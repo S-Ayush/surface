@@ -3,6 +3,7 @@
  * answers and `/readyz` reports 503 while the database is prepared, then runs
  * the startup sequence. `serve()` adds signal handling and exits on failure.
  */
+import { registry } from '@surface/operations';
 import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import { buildApp } from './app.js';
@@ -11,6 +12,11 @@ import type { Config } from './config.js';
 import { loadMigrations, migrationStatus, type Migration } from './db/migrate.js';
 import { createPool, waitForDatabase, type Pool } from './db/pool.js';
 import { prepareDatabase } from './db/prepare.js';
+import { createExecutor, missingHandlers } from './executor/execute.js';
+import { tokenBucket } from './executor/rate-limit.js';
+import { HANDLERS } from './handlers/index.js';
+import { noSignedInActor, type ActorResolver } from './http/ops.js';
+import { startJobs, type Jobs } from './jobs/index.js';
 import { Lifecycle } from './lifecycle.js';
 import { createLogger } from './logger.js';
 import { installProcessHandlers } from './shutdown.js';
@@ -22,6 +28,8 @@ export interface StartOptions {
   migrations?: Migration[];
   /** How long to wait for the database before giving up (E1). */
   databaseWaitMs?: number;
+  /** Who sent a request. Sessions arrive in PLAN-001 S3; until then nobody is signed in. */
+  resolveActor?: ActorResolver;
 }
 
 export interface RunningServer {
@@ -43,6 +51,9 @@ export async function startServer(
   const lifecycle = new Lifecycle();
   const pool = createPool(config.databaseUrl, logger);
 
+  // Hooks run in registration order: the job worker stops before the pool its handlers use.
+  let jobs: Jobs | undefined;
+  lifecycle.onShutdown('resources', 'job queue', () => jobs?.stop());
   lifecycle.onShutdown('resources', 'database pool', () => pool.end());
   lifecycle.addReadinessCheck('db', async () => {
     await pool.query('SELECT 1');
@@ -50,7 +61,32 @@ export async function startServer(
   });
   lifecycle.addReadinessCheck('migrations', () => migrationStatus(pool, migrations));
 
-  const app = await buildApp({ config, lifecycle, logger, info });
+  // Every registered operation needs a handler; a gap is a build mistake, caught before listening.
+  const unhandled = missingHandlers(registry, HANDLERS);
+  if (unhandled.length > 0) {
+    throw new StartupError(`No handler is registered for: ${unhandled.join(', ')}.`);
+  }
+  const app = await buildApp({
+    config,
+    lifecycle,
+    logger,
+    info,
+    ops: {
+      registry,
+      resolveActor: options.resolveActor ?? noSignedInActor,
+      createExecutor: (metrics) =>
+        createExecutor({
+          pool,
+          registry,
+          handlers: HANDLERS,
+          log: logger,
+          // Internal (debug) operations exist only outside production (SPEC-003 §6 step 2).
+          allowInternal: config.nodeEnv !== 'production',
+          rateLimiter: tokenBucket(),
+          ...(metrics ? { metrics } : {}),
+        }),
+    },
+  });
   await app.listen({ port: config.port, host: config.host });
 
   const ready = (async () => {
@@ -68,7 +104,10 @@ export async function startServer(
     });
 
     // PLAN-001 S2: log the setup token while setup is incomplete.
-    // Job worker and sync hub start here in later slices (by SURFACE_ROLE).
+    // The sync hub starts here in PLAN-002 (by SURFACE_ROLE).
+    if (config.role !== 'web') {
+      jobs = await startJobs({ databaseUrl: config.databaseUrl, pool, log: logger });
+    }
 
     lifecycle.markReady();
     // A shutdown that started during startup leaves us draining: don't claim ready.

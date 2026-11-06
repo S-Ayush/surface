@@ -1,4 +1,5 @@
 // Operation Registry (SPEC-003, ADR-0011): one definition drives every surface.
+export * from './catalog.js';
 export * from './define.js';
 export * from './domains.js';
 export * from './fields.js';

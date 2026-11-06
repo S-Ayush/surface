@@ -11,6 +11,7 @@ import {
 } from '@surface/domain';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
+import type { ActorResolver } from '../src/http/ops.js';
 import { loadConfig, type Config } from '../src/config.js';
 import { Lifecycle } from '../src/lifecycle.js';
 import { createLogger } from '../src/logger.js';
@@ -93,4 +94,17 @@ export function actorFor(
     memberships: user.memberships ?? [],
     ...(via ? { via } : {}),
   });
+}
+
+/**
+ * Test-only actor resolver: `x-test-actor: <name>` picks one of `actors`. It lives in `test/`
+ * so production code can never construct it; sessions replace it in PLAN-001 S3.
+ */
+export function headerActor(actors: Readonly<Record<string, Actor>>): ActorResolver {
+  return (request) => {
+    const name = request.headers['x-test-actor'];
+    return Promise.resolve(
+      typeof name === 'string' && Object.hasOwn(actors, name) ? actors[name] : undefined,
+    );
+  };
 }

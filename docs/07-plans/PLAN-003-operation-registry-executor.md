@@ -158,12 +158,34 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 >   - **S6:** pass the body's `fields` to `execute()`; list ops' `limit` defaults apply after parsing.
 >   - **PLAN-001 S1:** each real list model sets `teamColumn` and `archivedColumn`, and gets a leak case in its list tests; re-run the conformance harness per model (session E's note).
 
-### S6: HTTP exposure · M
+### S6: HTTP exposure · M · ✅ Done 2026-11-06
 - `POST /api/ops/:name`, `GET /api/ops` (catalog filtered by actor), `GET /api/openapi.json` (generated, no auth).
 - **Auth hook:** an `Actor` resolver interface. A test-only header actor is used until PLAN-001 S3 provides sessions and CSRF.
 - **Rate limiting:** an in-memory token bucket per actor and kind (defaults from SPEC-003 §9). The store interface allows Postgres-backed limits later if multi-process.
 - **Idempotency:** migration `api_idempotency` (actor_id, client_mutation_id, result jsonb, created_at). A 24 h TTL cleanup job is registered in M0 as a startup-scheduled pg-boss job, so pg-boss setup lands here (a minimal ADR-0010 slice).
 - **Tests:** one definition shows up in all three surfaces with no glue (AC-1), idempotent replay (AC-8), rate-limit 429 with `Retry-After`.
+
+> **As built (2026-11-06).**
+> - **Versions:** `pg-boss` 12.38.1 (ADR-0010; no outbound calls, OpenTelemetry hooks switched off). It pulls in `@opentelemetry/api` as a peer, a no-op without an SDK.
+> - **Routes (`apps/server/src/http/ops.ts`):** `POST /api/ops/:name`, `GET /api/ops`, `GET /api/openapi.json`, registered by `buildApp` when `AppDeps.ops` is given (`registry`, `resolveActor`, `createExecutor(metrics)`; the executor gets the app's `/metrics` registry). `startServer` builds the real executor: `allowInternal` outside production, `tokenBucket()` limits, and a `StartupError` if any operation lacks a handler.
+> - **Auth:** `ActorResolver = (request) => Promise<Actor | undefined>`. Production M0 uses `noSignedInActor`, so the routes answer 401 `UNAUTHENTICATED` (new error code, SPEC-003 §9). Tests use `headerActor()` from `test/helpers.ts` (`x-test-actor: <name>`), which lives only under `test/`, so production code can't build it.
+> - **Shared (`packages/operations/src/catalog.ts`):** `catalogEntry(def)` (compact schemas, cached) and `toOpenApi(ops, { version })`. Each op's input and output schemas become `components.schemas` entries named `<op>.input` / `<op>.output`, with Zod's `$defs` moved alongside and `#`-relative refs rewritten (otherwise recursive schemas would point at the document root). Internal ops are never published. M0 has no public operations, so the real document has no paths yet.
+> - **Idempotency (`executor/idempotency.ts`, migration `0003_api_idempotency`):** the transaction claims `(owner, id)` with `INSERT … ON CONFLICT DO UPDATE … WHERE expired` before reading anything; a concurrent repeat blocks on the row, then replays. Results are stored as `json` (not `jsonb`) so replays are byte-identical; owner is `key:<id>` or `user:<id>`; reuse for another op is `INVALID_INPUT`. `ExecuteResult.replayed` becomes the `Idempotent-Replayed` header.
+> - **Rate limiting (`executor/rate-limit.ts`):** `tokenBucket(limits?, clock?)`, one bucket per key or user and kind, idle buckets swept after a minute. Limits are code defaults; no environment variables yet (they would need SPEC-004 §7 and `.env.example`, owned by session B).
+> - **Jobs (`apps/server/src/jobs/index.ts`):** `startJobs({ databaseUrl, pool, log })` starts pg-boss in schema `pgboss` (pg-boss creates and migrates it itself, under its own lock, so there's no Surface migration for it), creates the queue `idempotency-prune`, schedules it hourly (`17 * * * *`) and works it. Started by roles `all` and `worker` after migrations; stopped before the pool on shutdown (hooks run in registration order, so `startServer` registers the job hook first).
+> - **Also:** `GET /api/ops` lists `executor.operations(actor)` (internal ops only where allowed; filtered by key scope). Before the server is ready, the routes answer 503 `UNAVAILABLE` with `Retry-After: 5`. Request bodies are a strict `{ input, fields?, clientMutationId? }`.
+> - **Tests:**
+>   - `ops-http.int.test.ts`: AC-1 (`debug.teamNote` runs over POST, appears in the catalog with its compact schema, and has an OpenAPI path; internal ops don't), the status mapping, a strict body, `fields`, AC-8 over HTTP (identical body and the replay header), 401 and 503, 429 with `Retry-After`, and the catalog per actor;
+>   - `executor-idempotency.int.test.ts` (AC-8): replay byte for byte, 8 concurrent repeats run once, rollback then retry, reuse for another op, owner scoping, 24 h expiry and pruning, queries ignored, length check;
+>   - `rate-limit.test.ts` (fake clock), `jobs.int.test.ts` (schema, schedule, a sent prune job completes and deletes only expired rows), `operations/test/catalog.test.ts` (every OpenAPI `$ref` resolves, including a recursive schema).
+> - **Exercised:** booted `src/main.ts` against a throwaway `postgres:17`: `/readyz` ready, migrations current, the pg-boss schedule present, `/api/openapi.json` served, `/api/ops` and `POST /api/ops/debug.echo` 401; SIGTERM shut down cleanly.
+> - **Deviations:**
+>   - AC-1's "client dispatch" leg needs `dispatch()` (PLAN-002 S8, session D). The definition is already the one the client imports (`registry` from `@surface/operations`).
+>   - The test file names differ from the table: AC-1 is in `ops-http.int.test.ts`, AC-8 in `executor-idempotency.int.test.ts` (the table is updated).
+> - **Notes for later slices:**
+>   - **PLAN-001 S3:** implement `ActorResolver` from the session cookie, **check the CSRF header there**, and pass it as `startServer({ resolveActor })` (or make it the default).
+>   - **M6:** API keys resolve to actors with `apiKey` set; idempotency, rate limits and the catalog already key on it.
+>   - **S7:** lint the catalog through `catalogEntry`; the OpenAPI document is `toOpenApi(registry.list().filter(op => !op.internal))`.
 
 ### S7: Registry lint & catalog snapshot · S
 - `pnpm registry:lint` (in CI stage 1) implementing the 8 rules of SPEC-003 §11, plus contract tests that run every op's `examples` against the seed fixture.
@@ -181,14 +203,14 @@ New tables `event_outbox` and `api_idempotency`, plus the pg-boss schema. All ar
 
 | AC | Test |
 |---|---|
-| AC-1 | `server/test/ops-surfaces.int.test.ts` |
+| AC-1 | `server/test/ops-http.int.test.ts` (client dispatch leg with PLAN-002 S8) |
 | AC-2 | `server/test/resolvers.int.test.ts` (the M0 reference types; extended as each milestone adds its types) |
 | AC-3 | `server/test/executor-stages.int.test.ts` (one case per stage) |
 | AC-4 | `server/test/executor-readonly.int.test.ts` |
 | AC-5 | `server/test/executor-atomic.int.test.ts` |
 | AC-6 | `server/test/filter-conformance.int.test.ts` (fast-check) |
 | AC-7 | `operations/test/fields.test.ts` (projection lives with the operation schemas; the executor applies it) |
-| AC-8 | `server/test/idempotency.int.test.ts` |
+| AC-8 | `server/test/executor-idempotency.int.test.ts`, plus the HTTP replay in `ops-http.int.test.ts` |
 | AC-9 | `operations/test/lint.test.ts` with fixtures |
 | AC-10 | `operations/test/compact-schema.test.ts` |
 | AC-11 | `server/test/executor-overhead.perf.int.test.ts` (p95 of execution minus a paired raw transaction, over 500 samples, run alone; a bench cannot fail CI) |

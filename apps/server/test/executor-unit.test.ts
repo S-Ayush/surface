@@ -64,6 +64,7 @@ describe('error codes', () => {
   it('map to the SPEC-003 §9 HTTP statuses', () => {
     expect(ERROR_CODES.map((code) => [code, HTTP_STATUS[code]])).toEqual([
       ['INVALID_INPUT', 400],
+      ['UNAUTHENTICATED', 401],
       ['UNKNOWN_OPERATION', 404],
       ['NOT_FOUND', 404],
       ['FORBIDDEN', 403],

@@ -6,7 +6,7 @@
  *  3    API-key scope                         → FORBIDDEN
  *  4    rate limit                            → RATE_LIMITED
  *  5    validate input                        → INVALID_INPUT
- *  6    BEGIN (read-only for queries)
+ *  6    BEGIN (read-only for queries); claim a `clientMutationId` or replay its result
  *  7    resolve references                    → NOT_FOUND | INVALID_INPUT
  *  8    permission                            → FORBIDDEN
  *  9    handler
@@ -34,6 +34,7 @@ import { eventOutbox } from '../db/schema/index.js';
 import { uuidv7 } from '../db/uuidv7.js';
 import { queryHelpers, type DomainEvent, type Handler, type HandlerContext } from './context.js';
 import { INTERNAL_MESSAGE, SurfaceError, type ErrorIssue, type OperationError } from './errors.js';
+import { checkClientMutationId, claim, idempotencyOwner, record } from './idempotency.js';
 import { keyScopeProblem, narrowToKeyTeams, refOutsideKeyTeams } from './key-scope.js';
 import { loggableError } from './log-error.js';
 import { noMetrics, operationMetrics, type OperationMetrics } from './metrics.js';
@@ -70,6 +71,12 @@ export interface ExecutorDeps {
   readonly clock?: () => Date;
 }
 
+interface TransactionOutcome {
+  readonly result: unknown;
+  readonly lastSyncId: number | undefined;
+  readonly replayed?: true;
+}
+
 export interface ExecuteOptions {
   /** Ties the result, the log line and any error together; the HTTP request id when there is one. */
   readonly correlationId?: string;
@@ -78,6 +85,11 @@ export interface ExecuteOptions {
   readonly seq?: number;
   /** Dot-paths that project the result (SPEC-003 §7.2); checked before any work is done. */
   readonly fields?: readonly string[];
+  /**
+   * API and MCP mutations: a repeat within 24 h returns the stored result without running
+   * again (SPEC-003 §9, AC-8). Ignored for queries and for actors without a user.
+   */
+  readonly clientMutationId?: string;
 }
 
 export type ExecuteResult =
@@ -87,10 +99,17 @@ export type ExecuteResult =
       readonly lastSyncId?: number;
       /** E8: a deprecated operation still runs and says what replaces it. */
       readonly deprecation?: { readonly replacedBy: string };
+      /** The stored result of an earlier call with the same `clientMutationId`. */
+      readonly replayed?: true;
     }
   | { readonly ok: false; readonly error: OperationError };
 
 export interface Executor {
+  /**
+   * Operations the actor may call: internal ones only where allowed, and only what an API
+   * key's scope permits (`GET /api/ops`, SPEC-003 §9).
+   */
+  operations(actor: Actor): AnyOperation[];
   execute(
     opName: string,
     rawInput: unknown,
@@ -146,19 +165,29 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       }
     }
 
+    const owner = def.kind === 'mutation' ? idempotencyOwner(actor) : undefined;
+    const clientMutationId = owner === undefined ? undefined : options.clientMutationId;
+    if (clientMutationId !== undefined) checkClientMutationId(clientMutationId);
+
     const handler = handlers.get(def.name);
     if (!handler) throw new Error(`No handler is registered for ${def.name}`);
     const viewer = narrowToKeyTeams(actor);
 
     // 6–12
-    const { result, lastSyncId } = await inTransaction(
+    const { result, lastSyncId, replayed } = await inTransaction(
       deps.pool,
       { ...transactionOptions, readOnly: def.kind === 'query' },
-      async (client) => {
+      async (client): Promise<TransactionOutcome> => {
         const now = clock();
         const tx = drizzle({ client, casing: 'snake_case' });
         const repo = repoFactory(tx, now);
         const events: DomainEvent[] = [];
+
+        // 6. Idempotency, before anything is read: a replay doesn't look at the present.
+        if (owner !== undefined && clientMutationId !== undefined) {
+          const claimed = await claim(tx, owner, clientMutationId, def.name);
+          if ('replay' in claimed) return { ...claimed.replay, replayed: true };
+        }
 
         // 7. References (visibility applied in SQL; key narrowing re-checked as a backstop)
         const refs = await resolveRefs(def, input, viewer, client);
@@ -232,6 +261,9 @@ export function createExecutor(deps: ExecutorDeps): Executor {
             })),
           );
         }
+        if (owner !== undefined && clientMutationId !== undefined) {
+          await record(tx, owner, clientMutationId, output.data, flushed.lastSyncId);
+        }
         return { result: output.data, lastSyncId: flushed.lastSyncId };
       },
     );
@@ -242,10 +274,16 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       result: fields === undefined ? result : shapeOutput(def, result, fields),
       ...(lastSyncId !== undefined ? { lastSyncId } : {}),
       ...(def.deprecated ? { deprecation: { replacedBy: def.deprecated.replacedBy } } : {}),
+      ...(replayed ? { replayed } : {}),
     };
   }
 
   return {
+    operations: (actor) =>
+      deps.registry
+        .list()
+        .filter((op) => callable(op, actor) && keyScopeProblem(op, actor) === undefined),
+
     async execute(opName, rawInput, actor, options = {}) {
       const started = performance.now();
       const correlationId = options.correlationId ?? randomUUID();

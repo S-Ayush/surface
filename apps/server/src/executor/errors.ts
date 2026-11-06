@@ -5,6 +5,7 @@
 
 export const ERROR_CODES = [
   'INVALID_INPUT',
+  'UNAUTHENTICATED',
   'UNKNOWN_OPERATION',
   'NOT_FOUND',
   'FORBIDDEN',
@@ -38,6 +39,7 @@ export interface ErrorDetails {
 /** SPEC-003 §9 "Error → HTTP status". */
 export const HTTP_STATUS: Readonly<Record<ErrorCode, number>> = {
   INVALID_INPUT: 400,
+  UNAUTHENTICATED: 401,
   UNKNOWN_OPERATION: 404,
   NOT_FOUND: 404,
   FORBIDDEN: 403,

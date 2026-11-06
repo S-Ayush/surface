@@ -209,7 +209,7 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
 | `GET /api/ops` | Same | Catalog: name, kind, domain, summary, description, keywords, compact input/output schema, examples, destructive. Filtered by the actor's scope. |
 | `GET /api/openapi.json` | Public within the deployment (no data) | Generated OpenAPI 3.1, one path per non-internal operation |
 
-**Error → HTTP status:** `INVALID_INPUT` 400 · `UNKNOWN_OPERATION` 404 · `NOT_FOUND` 404 · `FORBIDDEN` 403 · `CONFLICT` 409 · `RATE_LIMITED` 429 (+ `Retry-After`) · `CLIENT_OUTDATED` 426 · `INTERNAL` 500 (with a correlation ID; no stack traces).
+**Error → HTTP status:** `INVALID_INPUT` 400 · `UNAUTHENTICATED` 401 (nobody signed in; SPEC-001 E14) · `UNKNOWN_OPERATION` 404 · `NOT_FOUND` 404 · `FORBIDDEN` 403 · `CONFLICT` 409 · `RATE_LIMITED` 429 (+ `Retry-After`) · `CLIENT_OUTDATED` 426 · `INTERNAL` 500 (with a correlation ID; no stack traces).
 
 **Error body:**
 ```json
@@ -218,9 +218,20 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
   "correlationId": "01J…" } }
 ```
 
-**Idempotency (API/MCP):** `clientMutationId` is stored for 24 h in `api_idempotency(actor_id, client_mutation_id, result)`. A repeat returns the stored result. (Sync clients use `(clientId, seq)` instead, per SPEC-002.)
+**Idempotency (API/MCP):** `clientMutationId` is stored for 24 h in `api_idempotency(actor_id, client_mutation_id, operation, result)`. A repeat returns the stored result. (Sync clients use `(clientId, seq)` instead, per SPEC-002.)
+- Ids are scoped to the API key, or to the user for session calls, and apply to mutations only (queries ignore them). 1–200 characters.
+- The mutation's transaction claims the id before anything else, so concurrent repeats wait for the first and then replay it; if the first fails, nothing is stored and a repeat runs normally.
+- A replay's body is byte-identical to the first response, and carries the header `Idempotent-Replayed: true`.
+- Reusing an id for a different operation is `INVALID_INPUT`. A pg-boss job (`idempotency-prune`, hourly) deletes expired entries.
 
 **Rate limits (defaults, configurable):** per actor, queries 600/min and mutations 120/min. Session actors are exempt from the query limit.
+- A token bucket per API key (or user) and kind, holding a minute's allowance, so bursts up to the limit pass. In memory, per process: several web replicas each allow the full rate until a Postgres-backed limiter is needed. The system actor is never limited.
+- M0 sets the limits in code (`tokenBucket()`); environment variables for them can follow when someone needs to change them.
+
+**Other HTTP behaviour:**
+- `GET /api/ops` returns `{ ok: true, result: { operations: [...] } }`: what the caller may run (no internal operations for API keys or in production; queries only for read keys; no destructive operations for keys without "allow destructive").
+- While the server is starting (before `/readyz` is ready), the operation routes answer 503 `UNAVAILABLE` with `Retry-After: 5`, because migrations may still be running.
+- The request body is exactly `{ input, fields?, clientMutationId? }`; anything else is `INVALID_INPUT`.
 
 ## 10. Schema export
 
