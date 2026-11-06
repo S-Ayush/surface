@@ -82,6 +82,7 @@ SSO/SAML, guests, sub-teams, built-in AI or AI agents, third-party integrations 
 
 - **Every acceptance criterion has a named test,** except rows marked ⏸ held (`docs/07-plans/README.md` §6). The mapping lives in the plan's test plan table. Name tests after behaviour, not implementation.
 - **File naming:** `*.test.ts` for unit tests (no Docker), `*.int.test.ts` for tests that need Postgres (Testcontainers locally, a service container in CI). E2E tests live in `e2e/` (Playwright). **On hold:** don't write tests that need a browser, a running stack or Postgres (e2e, perf, smoke, new integration tests) until the user lifts the hold (`docs/07-plans/README.md` §6). Still required: unit and property tests, the sync property suite, and private-team leak tests (these may use Postgres). Existing integration tests are kept.
+- **Unit tests never call the network or a third-party service.** Mock the client or use a fake (an in-process server on `127.0.0.1`, a fake SMTP server, fake-indexeddb, fake timers). The shared Vitest preset enforces it for TCP and TLS connections from the test process: one to anything but this machine fails the test (`packages/config/vitest-no-network.js`). It can't see DNS lookups, UDP or child processes, so don't rely on it for those.
 - **Sync and permission logic** gets property tests (fast-check) and leak tests, not just examples.
 - **No real sleeps** to wait for conditions. Await events, poll with a deadline, or use fake timers.
 - **Fixing a bug starts with a test** that fails without the fix.

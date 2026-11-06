@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defaultClientConditions, defaultServerConditions } from 'vite';
 import { defineConfig, mergeConfig } from 'vitest/config';
 
@@ -11,6 +12,8 @@ const base = defineConfig({
     include: ['src/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}'],
     // Integration tests (real Postgres) run separately via `test:int`.
     exclude: ['**/node_modules/**', '**/dist/**', '**/*.int.test.{ts,tsx}'],
+    // Unit tests may not reach the network: mock or fake every outside service.
+    setupFiles: [fileURLToPath(new URL('./vitest-no-network.js', import.meta.url))],
   },
 });
 
