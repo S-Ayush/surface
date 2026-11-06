@@ -8,6 +8,7 @@
 import { afterAll, expect, it } from 'vitest';
 import { SyncStore } from '../src/store.js';
 import { DebugItem, TEST_MODELS, debugRow } from './support/models.js';
+import { quietConnection } from './support/hub.js';
 import { bootstrapFrames, fakeFetch, ndjsonResponse } from './support/server.js';
 import { closePorts, connectViaRpc, uniqueName } from './support/storage.js';
 
@@ -27,6 +28,7 @@ it(`warm-starts ${ROWS} rows in under ${BUDGET_MS} ms`, { timeout: 60_000 }, asy
     workspaceId,
     userId: 'user-1',
     connectStorage: connectViaRpc,
+    connection: quietConnection(),
   };
 
   const cold = new SyncStore({

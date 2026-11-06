@@ -1,0 +1,86 @@
+/**
+ * Delta apply (SPEC-002 §3.4, E1, E2): decide what a `deltas` message means
+ * for this replica, and turn its packets into pool and storage changes.
+ *
+ * - `prev > lastSyncId`: packets were missed (E1). Nothing is applied; the
+ *   caller reconnects with `since = lastSyncId`.
+ * - Otherwise, packets with `id ≤ lastSyncId` are duplicates and are skipped
+ *   (E2). The rest are contiguous with what was applied, because a message
+ *   covers the connection's stream from `prev` onwards.
+ * - A `G` packet (sync groups changed) means a full re-bootstrap until M7.
+ *
+ * Every row is validated before anything is applied, so a message is all or
+ * nothing.
+ */
+import type { DeltaPacket, DeltasMessage } from '@surface/sync-protocol';
+import { ProtocolError } from '@surface/sync-protocol';
+import { decodeRow } from './bootstrap.js';
+import type { BaseChange, ObjectPool } from './pool.js';
+import type { StoredChange } from './storage/types.js';
+
+export type DeltaPlan =
+  | { readonly kind: 'gap' }
+  | { readonly kind: 'resync' }
+  /** Nothing new: every packet was a duplicate, or the message only carries acks. */
+  | { readonly kind: 'none' }
+  | {
+      readonly kind: 'apply';
+      readonly base: readonly BaseChange[];
+      readonly stored: readonly StoredChange[];
+      /** The id of the last packet applied: the new `lastSyncId`. */
+      readonly lastSyncId: number;
+    };
+
+/** Throws `ProtocolError` when a row does not match its model. */
+export function planDeltas(
+  pool: ObjectPool,
+  message: DeltasMessage,
+  lastSyncId: number,
+): DeltaPlan {
+  if (message.prev > lastSyncId) return { kind: 'gap' };
+  const fresh = message.packets.filter((packet) => packet.id > lastSyncId);
+  const last = fresh.at(-1);
+  if (last === undefined) return { kind: 'none' };
+  if (fresh.some((packet) => packet.a === 'G')) return { kind: 'resync' };
+
+  const base: BaseChange[] = [];
+  const stored: StoredChange[] = [];
+  for (const packet of fresh) {
+    const change = toChange(pool, packet);
+    if (change === undefined) continue;
+    base.push(change.base);
+    stored.push(change.stored);
+  }
+  return { kind: 'apply', base, stored, lastSyncId: last.id };
+}
+
+function toChange(
+  pool: ObjectPool,
+  packet: DeltaPacket,
+): { base: BaseChange; stored: StoredChange } | undefined {
+  const version = packet.id;
+  switch (packet.a) {
+    case 'I':
+    case 'U': {
+      const row = decodeRow(pool, packet.m, packet.d);
+      return {
+        base: { kind: 'upsert', model: packet.m, row },
+        stored: { kind: 'upsert', model: packet.m, version, row },
+      };
+    }
+    case 'A':
+    case 'V':
+    case 'D': {
+      const kind = packet.a === 'A' ? 'archive' : packet.a === 'V' ? 'unarchive' : 'delete';
+      if (!pool.models.some((def) => def.name === packet.m)) {
+        throw new ProtocolError(`Invalid packet: unknown model ${packet.m}`);
+      }
+      return {
+        base: { kind, model: packet.m, id: packet.mid },
+        stored: { kind, model: packet.m, version, id: packet.mid },
+      };
+    }
+    case 'G':
+      return undefined;
+  }
+}

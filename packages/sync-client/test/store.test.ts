@@ -8,6 +8,7 @@ import { ObjectPool } from '../src/pool.js';
 import type { SyncStorage } from '../src/storage/types.js';
 import { SyncStore } from '../src/store.js';
 import { Board, Card, DebugItem, TEST_MODELS, debugRow, id } from './support/models.js';
+import { quietConnection } from './support/hub.js';
 import { bootstrapFrames, fakeFetch, gatedResponse, ndjsonResponse } from './support/server.js';
 import { closePorts, connectViaRpc, uniqueName } from './support/storage.js';
 
@@ -30,6 +31,7 @@ function storeFor(
     userId: 'user-1',
     fetch,
     connectStorage: connectViaRpc,
+    connection: quietConnection(),
     ...options,
   });
 }

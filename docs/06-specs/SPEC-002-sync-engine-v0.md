@@ -137,7 +137,8 @@ packages/sync-client/
   hydrate.ts, store.ts  warm start; start-up sequence and status
   persistence.ts        storage failure handling: fenced generation vs lost storage (E5, E6)
   locks.ts              cross-tab replica lock (Web Locks: shared to hydrate, exclusive to bootstrap; E5)
-  socket.ts             WS lifecycle, ping/pong, backoff, gap detection
+  socket.ts             WS lifecycle, ping/pong, silence watchdog, backoff, online event, close codes
+  deltas.ts             delta apply plan: gap (E1), duplicates (E2), G → resync; rows validated first
   queue.ts              pending mutations, seq, flusher, results handling
   overlay.ts            base ⊕ optimistic(pending) recomputation
   dispatch.ts           dispatch(op, input) entry point, typed from packages/operations
@@ -172,7 +173,7 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 
 | # | Case | Behaviour |
 |---|---|---|
-| E1 | A delta gap is detected (packet id ≠ last + 1 for the user's filtered stream) | Filtered streams legitimately skip IDs, so the hub sends `prev` (the previous id *for this connection*) on each batch. If `prev ≠ lastSyncId`, close and reconnect with `since = lastSyncId`. |
+| E1 | A delta gap is detected (packet id ≠ last + 1 for the user's filtered stream) | Filtered streams legitimately skip IDs, so the hub sends `prev` (the previous id *for this connection*) on each batch. If `prev > lastSyncId`, the client missed packets: it applies nothing from that message, closes, and reconnects with `since = lastSyncId`. If `prev ≤ lastSyncId`, the message overlaps what the client has: it skips packets with `id ≤ lastSyncId` (E2) and applies the rest (sync-protocol.md §4.3). |
 | E2 | Duplicate packet after reconnect | Ignored (`id ≤ lastSyncId`) |
 | E3 | Server restart while a batch is in flight | The client retries the same batch. The server dedupes by seq. |
 | E4 | The client crashes after sending but before the ack is persisted | On restart the pending mutations are resent and deduped, and the stored results are returned |
@@ -181,8 +182,9 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | E7 | `schemaHash` changes on deploy | Connected clients get `resync(schema)`, show the "reload" banner, and on reload the IDB is cleared and bootstrapped again |
 | E8 | A very long offline period (> 30 days) | `resync(too_old)` → re-bootstrap, then **flush the queue**. Pending mutations survive the re-bootstrap. |
 | E9 | A mutation references a row deleted by the server meanwhile | Rejected with `NOT_FOUND` → rollback and toast |
-| E10 | A session is revoked mid-session | Socket closed with `4001` → redirect to login. The queue is kept (keyed by user). |
+| E10 | A session is revoked mid-session, or while the client is offline | Socket closed with `4001` → redirect to login. On reconnect without a valid session the hub accepts the upgrade and closes with `4001` too (sync-protocol.md §4.3). The queue is kept (keyed by user). |
 | E11 | Clock skew on the client | Irrelevant: ordering comes only from the server's `sync_id`, and `at` is informational |
+| E12 | A row fails client validation although `schemaHash` matches (a server/client disagreement) | Nothing from that message is applied, and the client reconnects. After 3 rejections at the same `lastSyncId` it re-bootstraps. If the snapshot has the bad row too, the store goes `failed`, keeps the error for the inspector, and stops retrying until a reload. |
 
 ## 9. Acceptance criteria
 
@@ -225,3 +227,9 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Q5 | (2026-11-06, PLAN-002 S2) How does a change of a row's groups reach clients? | Two packets with consecutive ids: `D` with the old groups, then `U` with the new ones. Users who see both delete and re-insert (one batch); users who only saw the old groups delete; users who only see the new groups upsert. This keeps the hub's filter a plain `groups && clientGroups`. |
 | Q6 | (2026-11-06, PLAN-002 S2 review) Which of a row's groups does a client receive? | Only the ones it is in: bootstrap and the hub send `syncGroups` intersected with the connection's groups. The client needs a row's groups to purge it when it leaves a team (sync-protocol §6) and for `p.canSee`, and the intersection answers both. The full list could name a private team the user isn't in (a project shared by several private teams). `sync_log.data` keeps the full list: it is server-only. |
 | D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |
+
+### Changes after acceptance
+
+| Date | Change | Why |
+|---|---|---|
+| 2026-11-06 | **E1:** `prev > lastSyncId` is a gap (reconnect); `prev ≤ lastSyncId` skips packets with `id ≤ lastSyncId` and applies the rest. It used to say `prev ≠ lastSyncId` means reconnect. **E10:** also covers a session revoked while offline: the hub accepts the upgrade and closes with `4001`. **E12** added. | PLAN-002 S7 reviews. An overlapping or resent message is harmless, so reconnecting on it only adds churn. A browser cannot see a refused upgrade's status, so a `401` would make the client retry forever. A bad row used to make the client reconnect forever with no visible error. Protocol side: [sync-protocol.md](../04-architecture/sync-protocol.md) v0.4. Approved by the user. |

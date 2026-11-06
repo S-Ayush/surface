@@ -1,6 +1,6 @@
 # Surface: Sync Protocol (v1)
 
-Status: **Draft v0.3** · Date: 2026-11-06 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
+Status: **Draft v0.4** · Date: 2026-11-06 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
 
 This is the contract between `packages/sync-client` and `apps/server`. Every wire type here lives in `packages/sync-protocol`, as a Zod codec. Decoders strip unknown keys instead of rejecting them, so additive changes stay compatible. Changes are listed in §11.
 
@@ -82,13 +82,15 @@ Server → client messages:
 Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subject":"issue:…","state":"viewing|editing"}`.
 
 **`deltas` rules** (checked by the decoder):
-- `prev` is the id of the last packet the server sent **on this connection** before this message, or `since` for the first one. The client applies the message only if `prev` equals its `lastSyncId`. Otherwise it has missed packets: it closes the socket and reconnects with `since = lastSyncId` (SPEC-002 E1).
+- `prev` is the id of the last packet the server sent **on this connection** before this message, or `since` for the first one. If `prev` is greater than the client's `lastSyncId`, the client has missed packets: it applies nothing from the message, closes the socket and reconnects with `since = lastSyncId` (SPEC-002 E1). If `prev` is less than or equal to `lastSyncId`, the message is contiguous with what the client has: it skips packets with `id ≤ lastSyncId` as duplicates (E2) and applies the rest. The server never needs to rely on the second case; it only makes a re-delivery harmless.
 - Packet ids are strictly increasing and greater than `prev`. Ids can skip, because the stream is filtered by sync groups. At most 500 packets per message.
 - `ack` lists this connection's own mutations that committed in the `sync_log` range the message covers. `packets` may be **empty only when `ack` is not**: a mutation can write rows this client cannot see, and its pending entry must still be confirmed. A message with neither is invalid.
 - `G` packets are decoded in v0 because they take part in the ordering. Until M7, the client handles one with a full re-bootstrap.
 - **Archived state changes only through `A` and `V`.** `I` inserts a live row, and `U` replaces the row's fields but keeps whether it is archived. An edit that also unarchives a row ("any edit" in state-machines.md §2) emits both `U` and `V` in the same transaction. This keeps a client that applied the stream identical to one that cold-started from a bootstrap (whose `row.archived` reflects the same state).
 
 **Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10).
+
+**No valid session:** the hub accepts the upgrade and then closes at once with `4001`. It does not answer `401`. A browser cannot read the HTTP status of a refused upgrade, which looks like any network failure (`1006`), so the client would keep retrying. This is how a client that was offline when its session was revoked learns about it. Nothing is sent before the close.
 
 **Catch-up:** on connect, the server streams `sync_log` rows with `sync_id > since` filtered by the user's groups, then switches to live mode. If `since` is older than the retention window (30 days), or `schemaHash` differs, the server sends `resync`.
 
@@ -222,5 +224,6 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-06 | v0.4 | PLAN-002 S7. Server: an upgrade without a valid session is accepted and closed with `4001`, not refused with `401` (§4.3). Clarified, no wire change: `prev > lastSyncId` is a gap; `prev ≤ lastSyncId` skips packets with `id ≤ lastSyncId` and applies the rest (§4.3, SPEC-002 E1) | Session A (Handoffs) |
 | 2026-11-06 | v0.3 | PLAN-002 S6: `meta.rows` (required), the exact row count, for the progress bar; `row.archived` (optional boolean; `true` = archived) so a cold start matches clients that saw the `A` packet. While v0.3 was unreleased, `archived` was first `true`-only and was widened to boolean before release. Also stated: archived state changes only through `A`/`V`; `U` keeps it (§4.3) | Session A (Handoffs) |
 | 2026-11-06 | v0.2 | PLAN-002 S1 codecs: `deltas.prev`; acks without packets; `schemaHash` in the WebSocket URL; close codes; batch rules (1–100, consecutive seqs); `lastSeq` on `SEQ_GAP`; `CLIENT_OUTDATED` = 426; schema hash definition; `presence` deferred to M4 | Session A (session-d-sync-client.md, Handoffs) |
