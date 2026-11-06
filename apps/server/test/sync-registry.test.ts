@@ -33,6 +33,22 @@ describe('the sync registry', () => {
     expect(model?.archivable).toBe(true);
   });
 
+  it('maps a multi-word field to its snake_case column, as Drizzle names it in SQL', () => {
+    const withCreatedAt = defineModel('DebugItem', {
+      load: 'eager',
+      fields: { title: str(), counter: int(), groups: array(str()), createdAt: timestamp() },
+    });
+    const model = syncModel('DebugItem', withCreatedAt, debugItems);
+    expect(model.columns.get('createdAt')).toBe('created_at');
+  });
+
+  it("can't be given a field named like bootstrap's own aliases (__groups, __archived)", () => {
+    // `defineModel` accepts camelCase names only, so the aliases never collide with a field.
+    expect(() =>
+      defineModel('DebugItem', { load: 'eager', fields: { __groups: array(str()) } }),
+    ).toThrow('field __groups must be camelCase');
+  });
+
   it('refuses a definition that declares a field the table lacks, naming both', () => {
     const extra = defineModel('DebugItem', {
       load: 'eager',
@@ -57,7 +73,7 @@ describe('a client row', () => {
   };
 
   it('holds exactly the declared fields, valid for the client model and the wire', () => {
-    const d = clientRow(model, row, new Set(['workspace']));
+    const d = clientRow(model, row, row.syncGroups, new Set(['workspace']));
     expect(d).toEqual({
       id: row.id,
       title: 'Shared',
@@ -69,8 +85,12 @@ describe('a client row', () => {
   });
 
   it("carries only the groups the receiving connection is in (a private team's id stays hidden)", () => {
-    expect(clientRow(model, row, new Set(['workspace']))['groups']).toEqual(['workspace']);
-    expect(clientRow(model, row, new Set(row.syncGroups))['groups']).toEqual(row.syncGroups);
+    expect(clientRow(model, row, row.syncGroups, new Set(['workspace']))['groups']).toEqual([
+      'workspace',
+    ]);
+    expect(clientRow(model, row, row.syncGroups, new Set(row.syncGroups))['groups']).toEqual(
+      row.syncGroups,
+    );
   });
 
   it('sends instants as ISO strings with milliseconds', () => {
@@ -79,6 +99,8 @@ describe('a client row', () => {
       fields: { title: str(), counter: int(), groups: array(str()), createdAt: timestamp() },
     });
     const timed = syncModel('DebugItem', withCreatedAt, debugItems);
-    expect(clientRow(timed, row, new Set())['createdAt']).toBe('2026-11-07T10:00:00.123Z');
+    expect(clientRow(timed, row, row.syncGroups, new Set())['createdAt']).toBe(
+      '2026-11-07T10:00:00.123Z',
+    );
   });
 });

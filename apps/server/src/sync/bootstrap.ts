@@ -6,13 +6,26 @@
  * fetch, pulled only as fast as the response is written.
  */
 import { syncGroupSchema, type BootstrapFrame } from '@surface/sync-protocol';
-import type pg from 'pg';
 import { clientRow, type SyncModel, type SyncRegistry } from './registry.js';
 
 export const BOOTSTRAP_FETCH_SIZE = 1000;
 
+/** What bootstrap needs from a connection: `pg.PoolClient` satisfies it. */
+export interface BootstrapClient {
+  query<R extends Record<string, unknown>>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<{ rows: R[] }>;
+  release(destroy?: boolean): void;
+}
+
+/** What bootstrap needs from the pool: `pg.Pool` satisfies it. */
+export interface BootstrapPool {
+  connect(): Promise<BootstrapClient>;
+}
+
 export interface BootstrapOptions {
-  readonly pool: pg.Pool;
+  readonly pool: BootstrapPool;
   readonly registry: SyncRegistry;
   /** The actor's sync groups: only rows in one of them are sent (`sync_groups && $groups`). */
   readonly groups: readonly string[];
@@ -63,10 +76,7 @@ export async function* bootstrapFrames({
     const visible = new Set(groups);
     let sent = 0;
     for (const model of registry.eager) {
-      await client.query({
-        text: `DECLARE bootstrap NO SCROLL CURSOR FOR ${selectRows(model)}`,
-        values: [groups],
-      });
+      await client.query(`DECLARE bootstrap NO SCROLL CURSOR FOR ${selectRows(model)}`, [groups]);
       for (;;) {
         const batch = await client.query<Record<string, unknown>>(
           `FETCH ${BOOTSTRAP_FETCH_SIZE} FROM bootstrap`,
@@ -76,8 +86,8 @@ export async function* bootstrapFrames({
           yield {
             t: 'row',
             m: model.name,
-            d: clientRow(model, row, visible),
-            ...(row['archived'] === true ? { archived: true } : {}),
+            d: clientRow(model, row, row[GROUPS_ALIAS], visible),
+            ...(row[ARCHIVED_ALIAS] === true ? { archived: true } : {}),
           };
         }
         if (batch.rows.length < BOOTSTRAP_FETCH_SIZE) break;
@@ -103,12 +113,23 @@ export async function* bootstrapFrames({
   }
 }
 
+/**
+ * Aliases for the row's groups and archive state. `defineModel` accepts camelCase field names
+ * only, so these never collide with a declared field.
+ */
+const GROUPS_ALIAS = '__groups';
+const ARCHIVED_ALIAS = '__archived';
+
 /** The declared fields under their client names, plus the row's groups and archive state. */
 function selectRows(model: SyncModel): string {
   const fields = [...model.columns].map(([field, column]) => `${quote(column)} AS ${quote(field)}`);
   // Read even when the model has no `groups` field: cheap, and `clientRow` decides.
-  fields.push(`sync_groups AS "syncGroups"`);
-  fields.push(model.archivable ? `archived_at IS NOT NULL AS archived` : `false AS archived`);
+  fields.push(`sync_groups AS ${quote(GROUPS_ALIAS)}`);
+  fields.push(
+    model.archivable
+      ? `archived_at IS NOT NULL AS ${quote(ARCHIVED_ALIAS)}`
+      : `false AS ${quote(ARCHIVED_ALIAS)}`,
+  );
   return `SELECT ${fields.join(', ')} FROM ${quote(model.table)} WHERE sync_groups && $1::text[]`;
 }
 

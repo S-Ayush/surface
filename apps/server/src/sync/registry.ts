@@ -7,6 +7,7 @@
 import type { ModelDef } from '@surface/domain/model';
 import { computeSchemaHash } from '@surface/sync-protocol';
 import { getTableColumns, getTableName } from 'drizzle-orm';
+import { toSnakeCase } from 'drizzle-orm/casing';
 import { isModelName, SYNCED_MODELS, type ModelName } from './models.js';
 
 /**
@@ -64,7 +65,7 @@ export function syncModel(
   if (def.name !== name) {
     throw new Error(`Synced model ${name} has the definition of ${def.name}.`);
   }
-  const tableColumns: Record<string, { name: string }> = getTableColumns(table);
+  const tableColumns: Record<string, { name: string; keyAsName: boolean }> = getTableColumns(table);
   const columns = new Map<string, string>();
   for (const field of Object.keys(def.fields)) {
     if (field === GROUPS_FIELD) continue;
@@ -74,7 +75,9 @@ export function syncModel(
         `${name}.${field} is declared in @surface/domain/model but ${getTableName(table)} has no such column.`,
       );
     }
-    columns.set(field, column.name);
+    // Columns declared without a name are named by `casing: 'snake_case'` when Drizzle builds
+    // SQL (drizzle.config.ts, the executor); `column.name` is then still the camelCase key.
+    columns.set(field, column.keyAsName ? toSnakeCase(column.name) : column.name);
   }
   return {
     name,
@@ -86,13 +89,14 @@ export function syncModel(
 }
 
 /**
- * The row a client receives, from a database row keyed by client field (as `bootstrap.ts`
- * selects it), plus the row's `syncGroups`. Declared fields only; instants as ISO strings with
- * milliseconds; `groups` cut to `visible`.
+ * The row a client receives, from values keyed by client field (as `bootstrap.ts` selects them,
+ * or a `sync_log.data` row) and the row's sync groups. Declared fields only; instants as ISO
+ * strings with milliseconds; `groups` = `rowGroups` cut to `visible`.
  */
 export function clientRow(
   model: SyncModel,
   row: Readonly<Record<string, unknown>>,
+  rowGroups: unknown,
   visible: ReadonlySet<string>,
 ): { readonly id: string; readonly [field: string]: unknown } {
   const id = row['id'];
@@ -100,8 +104,7 @@ export function clientRow(
   const out: Record<string, unknown> = {};
   for (const field of Object.keys(model.def.fields)) {
     if (field === GROUPS_FIELD) {
-      const groups = row['syncGroups'];
-      out[field] = Array.isArray(groups) ? groups.filter((g) => visible.has(String(g))) : [];
+      out[field] = Array.isArray(rowGroups) ? rowGroups.filter((g) => visible.has(String(g))) : [];
     } else {
       const value = row[field];
       out[field] = value instanceof Date ? value.toISOString() : value;

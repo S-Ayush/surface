@@ -165,7 +165,7 @@ At dispatch time the runner records the **inverse operation**, computed from the
   - **added:** the client calls `GET /sync/bootstrap?groups=<added>`, then continues with deltas.
   - **removed:** the client deletes every row whose groups are now all invisible, from memory and from IDB.
 - A row's `groups` can change (e.g. a project loses its last public team). The repo logs `D` with the old groups, then `U` (the full row) with the new ones, under consecutive ids: users who lose visibility get only the `D`, users who gain it only the `U` (an upsert), and users who keep it get both in one batch, because the hub never splits that pair across batches or pages (SPEC-002 Q5).
-- A row reaches a client with `syncGroups` cut down to the groups that client is in, so it never learns the id of a private team it isn't a member of (SPEC-002 Q6).
+- A row reaches a client with its `sync_groups` cut down to the groups that client is in, so it never learns the id of a private team it isn't a member of (SPEC-002 Q6). The client receives them in the model's `groups` field, if the model declares one; other models carry no groups (SPEC-002 Q8).
 
 ---
 
@@ -230,6 +230,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-07 | v0.4 | PLAN-002 S3, server only, no codec change. Bootstrap answers `400` to `?groups=` until M7; errors before the first frame use the SPEC-003 body with `401`, `403` (an API key, SPEC-002 Q7) or `503`; the body is gzipped when `Accept-Encoding` allows it (§4.1). A row's groups travel in the model's `groups` field, if declared (§4.1, §6, SPEC-002 Q8) | — |
 | 2026-11-06 | v0.4 | PLAN-002 S8, no wire change. Client: the queue flushes once the socket is open rather than after catch-up (§5.3); a result whose `lastSyncId` the replica has already passed confirms at once; queues are adopted across tabs (§5.1, SPEC-002 E5); `413` and other refused requests split the batch and reject the mutation at fault, and requests time out after 30 s (§4.4). Stated, for the server: catch-up carries the client's acks for `(since, head]` (§4.3) | Session A (Handoffs row 4) |
 | 2026-11-06 | v0.4 | PLAN-002 S7. Server: an upgrade without a valid session is accepted and closed with `4001`, not refused with `401` (§4.3). Clarified, no wire change: `prev > lastSyncId` is a gap; `prev ≤ lastSyncId` skips packets with `id ≤ lastSyncId` and applies the rest (§4.3, SPEC-002 E1) | Session A (Handoffs) |
 | 2026-11-06 | v0.3 | PLAN-002 S6: `meta.rows` (required), the exact row count, for the progress bar; `row.archived` (optional boolean; `true` = archived) so a cold start matches clients that saw the `A` packet. While v0.3 was unreleased, `archived` was first `true`-only and was widened to boolean before release. Also stated: archived state changes only through `A`/`V`; `U` keeps it (§4.3) | Session A (Handoffs) |

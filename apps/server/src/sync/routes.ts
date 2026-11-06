@@ -6,15 +6,14 @@ import { pipeline, Readable } from 'node:stream';
 import { createGzip } from 'node:zlib';
 import { BOOTSTRAP_PATH, encodeNdjsonLine, NDJSON_CONTENT_TYPE } from '@surface/sync-protocol';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type pg from 'pg';
 import { errorBody } from '../http/errors.js';
 import { signedIn, type ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
-import { bootstrapFrames } from './bootstrap.js';
+import { bootstrapFrames, type BootstrapPool } from './bootstrap.js';
 import type { SyncRegistry } from './registry.js';
 
 export interface SyncRoutesDeps {
-  readonly pool: pg.Pool;
+  readonly pool: BootstrapPool;
   readonly registry: SyncRegistry;
   readonly resolveActor: ActorResolver;
   readonly lifecycle: Lifecycle;
@@ -56,14 +55,26 @@ export function registerSyncRoutes(app: FastifyInstance, deps: SyncRoutesDeps): 
     // Read the first frame before answering, so a database error is a 500, not a 200 with a
     // cut-off body.
     const first = await frames.next();
+    // However early the client goes away (even while rows were being counted, before the stream
+    // below has started), end the snapshot and release its connection. Once the stream has run to
+    // its end this is a no-op.
+    const stop = () => {
+      frames.return(undefined).catch((err: unknown) => {
+        request.log.error({ err }, 'bootstrap cleanup failed');
+      });
+    };
+    reply.raw.once('close', stop);
+    if (request.raw.destroyed || reply.raw.destroyed) {
+      stop();
+      return reply;
+    }
     const lines = Readable.from(
       (async function* () {
         try {
           if (!first.done) yield encodeNdjsonLine(first.value);
           for await (const frame of frames) yield encodeNdjsonLine(frame);
         } finally {
-          // Closed after the first frame: end the snapshot and release its connection.
-          await frames.return(undefined);
+          stop();
         }
       })(),
     );
@@ -72,16 +83,12 @@ export function registerSyncRoutes(app: FastifyInstance, deps: SyncRoutesDeps): 
       .header('content-type', NDJSON_CONTENT_TYPE)
       .header('cache-control', 'no-store')
       .header('vary', 'accept-encoding');
-    const onError = (error: Error | null | undefined) => {
-      // The response has started: the client sees a stream without `end` and starts over.
-      if (error && !isClosedEarly(error)) request.log.error({ err: error }, 'bootstrap failed');
-    };
-    if (!acceptsGzip(request.headers['accept-encoding'])) {
-      lines.on('error', onError);
-      return reply.send(lines);
-    }
+    // A stream that fails after the headers went out is logged by Fastify; the client sees a
+    // stream without `end` and starts over.
+    if (!acceptsGzip(request.headers['accept-encoding'])) return reply.send(lines);
     reply.header('content-encoding', 'gzip');
-    return reply.send(pipeline(lines, createGzip(), onError));
+    // `pipeline` passes an error on to the gzip stream, where Fastify sees it.
+    return reply.send(pipeline(lines, createGzip(), () => {}));
   });
 }
 
@@ -98,9 +105,4 @@ export function acceptsGzip(header: string | undefined): boolean {
     const q = params.map((p) => p.trim()).find((p) => p.startsWith('q='));
     return q === undefined || Number(q.slice(2)) > 0;
   });
-}
-
-/** The client went away mid-stream: not an error worth logging. */
-function isClosedEarly(error: Error): boolean {
-  return Reflect.get(error, 'code') === 'ERR_STREAM_PREMATURE_CLOSE';
 }
