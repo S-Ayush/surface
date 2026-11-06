@@ -77,7 +77,9 @@ export async function executorHarness(): Promise<ExecutorHarness> {
 
 // ---------------------------------------------------------------------------------------------
 // AC-12 (SPEC-002), runtime half: every write to a synced table is audited, and the test
-// executor fails any mutation that wrote a row its repo didn't log.
+// executor fails any mutation that wrote a row its repo didn't log. Known gaps, covered by the
+// lint rule instead: it matches by (table, id), so a raw write to a row the repo also logged
+// passes, and it doesn't audit `sync_log` / `sync_state` (only the repo's flush writes them).
 
 const tableOfModel = new Map(
   Object.entries(SYNCED_MODELS).map(([model, { table }]) => [model, getTableName(table)]),
@@ -365,9 +367,9 @@ export function testExecutor(pool: pg.Pool, overrides: Partial<ExecutorDeps> = {
     log,
     allowInternal: true,
     backoff: () => 0,
-    // A test that passes its own checks replaces the write audit.
-    checks: [repoWritesOnly],
     ...overrides,
+    // A test's own checks run after the write audit, never instead of it.
+    checks: [repoWritesOnly, ...(overrides.checks ?? [])],
   });
   return { executor, logs };
 }

@@ -113,6 +113,8 @@ A lint rule (`surface/no-synced-table-writes`) forbids direct `db.insert/update/
 ### 4.3 Broadcast hub
 - After commit, run `NOTIFY sync, '<last_sync_id>'`.
 - The hub keeps `broadcastedUpTo`. On notify, it reads `sync_log WHERE sync_id > broadcastedUpTo ORDER BY sync_id`. For each connection it filters by `groups && connection.groups`, batches up to 500 packets, and attaches `ack` entries for that connection's `clientId`.
+- A batch (and a catch-up page) never separates a `D` from the packet for the same row that directly follows it, so a groups change (Q5) reaches users who keep the row in one batch.
+- Rows go out with `syncGroups` intersected with the connection's groups, in bootstrap and in deltas (Q6).
 - **Catch-up for a new connection:** stream from `since` to the current `broadcastedUpTo` (with the same filter), then join live delivery. Live packets that arrive during catch-up are buffered for that connection to avoid races.
 - If `since` < the oldest retained `sync_id` → `resync(too_old)`. If the client's `schemaHash` ≠ the server's → `resync(schema)`.
 
@@ -215,3 +217,4 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Q3 | Should the hub run per process or as a dedicated role? | Per process, with NOTIFY fan-out, so a multi-process setup works too |
 | Q4 | (2026-11-06, PLAN-002 S2) What does `data` hold for archive and unarchive? | The full row, like I and U. An unarchive must be able to re-insert a row a client dropped (archived rows need not be in the eager set), and full rows keep every non-delete packet an idempotent upsert. |
 | Q5 | (2026-11-06, PLAN-002 S2) How does a change of a row's groups reach clients? | Two packets with consecutive ids: `D` with the old groups, then `U` with the new ones. Users who see both delete and re-insert (one batch); users who only saw the old groups delete; users who only see the new groups upsert. This keeps the hub's filter a plain `groups && clientGroups`. |
+| Q6 | (2026-11-06, PLAN-002 S2 review) Which of a row's groups does a client receive? | Only the ones it is in: bootstrap and the hub send `syncGroups` intersected with the connection's groups. The client needs a row's groups to purge it when it leaves a team (sync-protocol §6) and for `p.canSee`, and the intersection answers both. The full list could name a private team the user isn't in (a project shared by several private teams). `sync_log.data` keeps the full list: it is server-only. |
