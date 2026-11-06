@@ -1,0 +1,42 @@
+/* Document defaults. Uses only tokens (Stylelint, AC-11). */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: var(--font-size-root);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base-size);
+  font-weight: var(--text-base-weight);
+  line-height: var(--text-base-line);
+  font-feature-settings: var(--font-features);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+}
+
+/* Focus rings show for keyboard focus only (SPEC-005 §6). */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}

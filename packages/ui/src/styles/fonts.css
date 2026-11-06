@@ -1,0 +1,5 @@
+/* Bundled fonts (design-system §2.4, FR-OPS-09). Fontsource ships the OFL files with
+   font-display: swap and per-script unicode-range subsets; Vite bundles them, so nothing is
+   fetched from a CDN. */
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';

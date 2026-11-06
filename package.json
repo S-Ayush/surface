@@ -12,7 +12,7 @@
     "dev:db:down": "node scripts/dev.mjs db:down",
     "db:migrate": "node scripts/dev.mjs db:migrate",
     "build": "turbo run build",
-    "lint": "turbo run lint && pnpm lint:deps && pnpm format:check",
+    "lint": "turbo run lint && pnpm lint:deps && pnpm lint:css && pnpm format:check",
     "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
@@ -21,7 +21,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "changeset": "changeset",
-    "docker:smoke": "scripts/docker-smoke.sh"
+    "docker:smoke": "scripts/docker-smoke.sh",
+    "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
+    "ui:tokens": "pnpm --filter @surface/ui tokens",
+    "test:tokens": "pnpm --filter @surface/ui test:tokens"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
@@ -36,6 +39,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.14.0",
     "prettier": "^3.9.10",
+    "stylelint": "^18.0.0",
     "turbo": "^2.11.10",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.72.1",

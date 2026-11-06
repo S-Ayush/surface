@@ -1,0 +1,8 @@
+/* App-level global styles. Tokens, fonts and document defaults come from the design system. */
+@import '@surface/ui/styles.css';
+
+html,
+body,
+#root {
+  height: 100%;
+}

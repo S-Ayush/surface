@@ -63,8 +63,12 @@ Stop after S3. Use ports 6006 (Storybook) and 5174 (Vite) in this worktree.
 
 | To | Request | Why / blocking? | Status |
 |---|---|---|---|
+| A | When the CSP lands (architecture §security headers), allow the theme bootstrap with `script-src 'self' 'sha256-…'`, not `'unsafe-inline'`. Simplest: at startup, hash the single inline `<script>` in the served `dist/index.html` (a test keeps it the only one). | Without it a strict CSP blocks the script and the theme flashes. Not blocking now. | open |
+| B | FYI: root `pnpm lint` now also runs `pnpm lint:css` (Stylelint, root `stylelint.config.js`), so CI's lint step covers CSS with no change. If CI calls the sub-steps individually, add `pnpm lint:css`. | So every session's CSS is gated in CI. Not blocking. | open |
 
 ## Log (append-only)
 
 | Date | Slice | Branch | State | Notes / handoffs |
 |---|---|---|---|---|
+| 2026-11-06 | PLAN-005 S1 | p005-s1-tokens | built, in review | Tokens, generator, fonts, theme bootstrap, contrast test (163 pairs × 2 themes), Stylelint. `pnpm check` green. Light accent/focus/tertiary colours corrected in design-system §2.1 (logged there). Shared-file changes: root `package.json` (+`stylelint`, scripts `lint:css` added to `lint`, `ui:tokens`, `test:tokens`), lockfile. Handoff to A: CSP hash. |
+| 2026-11-06 | PLAN-005 S1 | p005-s1-tokens | review fixed | All 14 /review findings fixed: unit-safe reduced-motion tokens (now in `tokens.css`), complete per-token usage contract in the contrast test, new `--border-control` (3:1 input edge; gray-9 darkened), SPEC-005 §6 row for the `surface.theme` cache, stricter bootstrap test, generator duplicate-name check, `--check` mode removed, physical units banned. Spec change: SPEC-005 §6 (one row). Ready for /commit. |

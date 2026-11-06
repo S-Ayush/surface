@@ -86,6 +86,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. In M0: 
 |---|---|---|
 | Sidebar width / collapsed | Shell store | `localStorage` (per device) |
 | Theme, density, font size, home view | User preferences (`user.updatePreferences`) | Synced (`user:<id>` group) |
+| Theme first-paint cache | Written whenever the theme preference changes (including from another device, via sync) | `localStorage['surface.theme']` (per device), read by the inline bootstrap in `index.html` so the first paint has no theme flash. Added 2026-11-06 (PLAN-005 S1). |
 | Expanded sidebar team sections | Shell store | `localStorage` |
 | Focus / selection context | Shell store, set by pages | Memory |
 | Toasts, banners, modal stack | Overlay manager | Memory |

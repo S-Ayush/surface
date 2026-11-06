@@ -1,0 +1,7 @@
+{
+  "extends": "@surface/config/tsconfig.node.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [".", "../tokens"]
+}

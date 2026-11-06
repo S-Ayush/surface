@@ -40,22 +40,25 @@ Themes switch by setting `data-theme="light|dark"` on `<html>`. `system` follows
 | `--bg-sidebar` | `#F4F5F7` | `#111316` | Sidebar |
 | `--bg-panel` | `#FFFFFF` | `#14171B` | Main content surfaces |
 | `--bg-elevated` | `#FFFFFF` | `#1B1F24` | Popovers, menus, modals |
-| `--bg-hover` | `#F0F1F4` | `#1E2329` | Hovered row or item |
+| `--bg-hover` | `#F0F1F4` | `#1F2329` | Hovered row or item |
 | `--bg-active` | `#E8EAEE` | `#252B32` | Pressed, or the current nav item |
-| `--bg-selected` | `#E4F3F2` | `#13302F` | Selected rows (multi-select) |
+| `--bg-selected` | `#E2F3F2` | `#123130` | Selected rows (multi-select) |
 | `--border-subtle` | `#ECEDF1` | `#1F2329` | Row separators |
 | `--border-default` | `#DFE2E7` | `#2A2F36` | Inputs, cards |
 | `--border-strong` | `#C7CCD4` | `#3B414A` | Emphasis, dividers in menus |
+| `--border-control` | `#858B98` | `#68707C` | Boundary of inputs, checkboxes and switches (≥ 3:1, WCAG 1.4.11) |
 | `--text-primary` | `#16181D` | `#ECEEF1` | Titles, body |
 | `--text-secondary` | `#4A5060` | `#B2B8C3` | Labels, metadata |
-| `--text-tertiary` | `#666D7C` | `#8C94A1` | Hints, timestamps (must still pass 4.5:1) |
-| `--text-disabled` | `#A6ACB7` | `#555C67` | Disabled controls (exempt from contrast) |
-| `--accent` | `#0E8A87` | `#2EC4BF` | Primary buttons, links, focus, selection |
-| `--accent-hover` | `#0B7471` | `#4ED2CD` | |
+| `--text-tertiary` | `#5F6676` | `#8C94A1` | Hints, timestamps (must still pass 4.5:1) |
+| `--text-disabled` | `#858B98` | `#68707C` | Disabled controls (exempt from contrast) |
+| `--accent` | `#0A7A77` | `#2EC4BF` | Primary buttons, links, focus, selection |
+| `--accent-hover` | `#086A67` | `#4ED2CD` | |
 | `--accent-subtle` | `#E2F3F2` | `#123130` | Accent backgrounds |
 | `--on-accent` | `#FFFFFF` | `#04201F` | Text on the accent colour |
-| `--focus-ring` | `#2BB0AC` | `#4ED2CD` | 2 px ring with a 2 px offset |
+| `--focus-ring` | `#16908C` | `#4ED2CD` | 2 px ring with a 2 px offset |
 | `--danger` / `--warning` / `--success` / `--info` | `#D03A3A` / `#B86E0C` / `#2B9255` / `#3569D4` | `#F06868` / `#EBA33F` / `#4FC47D` / `#6E9EF6` | Feedback, and semantic icons |
+
+> **Corrections (2026-11-06, PLAN-005 S1):** the contrast test failed four light-theme proposals: `--accent` `#0E8A87` (white text on it was 4.2:1, and as link text 4.2:1), `--focus-ring` `#2BB0AC` (2.7:1), and `--text-tertiary` `#666D7C` (4.3:1 on `--bg-active`); `--accent-hover` darkened with the accent. `--bg-selected` was merged with `--accent-subtle` and dark `--bg-hover` with `--border-subtle` (each within 2 RGB steps) so the primitive scales stay at 12 steps. Added tokens: `--danger-hover`, `--on-danger`, `--{danger,warning,success,info}-subtle`, `--label-<hue>`, and `--border-control` (inputs need a 3:1 edge, WCAG 1.4.11; `--text-disabled` shares its new, darker value). `tnum` is applied only where numbers align (`--font-features-numeric`), not to all text. The source of truth is `packages/ui/tokens/*.ts`.
 
 ### 2.2 Domain colours
 
@@ -69,6 +72,7 @@ Themes switch by setting `data-theme="light|dark"` on `<html>`. `system` follows
 ### 2.3 Contrast rules (tested)
 - Every `--text-*` token except disabled reaches **≥ 4.5:1** on `--bg-app`, `--bg-panel`, `--bg-elevated`, `--bg-hover`, and `--bg-selected` in both themes.
 - Icons and borders that carry meaning reach **≥ 3:1**.
+- **Usage contract** (enforced by `packages/ui/test/contrast.test.ts`): `--text-*` works on every surface; `--accent` is text only on app, panel, elevated and hover; `--danger` is text only on app, panel and elevated (field errors); `--warning`, `--success`, `--info` and `--label-*` are icon and dot colours only, never text. Banner and toast text uses `--text-*`. Decorative borders (`--border-subtle/default/strong`) are exempt; a control whose edge is its only outline uses `--border-control`.
 - `pnpm test:tokens` computes every pair and fails CI on a violation, so the hex values above are proposals that the test validates.
 
 ### 2.4 Typography

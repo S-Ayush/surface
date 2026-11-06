@@ -5,15 +5,25 @@
   "type": "module",
   "description": "Design system tokens and components.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles/index.css"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
+    "tokens": "tsx scripts/build-tokens.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json && tsc -p scripts/tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:tokens": "vitest run test/contrast.test.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0"
+  },
   "devDependencies": {
-    "@surface/config": "workspace:*"
+    "@surface/config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "prettier": "^3.9.10",
+    "stylelint": "^18.0.0",
+    "tsx": "^4.23.15"
   }
 }
