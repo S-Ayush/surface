@@ -19,8 +19,8 @@ import {
 import type { Queryable } from '../../db/pool.js';
 import { SurfaceError, type ErrorCandidate } from '../errors.js';
 
-/** What resolution needs from the actor: `me`, and the groups for visibility. */
-export type ResolveActor = Pick<Actor, 'kind' | 'userId' | 'groups'>;
+/** What resolution needs from the actor: `me`, the groups for visibility, and key narrowing. */
+export type ResolveActor = Pick<Actor, 'kind' | 'userId' | 'groups' | 'apiKey'>;
 
 export interface LookupContext {
   readonly db: Queryable;
@@ -123,20 +123,25 @@ interface TeamRow extends RefEntity {
 async function lookupTeam(value: string, ctx: LookupContext): Promise<TeamRow> {
   const ref = parseTeamRef(value);
   const groups = visibleGroups(ctx.actor);
+  // permissions.md §3.5: a key limited to some teams sees no others, public ones included.
+  // Statuses and labels resolve within a team ref, so this one filter covers them too.
+  const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
   let rows: TeamRow[] = [];
   if (ref?.by === 'id') {
     ({ rows } = await ctx.db.query<TeamRow>(
       `SELECT id, key, name, private, sync_groups AS "syncGroups"
          FROM teams
-        WHERE id = $1 AND ($2::text[] IS NULL OR sync_groups && $2::text[])`,
-      [ref.id, groups],
+        WHERE id = $1 AND ($2::text[] IS NULL OR sync_groups && $2::text[])
+          AND ($3::uuid[] IS NULL OR id = ANY($3::uuid[]))`,
+      [ref.id, groups, keyTeams],
     ));
   } else if (ref?.by === 'key') {
     ({ rows } = await ctx.db.query<TeamRow>(
       `SELECT id, key, name, private, sync_groups AS "syncGroups"
          FROM teams
-        WHERE key = $1 AND ($2::text[] IS NULL OR sync_groups && $2::text[])`,
-      [ref.key, groups],
+        WHERE key = $1 AND ($2::text[] IS NULL OR sync_groups && $2::text[])
+          AND ($3::uuid[] IS NULL OR id = ANY($3::uuid[]))`,
+      [ref.key, groups, keyTeams],
     ));
   }
   const [team] = rows;

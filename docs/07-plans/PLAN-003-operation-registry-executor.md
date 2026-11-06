@@ -64,7 +64,7 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 >   - **S4:** order: `keyScopeProblem` (step 3) → `narrowToKeyTeams` → `resolveRefs` → `refOutsideKeyTeams` → `NOT_FOUND` → `evaluatePermission` (step 8).
 >   - **S5:** list queries for a key with `teamIds` must also filter by team in SQL, because public teams share the `workspace` group.
 
-### S4: Executor pipeline · L
+### S4: Executor pipeline · L · ✅ Done 2026-11-06
 - `apps/server/src/executor/execute.ts` implementing the SPEC-003 §6 steps 1–14.
 - Transaction wrapper: `READ ONLY` for queries, and up to 3 retries with jitter on serialization or deadlock errors (E5).
 - **Handler context:** `actor`, `refs`, `tx`, `repo`, `query`, `emit`, `now`, `log`. `repo` is an **interface** here, with a temporary passthrough implementation that writes rows and buffers changes. PLAN-002 S2 replaces it with the sync-logging repo.
@@ -73,6 +73,41 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 - **Logging and metrics:** `op`, `actorKind`, `durationMs`, `outcome`, and a histogram per operation.
 - **Test-only ops:** `debug.echo` (query) and `debug.touch` (mutation), both marked `internal`.
 - **Tests:** stage-by-stage failures (AC-3), read-only enforcement (AC-4), atomic rollback with an injected failure after the handler (AC-5), overhead benchmark < 2 ms p95 (AC-11), and 50 concurrent updates on one row (AC-12).
+
+> **As built (2026-11-06).**
+> - **Structure (`apps/server/src/executor/`):**
+>   - `execute.ts`: `createExecutor({ pool, registry, handlers, log, allowInternal, metrics?, rateLimiter?, repoFactory?, checks?, retries?, backoff?, clock? }).execute(op, input, actor, { correlationId?, clientId?, seq? })`, and `missingHandlers()`;
+>   - `transaction.ts`, `context.ts` (`HandlerContext`, `handler()`, `ctx.query.get`), `repo.ts` (the `Repo` / `TransactionRepo` interface and `passthroughRepo`), `errors.ts` (`HTTP_STATUS`, `OperationError`, `INTERNAL_MESSAGE`), `rate-limit.ts` (an interface plus `unlimited`), `metrics.ts` (`surface_operation_duration_seconds{op,kind,outcome}`), `suggest.ts`, `log-error.ts`;
+>   - outside the executor folder: `sync/models.ts` (`SYNCED_MODELS`), `db/uuidv7.ts`, `handlers/` (`HANDLERS`, `debug/echo.ts`, `debug/touch.ts`), and `debug.echo` / `debug.touch` in `packages/operations/src/ops/debug.ts`.
+> - **Migration `0001_executor_outbox`:** `event_outbox`, as planned plus a nullable `last_sync_id` (the events.md envelope has it; PLAN-002 S2 fills it from `flush()`), with a partial index on unprocessed rows. Also **`debug_items`** (`id`, `title`, `counter`, `sync_groups` with a GIN index, timestamps), because AC-5 and AC-12 need a synced table before `teams` exists. **PLAN-002 S2 should reuse this table**, not create it.
+> - **Isolation (SPEC-003 Decision Q6):** mutations run at `READ COMMITTED`, so concurrent writes to a row queue on its lock and the last write wins, as sync-protocol §5 requires. Queries run `REPEATABLE READ READ ONLY`, so resolution and the handler share one snapshot. Codes 40001 and 40P01 retry 3 times with 10–50 ms × attempt jitter, then return `CONFLICT`. Handlers that read, then write based on what they read, take `SELECT … FOR UPDATE`.
+> - **Pipeline details:**
+>   - `narrowToKeyTeams` runs before resolution. Team lookups now also filter by the key's `teamIds`, which covers statuses and labels through their scope. `refOutsideKeyTeams` is kept as a backstop.
+>   - Output is validated with `def.output` **before COMMIT**. A bad output becomes `INTERNAL` and rolls back, and the parse strips undeclared fields.
+>   - Queries may not `emit()`.
+>   - Internal ops are callable only when `allowInternal` is true and the actor is a user. S6 sets that flag from `nodeEnv !== 'production'`.
+>   - Unknown names get "Did you mean": close matches first, otherwise names in the same domain.
+>   - E7: a primary-key `23505` in `repo.insert` becomes `CONFLICT`.
+>   - E8: results include `deprecation`.
+>   - `fields` shaping is left to S5.
+> - **Security fix found while testing:** Drizzle's query errors carry bound **parameters** in `message`, `stack` and `params`. `loggableError()` logs only the SQL text and Postgres's error fields (`code`, `constraint`, `table`, …) and drops `detail`, which quotes values. `executor-readonly.int.test.ts` asserts that no bound value reaches the log. **Any other code that logs DB errors should use `loggableError()`.**
+> - **Repo:** `passthroughRepo` implements `insert`, `update` (patch values may be `SQL`, e.g. atomic increments), `purge`, `changes()` and a no-op `flush()`. `archive`/`unarchive` wait for a model with `archivedAt` (PLAN-002 S2 / PLAN-001 S1). It does not recompute groups on update.
+> - **Tests:**
+>   - integration: `executor-stages.int.test.ts` (AC-3, plus E4, E5, E7, E8 and logging); `executor-readonly.int.test.ts` (AC-4, E3, no parameter leak); `executor-atomic.int.test.ts` (AC-5, and NOT_FOUND for an invisible item); `executor-concurrency.int.test.ts` (AC-12 on `debug.touch`, since `team.update` arrives in PLAN-001: 50/50 succeed, no lost updates); `executor-overhead.int.test.ts` (AC-11);
+>   - unit: `executor-unit.test.ts` (suggestions, uuidv7, retry detection, the HTTP mapping, a handler for every registered op);
+>   - the harness `test/executor.ts` holds test-only ops and a fixture `teams` table, reached through the pool's `search_path`.
+> - **AC-11 as a test, not a bench:** Vitest benches can't fail CI, so the plan's `bench/executor.bench.ts` became `test/executor-overhead.int.test.ts`. It runs 500 samples after 100 warm-ups and prints p50/p95. Locally, p95 was 0.6 ms alone but **1.7 ms when run alongside the other integration files**. If it flakes in CI, run it in its own Vitest invocation instead of raising the limit.
+> - **Notes for later slices:**
+>   - **S5:** add `fields` to `ExecuteOptions` and shape after step 12.
+>   - **S6:**
+>     - build the executor in the app with `allowInternal: config.nodeEnv !== 'production'` and the `/metrics` registry;
+>     - fail startup if `missingHandlers()` is non-empty;
+>     - pass `request.id` as `correlationId`;
+>     - map results with `HTTP_STATUS` and set `Retry-After` from `retryAfter`.
+>   - **PLAN-002 S2:**
+>     - replace `passthroughRepo` with the sync-logging repo, via `repoFactory`;
+>     - `flush()` returns `lastSyncId`, which the outbox rows already record;
+>     - NOTIFY after commit is still to be added.
 
 ### S5: Queries: filter engine, lists, shaping · L
 - `packages/domain/filter`: the Filter AST type, a Zod schema, and a **client evaluator** (`matches(row, filter, ctx)`) with relative values (`me`, durations).
@@ -113,7 +148,7 @@ New tables `event_outbox` and `api_idempotency`, plus the pg-boss schema. All ar
 | AC-8 | `server/test/idempotency.int.test.ts` |
 | AC-9 | `operations/test/lint.test.ts` with fixtures |
 | AC-10 | `operations/test/compact-schema.test.ts` |
-| AC-11 | `server/bench/executor.bench.ts` (Vitest bench, asserted in CI) |
+| AC-11 | `server/test/executor-overhead.int.test.ts` (p95 over 500 samples; a bench cannot fail CI) |
 | AC-12 | `server/test/executor-concurrency.int.test.ts` |
 
 ## 5. Risks & mitigations

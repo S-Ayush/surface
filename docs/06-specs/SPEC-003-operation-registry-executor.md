@@ -244,3 +244,4 @@ Fails the build if any operation:
 | Q3 | Should we version operations (`issue.update@2`)? | No. Additive changes and deprecation only (lint rule 8). |
 | Q4 | Are reference names case-sensitive? (added 2026-11-06, PLAN-003 S2) | No. Case-insensitive, with an exact-case match preferred, so `todo` finds "Todo" and typed or AI input works. |
 | Q5 | What does a deactivated user in a `UserRef` return? (added 2026-11-06, PLAN-003 S2) | `INVALID_INPUT` with "… is deactivated", since the user is visible and `NOT_FOUND` would mislead. |
+| Q6 | Which isolation level does the executor use? (added 2026-11-06, PLAN-003 S4) | Mutations `READ COMMITTED`: concurrent writes to a row wait for its lock and the last write wins (sync-protocol §5); handlers that read, then write, lock with `FOR UPDATE`. Queries `REPEATABLE READ READ ONLY`, one snapshot. Serialization failures and deadlocks still retry per E5. |
