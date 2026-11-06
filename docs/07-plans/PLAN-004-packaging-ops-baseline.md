@@ -222,19 +222,36 @@ Added on 2026-11-06 for session C's handoff (PLAN-005 S1): the theme bootstrap i
 
 ### S10: Trust exactly one proxy hop · S · ✅ Done 2026-11-06
 Added on 2026-11-06 for session B's handoff (S7 review): `TRUST_PROXY=true` trusted every hop, so the client address was whatever the client put first in `X-Forwarded-For`.
-- `TRUST_PROXY=true` trusts only the nearest hop; SPEC-004 §7 and D6; the reverse-proxy guide and `.env.example` say what is trusted.
+- `TRUST_PROXY=true` trusts only the nearest hop, and only from a private address; SPEC-004 §7 and D6; the reverse-proxy guide and `.env.example` say what is trusted.
 - **Tests:** `client-address.test.ts`.
 
 > **As built (2026-11-06).**
-> - **Versions:** no new packages.
-> - **Code:** `buildApp` passes `trustProxy: trustNearestHop` (`(address, hop) => hop === 0`) when `TRUST_PROXY=true`, else `false`. The config variable stays a boolean.
-> - **Deviation from the handoff:** it proposed `trustProxy: 1`. In Fastify 5.12+ a hop count trusts **nobody** (it can't validate the immediate peer, so it fails closed), which would silently log the proxy's address for every client. The test caught it. A function keeps the intended meaning.
-> - **Tests:** `client-address.test.ts` (3), read from the request log's `remoteAddress`. It covers:
->   - behind one proxy, the address that proxy appended wins over a spoofed earlier entry; this test failed before the change, logging the spoofed address;
->   - a proxy that replaces the header;
->   - `TRUST_PROXY=false` ignores the header.
-> - **Docs:** the reverse-proxy guide now says appending works (only the last entry is read) and still says to make the proxy the only way in. Its `SURFACE_BIND` advice is unchanged: with `TRUST_PROXY=true`, a client that reaches port 3000 directly is taken for the proxy.
-> - **Notes for later:** **PLAN-001 S3:** per-IP sign-in limits use `request.ip`, which is now the proxy-appended address. Two proxies in a row (a CDN, then nginx) would need `TRUST_PROXY` to accept a list of proxy addresses; not supported in v1 (D6).
+> - **Versions:** no new packages (`node:net` `BlockList`).
+> - **Code:** `apps/server/src/http/client-address.ts`:
+>   - `isPrivateAddress(address)`: loopback, private, link-local and shared (`100.64/10`) ranges, IPv4 and IPv6, IPv4-mapped included;
+>   - `trustReverseProxy(address, hop)`: `hop === 0 && isPrivateAddress(address)`.
+>
+>   `buildApp` passes it as `trustProxy` when `TRUST_PROXY=true`, else `false`. The config variable stays a boolean.
+> - **Deviations from the handoff:**
+>   - It proposed `trustProxy: 1`. In the installed Fastify (5.12.8) a hop count trusts **nobody** (it fails closed because it can't validate the peer), which would log the proxy's address for every client. The first test caught it.
+>   - The first build trusted hop 0 at any address. Review pointed out that Fastify's docs call that unsafe when the server is reachable directly (a forgotten `SURFACE_BIND`). It now also checks the peer's address.
+> - **Tests:** `client-address.test.ts` (25), through a test route that returns `request.ip`, `protocol` and `host`:
+>   - behind a private proxy, the proxy's appended `X-Forwarded-For` entry wins over a spoofed one, also when the proxy replaces the header;
+>   - with no header, the address is the proxy's own;
+>   - the scheme and host are the last `X-Forwarded-Proto`/`-Host` entries;
+>   - loopback and IPv4-mapped private proxies are trusted;
+>   - a public peer's forwarded headers are ignored, even with `TRUST_PROXY` on (this fails with the hop-only rule);
+>   - `TRUST_PROXY=false` ignores them all;
+>   - 18 address cases for `isPrivateAddress`, range edges included.
+>
+>   Before the change, the first test logged the spoofed address.
+> - **Docs:**
+>   - The reverse-proxy guide lists the trusted ranges, and says appending works (only the last entry is read).
+>   - The nginx example now sets `X-Forwarded-Host` (nginx passes the client's otherwise), and its stale "don't append" comment is corrected.
+>   - `SURFACE_BIND` and `TRUST_PROXY=false` advice is unchanged: LAN and VPN clients are on private addresses.
+> - **Notes for later:**
+>   - **PLAN-001 S3:** per-IP sign-in limits use `request.ip`. For anything security-relevant (links in emails, cookie scope, origin checks), use `SURFACE_URL`, never `request.host` or `request.protocol`: a proxy that forgets to overwrite `X-Forwarded-Host` lets the client choose them.
+>   - Two proxies in a row would need `TRUST_PROXY` to accept a list of proxy addresses; not supported in v1 (D6).
 
 ## 2. Modules touched
 Root config, `packages/config`, `apps/server/{src/config.ts, src/app.ts, src/db/*, src/http/security-headers.ts, bin/surface.ts}`, `apps/web` (hello), `docker/*`, `.github/workflows/*`, `e2e/*`, `scripts/*`, `README.md`, `docs/ops/*`.
