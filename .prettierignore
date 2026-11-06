@@ -4,3 +4,5 @@ coverage/
 .turbo/
 # Docs are hand-formatted (wide tables); not reflowed by Prettier.
 docs/
+# Agent permissions/hooks: reviewed and applied by hand; tooling must not rewrite it.
+.claude/settings.json

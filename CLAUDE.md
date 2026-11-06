@@ -91,6 +91,7 @@ SSO/SAML, guests, sub-teams, built-in AI or AI agents, third-party integrations 
 - **When a slice is finished:**
   - mark it `✅ Done <date>` in its plan, with an "As built" note recording versions, deviations and anything a later slice needs to know;
   - update the spec if behaviour or configuration changed.
+- **Parallel sessions:** M0 runs as four sessions in separate git worktrees (`docs/07-plans/sessions/`). If you were started as one of them, follow its file: edit only what it owns, log each slice there, and use handoffs for anything else.
 - **Commits** follow Conventional Commits (`feat(server): …`, `chore: …`, `docs: …`). Commit only when asked. Never `--no-verify`, never force-push `main`.
 - **Report honestly:** say what was verified (tests run, commands executed) and what wasn't. If a check fails, show it. Don't claim it passes.
 
