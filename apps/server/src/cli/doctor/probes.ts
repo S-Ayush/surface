@@ -9,7 +9,7 @@ import { open, stat, statfs, unlink } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import tls from 'node:tls';
-import { REQUIRED_EXTENSIONS } from '../../db/checks.js';
+import { checkCollations, REQUIRED_COLLATIONS, REQUIRED_EXTENSIONS } from '../../db/checks.js';
 import { migrationStatus, type Migration } from '../../db/migrate.js';
 import type { Pool } from '../../db/pool.js';
 import { StartupError } from '../../startup-error.js';
@@ -34,6 +34,23 @@ export async function postgresVersion(pool: Pool): Promise<{ num: number; text: 
   const row = rows[0];
   if (!row) throw new Error('the server did not report its version');
   return { num: Number(row.num), text: row.text };
+}
+
+/**
+ * Runs startup's collation check, which only reads `pg_collation`, and returns its
+ * message when a collation is missing.
+ */
+export async function collationProblem(
+  pool: Pool,
+  names: readonly string[] = REQUIRED_COLLATIONS,
+): Promise<string | undefined> {
+  try {
+    await checkCollations(pool, names);
+    return undefined;
+  } catch (error) {
+    if (error instanceof StartupError) return error.message;
+    throw error;
+  }
 }
 
 export async function extensionFacts(

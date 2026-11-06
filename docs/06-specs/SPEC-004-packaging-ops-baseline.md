@@ -187,10 +187,10 @@ All configuration is through environment variables, validated at startup with a 
 | Command | M0 | Purpose |
 |---|---|---|
 | `serve` | ✓ | Default: run the server |
-| `migrate` | ✓ | Steps 2–4 of §8 (wait for the DB, version check, extensions and migrations under the lock), then exit. For CI and manual upgrades. |
+| `migrate` | ✓ | Steps 2–4 of §8 (wait for the DB, version and collation checks, extensions and migrations under the lock), then exit. For CI and manual upgrades. |
 | `setup-token` | ✓ | Print a fresh setup URL if setup is incomplete. Registered in M0 as a stub; implemented by PLAN-001. |
 | `reset-password <email>` | ✓ | Print a one-time reset link (the recovery path when no Admin can log in). Registered in M0 as a stub; implemented by PLAN-001. |
-| `doctor` | ✓ | Check config, DB connectivity and version, extensions, disk space on `/data`, SMTP connectivity, and `SURFACE_URL` reachability (local only) |
+| `doctor` | ✓ | Check config, DB connectivity and version, ICU collations, extensions, disk space on `/data`, SMTP connectivity, and `SURFACE_URL` reachability (local only) |
 | `version` | ✓ | Print the version, commit, and schema level (`--json` for scripts). The schema level is the newest migration in the build; the sync `schemaHash` is added with PLAN-002. |
 | `backup`, `restore <file>` | M7 | FR-OPS-05/06 |
 
@@ -203,6 +203,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | Configuration | Any `loadConfig()` error; every other check is then skipped | |
 | Database | Unreachable (E1, no retry), wrong credentials, `pg_hba.conf` rejection, missing database | |
 | PostgreSQL version | Older than 17 (E8) | |
+| Collations | A required ICU collation (`und-x-icu`) is missing, so the server was built without ICU (§8 step 3, E8). Same message as startup. | |
 | Extensions | `pg_trgm` unavailable, or not installed and the user may not create it (prints the SQL to run) (E8) | |
 | Migrations | Applied by a newer Surface (E7), or an applied migration was edited | Pending (applied at startup or by `surface migrate`) |
 | Data directory | `DATA_DIR` missing, not a directory, or not writable (E5, names uid 10001) | |
@@ -237,7 +238,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | E5 | The `/data` volume isn't writable | Exit at startup with a message about volume permissions (uid 10001). The startup check lands with the first feature that writes to `/data` (uploads, M2); until then `surface doctor` reports it. |
 | E6 | Disk is full | Uploads fail with a clear error. `doctor` reports it. The DB's own disk errors surface as `INTERNAL` with logs. |
 | E7 | Downgrading the image after a migration | The server detects a DB schema newer than the code and exits: "Database was migrated by a newer Surface (x.y). Restore a backup or upgrade." |
-| E8 | Postgres < 17, or `pg_trgm` unavailable on a managed DB | Exit with explicit instructions |
+| E8 | Postgres < 17, a server built without ICU (no `und-x-icu`), or `pg_trgm` unavailable on a managed DB | Exit with explicit instructions |
 
 ## 13. Acceptance criteria
 

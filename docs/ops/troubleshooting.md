@@ -10,8 +10,9 @@ command uses that file.
 docker compose exec app surface doctor
 ```
 
-It checks the configuration, the database (reachable, version, extensions, migrations), the data
-directory, free disk space, SMTP and the public URL. It changes nothing and never prints secrets.
+It checks the configuration, the database (reachable, version, ICU collations, extensions,
+migrations), the data directory, free disk space, SMTP and the public URL. It changes nothing and
+never prints secrets.
 
 ```
 Surface doctor · version 1.4.2 (a20608a)
@@ -19,6 +20,7 @@ Surface doctor · version 1.4.2 (a20608a)
 ✓ Configuration       valid
 ✓ Database            connected to db:5432/surface
 ✓ PostgreSQL version  17.11 (Debian 17.11-1.pgdg13+2)
+✓ Collations          und-x-icu available
 ✓ Extensions          pg_trgm installed
 ✓ Migrations          all 2 applied
 ✓ Data directory      /data is writable
@@ -121,6 +123,17 @@ Create it (`CREATE DATABASE surface OWNER surface;`) or fix the name at the end 
 
 Surface stops before changing anything. Upgrade the server, or move to the bundled `postgres:17`
 by restoring a dump ([backup-manual.md](backup-manual.md)).
+
+### The PostgreSQL collation "und-x-icu" is missing
+
+```
+The PostgreSQL collation "und-x-icu" is missing, so this server was built without ICU support. Use a PostgreSQL build with ICU, such as the official postgres:17 image.
+```
+
+Surface lowercases text for filters with the ICU root collation. The official `postgres` images and
+most managed databases include ICU; some self-compiled or minimal builds don't. Switch to a build
+with ICU, or move to the bundled `postgres:17` by restoring a dump
+([backup-manual.md](backup-manual.md)). Surface stops before changing anything.
 
 ### The PostgreSQL extension pg_trgm is not installed
 

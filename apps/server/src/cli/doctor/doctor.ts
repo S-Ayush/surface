@@ -6,12 +6,14 @@
 import { pino } from 'pino';
 import { buildInfo, type BuildInfo } from '../../build-info.js';
 import { ConfigError, loadConfig, type Config } from '../../config.js';
+import { REQUIRED_COLLATIONS } from '../../db/checks.js';
 import { loadMigrations, type Migration } from '../../db/migrate.js';
 import { createPool, databaseLocation } from '../../db/pool.js';
 import { REDACTED } from '../../logger.js';
 import { EXIT, type CliIo } from '../io.js';
 import {
   CHECKS,
+  collationsCheck,
   configCheck,
   databaseCheck,
   dataDirCheck,
@@ -28,6 +30,7 @@ import {
   type CheckResult,
 } from './checks.js';
 import {
+  collationProblem,
   dataDirFacts,
   diskFacts,
   extensionFacts,
@@ -41,6 +44,8 @@ import {
 
 export interface DoctorOptions {
   migrations?: Migration[];
+  /** Collations that must exist. Defaults to what startup requires. */
+  collations?: readonly string[];
   /** Per network probe (SMTP, public URL). */
   timeoutMs?: number;
   disk?: DiskProbe;
@@ -87,42 +92,61 @@ async function attempt(id: CheckId, run: () => Promise<CheckResult>): Promise<Ch
   }
 }
 
-function databaseChecks(config: Config, migrations: Migration[]): Promise<CheckResult[]> {
-  return group(['database', 'postgres', 'extensions', 'migrations'], async (report) => {
-    const location = databaseLocation(config.databaseUrl);
-    // One connection, no retries: doctor reports the state now (unlike startup's E1 wait).
-    const pool = createPool(config.databaseUrl, pino({ level: 'silent' }), { max: 1 });
-    try {
+function databaseChecks(
+  config: Config,
+  migrations: Migration[],
+  collations: readonly string[],
+): Promise<CheckResult[]> {
+  return group(
+    ['database', 'postgres', 'collations', 'extensions', 'migrations'],
+    async (report) => {
+      const location = databaseLocation(config.databaseUrl);
+      // One connection, no retries: doctor reports the state now (unlike startup's E1 wait).
+      const pool = createPool(config.databaseUrl, pino({ level: 'silent' }), { max: 1 });
       try {
-        await pool.query('SELECT 1');
-      } catch (error) {
-        const why = 'skipped: needs a database connection';
-        report(databaseCheck(location, error));
-        for (const id of ['postgres', 'extensions', 'migrations'] as const) report(skip(id, why));
-        return;
-      }
-      report(databaseCheck(location, undefined));
+        try {
+          await pool.query('SELECT 1');
+        } catch (error) {
+          const why = 'skipped: needs a database connection';
+          report(databaseCheck(location, error));
+          for (const id of ['postgres', 'collations', 'extensions', 'migrations'] as const) {
+            report(skip(id, why));
+          }
+          return;
+        }
+        report(databaseCheck(location, undefined));
 
-      const version = await postgresVersion(pool);
-      const postgres = postgresCheck(version.num, version.text);
-      report(postgres);
-      if (postgres.status === 'fail') {
-        const why = 'skipped: needs a supported PostgreSQL version';
-        report(skip('extensions', why));
-        report(skip('migrations', why));
-        return;
-      }
+        const version = await postgresVersion(pool);
+        const postgres = postgresCheck(version.num, version.text);
+        report(postgres);
+        if (postgres.status === 'fail') {
+          const why = 'skipped: needs a supported PostgreSQL version';
+          for (const id of ['collations', 'extensions', 'migrations'] as const) {
+            report(skip(id, why));
+          }
+          return;
+        }
 
-      report(await attempt('extensions', async () => extensionsCheck(await extensionFacts(pool))));
-      report(
-        await attempt('migrations', async () =>
-          migrationsCheck(await migrationFacts(pool, migrations)),
-        ),
-      );
-    } finally {
-      await pool.end().catch(() => undefined);
-    }
-  });
+        // Same order as startup (SPEC-004 §8 step 3): version, then collations.
+        report(
+          await attempt('collations', async () =>
+            collationsCheck(collations, await collationProblem(pool, collations)),
+          ),
+        );
+
+        report(
+          await attempt('extensions', async () => extensionsCheck(await extensionFacts(pool))),
+        );
+        report(
+          await attempt('migrations', async () =>
+            migrationsCheck(await migrationFacts(pool, migrations)),
+          ),
+        );
+      } finally {
+        await pool.end().catch(() => undefined);
+      }
+    },
+  );
 }
 
 function storageChecks(config: Config, disk: DiskProbe): Promise<CheckResult[]> {
@@ -173,7 +197,7 @@ export async function runDoctor(
   const migrations = options.migrations ?? loadMigrations();
 
   const groups = await Promise.all([
-    databaseChecks(config, migrations),
+    databaseChecks(config, migrations, options.collations ?? REQUIRED_COLLATIONS),
     storageChecks(config, options.disk ?? diskFacts),
     smtpChecks(config, timeoutMs),
     publicUrlChecks(config, timeoutMs),

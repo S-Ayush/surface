@@ -116,12 +116,12 @@ prints a one-time setup link. It opens a short wizard that creates the workspace
 
 The `surface` command inside the container: `docker compose exec app surface <command>`.
 
-| Command   | What it does                                                                                      |
-| --------- | ------------------------------------------------------------------------------------------------- |
-| `doctor`  | Checks configuration, database, extensions, migrations, disk, SMTP and the public URL. Read-only. |
-| `version` | Prints the version, commit and schema level (`--json` for scripts).                               |
-| `migrate` | Applies pending migrations, then exits (they also run at startup).                                |
-| `serve`   | Runs the server (the container's default command).                                                |
+| Command   | What it does                                                                                                  |
+| --------- | ------------------------------------------------------------------------------------------------------------- |
+| `doctor`  | Checks configuration, database, collations, extensions, migrations, disk, SMTP and the public URL. Read-only. |
+| `version` | Prints the version, commit and schema level (`--json` for scripts).                                           |
+| `migrate` | Applies pending migrations, then exits (they also run at startup).                                            |
+| `serve`   | Runs the server (the container's default command).                                                            |
 
 ## Development
 

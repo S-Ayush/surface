@@ -4,6 +4,7 @@
 // doctor.int.test.ts.
 import { describe, expect, it } from 'vitest';
 import {
+  collationsCheck,
   configCheck,
   databaseCheck,
   dataDirCheck,
@@ -83,6 +84,23 @@ describe('doctor verdicts', () => {
         id: 'postgres',
         status: 'ok',
         message: '17.6',
+      });
+    });
+
+    it('fails with the problem startup reported for a missing collation', () => {
+      const problem = 'The PostgreSQL collation "und-x-icu" is missing, so …';
+      expect(collationsCheck(['und-x-icu'], problem)).toEqual({
+        id: 'collations',
+        status: 'fail',
+        message: problem,
+      });
+    });
+
+    it('lists the required collations when they are all present', () => {
+      expect(collationsCheck(['und-x-icu'], undefined)).toEqual({
+        id: 'collations',
+        status: 'ok',
+        message: 'und-x-icu available',
       });
     });
 

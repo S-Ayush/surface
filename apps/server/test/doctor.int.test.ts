@@ -1,8 +1,10 @@
 // SPEC-004 AC-12: `surface doctor` reports each failure condition of §12 against
 // real resources, one fixture per condition: E1 (database unreachable, plus the
 // fail-fast credential and database errors), E3 (public URL), E5 (data volume),
-// E6 (disk), E7 (newer schema), E8 (extension), SMTP. An older PostgreSQL and a
-// missing contrib package can't be produced by postgres:17; see doctor.test.ts.
+// E6 (disk), E7 (newer schema), E8 (extension, ICU collation), SMTP. An older
+// PostgreSQL and a missing contrib package can't be produced by postgres:17; see
+// doctor.test.ts. A server without ICU can't either: the `collations (E8)` tests
+// below use a made-up collation instead.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -19,7 +21,7 @@ import type { CheckId, CheckResult } from '../src/cli/doctor/checks.js';
 import { doctorCommand, runDoctor, type DoctorOptions } from '../src/cli/doctor/doctor.js';
 import { extensionFacts } from '../src/cli/doctor/probes.js';
 import type { Config } from '../src/config.js';
-import { ensureExtensions } from '../src/db/checks.js';
+import { checkCollations, ensureExtensions } from '../src/db/checks.js';
 import { loadMigrations } from '../src/db/migrate.js';
 import { StartupError } from '../src/startup-error.js';
 import {
@@ -125,6 +127,7 @@ describe('surface doctor', () => {
       ['config', 'ok'],
       ['database', 'ok'],
       ['postgres', 'ok'],
+      ['collations', 'ok'],
       ['extensions', 'ok'],
       ['migrations', 'ok'],
       ['dataDir', 'ok'],
@@ -133,6 +136,7 @@ describe('surface doctor', () => {
       ['publicUrl', 'ok'],
     ]);
     expect(r.postgres.message).toMatch(/^1[7-9]\./);
+    expect(r.collations.message).toBe('und-x-icu available');
     expect(r.extensions.message).toBe('pg_trgm installed');
     expect(r.publicUrl.message).toBe(`${publicUrl} reaches Surface`);
     await expect.poll(() => smtp.received.join('')).toBe('QUIT\r\n');
@@ -146,7 +150,7 @@ describe('surface doctor', () => {
       const host = new URL(migrated.url).hostname;
       expect(r.database.message).toContain(`Could not reach the database at ${host}:${port}/`);
       expect(r.database.message).toContain('ECONNREFUSED');
-      for (const id of ['postgres', 'extensions', 'migrations'] as const) {
+      for (const id of ['postgres', 'collations', 'extensions', 'migrations'] as const) {
         expect(r[id]).toMatchObject({
           status: 'skip',
           message: 'skipped: needs a database connection',
@@ -168,6 +172,57 @@ describe('surface doctor', () => {
       const r = await doctor({ databaseUrl: databaseUrlWith({ database: 'no_such_db' }) });
       expect(r.database.status).toBe('fail');
       expect(r.database.message).toContain('does not exist. Create it');
+    });
+  });
+
+  describe('collations (E8)', () => {
+    // postgres:17 always has ICU, so a made-up collation stands in for a missing one.
+    const missing = ['no_such_collation'];
+
+    async function startupMessage(): Promise<string> {
+      const pool = new pg.Pool({ connectionString: migrated.url, max: 1 });
+      try {
+        await checkCollations(pool, missing);
+      } catch (error) {
+        if (error instanceof StartupError) return error.message;
+        throw error;
+      } finally {
+        await pool.end();
+      }
+      throw new Error('startup accepted the collation');
+    }
+
+    it("reports a missing collation in startup's words and still checks the rest", async () => {
+      const r = await doctor({}, { collations: missing });
+      expect(r.collations).toEqual({
+        id: 'collations',
+        status: 'fail',
+        message: await startupMessage(),
+      });
+      expect(r.collations.message).toContain('"no_such_collation" is missing');
+      expect(r.extensions.status).toBe('ok');
+      expect(r.migrations.status).toBe('ok');
+    });
+
+    it('exits 1 when a collation is missing', async () => {
+      let out = '';
+      const code = await doctorCommand(
+        { out: (t) => (out += t), err: (t) => (out += t) },
+        {
+          json: false,
+          env: {
+            ...VALID_ENV,
+            SURFACE_URL: `http://127.0.0.1:${await freePort()}`,
+            DATABASE_URL: migrated.url,
+            DATA_DIR: dataDir(),
+          },
+          disk: plenty,
+          timeoutMs: 500,
+          collations: missing,
+        },
+      );
+      expect(code).toBe(1);
+      expect(out).toMatch(/✗ Collations +The PostgreSQL collation "no_such_collation" is missing/);
     });
   });
 
@@ -308,6 +363,7 @@ describe('surface doctor', () => {
         'config',
         'database',
         'postgres',
+        'collations',
         'extensions',
         'migrations',
         'dataDir',

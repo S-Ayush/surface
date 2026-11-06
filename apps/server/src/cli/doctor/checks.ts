@@ -14,6 +14,7 @@ export const CHECKS = {
   config: 'Configuration',
   database: 'Database',
   postgres: 'PostgreSQL version',
+  collations: 'Collations',
   extensions: 'Extensions',
   migrations: 'Migrations',
   dataDir: 'Data directory',
@@ -78,7 +79,7 @@ export function databaseCheck(location: string, error: unknown): CheckResult {
 }
 
 // ---------------------------------------------------------------------------
-// PostgreSQL version and extensions (E8)
+// PostgreSQL version, collations and extensions (E8)
 // ---------------------------------------------------------------------------
 
 export function postgresCheck(versionNum: number, versionText: string): CheckResult {
@@ -89,6 +90,18 @@ export function postgresCheck(versionNum: number, versionText: string): CheckRes
     throw error;
   }
   return ok('postgres', versionText);
+}
+
+/**
+ * ICU collations (SPEC-004 §8 step 3, E8). `problem` is the message startup's own
+ * check (`checkCollations`) produced, so doctor and startup word it alike.
+ */
+export function collationsCheck(
+  names: readonly string[],
+  problem: string | undefined,
+): CheckResult {
+  if (problem !== undefined) return fail('collations', problem);
+  return ok('collations', `${names.join(', ')} available`);
 }
 
 export interface ExtensionFacts {
