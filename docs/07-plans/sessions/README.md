@@ -1,6 +1,6 @@
 # Parallel sessions: coordination
 
-Status: **Active** · Created: 2026-11-06 · Milestone: **M0**
+Status: **Active, phase 2** (from 2026-11-07, see §7) · Created: 2026-11-06 · Milestone: **M0**
 
 M0 is split into **four Claude Code sessions** that run at the same time, each in its **own git worktree**, owning disjoint parts of the repo. Each session has a file in this folder. That file is the session's brief, its paste-ready prompt, and its append-only log.
 
@@ -82,3 +82,40 @@ Phase 1 ends when PLAN-002 S5 (A) and S8 (D) are on `main`. Then:
 - the worktrees are removed with `git worktree remove ../surface-x` once their branches are merged.
 
 `/status` summarises every session's latest log row.
+
+## 7. Phase 2 (from 2026-11-07)
+
+Assigned by the user on 2026-11-07, before the phase 1 sync point, so that the sessions that had finished could start. Session A's PLAN-002 S3–S5 carries over and still ends phase 1. Each session has a new file. The phase 1 files stay as the record of phase 1, and their logs are closed.
+
+| Session | Track | Scope, in order | Starts | File |
+|---|---|---|---|---|
+| **A** | Sync server, setup, auth | PLAN-002 S3–S5 → PLAN-001 S2, S3, S7, S9 | now (S3 in progress) | [session-a2-server-auth.md](session-a2-server-auth.md) |
+| **C** | Web app shell | PLAN-005 S5 → S6 → S4 → S7 → S8 | now (S5); S4 after PLAN-001 S1 + S3 | [session-c2-web-shell.md](session-c2-web-shell.md) |
+| **D** | Sync property suite, inspector | PLAN-002 S9 → S10 | now; S9 uses the real server after PLAN-002 S5 | [session-d2-sync-tests.md](session-d2-sync-tests.md) |
+| **E** | Workspace data, accounts, teams | PLAN-001 S1 → S8 → S4 → S5 → S6 | now (S1) | [session-e2-accounts-teams.md](session-e2-accounts-teams.md) |
+| **B** | Retired | none: packaging work resumes when the testing hold lifts (PLAN-004 S8, [end-of-phase handoff](session-b-packaging.md)) | — | — |
+
+**Dependencies between sessions:**
+- E's PLAN-001 S1 (tables) unblocks A's PLAN-001 S2 and C's PLAN-005 S4.
+- A's PLAN-001 S3 (auth) unblocks C's PLAN-005 S4 and E's PLAN-001 S4–S6.
+- D's PLAN-002 S10 (UI hooks) unblocks C's PLAN-005 S7.
+- C's PLAN-005 S4 (shell) unblocks the web halves of E's slices.
+
+The session that merges an unblocking slice tells the user.
+
+**Changes to the phase 1 rules:**
+- **Migrations (replaces §2 rule 6):** one session holds the migration lock at a time. **E** holds it until PLAN-001 S1 is on `main`, then **A**. Anyone else who needs a table or column writes a handoff to the holder. A handover of the lock is logged by both sessions.
+- **Shared registry files**, append-only for everyone:
+  - `apps/server/src/handlers/index.ts`
+  - `packages/operations/src/ops/index.ts`
+  - `packages/domain/src/model/index.ts`
+  - `apps/server/src/sync/models.ts`
+  - `apps/server/src/db/schema/index.ts`
+  - `packages/domain/src/index.ts`
+
+  Add your own lines only. On a rebase conflict, keep both sides.
+- **Merge order** (replaces §5): A, then E, D, C.
+- **Ports:** A 3100/5173, C 5174 and Storybook 6006, D 3400, E 3500/5175 (dev Postgres 5435).
+- **Worktrees:** C's worktree is created again (`git worktree add ../surface-c -b p005-s5-shortcuts main`). `../surface-b` can be removed; its branches are on `main`.
+- **Not decided yet:** where the PLAN-002 S9 harness lives. Package boundaries forbid importing the server from `sync-client` and the reverse. D proposes a location, and the user decides (session-d2, scope step 1).
+
