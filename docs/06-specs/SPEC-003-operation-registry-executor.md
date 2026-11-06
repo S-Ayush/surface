@@ -149,16 +149,19 @@ input:  { filter?: Filter, orderBy?: OrderBy, limit?: number /*default 25, max 1
 output: { nodes: T[], pageInfo: { hasNextPage: boolean, endCursor: string | null }, totalCount?: number }
 ```
 - `filter` uses the shared **Filter model** ([domain-model §5](../03-domain/domain-model.md#5-filter-model)). The server compiles it to SQL. A **conformance test** runs the same fixture filters through the client evaluator and the SQL compiler and asserts identical results.
-- Cursors are opaque (base64 of the order key + id).
-- Visibility is applied **in SQL**, before limit, count, and ordering.
+- `OrderBy` is `{ field, direction?: "asc" | "desc" }` (default `asc`), one sort key per list; each list names its sortable fields and its default order. Ties are broken by id, and nulls sort last in both directions. (Q7)
+- Cursors are opaque (base64url of the sort, the last row's key and its id). Pagination is keyset, so pages never repeat or skip rows that existed throughout. A cursor that doesn't decode, or that belongs to another sort, is `INVALID_INPUT`. `totalCount` is returned only by lists that opt in (it costs a second query).
+- Visibility is applied **in SQL**, before limit, count, and ordering: the row's sync groups, and for an API key limited to some teams, the row's team.
+- `includeArchived` (default `false`) lists archived rows too, on models that archive.
 - List items use a **summary shape** by default (e.g. `IssueSummary`: id, identifier, title, status, priority, assignee, team, updatedAt). The full shape comes from `*.get`.
 
 ### 7.2 Output shaping (`fields`)
-- `fields: string[]` with dot-paths (`["identifier", "status.name", "assignee.displayName"]`) projects the output. Unknown paths → `INVALID_INPUT` listing the valid top-level fields.
+- `fields: string[]` with dot-paths (`["identifier", "status.name", "assignee.displayName"]`) projects the output. Unknown paths → `INVALID_INPUT` listing the valid top-level fields, with "did you mean" suggestions. It is checked before any work is done; at most 50 paths.
+- Arrays are transparent (`labels.name` picks `name` from each label). On a list, paths address each node, and `pageInfo` and `totalCount` are always kept. A path to an object keeps the whole object.
 - Relations in outputs are embedded **one level** as small objects (`{id, name}`). Deeper data needs another call.
 
 ### 7.3 Aggregates
-`*.count` and `*.groupBy` take the same `filter`. `groupBy` returns `[{ key, label, count, estimateSum? }]`. They are required for issue (M1) and project (M3) domains.
+`*.count` and `*.groupBy` take the same `filter` and `includeArchived`. `count` returns `{ count }`. `groupBy` also takes `groupBy` (the name of one of the model's groupings) and returns `[{ key, label, count, estimateSum? }]`, largest group first, with `key: null` and label "None" for rows without a value. They are required for issue (M1) and project (M3) domains.
 
 ### 7.4 Filter semantics
 Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5](../03-domain/domain-model.md#5-filter-model); this section fixes what it means, so the client evaluator and the SQL compiler agree (AC-6). Code: `packages/domain/src/filter/`, `apps/server/src/executor/filter-sql.ts`.
@@ -180,7 +183,7 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
   Text has no ordering operators, because client and database collations order text differently.
 - **Missing values** (null, or an empty/null set): a condition is false, except `neq`, `nin` and `exists: false`, which are true. So "assignee is not Ana" includes unassigned issues. Logic is two-valued everywhere.
 - **Empty groups and lists:** `and: []` matches everything, `or: []` nothing; `in: []` matches nothing, `nin: []` everything.
-- **Ids, not names:** `ref`/`refs` values are uuids or `me`. Names, keys and emails (the domain-model example's `"label": ["bug"]`) are turned into ids by the reference resolvers (§4) before the filter is resolved; the `*.list` helpers do this, with the same ambiguity and `NOT_FOUND` rules.
+- **Ids, not names:** `ref`/`refs` values are uuids or `me`. Names, keys and emails (the domain-model example's `"label": ["bug"]`) are turned into ids by the reference resolvers (§4) before the filter is resolved; the `*.list` helpers do this, with the same ambiguity and `NOT_FOUND` rules. M0 resolves team and user names; status and label names, which need a team, arrive with the issue list (M1).
 - **Visibility:** a dot-path field (`status.category`, `parent.title`) reads another table, and its SQL must apply the actor's sync groups, so a filter can never match through a row the actor can't see (permissions.md §5).
 - **Text:** `eq`/`in` compare exactly. `contains` ignores case using full Unicode lowercasing (JS `toLowerCase`, Postgres `lower()` with the ICU root collation `und-x-icu`), with no wildcards. Ids compare as lowercase uuids.
 - **Relative values** are resolved once, in shared code, before evaluation or SQL compilation:
@@ -276,4 +279,5 @@ Fails the build if any operation:
 | Q4 | Are reference names case-sensitive? (added 2026-11-06, PLAN-003 S2) | No. Case-insensitive, with an exact-case match preferred, so `todo` finds "Todo" and typed or AI input works. |
 | Q5 | What does a deactivated user in a `UserRef` return? (added 2026-11-06, PLAN-003 S2) | `INVALID_INPUT` with "… is deactivated", since the user is visible and `NOT_FOUND` would mislead. |
 | Q6 | Which isolation level does the executor use? (added 2026-11-06, PLAN-003 S4) | Mutations `READ COMMITTED`: concurrent writes to a row wait for its lock and the last write wins (sync-protocol §5); handlers that read, then write, lock with `FOR UPDATE`. Queries `REPEATABLE READ READ ONLY`, one snapshot. Serialization failures and deadlocks still retry per E5. |
+| Q7 | What is `OrderBy`? (added 2026-11-06, PLAN-003 S5) | One key, `{ field, direction }`, with id as the tie-break and nulls last. Views order by one field, with reverse (PRD FR-VIEW-04), and one key keeps cursors and indexes simple. A text sort key (such as a fractional manual order, M2) must compare bytewise (`COLLATE "C"`), so the client and the database agree. |
 | D1 | (2026-11-06, PLAN-003 S5) What do filters mean for missing values, case, time and sets? | §7.4: two-valued logic with negations including missing values; ICU full-Unicode case folding for `contains`; relative values resolved in shared code at millisecond precision; no text ordering. |

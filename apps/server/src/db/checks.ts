@@ -7,6 +7,8 @@ import type { Queryable } from './pool.js';
 
 export const MIN_POSTGRES_MAJOR = 17;
 export const REQUIRED_EXTENSIONS = ['pg_trgm'] as const;
+/** `contains` filters lowercase with the ICU root collation (SPEC-003 §7.4). */
+export const REQUIRED_COLLATIONS = ['und-x-icu'] as const;
 
 /** Throws unless `server_version_num` is at least the supported major version. */
 export function assertSupportedVersion(versionNum: number, versionText: string): void {
@@ -25,6 +27,23 @@ export async function checkPostgresVersion(db: Queryable): Promise<string> {
   if (!row) throw new StartupError('Could not read the PostgreSQL server version.');
   assertSupportedVersion(Number(row.num), row.text);
   return row.text;
+}
+
+/**
+ * Throws unless each required collation exists. Postgres builds with ICU (the official images
+ * do) create them; a server built without ICU can't run text filters.
+ */
+export async function checkCollations(
+  db: Queryable,
+  collations: readonly string[] = REQUIRED_COLLATIONS,
+): Promise<void> {
+  for (const name of collations) {
+    const { rowCount } = await db.query('SELECT 1 FROM pg_collation WHERE collname = $1', [name]);
+    if (rowCount) continue;
+    throw new StartupError(
+      `The PostgreSQL collation "${name}" is missing, so this server was built without ICU support. Use a PostgreSQL build with ICU, such as the official postgres:${MIN_POSTGRES_MAJOR} image.`,
+    );
+  }
 }
 
 /**

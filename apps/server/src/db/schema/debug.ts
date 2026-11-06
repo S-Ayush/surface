@@ -12,8 +12,10 @@ export const debugItems = pgTable(
     title: text().notNull(),
     counter: integer().notNull().default(0),
     syncGroups: text().array().notNull(),
-    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    // Millisecond precision, like every synced instant: the replica compares what is stored
+    // (SPEC-003 §7.4), and list cursors carry the exact value.
+    createdAt: timestamp({ withTimezone: true, precision: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true, precision: 3 }).notNull().defaultNow(),
   },
   (t) => [index('debug_items_sync_groups_idx').using('gin', t.syncGroups)],
 );

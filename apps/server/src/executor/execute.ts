@@ -13,12 +13,18 @@
  *  10   checks (automations, invariants), then output validation
  *  11   repo flush + outbox (mutations)
  *  12   COMMIT (retrying serialization failures and deadlocks, E5)
- *  13   result (`fields` shaping lands in S5)
+ *  13   result, projected to `fields` (§7.2)
  *  14   log + metrics
  */
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
-import { evaluatePermission, type AnyOperation, type OperationRegistry } from '@surface/operations';
+import {
+  evaluatePermission,
+  fieldsProblem,
+  shapeOutput,
+  type AnyOperation,
+  type OperationRegistry,
+} from '@surface/operations';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Logger } from 'pino';
 import type { Registry } from 'prom-client';
@@ -70,6 +76,8 @@ export interface ExecuteOptions {
   /** Sync clients only (SPEC-002 §4.4); passed to the repo flush. */
   readonly clientId?: string;
   readonly seq?: number;
+  /** Dot-paths that project the result (SPEC-003 §7.2); checked before any work is done. */
+  readonly fields?: readonly string[];
 }
 
 export type ExecuteResult =
@@ -128,6 +136,15 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     const parsed = def.input.safeParse(rawInput);
     if (!parsed.success) throw invalidInput(parsed.error);
     const input = parsed.data;
+    const fields = options.fields;
+    if (fields !== undefined) {
+      const problem = fieldsProblem(def, fields);
+      if (problem) {
+        throw new SurfaceError('INVALID_INPUT', problem.message, {
+          issues: [{ path: ['fields', problem.index], message: problem.message }],
+        });
+      }
+    }
 
     const handler = handlers.get(def.name);
     if (!handler) throw new Error(`No handler is registered for ${def.name}`);
@@ -170,7 +187,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
           refs,
           tx,
           repo,
-          query: queryHelpers(tx, viewer),
+          query: queryHelpers(tx, client, viewer, now),
           emit: (event) => void events.push(event),
           now: () => new Date(now),
           log,
@@ -222,7 +239,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     // 13. Result
     return {
       ok: true,
-      result,
+      result: fields === undefined ? result : shapeOutput(def, result, fields),
       ...(lastSyncId !== undefined ? { lastSyncId } : {}),
       ...(def.deprecated ? { deprecation: { replacedBy: def.deprecated.replacedBy } } : {}),
     };

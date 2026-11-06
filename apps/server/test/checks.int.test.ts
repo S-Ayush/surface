@@ -1,7 +1,7 @@
 // SPEC-004 §8 step 4 / E8: PostgreSQL version and required extensions.
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { checkPostgresVersion, ensureExtensions } from '../src/db/checks.js';
+import { checkCollations, checkPostgresVersion, ensureExtensions } from '../src/db/checks.js';
 import { createPool } from '../src/db/pool.js';
 import { createTestDatabase, silentLog as log, withAdmin, type TestDatabase } from './db.js';
 
@@ -16,6 +16,13 @@ afterAll(async () => {
 describe('database checks', () => {
   it('accepts the PostgreSQL 17 test server', async () => {
     expect(await checkPostgresVersion(db.pool)).toMatch(/^17\./);
+  });
+
+  it('finds the ICU root collation that text filters need, and names a missing one', async () => {
+    await expect(checkCollations(db.pool)).resolves.toBeUndefined();
+    await expect(checkCollations(db.pool, ['xx-x-missing'])).rejects.toThrow(
+      'The PostgreSQL collation "xx-x-missing" is missing, so this server was built without ICU support. Use a PostgreSQL build with ICU, such as the official postgres:17 image.',
+    );
   });
 
   it('creates pg_trgm when it is missing and the user may create it', async () => {

@@ -5,12 +5,26 @@
  */
 import type { Actor, ResolvedRefs } from '@surface/domain';
 import type { AnyOperation, ParsedInputOf } from '@surface/operations';
-import { and, arrayOverlaps, eq, inArray } from 'drizzle-orm';
+import type { FilterFields } from '@surface/domain';
+import { and, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type { PgColumn } from 'drizzle-orm/pg-core';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type { z } from 'zod';
+import type { Queryable } from '../db/pool.js';
 import { SYNCED_MODELS, type ModelName, type ModelRow } from '../sync/models.js';
+import {
+  countQuery,
+  groupByQuery,
+  listQuery,
+  visibleTo,
+  type CountArgs,
+  type Group,
+  type GroupByArgs,
+  type ListArgs,
+  type ListModel,
+  type Page,
+} from './list.js';
 import type { Repo } from './repo.js';
 
 /** A domain event as a handler emits it (events.md envelope, minus what the executor fills in). */
@@ -29,6 +43,19 @@ export interface QueryHelpers {
    * otherwise `undefined`, which the handler reports as `NOT_FOUND`.
    */
   get<M extends ModelName>(model: M, id: string): Promise<ModelRow<M> | undefined>;
+  /** A page of visible rows (SPEC-003 §7.1); the input is the op's parsed `listInput`. */
+  list<T extends PgTable, F extends FilterFields>(
+    model: ListModel<T, F>,
+    args: ListArgs,
+  ): Promise<Page<T['$inferSelect']>>;
+  count<T extends PgTable, F extends FilterFields>(
+    model: ListModel<T, F>,
+    args: CountArgs,
+  ): Promise<number>;
+  groupBy<T extends PgTable, F extends FilterFields>(
+    model: ListModel<T, F>,
+    args: GroupByArgs,
+  ): Promise<Group[]>;
 }
 
 export interface HandlerContext {
@@ -60,22 +87,32 @@ export function handler<Op extends AnyOperation>(
   return { op, run };
 }
 
-export function queryHelpers(tx: NodePgDatabase, actor: Actor): QueryHelpers {
+/**
+ * Read helpers over the handler's transaction. `client` is the same connection, for the
+ * reference resolvers that list filters use.
+ */
+export function queryHelpers(
+  tx: NodePgDatabase,
+  client: Queryable,
+  actor: Actor,
+  now: Date,
+): QueryHelpers {
+  const listContext = {
+    tx,
+    client,
+    actor,
+    // Users' time zones arrive with user settings (PLAN-001); until then "today" is UTC's.
+    filterContext: { now: now.getTime(), timeZone: 'UTC', me: actor.userId ?? null },
+  };
   return {
     async get(model, id) {
       const { table, teamColumn } = SYNCED_MODELS[model];
-      const keyTeams = actor.apiKey?.teamIds ?? [];
-      const teamFilter: PgColumn | null = teamColumn;
-      const visible =
-        actor.kind === 'system'
-          ? eq(table.id, id)
-          : and(
-              eq(table.id, id),
-              arrayOverlaps(table.syncGroups, [...actor.groups]),
-              keyTeams.length > 0 && teamFilter ? inArray(teamFilter, [...keyTeams]) : undefined,
-            );
+      const visible = and(eq(table.id, id), visibleTo(actor, table.syncGroups, teamColumn));
       const [row] = await tx.select().from(table).where(visible).limit(1);
       return row;
     },
+    list: (model, args) => listQuery(listContext, model, args),
+    count: (model, args) => countQuery(listContext, model, args),
+    groupBy: (model, args) => groupByQuery(listContext, model, args),
   };
 }

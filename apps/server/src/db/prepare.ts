@@ -3,7 +3,7 @@
  * and `surface migrate`.
  */
 import type { Logger } from 'pino';
-import { checkPostgresVersion, ensureExtensions } from './checks.js';
+import { checkCollations, checkPostgresVersion, ensureExtensions } from './checks.js';
 import { migrate, type Migration } from './migrate.js';
 import type { Pool } from './pool.js';
 
@@ -19,7 +19,7 @@ export interface PrepareResult {
 }
 
 /**
- * Check the Postgres version, then, under the migrations lock, create missing
+ * Check the Postgres version and collations, then, under the migrations lock, create missing
  * extensions and apply pending migrations. Nothing is changed on an incompatible
  * server, and concurrent replicas never race on CREATE EXTENSION.
  */
@@ -28,6 +28,7 @@ export async function prepareDatabase(
   { log, appVersion, migrations }: PrepareOptions,
 ): Promise<PrepareResult> {
   const postgresVersion = await checkPostgresVersion(pool);
+  await checkCollations(pool);
   const { applied } = await migrate(pool, {
     log,
     appVersion,

@@ -121,7 +121,7 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 > - **AC-11 rework:** the test is now `executor-overhead.perf.int.test.ts`, run after the other integration files by `vitest.perf.config.js` with no file parallelism (`test:int` runs both). Each sample subtracts a raw `BEGIN READ ONLY; COMMIT` on the same pool run right after it, so load affects both sides; a second case resolves a `TeamRef` (`debug.teamEcho`). Logs go to a non-parsing stream. Locally: `debug.echo` p95 0.05 ms, `debug.teamEcho` p95 0.32 ms. Under load from other worktrees (load average 5.5) one round reached p95 2.7 ms, so each case keeps the best of up to 3 rounds (a real regression fails every round), and each baseline makes the same number of round trips as the execution (`SELECT 1` per reference lookup), so round-trip latency to a loaded database VM isn't counted as overhead.
 > - **Deferred:** the `INVALID_INPUT` "see the operation's input schema" hint lands with S6, where the catalog URL exists.
 
-### S5: Queries: filter engine, lists, shaping · L
+### S5: Queries: filter engine, lists, shaping · L · ✅ Done 2026-11-06
 - `packages/domain/filter`: the Filter AST type, a Zod schema, and a **client evaluator** (`matches(row, filter, ctx)`) with relative values (`me`, durations).
 - `apps/server/src/executor/filter-sql.ts`: a **SQL compiler** (AST → Drizzle `SQL`) driven by a per-model field map (column, type, join path).
 - List helpers: `listQuery({model, filter, orderBy, limit, cursor, includeArchived})` with opaque cursors and visibility applied in SQL. Count and groupBy helpers.
@@ -135,6 +135,28 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 > - **Requirements for later slices:** `*.list` resolves name/key refs to ids (§4 resolvers) before `compileFilter`; every dot-path column into a synced table applies `scope.groups`, and each real model gets a leak case like the fixture's hidden status; `number` fields are `integer`/`smallint`/`double precision`; `contains` is index-backed only by a `pg_trgm` index on exactly `lower(col COLLATE "und-x-icu")` (M1 issue search); when the conformance harness is re-run per real model, it must read rows through the real sync-protocol codec, not hand-written casts, to catch representation drift (µs timestamps, uppercase ids); synced tables store instants as `timestamptz(3)`; the database needs the ICU collation `und-x-icu` (true for the official `postgres:17` image); the client replica keeps instants as ISO strings (or Dates), days as `YYYY-MM-DD`, ids lowercase, and id sets as arrays. Cycle-relative values come with cycles (M1). Handoffs to A are in `sessions/session-e-filter.md`.
 > - **Tests:** `filter-conformance.int.test.ts` (AC-6) runs 300 fast-check cases × 5 filters (1,500 filters, fixed seed `20261106`) over generated rows with edge values (nulls, empty sets, Unicode case mapping, `-0`, float rounding, DST and leap days, orphan joins), plus hand-picked cases in five time zones. A third test checks that a status hidden from the actor can never be matched through `status.category`. It caught all seven deliberately planted compiler bugs (libc `lower()`, `<>` for `neq`, `nin` without nulls, sets without `coalesce`, seconds truncation, number rounding, `LIKE`). `domain/src/filter/filter.test.ts` has 25 unit tests, including a negation-law property test. `fast-check` 4.10 added as a dev dependency.
 > - **Review fixes:** a node with both `and` and `or` was rejected only after an unbounded walk, now before; instants are bounded to years 1–9999; `ctx.me` is validated and lowercased; a bad context time zone is an internal error; fields and columns are one model object; the visibility requirement is in the API and the spec.
+
+> **As built — lists, aggregates and `fields` (session A, 2026-11-06).**
+> - **Shared (`packages/operations/src/`):** `list.ts` has `listInput` / `countInput` / `groupByInput` (spread into an op's `z.object`), `OrderBySchema`, `connectionOf(node)`, `CountOutput` and `GroupByOutput`. `fields.ts` has `fieldPaths(def)` (paths read from the output's JSON Schema, cached per op), `fieldsProblem(def, fields)` and `shapeOutput(def, output, fields)`. `editDistance` moved here (`suggest.ts`); the server re-exports it.
+> - **Server (`apps/server/src/executor/list.ts`):** `defineListModel({ table, filter, filterRefs?, order, defaultOrder, teamColumn, archivedColumn?, groupings?, estimateColumn? })` checks its columns at load. `listQuery`, `countQuery` and `groupByQuery` take a `ListContext` (`tx`, `client`, actor, filter context); handlers call them as `ctx.query.list/count/groupBy(model, input)`. `visibleTo(actor, syncGroups, teamColumn)` is now shared by `ctx.query.get` and the lists.
+> - **Decisions (SPEC-003 §7.1–7.3, Q7):** one sort key, `{ field, direction }`, with id as tie-break and nulls last. Keyset cursors (base64url JSON of sort, key, id), validated on the way in. `totalCount` is opt-in per list (`withTotal`). `count` returns `{ count }`; `groupBy` takes a grouping name. On a list, `fields` paths address the nodes, and `pageInfo`/`totalCount` are kept.
+> - **Executor:** `ExecuteOptions.fields`, checked before `BEGIN` (`INVALID_INPUT` at `['fields', i]` with suggestions), applied at step 13.
+> - **Fixture op:** `debug.listItems` (internal) over `DebugItem`. **Migration `0002_debug_items_ms`:** `debug_items` timestamps are now `timestamptz(3)`.
+> - **Session E handoffs done here:** `.claude/rules/database.md` says instants are `timestamptz(3)`; startup checks the `und-x-icu` collation (`checkCollations()` in `db/checks.ts`, run by `prepareDatabase()`). The CLAUDE.md domain line already said "no workspace deps; Zod only".
+> - **Deviations / limits:**
+>   - Filter values may be team or user names (`filterRefs`, `FilterRefType`); status and label names need a team and come with the issue list (M1). Deactivated users resolve in filters.
+>   - The filter context's time zone is UTC until user settings exist (PLAN-001); `ctx.query` passes `now` and `me` from the execution.
+>   - E6 ("`fields` may request any field of the full shape") needs per-entity summary and full schemas, so it lands with the first real list (M1). Today `fields` projects what the handler returns.
+>   - A dot-path filter column or a grouping label that reads another synced table must apply `groups` (the model functions receive them), as session E noted.
+>   - Text sort keys order in the database collation. Only the server orders by them; a text key the client must also order (manual order, M2) needs `COLLATE "C"`.
+> - **Tests:**
+>   - `operations/test/fields.test.ts` (AC-7: paths, projection of nested, nullable and array values, lists, suggestions, limits);
+>   - `server/test/list.int.test.ts`: a fast-check property (seed `20261106`, 120 runs) that paging in any order and page size returns exactly the visible rows once each, matching one plain `ORDER BY` query. It caught four planted cursor bugs (`>=` tie-break in each branch, dropped null rows, `NULLS FIRST`). Also: leak cases for list, count, groupBy and filters (a row in a visible team hidden by its own groups), API-key team narrowing, archived rows, bad and foreign cursors, unknown sorts and groupings, team keys in filters (a private team's key is `NOT_FOUND`, worded like a missing one), error paths into the filter tree, and `debug.listItems` through the executor with `fields`;
+>   - `server/test/checks.int.test.ts`: the collation check.
+> - **Not exercised over HTTP:** `POST /api/ops` arrives in S6.
+> - **Notes for later slices:**
+>   - **S6:** pass the body's `fields` to `execute()`; list ops' `limit` defaults apply after parsing.
+>   - **PLAN-001 S1:** each real list model sets `teamColumn` and `archivedColumn`, and gets a leak case in its list tests; re-run the conformance harness per model (session E's note).
 
 ### S6: HTTP exposure · M
 - `POST /api/ops/:name`, `GET /api/ops` (catalog filtered by actor), `GET /api/openapi.json` (generated, no auth).
@@ -165,7 +187,7 @@ New tables `event_outbox` and `api_idempotency`, plus the pg-boss schema. All ar
 | AC-4 | `server/test/executor-readonly.int.test.ts` |
 | AC-5 | `server/test/executor-atomic.int.test.ts` |
 | AC-6 | `server/test/filter-conformance.int.test.ts` (fast-check) |
-| AC-7 | `domain/test/fields.test.ts` |
+| AC-7 | `operations/test/fields.test.ts` (projection lives with the operation schemas; the executor applies it) |
 | AC-8 | `server/test/idempotency.int.test.ts` |
 | AC-9 | `operations/test/lint.test.ts` with fixtures |
 | AC-10 | `operations/test/compact-schema.test.ts` |

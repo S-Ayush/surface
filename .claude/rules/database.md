@@ -15,7 +15,7 @@ Decisions: ADR-0006. Conventions: `docs/03-domain/domain-model.md` §1. Sync tab
 - **Advisory-lock keys** all live in `src/db/locks.ts` (`LOCKS.*`). Never use a literal number inline.
 - **Column conventions:**
   - IDs are `uuid` (UUIDv7, client-generated for synced entities).
-  - Instants are `timestamptz`, and calendar dates are `date`.
+  - Instants are `timestamptz(3)` (millisecond precision: the client replica and list cursors compare exactly what is stored, SPEC-003 §7.4), and calendar dates are `date`.
   - Enums are stored as `text` with a CHECK constraint or Zod validation, not Postgres enum types (they are hard to evolve).
   - `created_at`/`updated_at` are server-set.
   - `archived_at` means archived, and `deleted_at` means trash (purged after 30 days).

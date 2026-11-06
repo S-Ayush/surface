@@ -15,6 +15,13 @@
       "when": 1793963244120,
       "tag": "0001_executor_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793966802598,
+      "tag": "0002_debug_items_ms",
+      "breakpoints": true
     }
   ]
 }
