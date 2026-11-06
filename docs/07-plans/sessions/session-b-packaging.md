@@ -57,8 +57,11 @@ Docker runs on Colima. Use port 3200 for any server you start in this worktree.
 
 | To | Request | Why / blocking? | Status |
 |---|---|---|---|
+| A | `apps/server/test/startup.int.test.ts` (AC-9 lock test): the `until(...)` query counts **any** ungranted advisory lock in the cluster. Restrict it to this database: add `AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`. | Flaky (~1 in 7 runs of `pnpm test:int`): another file's worker waiting on `LOCKS.testDatabases` in `postgres` satisfies the condition before the server waits, so the "waiting for another instance" log assertion fails. More parallel int files (S4 adds two) make it likelier. Blocks a reliable CI `test:int` (S6). | open |
 
 ## Log (append-only)
 
 | Date | Slice | Branch | State | Notes / handoffs |
 |---|---|---|---|---|
+| 2026-11-06 | PLAN-004 S4 | p004-s4-cli | built, in review | `surface` CLI: serve, migrate, version, doctor + PLAN-001 stubs. 106 unit / 51 int green. **Shared-file changes:** `apps/server/src/config.ts` + `test/config.test.ts` (new `DATA_DIR`, approved by the user), `apps/server/package.json` (`bin`, `surface` script; no new deps). SPEC-004 §7, §9, §14 D2 updated. Handoff from A (CI `test:int`) is planned for S6. Found a flaky A test (`startup.int.test.ts`); handoff to A raised. |
+| 2026-11-06 | PLAN-004 S4 | p004-s4-cli | review fixes, ready to commit | All 7 review findings and the nits fixed: migration-independent tests, SMTP socket destroyed after QUIT (process-level test, fails without the fix), redirects reported not followed, ENOTDIR/EACCES verdicts, one entry per check on unexpected errors, scrub before formatting (12+ chars), startup/doctor message parity tests, `-V` + command is a usage error, SPEC E5 note, E2/E4 scope stated. **Shared-file change:** `apps/server/dev.env` gets `DATA_DIR=../../data` (dev only). 108 unit / 57 int green (except the known flaky A test `startup.int.test.ts`, handoff open). |

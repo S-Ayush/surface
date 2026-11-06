@@ -4,6 +4,7 @@
  * Everything comes from environment variables and is validated once at startup.
  * Errors name the variable and say how to fix it; secret values are never echoed.
  */
+import path from 'node:path';
 import { z } from 'zod';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -31,6 +32,8 @@ export interface Config {
   backup: { schedule: string | undefined; retention: string | undefined };
   /** Directory holding the built web app; `undefined` = default location. */
   webDir: string | undefined;
+  /** Writable data volume (uploads, backups); always absolute. */
+  dataDir: string;
   nodeEnv: 'production' | 'development' | 'test';
 }
 
@@ -196,6 +199,7 @@ const schema = z.object({
   BACKUP_SCHEDULE: z.string().optional(),
   BACKUP_RETENTION: z.string().optional(),
   SURFACE_WEB_DIR: z.string().optional(),
+  DATA_DIR: z.string().optional(),
   NODE_ENV: oneOf('NODE_ENV', ['production', 'development', 'test'], 'production'),
 });
 
@@ -262,6 +266,8 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): Config {
     host: e.HOST ?? '0.0.0.0',
     backup: { schedule: e.BACKUP_SCHEDULE, retention: e.BACKUP_RETENTION },
     webDir: e.SURFACE_WEB_DIR,
+    // The image sets /data (SPEC-004 §5); a relative path is resolved once, here.
+    dataDir: path.resolve(e.DATA_DIR ?? '/data'),
     nodeEnv: e.NODE_ENV,
   };
 }

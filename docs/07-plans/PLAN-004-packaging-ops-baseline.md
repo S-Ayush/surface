@@ -65,7 +65,18 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 - **Test harness:** `test/db.ts` with Testcontainers Postgres 17, a per-test-file database (template DB clone for speed), and a `withTx` helper.
 - **Tests:** the concurrent-migration lock (E2), newer-schema detection (E7), the PG version check.
 
-### S4: `surface` CLI · S
+### S4: `surface` CLI · S · ✅ Done 2026-11-06
+> **As built:** No new dependencies. Modules in `apps/server/src/cli/`: `main.ts` (entry), `run.ts` (parsing and dispatch), `io.ts`, `version.ts`, `migrate.ts`, and `doctor/{checks,probes,doctor}.ts`. `apps/server/bin/surface.js` is a shim over `dist/cli/main.js` (the `bin` field). In development use `pnpm --filter @surface/server surface <command>` (tsx, source, loads `dev.env`; `dev.env` sets `DATA_DIR=../../data`, the gitignored `/data/` at the repo root, which S5's `pnpm dev` should create). 47 unit + 35 integration tests.
+> - **Deviation:** arguments are parsed with `node:util` `parseArgs`, not commander. Six commands and two flags don't justify a dependency in the image. Exit codes: 0 ok, 1 failed, 2 usage.
+> - **Lazy loading:** `run.ts` imports only `config.ts`, and each command is a dynamic import. `surface` (= `serve`) with a bad config still exits in < 1 s (AC-6 test via `src/cli/main.ts`), and `version` needs neither config nor a database.
+> - **`serve`** calls the existing `serve(config)`; `src/main.ts` stays as the `pnpm dev`/`start` entry for now. S5 points the image `ENTRYPOINT` at `bin/surface.js`.
+> - **`migrate`** = `waitForDatabase` (60 s, like `serve`) → `prepareDatabase()` with a pool of 2, JSON logs to stdout ("migrations applied" / "nothing to migrate"), StartupError → one fatal line, exit 1.
+> - **`version`** prints version, commit and **schema level** (the newest migration tag and count) instead of a schema-hash placeholder. The sync `schemaHash` (sync-protocol.md) belongs to PLAN-002 and is added there.
+> - **`doctor`** is read-only and checks, in four concurrent groups: config → database → PostgreSQL version → extensions → migrations; data directory → disk; SMTP; public URL. Every check is a pure verdict over gathered facts (`checks.ts`), so conditions postgres:17 can't produce (PG < 17, no contrib, a full disk) have unit fixtures. The SMTP check only reads the `220` greeting and sends `QUIT`; credentials are not tested (that would need an SMTP client dependency). After `QUIT` the socket is destroyed within 1 s, so a server that never hangs up can't keep the process alive. The public-URL check is a warning only (SPEC-004 §14 D2) and does not follow redirects: a redirect is reported with its target. A probe that throws unexpectedly is reported on its own check and the rest of its group is skipped, so the report always has one entry per check. Messages are scrubbed of the session secret, setup token and DB/SMTP passwords (12+ characters; shorter ones are often ordinary words such as the dev password `surface`) before formatting. Startup and doctor wording for extensions is kept equal by a test, since doctor can't reuse `ensureExtensions()` (it creates).
+> - **New config `DATA_DIR`** (default `/data`, absolute after loading), agreed with the user although `config.ts` is outside session B's list. SPEC-004 §7 and §9 updated. `.env.example` doesn't exist yet: S5 creates it with every variable, `DATA_DIR` included.
+> - **Not in M0 yet:** the E5 startup check (exit when `/data` is not writable) belongs with the first code that writes there (uploads, M2+). Until then only `doctor` reports it.
+> - **AC-12 scope:** doctor covers E1, E3, E5, E6, E7 and E8 (plus SMTP). E2 (concurrent replicas) is not a doctor condition: the migrations lock handles it (AC-9 tests). E4 (proxy strips WebSocket upgrades) has no WebSocket to probe until the sync hub (PLAN-002 S4); a doctor check for it can be added then.
+
 - `apps/server/bin/surface.ts` (commander): `serve`, `migrate`, `version` (version, commit, schemaHash placeholder), `doctor` (config, DB, PG version, extensions, `/data` writable, disk free, SMTP connect when set). `setup-token` and `reset-password` are registered and implemented in PLAN-001.
 - **Tests:** a `doctor` fixture per failure condition (AC-12).
 
@@ -116,7 +127,7 @@ Only the bootstrap migration `0000_extensions` (`pg_trgm`); history lives in the
 | AC-9 | `apps/server/test/health.test.ts` (state machine) + `apps/server/test/startup.int.test.ts` (503 while waiting for the migrations lock, then 200 with DB checks) |
 | AC-10 | CI no-egress job |
 | AC-11 | CI log-scan job |
-| AC-12 | `apps/server/test/doctor.int.test.ts` |
+| AC-12 | `apps/server/test/doctor.int.test.ts` (each condition against real Postgres, SMTP and HTTP fixtures) + `apps/server/test/doctor.test.ts` (verdicts, incl. PG < 17, no contrib, full disk). E2 is covered by AC-9, E4 waits for the sync hub. |
 | AC-13 | CI external-db job |
 
 ## 5. Risks & mitigations

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config.js';
 import { VALID_ENV } from './helpers.js';
@@ -28,8 +29,14 @@ describe('loadConfig', () => {
       trustProxy: true,
       port: 3000,
       host: '0.0.0.0',
+      dataDir: '/data',
       nodeEnv: 'production',
     });
+  });
+
+  it('resolves a relative DATA_DIR against the working directory', () => {
+    const config = loadConfig({ ...VALID_ENV, DATA_DIR: 'var/surface' });
+    expect(config.dataDir).toBe(path.resolve('var/surface'));
   });
 
   it('reports every missing required variable at once, with how to fix it', () => {

@@ -147,6 +147,7 @@ All configuration is through environment variables, validated at startup with a 
 | `BACKUP_SCHEDULE`, `BACKUP_RETENTION` | | — | Effective in M7 |
 | `PORT`, `HOST` | | 3000, 0.0.0.0 | Listen address *inside* the container. The host-side binding is `SURFACE_BIND`/`SURFACE_PORT` in compose. |
 | `SURFACE_WEB_DIR` | | `apps/web/dist` | Location of the built web app. Set by the image; rarely changed. |
+| `DATA_DIR` | | `/data` | Writable volume for uploads and backups. Set by the image. A relative path is resolved against the working directory. `surface doctor` checks it (E5, E6). |
 | `NODE_ENV` | | production | `development` is set by `pnpm dev` |
 
 `SURFACE_COMMIT` is baked into the image at build time and reported by `/readyz` logs and `surface version`. It is not user configuration. All problems are reported at once, and secret values (`SESSION_SECRET`, passwords in `DATABASE_URL` and `SMTP_URL`) are never echoed in errors.
@@ -181,14 +182,28 @@ All configuration is through environment variables, validated at startup with a 
 | Command | M0 | Purpose |
 |---|---|---|
 | `serve` | ✓ | Default: run the server |
-| `migrate` | ✓ | Run migrations and exit (CI and manual upgrades) |
-| `setup-token` | ✓ | Print a fresh setup URL if setup is incomplete |
-| `reset-password <email>` | ✓ | Print a one-time reset link (the recovery path when no Admin can log in) |
+| `migrate` | ✓ | Steps 2–4 of §8 (wait for the DB, version check, extensions and migrations under the lock), then exit. For CI and manual upgrades. |
+| `setup-token` | ✓ | Print a fresh setup URL if setup is incomplete. Registered in M0 as a stub; implemented by PLAN-001. |
+| `reset-password <email>` | ✓ | Print a one-time reset link (the recovery path when no Admin can log in). Registered in M0 as a stub; implemented by PLAN-001. |
 | `doctor` | ✓ | Check config, DB connectivity and version, extensions, disk space on `/data`, SMTP connectivity, and `SURFACE_URL` reachability (local only) |
-| `version` | ✓ | Print the version, commit, and schema hash |
+| `version` | ✓ | Print the version, commit, and schema level (`--json` for scripts). The schema level is the newest migration in the build; the sync `schemaHash` is added with PLAN-002. |
 | `backup`, `restore <file>` | M7 | FR-OPS-05/06 |
 
-Usage: `docker compose exec app surface doctor`.
+Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` the command failed, `2` wrong usage.
+
+**`doctor`** is read-only (it creates no extension, applies no migration and leaves no file behind) and prints one line per check: ✓ ok, ! warning, ✗ problem, - skipped. It exits 1 if any check is a problem; warnings exit 0. `--json` prints the same report for scripts. It never prints secrets.
+
+| Check | Problem (✗) | Warning (!) |
+|---|---|---|
+| Configuration | Any `loadConfig()` error; every other check is then skipped | |
+| Database | Unreachable (E1, no retry), wrong credentials, `pg_hba.conf` rejection, missing database | |
+| PostgreSQL version | Older than 17 (E8) | |
+| Extensions | `pg_trgm` unavailable, or not installed and the user may not create it (prints the SQL to run) (E8) | |
+| Migrations | Applied by a newer Surface (E7), or an applied migration was edited | Pending (applied at startup or by `surface migrate`) |
+| Data directory | `DATA_DIR` missing, not a directory, or not writable (E5, names uid 10001) | |
+| Disk space | Under 100 MB free on `DATA_DIR` (E6) | Under 1 GB free |
+| Email (SMTP) | When `SMTP_URL` is set: no connection, or no `220` greeting within 5 s. Credentials are not tested. | |
+| Public URL | | `GET <SURFACE_URL>/healthz` from this host fails, redirects (reported with its target, never followed), or is not Surface (E3), or plain `http` on a non-local host |
 
 ## 10. Observability
 
@@ -214,7 +229,7 @@ Usage: `docker compose exec app surface doctor`.
 | E2 | Two app replicas start at once | The migration lock serializes them. The second sees "migrations current". |
 | E3 | `SURFACE_URL` doesn't match the browser origin | Login fails CSRF/origin checks. `doctor` and the troubleshooting doc explain it, and the server logs a warning on mismatched `Origin` headers. |
 | E4 | The reverse proxy strips WebSocket upgrades | The client shows "Live updates unavailable, check proxy config" after 3 failed upgrade attempts, with a link to the docs |
-| E5 | The `/data` volume isn't writable | Exit at startup with a message about volume permissions (uid 10001) |
+| E5 | The `/data` volume isn't writable | Exit at startup with a message about volume permissions (uid 10001). The startup check lands with the first feature that writes to `/data` (uploads, M2); until then `surface doctor` reports it. |
 | E6 | Disk is full | Uploads fail with a clear error. `doctor` reports it. The DB's own disk errors surface as `INTERNAL` with logs. |
 | E7 | Downgrading the image after a migration | The server detects a DB schema newer than the code and exits: "Database was migrated by a newer Surface (x.y). Restore a backup or upgrade." |
 | E8 | Postgres < 17, or `pg_trgm` unavailable on a managed DB | Exit with explicit instructions |
@@ -246,3 +261,4 @@ Usage: `docker compose exec app surface doctor`.
 | Q3 | Should the bundled Caddy profile be the default install path? | No. It is optional, because many teams already have a proxy. The README shows both. |
 | Q4 | Which CI provider? | GitHub Actions (the stages are portable) |
 | D1 | (2026-11-06, PLAN-004 S3) Where do compatibility checks run relative to migrations? | §8 reordered: version check, then extensions and migrations together under the migrations lock. An incompatible database is never partly migrated, and concurrent replicas never race on `CREATE EXTENSION`. |
+| D2 | (2026-11-06, PLAN-004 S4) What does `doctor`'s "`SURFACE_URL` reachability (local only)" mean, and is a failure fatal? | One `GET <SURFACE_URL>/healthz` from the Surface host itself, never through a third-party service. It is only a **warning**, because a host often cannot resolve its own public name (split DNS, hairpin NAT), and because the no-egress rule (FR-OPS-09) must hold even when the operator runs `doctor`. |

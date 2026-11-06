@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Surface server: HTTP API, sync hub, MCP, auth, jobs.",
   "main": "./dist/main.js",
+  "bin": {
+    "surface": "./bin/surface.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch --conditions=@surface/source --env-file=dev.env src/main.ts",
@@ -13,7 +16,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:int": "vitest run --config vitest.int.config.js && vitest run --config vitest.perf.config.js",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "surface": "tsx --conditions=@surface/source --env-file-if-exists=dev.env src/cli/main.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.10",
