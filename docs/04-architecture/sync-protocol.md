@@ -1,8 +1,8 @@
 # Surface: Sync Protocol (v1)
 
-Status: **Draft v0.1** · Date: 2026-11-06 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
+Status: **Draft v0.2** · Date: 2026-11-06 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
 
-This is the contract between `packages/sync-client` and `apps/server`. Every wire type here lives in `packages/sync-protocol`.
+This is the contract between `packages/sync-client` and `apps/server`. Every wire type here lives in `packages/sync-protocol`, as a Zod codec. Decoders strip unknown keys instead of rejecting them, so additive changes stay compatible. Changes are listed in §11.
 
 ---
 
@@ -51,6 +51,9 @@ Content is split into separate tables or models on the server (e.g. `issue_conte
 …
 {"t":"end","rows":151234}
 ```
+- `schemaHash` is 64 lowercase hex characters (§8). `serverTime` is an ISO 8601 timestamp. `groups` are the connection's sync groups (§6).
+- Every row `d` is a JSON object with a UUID `id`. Its other fields are checked by the client store against the model definition, not by the wire codec.
+- `end.rows` is the number of `row` frames sent, so the client can detect a truncated stream.
 - Rows are read inside one `REPEATABLE READ` snapshot, which includes `max(sync_id)`. That makes the snapshot consistent with `lastSyncId`.
 - Optional `?groups=team:<id>` gives a **partial bootstrap** for groups added later (see §6).
 - The client writes rows to IDB in chunks (worker) and becomes interactive once the `end` frame arrives.
@@ -58,12 +61,12 @@ Content is split into separate tables or models on the server (e.g. `issue_conte
 ### 4.2 Content: `GET /sync/content?parent=issue:<id>[,issue:<id>…]`
 Returns the content rows for the given parents (max 50 per request) plus the `lastSyncId` they are consistent with. The client marks those parents **hydrated**.
 
-### 4.3 WebSocket: `GET /sync/ws?since=<lastSyncId>&clientId=<uuid>`
-Authenticated by the session cookie.
+### 4.3 WebSocket: `GET /sync/ws?since=<lastSyncId>&clientId=<uuid>&schemaHash=<hash>`
+Authenticated by the session cookie. `since` is a non-negative decimal integer without leading zeros. `schemaHash` lets the hub answer `resync(schema)` before catch-up.
 
 Server → client messages:
 ```jsonc
-{"t":"deltas","packets":[
+{"t":"deltas","prev":18234,"packets":[
   {"id":18235,"a":"I","m":"Issue","d":{…}},          // insert (full row)
   {"id":18236,"a":"U","m":"Issue","d":{…}},          // update (full row → idempotent upsert)
   {"id":18237,"a":"A","m":"Issue","mid":"…"},        // archive
@@ -72,10 +75,18 @@ Server → client messages:
   {"id":18240,"a":"G","added":["team:…"],"removed":[]} // sync-group change for this user
 ], "ack":[{"clientId":"…","seq":57}]}               // mutations confirmed in these packets
 {"t":"resync","reason":"schema|too_old|groups"}     // client must re-bootstrap
-{"t":"presence","subject":"issue:…","users":["…"]}  // ephemeral, not in sync_log
+{"t":"presence","subject":"issue:…","users":["…"]}  // ephemeral, not in sync_log (M4, not in v0)
 {"t":"ping"}
 ```
-Client → server messages: `{"t":"presence","subject":"issue:…","state":"viewing|editing"}` and `{"t":"pong"}`.
+Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subject":"issue:…","state":"viewing|editing"}`.
+
+**`deltas` rules** (checked by the decoder):
+- `prev` is the id of the last packet the server sent **on this connection** before this message, or `since` for the first one. The client applies the message only if `prev` equals its `lastSyncId`. Otherwise it has missed packets: it closes the socket and reconnects with `since = lastSyncId` (SPEC-002 E1).
+- Packet ids are strictly increasing and greater than `prev`. Ids can skip, because the stream is filtered by sync groups. At most 500 packets per message.
+- `ack` lists this connection's own mutations that committed in the `sync_log` range the message covers. `packets` may be **empty only when `ack` is not**: a mutation can write rows this client cannot see, and its pending entry must still be confirmed. A message with neither is invalid.
+- `G` packets are decoded in v0 because they take part in the ordering. Until M7, the client handles one with a full re-bootstrap.
+
+**Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10).
 
 **Catch-up:** on connect, the server streams `sync_log` rows with `sync_id > since` filtered by the user's groups, then switches to live mode. If `since` is older than the retention window (30 days), or `schemaHash` differs, the server sends `resync`.
 
@@ -95,6 +106,10 @@ Client → server messages: `{"t":"presence","subject":"issue:…","state":"view
 - The server processes a batch **in seq order**, with **one DB transaction per mutation** (one failure doesn't block the others).
 - **Idempotency:** the server stores `(clientId → lastProcessedSeq)`. Re-sent mutations with `seq ≤ lastProcessedSeq` return their stored result without being re-executed.
 - **Ordering across reconnects:** the client never sends seq N+1 before N has been sent. Batches are sent one at a time per client.
+- A batch holds 1–100 mutations with **consecutive, ascending** seqs, starting at 1 for a new client. `input` is any JSON value. `at` is optional and informational (SPEC-002 E11). `results` has one entry per mutation, in the same seq order.
+- **Whole-request errors** use the SPEC-003 §9 body `{"ok":false,"error":{"code","message","correlationId"}}`:
+  - `426 CLIENT_OUTDATED`: `schemaHash` differs from the server's. The client shows the reload banner.
+  - `400 SEQ_GAP`: the batch starts after `lastSeq + 1`. The body adds `"lastSeq": <n>`, the last seq the server processed for this client, so the client resends from `lastSeq + 1`.
 
 ---
 
@@ -102,7 +117,7 @@ Client → server messages: `{"t":"presence","subject":"issue:…","state":"view
 
 ### 5.1 Pending mutation lifecycle
 ```
-created ─► queued (persisted in IDB) ─► sent ─► acked(lastSyncId=N) ─► confirmed (client lastSyncId ≥ N) ─► removed
+created ─► queued (persisted in IDB) ─► sent ─► acked(lastSyncId=N) ─► confirmed (client lastSyncId ≥ N, or an `ack` for its seq) ─► removed
                                           └──► rejected ─► removed + rebase + user-visible toast
 ```
 
@@ -169,7 +184,8 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 ## 8. Schema evolution
 
-- `schemaHash` = a hash of the synced model definitions. When it changes, clients receive `resync` and do a full bootstrap.
+- `schemaHash` = `computeSchemaHash(models)` from `packages/sync-protocol`: the lowercase hex SHA-256 of a canonical JSON form of `[SYNC_PROTOCOL_VERSION, models]`. For each model it covers the name, the load strategy, and each field's name, type and nullability. Models and fields are sorted by name, so declaration order doesn't matter. Client-only metadata (refs, indexes) is not hashed. Bumping `SYNC_PROTOCOL_VERSION` changes every hash. When it changes, clients receive `resync` and do a full bootstrap.
+- The hash is computed in pure TypeScript rather than with `crypto.subtle`, which is async and missing on plain-HTTP origins (common for a self-hosted LAN install).
 - Operation inputs evolve **additively** (optional fields only). A removed or renamed operation makes the server reply `CLIENT_OUTDATED`, and the client reloads.
 - DB migrations run at server start, guarded by an advisory lock, before the server accepts connections.
 
@@ -197,3 +213,11 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 4. **Group change:** visibility is gained and lost correctly, with purging on removal.
 5. **Rejection:** the overlay rolls back cleanly and the UI state matches the base state.
 6. **Performance:** bootstrap, warm start, and delta apply stay within the NFR budgets at the reference scale.
+
+---
+
+## 11. Change log
+
+| Date | Version | Change | Handed off |
+|---|---|---|---|
+| 2026-11-06 | v0.2 | PLAN-002 S1 codecs: `deltas.prev`; acks without packets; `schemaHash` in the WebSocket URL; close codes; batch rules (1–100, consecutive seqs); `lastSeq` on `SEQ_GAP`; `CLIENT_OUTDATED` = 426; schema hash definition; `presence` deferred to M4 | Session A (session-d-sync-client.md, Handoffs) |

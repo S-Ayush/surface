@@ -1,7 +1,11 @@
 {
   "extends": "@surface/config/tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // Runs in the browser's IDB worker and in Node: only APIs common to both
+    // (TextEncoder/TextDecoder). Tests also get Node types for cross-checks.
+    "lib": ["ES2023", "WebWorker"],
+    "types": ["node"]
   },
   "include": ["src", "test"]
 }

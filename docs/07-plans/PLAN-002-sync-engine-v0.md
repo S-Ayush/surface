@@ -8,11 +8,26 @@ Implements: [SPEC-002](../06-specs/SPEC-002-sync-engine-v0.md) · Protocol: [syn
 
 ## 1. Slices
 
-### S1: `packages/sync-protocol` · S
+### S1: `packages/sync-protocol` · S · ✅ Done 2026-11-06
 - Wire types and Zod codecs: bootstrap frames (`meta`, `row`, `end`), WebSocket messages (`deltas` with `prev` and `ack`, `resync`, `ping`/`pong`), mutate request and response.
 - NDJSON stream encoder/decoder (works in a worker and in Node).
 - `computeSchemaHash(modelDefs)`: a stable hash of the synced model names, fields, and types.
 - **Tests:** round-trip codecs, a partial-chunk NDJSON decoder, schemaHash stability.
+
+> **As built (2026-11-06, session D):**
+> - **Deps:** `zod` ^4.6.7 (same range as the server); dev: `fast-check` ^4.10.2, `@types/node` (tests only).
+> - **Structure:** `src/scalars.ts` (sync id, UUID, seq, sync group, model and op names, row), `bootstrap.ts`, `socket.ts`, `mutate.ts`, `ndjson.ts`, `schema-hash.ts`, `sha256.ts`, `errors.ts`. Each message has a Zod schema, an inferred type, and a `decode*` helper that throws `ProtocolError`. Error messages name the path and rule, never the payload, so row data can't reach logs.
+> - **Portability:** `src` builds with `lib: ES2023 + WebWorker` and no Node types (`tsconfig.build.json` sets `types: []`), so a Node-only API in `src` fails `pnpm build`. Only `TextEncoder`/`TextDecoder` are used.
+> - **Deviations and additions** (all in sync-protocol.md §4 and §11, handed off to A):
+>   - `deltas.packets` may be empty when `ack` is non-empty. A mutation can write rows its own client cannot see, and the client must still confirm it.
+>   - The WebSocket URL carries `schemaHash`, so the hub can answer `resync(schema)` (S4 needs it; the doc's URL lacked it).
+>   - `SEQ_GAP` error bodies carry `lastSeq`, so the client knows where to resend from.
+>   - Decoders enforce ordering: packet ids strictly increasing and > `prev`, mutation and result seqs consecutive.
+>   - `presence` is left out of the codecs (M4). A message with an unknown `t` fails to decode.
+> - **NDJSON:** `NdjsonDecoder` is push-based (`push(chunk)` → values, `end()`), accepts byte or string chunks (not mixed), reassembles UTF-8 split across chunks (`fatal: true`, so malformed bytes throw), tolerates CRLF and blank lines, and caps a line at 8 Mi chars. `decodeNdjson(asyncIterable)` wraps it. A push API avoids depending on `ReadableStream` async iteration in browsers.
+> - **`computeSchemaHash(models: Iterable<SchemaHashModel>)`:** the input is structural: `{ name, load, fields: { [name]: { type, nullable } } }`. S6's `defineModel` output must provide these keys (extra keys such as refs and indexes are ignored). The hash is SHA-256 hex of the canonical form, using a pure-TS SHA-256 because `crypto.subtle` is missing on plain-HTTP origins. It is cross-checked against `node:crypto`. `SYNC_PROTOCOL_VERSION` (now exported from `schema-hash.ts`) is part of every hash.
+> - **Tests (99):** fast-check round trips for every message type, connect params and NDJSON (byte and text chunking at arbitrary cut points), rejection cases per codec, a pinned golden hash, order independence, per-field sensitivity, FIPS vectors plus padding boundaries. Property tests use the fixed seed `PROPERTY_SEED` in `test/support/arbitraries.ts`, and fast-check prints the seed and path on failure.
+> - **For later slices:** S3/S4/S5 import the schemas from `@surface/sync-protocol` (server code reads `dist/`, which the build produces). Use `decodeSocketConnectParams(request.query)`, `decodeMutateRequest(body)` and `encodeNdjsonLine(frame)`. S6 must define the canonical field `type` strings (e.g. `uuid`, `string`, `int`, `enum:a|b`), because they feed the hash.
 
 ### S2: Sync tables & repo layer (server) · L · ✅ Done 2026-11-06
 - Migrations: `sync_log`, `sync_state` (seeded with 0), `client_mutations`. The `sync_groups text[] NOT NULL` convention is documented in `db/README.md`.

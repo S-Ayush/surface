@@ -4,7 +4,9 @@
     "noEmit": false,
     "rootDir": "src",
     "outDir": "dist",
-    "customConditions": []
+    "customConditions": [],
+    // No Node types for source: a Node-only API in src fails the build.
+    "types": []
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]

@@ -1,0 +1,167 @@
+import fc from 'fast-check';
+import { describe, expect, it } from 'vitest';
+import {
+  CloseCode,
+  decodeClientMessage,
+  decodeServerMessage,
+  decodeSocketConnectParams,
+  encodeSocketConnectParams,
+  encodeSocketMessage,
+  MAX_PACKETS_PER_MESSAGE,
+  ProtocolError,
+} from '../src/index.js';
+import {
+  clientMessage,
+  hash,
+  propertyOptions,
+  serverMessage,
+  syncId,
+  uuid,
+  viaJson,
+} from './support/arbitraries.js';
+
+const ID = '0192f5a4-1c2b-7d3e-8f40-123456789abc';
+const row = (id = ID) => ({ id, title: 'x' });
+
+describe('server messages', () => {
+  it('round-trip unchanged', () => {
+    fc.assert(
+      fc.property(serverMessage, (message) => {
+        expect(decodeServerMessage(encodeSocketMessage(message))).toEqual(viaJson(message));
+      }),
+      propertyOptions,
+    );
+  });
+
+  it('decode every packet action from sync-protocol.md §4.3', () => {
+    const message = decodeServerMessage(
+      JSON.stringify({
+        t: 'deltas',
+        prev: 18234,
+        packets: [
+          { id: 18235, a: 'I', m: 'Issue', d: row() },
+          { id: 18236, a: 'U', m: 'Issue', d: row() },
+          { id: 18237, a: 'A', m: 'Issue', mid: ID },
+          { id: 18238, a: 'V', m: 'Issue', mid: ID },
+          { id: 18239, a: 'D', m: 'Comment', mid: ID },
+          { id: 18240, a: 'G', added: [`team:${ID}`], removed: [] },
+        ],
+        ack: [{ clientId: ID, seq: 57 }],
+      }),
+    );
+    expect(message.t === 'deltas' && message.packets.map((p) => p.a)).toEqual([
+      'I',
+      'U',
+      'A',
+      'V',
+      'D',
+      'G',
+    ]);
+  });
+
+  it('accepts acks without packets, for mutations whose rows this client cannot see', () => {
+    const message = decodeServerMessage(
+      JSON.stringify({ t: 'deltas', prev: 7, packets: [], ack: [{ clientId: ID, seq: 1 }] }),
+    );
+    expect(message).toEqual({ t: 'deltas', prev: 7, packets: [], ack: [{ clientId: ID, seq: 1 }] });
+  });
+
+  const deltas = (prev: number, ids: number[], ack: unknown[] = []) =>
+    JSON.stringify({
+      t: 'deltas',
+      prev,
+      packets: ids.map((id) => ({ id, a: 'A', m: 'Issue', mid: ID })),
+      ack,
+    });
+
+  it.each([
+    ['a first packet id equal to prev', deltas(5, [5, 6])],
+    ['a first packet id below prev', deltas(5, [4])],
+    ['decreasing packet ids', deltas(5, [7, 6])],
+    ['duplicate packet ids', deltas(5, [6, 6])],
+    ['no packets and no acks', deltas(5, [])],
+    [
+      'an I packet without a row',
+      JSON.stringify({ t: 'deltas', prev: 0, packets: [{ id: 1, a: 'I', m: 'Issue' }], ack: [] }),
+    ],
+    [
+      'an A packet without mid',
+      JSON.stringify({ t: 'deltas', prev: 0, packets: [{ id: 1, a: 'A', m: 'Issue' }], ack: [] }),
+    ],
+    [
+      'an unknown packet action',
+      JSON.stringify({
+        t: 'deltas',
+        prev: 0,
+        packets: [{ id: 1, a: 'X', m: 'Issue', mid: ID }],
+        ack: [],
+      }),
+    ],
+    ['an ack with seq 0', deltas(5, [6], [{ clientId: ID, seq: 0 }])],
+    ['an unknown resync reason', JSON.stringify({ t: 'resync', reason: 'bored' })],
+    [
+      'presence, which is not part of v0',
+      JSON.stringify({ t: 'presence', subject: 'issue:1', users: [] }),
+    ],
+    ['text that is not JSON', '{"t":"ping"'],
+  ])('rejects %s', (_case, text) => {
+    expect(() => decodeServerMessage(text)).toThrow(ProtocolError);
+  });
+
+  it(`caps a deltas message at ${MAX_PACKETS_PER_MESSAGE} packets`, () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    expect(() => decodeServerMessage(deltas(0, ids(MAX_PACKETS_PER_MESSAGE)))).not.toThrow();
+    expect(() => decodeServerMessage(deltas(0, ids(MAX_PACKETS_PER_MESSAGE + 1)))).toThrow(
+      ProtocolError,
+    );
+  });
+
+  it('names the offending packet when ids go backwards', () => {
+    expect(() => decodeServerMessage(deltas(5, [6, 8, 7]))).toThrow(
+      'Invalid server message at packets.2.id: packet ids must be strictly increasing and greater than prev',
+    );
+  });
+});
+
+describe('client messages', () => {
+  it('round-trip unchanged', () => {
+    fc.assert(
+      fc.property(clientMessage, (message) => {
+        expect(decodeClientMessage(encodeSocketMessage(message))).toEqual(message);
+      }),
+      propertyOptions,
+    );
+  });
+
+  it('rejects messages the server does not accept from clients', () => {
+    expect(() => decodeClientMessage('{"t":"ping"}')).toThrow(ProtocolError);
+  });
+});
+
+describe('connect parameters', () => {
+  it('round-trip through a query string', () => {
+    fc.assert(
+      fc.property(fc.record({ since: syncId, clientId: uuid, schemaHash: hash }), (params) => {
+        const query = Object.fromEntries(new URLSearchParams(encodeSocketConnectParams(params)));
+        expect(decodeSocketConnectParams(query)).toEqual(params);
+      }),
+      propertyOptions,
+    );
+  });
+
+  it.each(['', '-1', '01', '1.5', '1e3', ' 1', '9007199254740993'])('rejects since=%j', (since) => {
+    expect(() =>
+      decodeSocketConnectParams({ since, clientId: ID, schemaHash: 'b'.repeat(64) }),
+    ).toThrow(ProtocolError);
+  });
+
+  it('rejects a missing schema hash', () => {
+    expect(() => decodeSocketConnectParams({ since: '0', clientId: ID })).toThrow(ProtocolError);
+  });
+});
+
+describe('close codes', () => {
+  it('match sync-protocol.md', () => {
+    expect(CloseCode).toEqual({ ServiceRestart: 1012, SessionRevoked: 4001 });
+  });
+});

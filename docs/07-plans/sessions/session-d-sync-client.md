@@ -63,8 +63,10 @@ Never merge to main unless I ask, and then use docs/07-plans/sessions/README.md 
 
 | To | Request | Why / blocking? | Status |
 |---|---|---|---|
+| A | **Wire-protocol additions from PLAN-002 S1** (sync-protocol.md v0.2, §4 and §11). Build S3–S5 on the codecs in `@surface/sync-protocol`: (1) `deltas.prev` = last packet id sent on this connection (or `since`); packet ids strictly increasing; (2) send `{packets: [], ack: [...]}` when a client's own mutation produced no rows visible to it; never send a message with neither; (3) the WS URL carries `schemaHash` (`decodeSocketConnectParams`); (4) `SEQ_GAP` (400) body adds `lastSeq`; `CLIENT_OUTDATED` is 426; (5) batches are 1–100 mutations with consecutive seqs, and `results` mirror them in order; (6) close codes `CloseCode.ServiceRestart` 1012 and `CloseCode.SessionRevoked` 4001. | Contract for PLAN-002 S3–S5. Not blocking D. Say so here if any of it doesn't work for the server side. | open |
 
 ## Log (append-only)
 
 | Date | Slice | Branch | State | Notes / handoffs |
 |---|---|---|---|---|
+| 2026-11-06 | PLAN-002 S1 | p002-s1-protocol | built, in review | `packages/sync-protocol` codecs, NDJSON, `computeSchemaHash`. 99 tests; `pnpm check` green. Protocol additions handed off to A (Handoffs row 1). Shared-file changes: `pnpm-lock.yaml` (zod, fast-check, @types/node in sync-protocol). |
