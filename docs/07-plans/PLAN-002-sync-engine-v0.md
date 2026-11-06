@@ -172,13 +172,13 @@ Additive tables. `debug_items` exists only in dev and test (the migration is gua
 |---|---|
 | AC-1 | `server/test/sync-ordering.stress.int.test.ts` (written in S2) |
 | AC-2 | `sync-client/test/sim/convergence.prop.test.ts` (not held: real executor and Postgres, §6) |
-| AC-3 | `sync-client/test/sim/exactly-once.prop.test.ts` (not held: real executor and Postgres, §6) |
+| AC-3 | **Partial:** `sync-client/test/queue.prop.test.ts` "applies every mutation exactly once through faults and reloads" (S8: one client against the in-process fake hub, with failed requests, lost responses, dropped sockets and reloads). Still to write in S9: `sync-client/test/sim/exactly-once.prop.test.ts`, with several clients, crashes and the real executor (not held: real executor and Postgres, §6) |
 | AC-4 | ⏸ held (e2e) `e2e/sync-realtime.spec.ts` (two browser contexts, 100 trials, p95 assertion) |
 | AC-5 | `sync-client/test/optimistic-frame.test.ts` (+ `e2e/sync-optimistic.spec.ts`, ⏸ held) |
-| AC-6 | ⏸ held (e2e) `e2e/sync-offline.spec.ts` (Playwright `context.setOffline`, reload) |
+| AC-6 | `sync-client/test/ownership.test.ts`: "shows a change made offline after a reload, and sends it once back online" (Web Locks) and "picks up the queue it left before a reload once that lease runs out" (plain HTTP, lease) (unit, S8) + ⏸ held (e2e) `e2e/sync-offline.spec.ts` (Playwright `context.setOffline`, reload) |
 | AC-7 | `sync-client/test/rejection.test.ts` (+ `e2e/sync-rejection.spec.ts`, ⏸ held) |
 | AC-8 | ⏸ held (perf) `e2e/perf/bootstrap.perf.ts` (nightly) |
-| AC-9 | ⏸ held (integration) `server/test/sync-catchup.int.test.ts` |
+| AC-9 | `sync-client/test/live.test.ts` "catches up on 1,000 changes made while it was away" (client side, S7) + ⏸ held (integration) `server/test/sync-catchup.int.test.ts` |
 | AC-10 | `sync-client/test/resync.test.ts` (+ `server/test/sync-resync.int.test.ts`, ⏸ held) |
 | AC-11 | `server/test/sync-groups.int.test.ts` (bootstrap, catch-up, live; not held: leak test, §6) |
 | AC-12 | `server/test/sync-lint.test.ts` (ESLint rule) + `server/test/repo-guard.int.test.ts` (both written in S2) |
