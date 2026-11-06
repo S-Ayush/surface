@@ -95,6 +95,10 @@ Resolver rules:
 - **Scoped** refs (status, cycle, team label) resolve *after* their scope ref, using dependency order declared by the ref type.
 - Resolution runs in the executor's transaction, so the snapshot is consistent with the handler.
 - The client has equivalent resolvers over the local store, used by `optimistic()` and command-menu parsing.
+- **Names and keys** match case-insensitively. When several rows differ only by case, an exact-case match wins; otherwise the name is ambiguous. (Q4)
+- **Ids of scoped refs** resolve only within their scope: a status id from another team is `NOT_FOUND`, the same as an unknown id.
+- **Deactivated users** referenced through a plain `UserRef` give `INVALID_INPUT` ("… is deactivated"), not `NOT_FOUND`, because users are visible to everyone. Fields that must accept them use the `allowInactive` variant. (Q5)
+- The **system actor** sees every row; visibility applies to user, API and MCP actors.
 
 ## 5. Permissions
 
@@ -238,3 +242,5 @@ Fails the build if any operation:
 | Q1 | Should `GET /api/openapi.json` require auth? | No. It contains no data, and it helps scripts. |
 | Q2 | Should handlers be allowed to call `execute()` of other ops? | No. Compose through internal functions within one transaction, so there is one authorization point. |
 | Q3 | Should we version operations (`issue.update@2`)? | No. Additive changes and deprecation only (lint rule 8). |
+| Q4 | Are reference names case-sensitive? (added 2026-11-06, PLAN-003 S2) | No. Case-insensitive, with an exact-case match preferred, so `todo` finds "Todo" and typed or AI input works. |
+| Q5 | What does a deactivated user in a `UserRef` return? (added 2026-11-06, PLAN-003 S2) | `INVALID_INPUT` with "… is deactivated", since the user is visible and `NOT_FOUND` would mislead. |

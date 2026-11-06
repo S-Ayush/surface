@@ -42,7 +42,7 @@ If the code you need to write would contradict a spec, **stop and say so**. Fix 
 ```
 apps/server   Fastify: HTTP API, sync hub, MCP, auth, jobs (Node)
 apps/web      React 19 SPA (Vite), served by the server
-packages/domain         entity types, enums, invariants, filter engine (no deps)
+packages/domain         entity types, enums, invariants, refs, filter engine (no workspace deps; Zod only)
 packages/operations     operation definitions shared by client and server (→ domain)
 packages/sync-protocol  wire types + codecs (→ domain)
 packages/sync-client    client store, IndexedDB, mutation queue (→ domain, operations, sync-protocol)

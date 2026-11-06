@@ -1,11 +1,10 @@
+import type { RefEntity } from '@surface/domain';
+
 /**
- * A row a reference resolved to (SPEC-003 §4). The executor passes these to `permission`
- * after resolution and visibility checks. PLAN-003 S2 defines the resolvers.
+ * A row a reference resolved to (SPEC-003 §4), defined in `@surface/domain` so client
+ * resolvers share it. The executor passes these to `permission` after resolution.
  */
-export interface RefEntity {
-  readonly id: string;
-  readonly [field: string]: unknown;
-}
+export type { RefEntity };
 
 /** One resolved reference field: a single row, or the rows of a list of references. */
 export type ResolvedRef = RefEntity | readonly RefEntity[];
