@@ -9,7 +9,7 @@ import { SURFACE_REF_KEY } from '@surface/domain';
 import { z } from 'zod';
 import { definitionChecks, type AnyOperation } from './define.js';
 import { connectionOf, listInput } from './list.js';
-import { toCompactSchema, toJsonSchema, type CompactSchema, type JsonSchema } from './schema.js';
+import { toCompactSchema, toJsonSchema, type CompactField, type JsonSchema } from './schema.js';
 
 export type LintRule = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
@@ -30,12 +30,26 @@ export interface LintProblem {
   readonly message: string;
 }
 
-/** One field of a snapshot schema: what a breaking-change check compares. */
+const MIN_BOUNDS = ['minimum', 'exclusiveMinimum', 'minLength', 'minItems'] as const;
+const MAX_BOUNDS = ['maximum', 'exclusiveMaximum', 'maxLength', 'maxItems'] as const;
+type Bound = (typeof MIN_BOUNDS)[number] | (typeof MAX_BOUNDS)[number];
+
+/**
+ * One field of a snapshot schema: what a breaking-change check compares. Paths are dot-paths
+ * from the root (`$`); an array's items are `path[]`, so their nullability is a field of its own.
+ */
 export interface SnapshotField {
+  /** JSON type or reference type, with `|null` when nullable: `string|null`, `array`, `TeamRef`. */
   readonly type: string;
   readonly required?: true;
   readonly enum?: readonly unknown[];
   readonly format?: string;
+  /** Inputs only: limits a value must meet. */
+  readonly bounds?: Readonly<Partial<Record<Bound, number>>>;
+  /** Inputs only, and only without a format (a format implies its pattern). */
+  readonly pattern?: string;
+  /** Inputs only: the object rejects keys it doesn't name. */
+  readonly closed?: true;
 }
 
 export interface SnapshotEntry {
@@ -55,6 +69,9 @@ const SnapshotFieldSchema = z.strictObject({
   required: z.literal(true).optional(),
   enum: z.array(z.unknown()).optional(),
   format: z.string().optional(),
+  bounds: z.partialRecord(z.enum([...MIN_BOUNDS, ...MAX_BOUNDS]), z.number()).optional(),
+  pattern: z.string().optional(),
+  closed: z.literal(true).optional(),
 });
 const SnapshotSchema = z.strictObject({
   operations: z.record(
@@ -263,6 +280,15 @@ function inputBreaks(before: Fields, after: Fields): string[] {
     }
     const lost = types(was.type).filter((t) => !covers(types(now.type), t));
     if (lost.length > 0) out.push(`input ${path} no longer accepts ${lost.join(', ')}`);
+    // A narrowed type brings its own bounds (an int's safe range); one message is enough.
+    if (lost.length === 0) out.push(...tighterBounds(path, was, now));
+    if (now.pattern !== undefined && now.pattern !== was.pattern) {
+      out.push(`input ${path} must now match the pattern ${now.pattern}`);
+    }
+    if (now.closed && !was.closed) {
+      const what = path === ROOT ? 'input' : `input ${path}`;
+      out.push(`${what} now rejects fields it does not name`);
+    }
     if (now.enum && (!was.enum || was.enum.some((v) => !now.enum?.includes(v)))) {
       const gone = was.enum?.filter((v) => !now.enum?.includes(v)) ?? [];
       out.push(
@@ -278,9 +304,23 @@ function inputBreaks(before: Fields, after: Fields): string[] {
   for (const [path, now] of Object.entries(after)) {
     if (now.required !== true || before[path]?.required === true) continue;
     // A required child of a new optional parent breaks nobody: old inputs leave the parent out.
+    if (path === ROOT) continue;
     const parent = parentOf(path);
-    if (parent === '' || before[parent] !== undefined) out.push(`input ${path} is now required`);
+    if (before[parent] !== undefined) out.push(`input ${path} is now required`);
   }
+  return out;
+}
+
+function tighterBounds(path: string, was: SnapshotField, now: SnapshotField): string[] {
+  const out: string[] = [];
+  const check = (bound: Bound, tighter: (n: number, w: number) => boolean) => {
+    const n = now.bounds?.[bound];
+    const w = was.bounds?.[bound];
+    if (n === undefined || (w !== undefined && !tighter(n, w))) return;
+    out.push(`input ${path} now has ${bound} ${n}${w === undefined ? '' : ` (was ${w})`}`);
+  };
+  for (const bound of MIN_BOUNDS) check(bound, (n, w) => n > w);
+  for (const bound of MAX_BOUNDS) check(bound, (n, w) => n < w);
   return out;
 }
 
@@ -310,31 +350,137 @@ function snapshotEntry(op: AnyOperation): SnapshotEntry {
   return {
     kind: op.kind,
     ...(op.deprecated ? { deprecated: { ...op.deprecated } } : {}),
-    input: snapshotFields(toCompactSchema(op.input, 'input')),
-    output: snapshotFields(toCompactSchema(op.output, 'output')),
+    input: snapshotFields(toJsonSchema(op.input, 'input'), 'input'),
+    output: snapshotFields(toJsonSchema(op.output, 'output'), 'output'),
   };
 }
 
-/** Compact fields without descriptions and defaults: rewording is not a schema change. */
-function snapshotFields(schema: CompactSchema): Record<string, SnapshotField> {
-  return Object.fromEntries(
-    Object.entries(schema).map(([path, field]) => [
-      path,
-      {
-        type: field.type,
-        ...(field.required ? { required: true as const } : {}),
-        ...(field.enum ? { enum: field.enum } : {}),
-        ...(field.format === undefined ? {} : { format: field.format }),
-      },
-    ]),
-  );
+const ROOT = '$';
+/** Relations embed one level (§7.2), so real schemas are shallow; this stops recursive ones. */
+const MAX_SNAPSHOT_DEPTH = 8;
+
+/**
+ * Every field of a schema, from its JSON Schema rather than the compact one: the compact schema
+ * is written for readers (it folds item nullability into `string[]` and drops bounds), while a
+ * breaking-change check needs both. Descriptions and defaults are left out: rewording is not a
+ * schema change, and a removed default shows up as a newly required field.
+ */
+function snapshotFields(root: JsonSchema, io: 'input' | 'output'): Record<string, SnapshotField> {
+  const out: Record<string, SnapshotField> = {};
+  const visit = (
+    node: JsonSchema,
+    path: string,
+    required: boolean,
+    depth: number,
+    refs: ReadonlySet<string>,
+  ): void => {
+    const ref = node.$ref;
+    if (ref !== undefined) {
+      const target = ref === '#' ? root : root.$defs?.[/^#\/\$defs\/([^/]+)$/.exec(ref)?.[1] ?? ''];
+      if (refs.has(ref) || !isSchema(target)) {
+        out[path] = { type: 'object', ...(required ? { required: true as const } : {}) };
+        return;
+      }
+      visit({ ...target, ...withoutRef(node) }, path, required, depth, new Set([...refs, ref]));
+      return;
+    }
+    const { inner, nullable } = splitNull(node);
+    const isRef =
+      typeof node[SURFACE_REF_KEY] === 'string' || typeof inner[SURFACE_REF_KEY] === 'string';
+    out[path] = {
+      type: snapshotType(inner) + (nullable ? '|null' : ''),
+      ...(required ? { required: true as const } : {}),
+      ...(isRef ? {} : valueRules(inner, io)),
+    };
+    if (isRef || depth >= MAX_SNAPSHOT_DEPTH) return;
+    const keys = new Set(Array.isArray(inner.required) ? inner.required : []);
+    for (const [key, child] of Object.entries(inner.properties ?? {})) {
+      if (!isSchema(child)) continue;
+      visit(child, path === ROOT ? key : `${path}.${key}`, keys.has(key), depth + 1, refs);
+    }
+    if (inner.type === 'array' && isSchema(inner.items)) {
+      // An element is always present; whether it can be null is its own type.
+      visit(inner.items, `${path}[]`, true, depth + 1, refs);
+    }
+  };
+  visit(root, ROOT, true, 0, new Set());
+  return out;
 }
 
-function sameField(have: SnapshotField | undefined, want: SnapshotField): boolean {
+function valueRules(node: JsonSchema, io: 'input' | 'output'): Partial<SnapshotField> {
+  const rules: { -readonly [K in keyof SnapshotField]?: SnapshotField[K] } = {};
+  if (Array.isArray(node.enum)) rules.enum = node.enum;
+  else if (node.const !== undefined) rules.enum = [node.const];
+  if (typeof node.format === 'string') rules.format = node.format;
+  if (io === 'output') return rules;
+  const bounds: Partial<Record<Bound, number>> = {};
+  for (const bound of [...MIN_BOUNDS, ...MAX_BOUNDS]) {
+    const value = node[bound];
+    if (typeof value === 'number') bounds[bound] = value;
+  }
+  if (Object.keys(bounds).length > 0) rules.bounds = bounds;
+  if (typeof node.pattern === 'string' && rules.format === undefined) rules.pattern = node.pattern;
+  if (node.type === 'object' && node.additionalProperties === false) rules.closed = true;
+  return rules;
+}
+
+function snapshotType(node: JsonSchema): string {
+  const ref = node[SURFACE_REF_KEY];
+  if (typeof ref === 'string') return ref;
+  if (typeof node.$ref === 'string') return 'object';
+  if (typeof node.type === 'string') return node.type;
+  if (Array.isArray(node.type)) return node.type.join('|');
+  const variants = node.anyOf ?? node.oneOf;
+  if (Array.isArray(variants)) {
+    return [
+      ...new Set(
+        variants
+          .filter(isSchema)
+          .map((v) => splitNull(v).inner)
+          .map(snapshotType),
+      ),
+    ].join('|');
+  }
+  return 'any';
+}
+
+/** `type: [x, "null"]` or `anyOf: [x, {type: "null"}]` as the non-null part and a flag. */
+function splitNull(node: JsonSchema): { inner: JsonSchema; nullable: boolean } {
+  if (Array.isArray(node.type) && node.type.includes('null')) {
+    const rest = node.type.filter((t) => t !== 'null');
+    return { inner: { ...node, type: rest.length === 1 ? rest[0] : rest }, nullable: true };
+  }
+  const variants = node.anyOf;
+  if (Array.isArray(variants)) {
+    const rest = variants.filter((v) => !(isSchema(v) && v.type === 'null'));
+    if (rest.length < variants.length) {
+      const [only] = rest;
+      const inner =
+        rest.length === 1 && isSchema(only)
+          ? { ...withoutVariants(node), ...only }
+          : { ...node, anyOf: rest };
+      return { inner, nullable: true };
+    }
+  }
+  return { inner: node, nullable: false };
+}
+
+function withoutRef(node: JsonSchema): JsonSchema {
+  const { $ref: _ref, ...rest } = node;
+  return rest;
+}
+
+function withoutVariants(node: JsonSchema): JsonSchema {
+  const { anyOf: _anyOf, ...rest } = node;
+  return rest;
+}
+
+/** Whether two compact fields agree on what a list convention fixes (type, required, values). */
+function sameField(have: CompactField | undefined, want: CompactField): boolean {
   if (have === undefined) return false;
-  const a = snapshotFields({ x: have }).x;
-  const b = snapshotFields({ x: want }).x;
-  return JSON.stringify(a) === JSON.stringify(b);
+  const core = (f: CompactField) =>
+    JSON.stringify([f.type, f.required ?? false, f.enum ?? null, f.format ?? null]);
+  return core(have) === core(want);
 }
 
 /** Paths of uuid-formatted strings outside reference types, as dot-paths (`[]` for items). */
@@ -373,9 +519,12 @@ function covers(set: readonly string[], type: string): boolean {
   );
 }
 
+/** `a.b` → `a`, `a[]` → `a`, `a[].b` → `a[]`, a top-level field → the root, the root → ''. */
 function parentOf(path: string): string {
+  if (path === ROOT) return '';
+  if (path.endsWith('[]')) return path.slice(0, -2);
   const dot = path.lastIndexOf('.');
-  return dot < 0 ? '' : path.slice(0, dot).replace(/\[\]$/, '');
+  return dot < 0 ? ROOT : path.slice(0, dot);
 }
 
 /** Only the outermost removed field is reported. */

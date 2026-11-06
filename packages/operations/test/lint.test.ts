@@ -67,6 +67,26 @@ function rules(ops: readonly AnyOperation[], released?: readonly AnyOperation[])
   );
 }
 
+describe('rules 1 and 7: the other required fields and unique names', () => {
+  it('flags no examples, no permission and an overlong description as rule 1', () => {
+    const noPermission: AnyOperation = { ...teamUpdate };
+    Reflect.deleteProperty(noPermission, 'permission');
+    expect(rules([{ ...teamUpdate, examples: [] }])).toEqual([
+      [1, 'examples needs at least 1 input, like { team: "ENG" }'],
+    ]);
+    expect(rules([noPermission])).toEqual([[1, 'permission is required, like (p) => p.admin()']]);
+    expect(rules([{ ...teamUpdate, description: 'x'.repeat(401) }])).toEqual([
+      [1, 'description must be 400 characters or fewer (401)'],
+    ]);
+  });
+
+  it('flags a second operation with the same name as rule 7', () => {
+    expect(rules([teamUpdate, { ...teamUpdate }])).toEqual([
+      [7, 'name is used by another operation. Names must be unique'],
+    ]);
+  });
+});
+
 describe('rule 4: reference types', () => {
   const uuid = '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e';
   const mutation = (name: string, input: z.ZodObject, internal = false): AnyOperation => ({
@@ -184,6 +204,62 @@ describe('rule 8: breaking changes against the snapshot', () => {
       // Only the outermost removed field.
       'output owner was removed',
     ]);
+  });
+
+  it('compares list items on their own, so a null item is a change', () => {
+    const before = query(
+      'team.tags',
+      z.object({ ids: z.array(z.string().nullable()).optional() }),
+      z.object({ tags: z.array(z.string()), owners: z.array(z.object({ name: z.string() })) }),
+    );
+    const after = query(
+      'team.tags',
+      z.object({ ids: z.array(z.string()).optional() }),
+      z.object({
+        tags: z.array(z.string().nullable()),
+        owners: z.array(z.object({ name: z.string() }).nullable()),
+      }),
+    );
+    expect(rules([after], [before]).map(([, m]) => m)).toEqual([
+      'input ids[] no longer accepts null',
+      'output tags[] can now be null',
+      'output owners[] can now be null',
+    ]);
+  });
+
+  it('rejects tighter input bounds, a new pattern and a strict object, but not looser ones', () => {
+    const before = query(
+      'team.rename',
+      z.object({ name: z.string().max(64).optional(), size: z.int().min(0).optional() }),
+      z.object({ name: z.string().max(64) }),
+    );
+    const tighter = query(
+      'team.rename',
+      z.strictObject({
+        name: z
+          .string()
+          .min(2)
+          .max(8)
+          .regex(/^[a-z]+$/)
+          .optional(),
+        size: z.int().min(1).optional(),
+      }),
+      // Output bounds are the server's business: callers only read the values.
+      z.object({ name: z.string().max(8) }),
+    );
+    expect(rules([tighter], [before]).map(([, m]) => m)).toEqual([
+      'input now rejects fields it does not name',
+      'input name now has minLength 2',
+      'input name now has maxLength 8 (was 64)',
+      'input name must now match the pattern ^[a-z]+$',
+      'input size now has minimum 1 (was 0)',
+    ]);
+    const looser = query(
+      'team.rename',
+      z.object({ name: z.string().max(100).optional(), size: z.int().optional() }),
+      z.object({ name: z.string() }),
+    );
+    expect(rules([looser], [before])).toEqual([]);
   });
 
   it('rejects a changed kind and a removed operation, unless it was released deprecated', () => {

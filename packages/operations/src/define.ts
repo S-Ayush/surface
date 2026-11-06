@@ -99,7 +99,10 @@ export function definitionProblems(def: AnyOperation): string[] {
   return definitionChecks(def).map((problem) => problem.message);
 }
 
-/** A definition problem and the registry-lint rule it breaks (SPEC-003 §11). */
+/**
+ * A definition problem and the registry-lint rule it breaks (SPEC-003 §11): 1 for the required
+ * fields (summary, description and its length), 7 for naming and the other §3.1 format checks.
+ */
 export interface DefinitionCheck {
   readonly rule: 1 | 7;
   readonly message: string;
@@ -144,7 +147,7 @@ export function definitionChecks(def: AnyOperation): DefinitionCheck[] {
     add(1, 'description is required: say what it changes and which references it accepts');
   } else if (description.length > DESCRIPTION_MAX_LENGTH) {
     add(
-      7,
+      1,
       `description must be ${DESCRIPTION_MAX_LENGTH} characters or fewer (${description.length})`,
     );
   }

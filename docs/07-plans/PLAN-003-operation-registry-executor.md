@@ -191,7 +191,7 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 - `pnpm registry:lint` (in CI stage 1) implementing the 8 rules of SPEC-003 §11, plus contract tests that run every op's `examples` against the seed fixture.
 - `catalog.snapshot.json` is committed. Rule 8 diffs the current catalog against the snapshot, and `pnpm registry:snapshot` updates it on release.
 - **Negative fixtures:** one deliberately broken op per rule in `packages/operations/test/lint-fixtures/` (AC-9).
-- **From the S1–S4 review:** rule 4 (an example that runs against the seed fixture) exempts `internal: true` ops, whose examples need test-only fixtures.
+- **From the S1–S4 review:** rule 2's run of examples against the seed fixture exempts `internal: true` ops, whose examples need test-only fixtures.
 
 > **As built (2026-11-06).**
 > - **Versions:** no new packages. `tsx` ^4.23.15 (already the server's) added as a dev dependency of `@surface/operations` to run the script.
@@ -200,20 +200,22 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 >   - `define.ts` gained `definitionChecks()`: the definition-time checks tagged with their rule (1 or 7). `definitionProblems()` is unchanged on top of it.
 >   - `packages/operations/scripts/registry.ts` (`lint` | `snapshot`), with its own `scripts/tsconfig.json` (Node types; `src/` stays browser-safe). Root scripts `pnpm registry:lint` and `pnpm registry:snapshot` (the latter runs Prettier on the file).
 >   - `packages/operations/catalog.snapshot.json`: `{ "operations": {} }`, since every M0 operation so far is internal.
-> - **How each rule is decided** is written into SPEC-003 §11 (Decision D2). In short: `ui` marks web mutations (rule 3); raw uuids are allowed only as a `create*` op's own `id` and in internal ops (rule 4); rules 5 and 6 go by verb prefix; rule 8 diffs compact schemas, with new output enum values allowed.
+> - **How each rule is decided** is written into SPEC-003 §11 (Decision D2). In short: `ui` marks web mutations (rule 3); raw uuids are allowed only as a `create*` op's own `id` and in internal ops (rule 4); rules 5 and 6 go by verb prefix; rule 8 diffs snapshot fields built from JSON Schema (array items as `path[]`; input bounds, patterns and strictness), with new output enum values allowed. Internal ops are also exempt from rule 4. The name's prefix need not equal `domain` (an S1 decision, kept after review).
 > - **Tests:**
 >   - `operations/test/lint.test.ts` (AC-9): each fixture in `test/lint-fixtures/` (one per rule) reports its rule and only that rule; the valid operation they are made from passes; the built-in operations pass against the **committed** snapshot (this is the lint inside `pnpm check`); plus cases for rule 4 exemptions and nested arrays, rule 6 bounds and kind, and rule 8 in both directions (additions allowed, each kind of break, removal after deprecation, a dangling `replacedBy`).
 >   - `server/test/registry-contract.int.test.ts`: every public operation's examples run through the real executor and handlers against `test/seed.ts`; a second case shows a failing example is reported (`debug.touch` → `NOT_FOUND`).
+> - **Review fixes (2026-11-06):** the snapshot is built from JSON Schema rather than the compact schema, which folds item nullability into `string[]` and drops bounds; rule 8 now sees null items, tighter input bounds, new patterns and strict inputs. Tests added for no examples, no permission, an overlong description (now rule 1, was 7), and duplicate names. A mutation check (items not visited) fails the new nullable-item test.
 > - **Exercised:** `pnpm registry:lint` passes (3 operations); with a keyword removed from `debug.echo` it printed the rule 1 problem and exited 1.
 > - **Deviations:**
 >   - The lint runs in CI through `pnpm test` rather than as its own CI step (`.github/workflows` belongs to session B); the CLI is for people.
 >   - The seed fixture is an admin actor with no rows, because users and teams arrive in PLAN-001, so the public-example contract test has nothing to run yet.
 > - **Notes for later slices:**
 >   - **PLAN-001 S1:** extend `test/seed.ts` (the actor's user row, the ENG team and its workflow) as the first public operations land; their examples then run in the contract test.
+>   - **Contract test isolation:** it runs every example in one database, in order. Once destructive operations exist (PLAN-001's `team.removeMember`), give each operation a fresh seed or roll each one back, so one example can't break the next.
 >   - **Every new public operation:** `pnpm registry:lint` locally. On release, `pnpm registry:snapshot` and commit the file (handoff to session B for the release workflow).
 
 ## 2. Modules touched
-`packages/operations/*`, `packages/domain/{refs,filter}/*`, `apps/server/src/executor/*`, `apps/server/src/http/ops.ts`, `apps/server/src/jobs/` (pg-boss bootstrap), migrations (`event_outbox`, `api_idempotency`, pg-boss schema), `scripts/registry-lint.ts`.
+`packages/operations/*`, `packages/domain/{refs,filter}/*`, `apps/server/src/executor/*`, `apps/server/src/http/ops.ts`, `apps/server/src/jobs/` (pg-boss bootstrap), migrations (`event_outbox`, `api_idempotency`, pg-boss schema), `packages/operations/scripts/registry.ts`.
 
 ## 3. Migration & rollback
 New tables `event_outbox` and `api_idempotency`, plus the pg-boss schema. All are additive. Rollback = revert the code; the tables are left unused.
