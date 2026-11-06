@@ -160,6 +160,37 @@ output: { nodes: T[], pageInfo: { hasNextPage: boolean, endCursor: string | null
 ### 7.3 Aggregates
 `*.count` and `*.groupBy` take the same `filter`. `groupBy` returns `[{ key, label, count, estimateSum? }]`. They are required for issue (M1) and project (M3) domains.
 
+### 7.4 Filter semantics
+Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5](../03-domain/domain-model.md#5-filter-model); this section fixes what it means, so the client evaluator and the SQL compiler agree (AC-6). Code: `packages/domain/src/filter/`, `apps/server/src/executor/filter-sql.ts`.
+
+- **Shape:** `{ and: Filter[] }`, `{ or: Filter[] }`, or `{ field, op, value }`. There is no `not`; use `neq`, `nin` or `exists: false`. At most 8 levels of nesting, 200 nodes, 500 list values and 1,000 characters per string. Text may not contain NUL or broken Unicode (Postgres can't store it as sent).
+- **Field types and operators** (each model declares its fields with `defineFilterFields`):
+
+| Type | Stored as | Operators |
+|---|---|---|
+| `text` | text | `eq` `neq` `in` `nin` `contains` `exists` |
+| `enum` | text | `eq` `neq` `in` `nin` `exists` |
+| `number` | `integer`, `smallint` or `double precision` (types the wire delivers as JS numbers; not `bigint`/`numeric`/`real`) | `eq` `neq` `in` `nin` `lt` `lte` `gt` `gte` `exists` |
+| `boolean` | boolean | `eq` `neq` `exists` |
+| `instant` | `timestamptz(3)` | `lt` `lte` `gt` `gte` `exists` |
+| `day` | `date` | `eq` `neq` `lt` `lte` `gt` `gte` `exists` |
+| `ref` | uuid | `eq` `neq` `in` `nin` `exists` |
+| `refs` (a set, e.g. labels) | `uuid[]` | `eq` (has) `neq` (lacks) `in` (has any of) `nin` (has none of) `exists` (non-empty) |
+
+  Text has no ordering operators, because client and database collations order text differently.
+- **Missing values** (null, or an empty/null set): a condition is false, except `neq`, `nin` and `exists: false`, which are true. So "assignee is not Ana" includes unassigned issues. Logic is two-valued everywhere.
+- **Empty groups and lists:** `and: []` matches everything, `or: []` nothing; `in: []` matches nothing, `nin: []` everything.
+- **Ids, not names:** `ref`/`refs` values are uuids or `me`. Names, keys and emails (the domain-model example's `"label": ["bug"]`) are turned into ids by the reference resolvers (§4) before the filter is resolved; the `*.list` helpers do this, with the same ambiguity and `NOT_FOUND` rules.
+- **Visibility:** a dot-path field (`status.category`, `parent.title`) reads another table, and its SQL must apply the actor's sync groups, so a filter can never match through a row the actor can't see (permissions.md §5).
+- **Text:** `eq`/`in` compare exactly. `contains` ignores case using full Unicode lowercasing (JS `toLowerCase`, Postgres `lower()` with the ICU root collation `und-x-icu`), with no wildcards. Ids compare as lowercase uuids.
+- **Relative values** are resolved once, in shared code, before evaluation or SQL compilation:
+  - `me` → the acting user's id. Without a user it is an error.
+  - **Instants** take an ISO-8601 date-time with an explicit offset, or a signed duration from now using weeks, days, hours and minutes (`-P14D`, `-PT30M`, `P1W`). A day is exactly 24 hours. Months and years are rejected (their length varies). The result must fall within years 1–9999 (UTC).
+  - **Days** take `YYYY-MM-DD`, or a whole-day duration from *today in the actor's time zone* (`-P7D` is a week ago, `P0D` today).
+  - Cycle-relative values (`current`, `next`, `previous`) arrive with cycles (M1).
+- **Instants compare at millisecond precision.** Synced tables store them as `timestamptz(3)`, so the replica holds exactly what the database compares.
+- Errors (unknown field, unsupported operator, bad value) are `INVALID_INPUT` with the path into the filter and the valid choices. A bad evaluation context (a malformed user id, an unknown time zone in settings) is an internal error, not the caller's.
+
 ## 8. Client contract (`optimistic`)
 
 - `optimistic(store, input)` runs in the client after local validation. It may read anything in the store and write only through `store.patch / insert / archive / remove` on the overlay.
@@ -245,3 +276,4 @@ Fails the build if any operation:
 | Q4 | Are reference names case-sensitive? (added 2026-11-06, PLAN-003 S2) | No. Case-insensitive, with an exact-case match preferred, so `todo` finds "Todo" and typed or AI input works. |
 | Q5 | What does a deactivated user in a `UserRef` return? (added 2026-11-06, PLAN-003 S2) | `INVALID_INPUT` with "… is deactivated", since the user is visible and `NOT_FOUND` would mislead. |
 | Q6 | Which isolation level does the executor use? (added 2026-11-06, PLAN-003 S4) | Mutations `READ COMMITTED`: concurrent writes to a row wait for its lock and the last write wins (sync-protocol §5); handlers that read, then write, lock with `FOR UPDATE`. Queries `REPEATABLE READ READ ONLY`, one snapshot. Serialization failures and deadlocks still retry per E5. |
+| D1 | (2026-11-06, PLAN-003 S5) What do filters mean for missing values, case, time and sets? | §7.4: two-valued logic with negations including missing values; ICU full-Unicode case folding for `contains`; relative values resolved in shared code at millisecond precision; no text ordering. |
