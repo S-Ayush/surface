@@ -58,6 +58,7 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 
 | Date | Slice | Branch | State | Notes / handoffs |
 |---|---|---|---|---|
+| 2026-11-07 | PLAN-002 S3 + review fixes | main | merged | Built, reviewed and fixed during phase 1 (rows in [session-a-platform.md](session-a-platform.md)). Rebased onto `95c55a8`, clean; `pnpm install`, `pnpm check`, `pnpm registry:lint`, `pnpm test:int` (179 + 3 perf) green; main fast-forwarded to `a76c982`. Also carries session D's docs commit `34e7ed8` (SPEC-002 AC-6 qualifier). Next: PLAN-002 S4. |
 
 ## Prompt
 
