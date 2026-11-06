@@ -69,7 +69,8 @@ export async function buildApp({
   });
 
   const webDir = config.webDir ?? defaultWebDir();
-  registerSecurityHeaders(app, readIndexHtml(webDir));
+  const indexHtml = readIndexHtml(webDir);
+  registerSecurityHeaders(app, indexHtml);
   registerErrorHandler(app);
   const metrics = config.metricsEnabled ? registerMetrics(app) : undefined;
   registerHealthRoutes(app, lifecycle, info);
@@ -82,7 +83,7 @@ export async function buildApp({
       version: info.version,
     });
   }
-  await registerWebApp(app, webDir);
+  await registerWebApp(app, webDir, indexHtml !== undefined);
 
   return app;
 }

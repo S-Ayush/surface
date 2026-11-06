@@ -10,12 +10,14 @@ import type { FastifyInstance } from 'fastify';
 /** A `<script>` without `src`, whatever its other attributes, and its exact text. */
 const INLINE_SCRIPT = /<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script\s*>/gi;
 
-/** CSP source expressions for every inline script in `html`, as the browser hashes them. */
+/**
+ * CSP source expressions for every inline script in `html`, as the browser hashes them: the
+ * HTML parser turns CRLF and CR into LF before the script text is hashed.
+ */
 export function inlineScriptHashes(html: string): string[] {
   const hashes = [...html.matchAll(INLINE_SCRIPT)].map((match) => {
-    const digest = createHash('sha256')
-      .update(match[1] ?? '', 'utf8')
-      .digest('base64');
+    const text = (match[1] ?? '').replace(/\r\n?/g, '\n');
+    const digest = createHash('sha256').update(text, 'utf8').digest('base64');
     return `'sha256-${digest}'`;
   });
   return [...new Set(hashes)];

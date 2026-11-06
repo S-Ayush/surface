@@ -258,7 +258,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | AC-11 | Logs are JSON. A test greps logs from an auth and API-key flow and finds no passwords, tokens, or cookies. | CI |
 | AC-12 | `surface doctor` reports each failure condition in §12 correctly (fixture per condition). | integration |
 | AC-13 | Running with an external `DATABASE_URL` (no `db` service) works end to end. | CI |
-| AC-14 | Every response carries the §15 policy. It allows the theme bootstrap by its sha256 hash and has no `'unsafe-inline'`, `'unsafe-eval'` or wildcard source. | unit |
+| AC-14 | Every response the app routes (pages, assets, API, errors, health) carries the §15 policy. It allows the theme bootstrap by its sha256 hash and has no `'unsafe-inline'`, `'unsafe-eval'` or wildcard source. | unit |
 
 ## 14. Decisions (open questions resolved with the proposed defaults, 2026-11-06)
 
@@ -292,4 +292,6 @@ Every response, the JSON API and errors included, carries this `Content-Security
 
 - The server reads `index.html` once at startup. When the web app isn't built, `script-src` is `'self'` only.
 - A library that probes for `eval` (Zod checks whether it can compile schemas) is refused, and falls back. Turn the probe off rather than allow `'unsafe-eval'`.
+- A library that injects a `<style>` element is blocked by `style-src 'self'`. Import its CSS through Vite instead (TipTap: `injectCSS: false`).
+- Responses Fastify writes without routing (the 503 while closing, malformed-request errors) skip the hook. None of them is HTML.
 - HSTS and the cookie flags in the architecture's security row come with auth (PLAN-001 S3) and the reverse-proxy settings; they are not part of this section.

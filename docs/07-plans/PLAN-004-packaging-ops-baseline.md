@@ -196,28 +196,32 @@ Added on 2026-11-06 for session C's handoff (PLAN-005 S1): the theme bootstrap i
 >   - `security-headers.ts` exports `inlineScriptHashes(html)`, `contentSecurityPolicy(hashes)` and `registerSecurityHeaders(app, indexHtml)` (an `onSend` hook).
 >   - `buildApp` reads `index.html` once through `readIndexHtml(webDir)` (new in `http/static.ts`) and registers the hook before anything else, so error and 404 responses carry it too.
 >   - `test/helpers.ts`: `fakeWebDir(indexHtml?)`.
-> - **Tests:** `security-headers.test.ts` (6) covers:
->   - hashes of exact script text (whitespace, non-ASCII, `type="module"`), checked against `openssl`, not `node:crypto`;
+> - **Tests:** `security-headers.test.ts` (9) covers:
+>   - hashes of exact script text (whitespace, non-ASCII, `type="module"`, CRLF and CR read as LF), checked against `openssl`, not `node:crypto`;
 >   - `src` scripts skipped, and duplicates listed once;
+>   - the real `apps/web/index.html` yields exactly the theme bootstrap's hash, a committed `openssl` value (update it when the script changes);
+>   - the policy equals the §15 table, and every source is `'self'`, `'none'`, a hash, or `data:`/`blob:` in `font-src`/`img-src` only;
 >   - the page's `script-src` is `'self'` plus the hash;
->   - no `'unsafe-inline'`/`'unsafe-eval'`/`*`, with `object-src`/`base-uri`/`frame-ancestors` set to `'none'`;
 >   - the same policy on the page, an asset, an API 404 and `/healthz`;
 >   - `'self'` only without a web build.
 >
->   With the hook removed, the 3 app-level tests fail.
+>   With the hook removed, the 3 app-level tests fail. Planted bugs each fail their test: no CRLF normalisation, `https:` added to `img-src`, a `data-src` attribute on the bootstrap tag.
 > - **Browser check (manual, once; CI has no browser jobs yet, SPEC-004 §14 D4):** Playwright Chromium against `buildApp` serving the real `apps/web/dist`:
 >   - the theme bootstrap ran (`data-theme` was `dark` and `light` with each colour scheme);
 >   - the app rendered and the 13 fonts loaded;
 >   - an injected inline `<script>` and an `onerror` handler were both refused.
 >
 >   The one other violation is Zod's caught `eval` probe (`allowsEval`), which falls back to non-JIT parsing. `z.config({ jitless: true })` in the web entry point removes it; that file is `apps/web`'s, so it is listed as a follow-up in session A's log.
+> - **Review fixes (2026-11-06):** the policy test pins every directive and rejects any other source; the real `index.html` is hashed in a unit test; line endings are normalised like the HTML parser does; `registerWebApp` takes `hasWebApp` from `readIndexHtml` (one existence check); AC-14 says "every response the app routes".
 > - **Notes for later:**
+>   - **Next work on `apps/web` (PLAN-005 S4+, owner to be decided):** turn off Zod's `eval` probe with `z.config({ jitless: true })`. Put it in a module of its own, imported first in `main.tsx`: imports are hoisted, so a call in `main.tsx`'s body runs after every imported module, including any that parse at load. Until then each load reports one `script-src eval` violation, harmless.
+>   - **The editor slice (`packages/editor`, ADR-0009):** create TipTap with `injectCSS: false` and import its CSS through Vite; `style-src 'self'` blocks the `<style>` element it injects by default.
 >   - **The deferred e2e stage:** add a Playwright test that loads the app and fails on any `securitypolicyviolation`.
 >   - **PLAN-002 S4:** check that `connect-src 'self'` admits the `/sync/ws` WebSocket in every supported browser (CSP Level 3 matches same-origin `ws:`/`wss:`).
 >   - **PLAN-001 S3:** HSTS and cookie flags are not part of this slice.
 
 ## 2. Modules touched
-Root config, `packages/config`, `apps/server/{src/config.ts, src/app.ts, src/db/*, bin/surface.ts}`, `apps/web` (hello), `docker/*`, `.github/workflows/*`, `e2e/*`, `scripts/*`, `README.md`, `docs/ops/*`.
+Root config, `packages/config`, `apps/server/{src/config.ts, src/app.ts, src/db/*, src/http/security-headers.ts, bin/surface.ts}`, `apps/web` (hello), `docker/*`, `.github/workflows/*`, `e2e/*`, `scripts/*`, `README.md`, `docs/ops/*`.
 
 ## 3. Migration & rollback
 Only the bootstrap migration `0000_extensions` (`pg_trgm`); history lives in the runner's `schema_migrations` table (see S3 "As built"). Migrations are forward-only, and the policy is documented in `upgrade.md` (back up before upgrading).

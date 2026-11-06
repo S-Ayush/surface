@@ -8,7 +8,7 @@ Status: **Ready** · Date: 2026-11-06 · Milestone: **M0 Foundations** · Specs:
 
 | Plan | Implements | Slices | Size |
 |---|---|---|---|
-| [PLAN-004](PLAN-004-packaging-ops-baseline.md) | SPEC-004 Repository, CI & packaging | 8 | ~9 d |
+| [PLAN-004](PLAN-004-packaging-ops-baseline.md) | SPEC-004 Repository, CI & packaging | 9 | ~9.5 d |
 | [PLAN-003](PLAN-003-operation-registry-executor.md) | SPEC-003 Operation Registry & executor | 7 | ~10 d |
 | [PLAN-002](PLAN-002-sync-engine-v0.md) | SPEC-002 Sync engine v0 | 10 | ~18 d |
 | [PLAN-001](PLAN-001-workspace-auth-members-teams.md) | SPEC-001 Auth, members & teams | 9 | ~13 d |

@@ -31,10 +31,12 @@ export function readIndexHtml(webDir: string): string | undefined {
   return existsSync(indexFile) ? readFileSync(indexFile, 'utf8') : undefined;
 }
 
-export async function registerWebApp(app: FastifyInstance, webDir: string): Promise<void> {
-  const indexFile = path.join(webDir, 'index.html');
-  const hasWebApp = existsSync(indexFile);
-
+/** `hasWebApp`: whether `readIndexHtml(webDir)` found the page, so both agree on one check. */
+export async function registerWebApp(
+  app: FastifyInstance,
+  webDir: string,
+  hasWebApp: boolean,
+): Promise<void> {
   if (hasWebApp) {
     await app.register(fastifyStatic, {
       root: webDir,
