@@ -39,9 +39,27 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 - Optional `/metrics` (prom-client) behind `METRICS_ENABLED`.
 - **Tests:** config errors (AC-6), readiness transitions (AC-9), and log redaction unit test.
 
-### S3: Database layer & migrations · M
+### S3: Database layer & migrations · M · ✅ Done 2026-11-06
+> **As built:** drizzle-orm 0.45 + drizzle-kit 0.31 on `pg` 8 (node-postgres, needed for LISTEN/NOTIFY and pg-boss). Testcontainers 12. Modules: `src/db/{pool,checks,migrate,locks}.ts`, `src/db/schema/index.ts` (empty until the first tables), `src/startup-error.ts`, `drizzle.config.ts`, `migrations/`. 83 tests (61 unit, 22 integration).
+> - **Migrator:** our own runner over the drizzle-kit journal (`migrations/meta/_journal.json`), not drizzle's built-in migrator. Drizzle's runs everything in one transaction, takes no advisory lock, and can't detect a newer schema. Ours holds `pg_advisory_lock(LOCKS.migrations)`, runs one transaction per migration, and records history in `schema_migrations(idx, tag, hash, applied_at, applied_by_version)`. Startup refuses:
+>   - unknown applied migrations (E7, naming the newer version);
+>   - applied migrations whose SQL hash changed.
+> - **Deviation:** there is no `schema_meta` table. `schema_migrations` already records what E7 needs. Migration `0000_extensions` creates `pg_trgm`, and the startup check creates it first, with instructions if that isn't permitted.
+> - **Startup order:** listen → wait for the DB → **check the Postgres version → (under `LOCKS.migrations`) create extensions → migrate** → ready. `prepareDatabase(pool, { log, appVersion })` in `src/db/prepare.ts` is that sequence; the S4 `surface migrate` command should call it too. Extensions are created on the lock-holding connection, so a pool of one works. `ensureExtensions` also tolerates a concurrent `CREATE EXTENSION` from outside the lock (`23505`/`42710` → re-check). SPEC-004 §8 and §14 (D1) updated.
+> - **Migrations lock:** taken with `pg_try_advisory_lock` first, logging "waiting for another instance to finish migrations" when another replica holds it. If unlocking fails, the connection is destroyed rather than returned to the pool.
+> - **Rolling upgrades:** after a newer replica migrates, older replicas report 503 on `/readyz` (unknown migration). This is deliberate and documented in SPEC-004 §8 Health.
+> - **Wait for DB (E1):** transient errors retry every 1 s for 60 s, with a "waiting for database…" warning at most every 5 s. Wrong credentials (`28P01`), a `pg_hba.conf` rejection (`28000`, with a `?sslmode=require` hint) or a missing database (`3D000`) fail at once. Messages include the server's reason and show host, port and database, never credentials.
+> - **Readiness:** the `db` check runs `SELECT 1`, and the `migrations` check requires all applied and nothing unknown. The pool closes as a `resources` shutdown hook, and a failed startup logs one fatal message and exits 1 (tested with a child process). "Surface is ready" is logged only if no shutdown began during startup.
+> - **Advisory-lock keys** live in `src/db/locks.ts`: "SURF" namespace + feature number (`migrations`, `sync`, `testDatabases`).
+> - **Test harness:**
+>   - `pnpm test:int` runs `vitest.int.config.js`.
+>   - Global setup starts `postgres:17` via Testcontainers on the active Docker context, or uses `TEST_DATABASE_URL` (CI: a superuser URL to a service container). It then builds the migrated template `surface_test_template`.
+>   - `test/db.ts` provides `createTestDatabase({ migrated })` (a clone per file), plus `withTx`, `withAdmin` and `writeMigrations` (fixture journals).
+>   - The suite takes about 2.3 s warm.
+> - **Not yet added:** a Drizzle query instance (`drizzle(pool)`). It arrives with the first tables (PLAN-003 S4 outbox).
+
 - Drizzle setup in `apps/server/src/db/` (pool, `schema/` folder, `migrations/` folder, drizzle-kit config).
-- `migrate()` with `pg_advisory_lock(MIGRATIONS_LOCK)`, each migration in its own transaction, and a `schema_version` check: if the DB is newer than the code, exit with the E7 message.
+- `migrate()` with `pg_advisory_lock(LOCKS.migrations)`, each migration in its own transaction, and a `schema_version` check: if the DB is newer than the code, exit with the E7 message.
 - Startup checks: Postgres ≥ 17, and `pg_trgm` available (create if permitted; otherwise exit with instructions, E8).
 - First migration: `schema_meta`, plus extensions.
 - **Test harness:** `test/db.ts` with Testcontainers Postgres 17, a per-test-file database (template DB clone for speed), and a `withTx` helper.
@@ -82,7 +100,7 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 Root config, `packages/config`, `apps/server/{src/config.ts, src/app.ts, src/db/*, bin/surface.ts}`, `apps/web` (hello), `docker/*`, `.github/workflows/*`, `e2e/*`, `scripts/*`, `README.md`, `docs/ops/*`.
 
 ## 3. Migration & rollback
-Only the bootstrap migration (`schema_meta`, extensions). Migrations are forward-only, and the policy is documented in `upgrade.md` (back up before upgrading).
+Only the bootstrap migration `0000_extensions` (`pg_trgm`); history lives in the runner's `schema_migrations` table (see S3 "As built"). Migrations are forward-only, and the policy is documented in `upgrade.md` (back up before upgrading).
 
 ## 4. Test plan (AC → test)
 
@@ -95,7 +113,7 @@ Only the bootstrap migration (`schema_meta`, extensions). Migrations are forward
 | AC-6 | `apps/server/test/config.test.ts` |
 | AC-7 | CI upgrade job (enabled after v0.1.0) |
 | AC-8 | `e2e/restart.spec.ts` (sends SIGTERM to the container mid-session; extended in PLAN-002 for queued mutations) |
-| AC-9 | `apps/server/test/readiness.int.test.ts` |
+| AC-9 | `apps/server/test/health.test.ts` (state machine) + `apps/server/test/startup.int.test.ts` (503 while waiting for the migrations lock, then 200 with DB checks) |
 | AC-10 | CI no-egress job |
 | AC-11 | CI log-scan job |
 | AC-12 | `apps/server/test/doctor.int.test.ts` |

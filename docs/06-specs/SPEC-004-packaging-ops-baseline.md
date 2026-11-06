@@ -157,9 +157,11 @@ All configuration is through environment variables, validated at startup with a 
 
 **Startup** (`surface serve`):
 1. Load and validate config (fail fast).
-2. Connect to the DB with retry for up to 60 s, logging "waiting for database…".
-3. Run **migrations** under `pg_advisory_lock(MIGRATIONS_LOCK)`. Concurrent replicas wait. A failed migration exits non-zero, with the DB unchanged (each migration runs in a transaction).
-4. Check the Postgres version (≥ 17) and required extensions (`pg_trgm`). Create them if permitted; otherwise exit with instructions.
+2. Connect to the DB with retry for up to 60 s, logging "waiting for database…". Wrong credentials, a `pg_hba.conf` rejection (with a hint about `?sslmode=require`) or a missing database fail at once, with the server's reason and never the password.
+3. Check the Postgres version (≥ 17). An unsupported server exits with instructions before anything is changed.
+4. Under `pg_advisory_lock(LOCKS.migrations)`, so concurrent replicas wait their turn:
+   - create the required extensions (`pg_trgm`) if missing and permitted; otherwise exit with the SQL an administrator must run (E8). Nothing else has been changed at that point;
+   - run **migrations**. A failed migration exits non-zero, with the DB unchanged by it (each migration runs in its own transaction). History is kept in `schema_migrations`, including the Surface version that applied each migration (used for E7).
 5. If setup is incomplete, generate or log the setup token (SPEC-001).
 6. Start the job worker (by role), HTTP, and WebSocket. `/readyz` turns ready.
 
@@ -172,6 +174,7 @@ All configuration is through environment variables, validated at startup with a 
 **Health**
 - `/healthz` → 200 if the event loop is responsive (used by the Docker HEALTHCHECK).
 - `/readyz` → 200 only when the DB is reachable, migrations are current, and the server is not shutting down. JSON details for operators: `{ db: "ok", migrations: "current", version }`.
+- During a rolling upgrade, once a newer replica has migrated, older replicas see migrations they don't know and report 503 (`migrations: "failing"`). This is deliberate: the proxy stops routing to code that predates the schema. Replace old replicas promptly.
 
 ## 9. CLI (`surface <command>`)
 
@@ -242,3 +245,4 @@ Usage: `docker compose exec app surface doctor`.
 | Q2 | Should port 3000 bind to `0.0.0.0` or `127.0.0.1` by default? | `0.0.0.0`, so it works without a proxy on a LAN. The docs recommend `SURFACE_BIND=127.0.0.1` when using Caddy. |
 | Q3 | Should the bundled Caddy profile be the default install path? | No. It is optional, because many teams already have a proxy. The README shows both. |
 | Q4 | Which CI provider? | GitHub Actions (the stages are portable) |
+| D1 | (2026-11-06, PLAN-004 S3) Where do compatibility checks run relative to migrations? | §8 reordered: version check, then extensions and migrations together under the migrations lock. An incompatible database is never partly migrated, and concurrent replicas never race on `CREATE EXTENSION`. |

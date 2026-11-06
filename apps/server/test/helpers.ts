@@ -1,3 +1,4 @@
+import { createServer } from 'node:net';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -57,4 +58,14 @@ export function fakeWebDir(): string {
   writeFileSync(path.join(dir, 'assets', 'index-abc123.js'), 'console.log(1)');
   writeFileSync(path.join(dir, 'favicon.svg'), '<svg/>');
   return dir;
+}
+
+/** A local port with nothing listening on it (for child processes, which can't use port 0). */
+export async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (address === null || typeof address === 'string') throw new Error('no TCP port assigned');
+  return address.port;
 }
