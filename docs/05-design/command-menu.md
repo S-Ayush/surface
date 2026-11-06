@@ -67,6 +67,7 @@ Commands that need a value open a **sub-page** in the same menu, using the share
 - A selected command calls `dispatch(op, input)` (the same path as any UI control), then closes the menu and shows an Undo toast (M2) where an inverse exists.
 - Commands that open a UI (e.g. "Create issue") close the menu and open that UI.
 - Errors show as a toast. The menu does not reopen.
+  > **Note (2026-11-06, PLAN-005 S3):** toasts raised while an overlay is open wait until it closes (so `Esc` keeps reaching the overlay). When the menu stays open (`Mod+Enter`), show the error inline in the menu instead.
 
 ## 4. Keyboard
 

@@ -30,7 +30,10 @@ const stories = readStories().filter((story) => !story.tags.includes('play-fn'))
 test('every component has at least one snapshotted (static) story', () => {
   const components = readdirSync(new URL('../src/components/', import.meta.url));
   const missing = components.filter(
-    (name) => !stories.some((story) => story.id.startsWith(`primitives-${name.toLowerCase()}--`)),
+    (name) =>
+      !stories.some((story) =>
+        new RegExp(`^(primitives|overlays)-${name.toLowerCase()}--`).test(story.id),
+      ),
   );
   expect(missing).toEqual([]);
 });
@@ -39,7 +42,9 @@ for (const story of stories) {
   for (const theme of ['light', 'dark'] as const) {
     test(`${story.id} (${theme})`, async ({ page }) => {
       await page.goto(`/iframe.html?id=${story.id}&viewMode=story&globals=theme:${theme}`);
-      await page.locator('#storybook-root > *').first().waitFor();
+      // Rendered: the root holds the story and the (empty) toast region, committed together with
+      // any portals. Overlay stories render into portals, so nothing in the root need be visible.
+      await page.locator('#storybook-root > *').first().waitFor({ state: 'attached' });
       await page.waitForFunction(() => document.fonts.status === 'loaded');
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       await expect(page).toHaveScreenshot(`${story.id}--${theme}.png`, { fullPage: true });

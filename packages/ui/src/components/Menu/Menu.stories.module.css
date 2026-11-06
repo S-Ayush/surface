@@ -1,0 +1,9 @@
+.area {
+  display: flex;
+  align-items: center;
+  height: var(--row-height);
+  padding: 0 var(--space-12);
+  border: var(--border-width) dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}

@@ -1,0 +1,163 @@
+import { X } from 'lucide-react';
+import { AlertDialog as RadixAlertDialog, Dialog as RadixDialog } from 'radix-ui';
+import { useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { cx } from '../../internal/cx.js';
+import { useModalLayer } from '../../overlays/layer.js';
+import { Button } from '../Button/Button.js';
+import { IconButton } from '../IconButton/IconButton.js';
+import styles from './Dialog.module.css';
+
+export type DialogSize = 'sm' | 'md' | 'lg';
+
+export type DialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Required: names the dialog. Sentence case ("Create issue"). */
+  title: string;
+  description?: ReactNode;
+  /** sm 420 · md 560 · lg 720 px (design-system §5.2). */
+  size?: DialogSize;
+  /**
+   * The content has unsaved changes. Closing it (Esc, outside click, the close button or a
+   * <DialogClose>) then asks "Discard changes?" first (design-system §5.2, shortcuts.md §3.8).
+   */
+  dirty?: boolean;
+  /** Optional trigger. Without one (opened by a shortcut), focus returns to what was focused. */
+  trigger?: ReactElement;
+  /** Right-aligned actions, e.g. Cancel (<DialogClose>) and the primary button. */
+  footer?: ReactNode;
+  children?: ReactNode;
+};
+
+/** design-system §5.2: a modal with a focus trap; `Esc` closes the top-most layer only. */
+export function Dialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  size = 'md',
+  dirty = false,
+  trigger,
+  footer,
+  children,
+}: DialogProps) {
+  const [confirming, setConfirming] = useState(false);
+  // Closed by its owner while asking (e.g. the issue was deleted elsewhere): drop the question too.
+  if (!open && confirming) setConfirming(false);
+  const layer = useModalLayer(open);
+
+  // Every way of closing goes through Radix onOpenChange, so this one guard covers them all.
+  const requestOpenChange = (next: boolean) => {
+    if (!next && dirty) setConfirming(true);
+    else onOpenChange(next);
+  };
+
+  return (
+    <RadixDialog.Root open={open} onOpenChange={requestOpenChange}>
+      {trigger !== undefined && <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger>}
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className={styles.backdrop} />
+        <RadixDialog.Content
+          className={cx(styles.content, styles[size])}
+          onCloseAutoFocus={layer.onCloseAutoFocus}
+          // Without a description, opt out explicitly so Radix does not point at a missing element.
+          {...(description === undefined ? { 'aria-describedby': undefined } : {})}
+        >
+          <div className={styles.header}>
+            <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
+          </div>
+          {description !== undefined && (
+            <RadixDialog.Description className={styles.description}>
+              {description}
+            </RadixDialog.Description>
+          )}
+          {children !== undefined && <div className={styles.body}>{children}</div>}
+          {footer !== undefined && <div className={styles.footer}>{footer}</div>}
+          {/* Last in the DOM (shown top-right): Radix focuses the first focusable element on open,
+              which should be the first field, not "Close". */}
+          <RadixDialog.Close asChild>
+            <IconButton aria-label="Close" icon={<X />} size="sm" className={styles.close} />
+          </RadixDialog.Close>
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+      <DiscardConfirm
+        open={confirming}
+        onKeep={() => setConfirming(false)}
+        onDiscard={() => {
+          setConfirming(false);
+          onOpenChange(false);
+        }}
+      />
+    </RadixDialog.Root>
+  );
+}
+
+/** Closes the dialog it is in (through the dirty guard). Wrap a single button. */
+export function DialogClose({ children }: { children: ReactElement }) {
+  return <RadixDialog.Close asChild>{children}</RadixDialog.Close>;
+}
+
+/**
+ * "Discard changes?" stacked on the dialog. Its own `Esc` keeps editing; the safe choice has focus.
+ */
+function DiscardConfirm({
+  open,
+  onKeep,
+  onDiscard,
+}: {
+  open: boolean;
+  onKeep: () => void;
+  onDiscard: () => void;
+}) {
+  const layer = useModalLayer(open);
+  const discarding = useRef(false);
+  return (
+    <RadixAlertDialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onKeep();
+      }}
+    >
+      <RadixAlertDialog.Portal>
+        <RadixAlertDialog.Overlay className={styles.backdrop} />
+        <RadixAlertDialog.Content
+          className={cx(styles.content, styles.sm)}
+          onCloseAutoFocus={(event) => {
+            // On discard the dialog underneath closes too and restores focus itself.
+            if (discarding.current) {
+              discarding.current = false;
+              event.preventDefault();
+              return;
+            }
+            layer.onCloseAutoFocus(event);
+          }}
+        >
+          <div className={styles.header}>
+            <RadixAlertDialog.Title className={styles.title}>
+              Discard changes?
+            </RadixAlertDialog.Title>
+          </div>
+          <RadixAlertDialog.Description className={styles.description}>
+            Your unsaved changes will be lost.
+          </RadixAlertDialog.Description>
+          <div className={styles.footer}>
+            <RadixAlertDialog.Cancel asChild>
+              <Button>Keep editing</Button>
+            </RadixAlertDialog.Cancel>
+            <RadixAlertDialog.Action asChild>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  discarding.current = true;
+                  onDiscard();
+                }}
+              >
+                Discard
+              </Button>
+            </RadixAlertDialog.Action>
+          </div>
+        </RadixAlertDialog.Content>
+      </RadixAlertDialog.Portal>
+    </RadixAlertDialog.Root>
+  );
+}

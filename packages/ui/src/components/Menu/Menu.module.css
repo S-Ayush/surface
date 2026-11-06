@@ -1,0 +1,109 @@
+.content {
+  z-index: var(--z-overlay);
+  min-width: var(--menu-min-width);
+  max-height: var(
+    --radix-dropdown-menu-content-available-height,
+    var(--radix-context-menu-content-available-height)
+  );
+  overflow-y: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-e1);
+  color: var(--text-primary);
+  font-size: var(--text-base-size);
+  line-height: var(--text-base-line);
+}
+
+/* Only while open: a closing overlay has no animation, so Radix unmounts it at once. */
+.content[data-state='open'] {
+  animation: enter var(--dur-fast) var(--ease-out);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: var(--control-md);
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: default;
+  user-select: none;
+}
+
+/* Radix moves focus to the highlighted item (arrow keys or pointer). */
+.item[data-highlighted],
+.item[data-state='open'] {
+  background: var(--bg-hover);
+}
+
+.item[data-highlighted]:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.item[data-disabled] {
+  color: var(--text-disabled);
+}
+
+.icon,
+.check {
+  display: inline-flex;
+  flex: none;
+  width: var(--icon-md);
+  height: var(--icon-md);
+  color: var(--text-secondary);
+}
+
+.icon:empty {
+  display: none;
+}
+
+.icon svg,
+.check svg {
+  width: 100%;
+  height: 100%;
+}
+
+.label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kbd {
+  margin-left: var(--space-16);
+}
+
+.kbd kbd {
+  background: var(--bg-hover);
+}
+
+.chevron {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--text-tertiary);
+}
+
+.groupLabel {
+  padding: var(--space-6) var(--space-8) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  font-weight: var(--text-xs-weight);
+  line-height: var(--text-xs-line);
+}
+
+.separator {
+  height: var(--border-width);
+  margin: var(--space-4) calc(-1 * var(--space-4));
+  background: var(--border-strong);
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--motion-shift)));
+  }
+}

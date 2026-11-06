@@ -103,7 +103,8 @@ The user preference "font size" (FR-AUTH-10) scales the root by 12 / 13 / 14 px.
 - **Row heights:** list row `36` (comfortable) or `32` (compact preference). Board card minimum height `72`.
 - **Radius:** `xs 4` (badges, kbd) · `sm 6` (buttons, inputs, rows) · `md 8` (cards, popovers) · `lg 12` (modals) · `full` (avatars, pills).
 - **Elevation:** `e1` popovers and menus · `e2` modals and the command menu · `e3` toasts. Light theme uses soft shadows. Dark theme uses a 1 px `--border-default` plus a deeper shadow, because shadows read poorly on dark backgrounds.
-- **Z-index scale:** base 0 · sticky headers 10 · sidebar 20 · popover 40 · modal 50 · command menu 60 · toast 70 · tooltip 80.
+- **Z-index scale:** base 0 · sticky headers 10 · sidebar 20 · overlays 50 (popovers, menus, modals and the command menu share one level and stack in the order they open) · toast 70 · tooltip 80.
+  > **Correction (2026-11-06, PLAN-005 S3):** separate popover 40 / modal 50 / command menu 60 levels put any picker or menu opened inside a modal behind it. One overlay level relies on portal order instead (`--z-overlay`).
 
 ### 2.6 Motion
 
@@ -192,6 +193,8 @@ Built on **Radix primitives** wherever a primitive exists (ADR-0004). Every comp
 | **Dialog (Modal)** | `sm 420 · md 560 · lg 720`. Focus trap. `Esc` closes unless the content is dirty (then it asks to discard). |
 | **Command menu** | See [command-menu.md](command-menu.md) |
 | **Shortcut help** | `?` overlay listing all shortcuts by group, with a search filter |
+
+> **As built (2026-11-06, PLAN-005 S3):** Menu and ContextMenu share one item list. Menus are non-modal (a modal menu fails axe `aria-hidden-focus`). In a submenu `←` closes it and `Esc` closes the whole menu. Overlays share one z-index level and stack in opening order (§2.5). Focus returns to the trigger, or to what was focused when the overlay opened (a dialog opened from a menu item returns to the menu's trigger). The dirty-close guard is a stacked "Discard changes?" dialog whose default is "Keep editing". A toast raised while an overlay is open waits until it closes, and a toast ignores `Esc` unless focused, so `Esc` always reaches the top-most overlay. The banner region shows one banner at a time, by priority (tone by default; an outdated client outranks all), then age; its live regions stay mounted. Toasts are reachable with `F8`.
 
 ### 5.3 Domain components
 | Component | Description |

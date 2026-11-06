@@ -44,3 +44,41 @@ export { Textarea } from './components/Textarea/Textarea.js';
 export type { TextareaProps } from './components/Textarea/Textarea.js';
 export { Tooltip, TooltipProvider, TOOLTIP_DELAY_MS } from './components/Tooltip/Tooltip.js';
 export type { TooltipProps } from './components/Tooltip/Tooltip.js';
+
+// Overlays (PLAN-005 S3)
+export { OverlayProvider } from './overlays/OverlayProvider.js';
+export {
+  BANNER_PRIORITY,
+  MAX_VISIBLE_TOASTS,
+  OverlayManager,
+  TOAST_ACTION_DURATION_MS,
+  TOAST_DURATION_MS,
+  banner,
+  overlayManager,
+  toast,
+} from './overlays/manager.js';
+export type {
+  BannerAction,
+  BannerOptions,
+  BannerTone,
+  LayerKind,
+  OverlayLayer,
+  OverlaySnapshot,
+  ToastAction,
+  ToastOptions,
+  ToastTone,
+} from './overlays/manager.js';
+export { Banner, BannerRegion } from './components/Banner/Banner.js';
+export type { BannerProps } from './components/Banner/Banner.js';
+export { Dialog, DialogClose } from './components/Dialog/Dialog.js';
+export type { DialogProps, DialogSize } from './components/Dialog/Dialog.js';
+export { ContextMenu, Menu } from './components/Menu/Menu.js';
+export type { ContextMenuProps, MenuEntry, MenuProps } from './components/Menu/Menu.js';
+export {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from './components/Popover/Popover.js';
+export type { PopoverContentProps, PopoverProps } from './components/Popover/Popover.js';
+export { ToastRegion } from './components/Toast/Toast.js';

@@ -73,6 +73,12 @@
   --spinner-stroke: 2px;
   --tooltip-max-width: 280px;
   --empty-state-max-width: 360px;
+  --dialog-sm: 420px;
+  --dialog-md: 560px;
+  --dialog-lg: 720px;
+  --menu-min-width: 200px;
+  --popover-max-width: 360px;
+  --toast-width: 360px;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -88,9 +94,7 @@
   --z-base: 0;
   --z-sticky: 10;
   --z-sidebar: 20;
-  --z-popover: 40;
-  --z-modal: 50;
-  --z-command-menu: 60;
+  --z-overlay: 50;
   --z-toast: 70;
   --z-tooltip: 80;
   --dur-instant: 0ms;

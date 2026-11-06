@@ -47,3 +47,13 @@ export const PSEUDO_STATES = {
     focusVisible: ['[data-pseudo="focus"] :is(button, input, textarea, [tabindex])'],
   },
 };
+
+/**
+ * Whether `element` is what the pointer would hit at its centre, i.e. visible and not covered by
+ * another layer. Testing Library's queries ignore stacking, so overlay tests check this too.
+ */
+export function isOnTop(element: Element): boolean {
+  const rect = element.getBoundingClientRect();
+  const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  return hit !== null && element.contains(hit);
+}

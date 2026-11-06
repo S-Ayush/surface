@@ -34,10 +34,13 @@ const S2_COMPONENTS = [
   'Tooltip',
 ];
 
+/** The S3 overlays (PLAN-005 S3); ContextMenu lives with Menu, sharing its entries. */
+const S3_COMPONENTS = ['Banner', 'Dialog', 'Menu', 'Popover', 'Toast'];
+
 describe('component inventory', () => {
-  it('has every S2 component, each with stories (visual snapshots and story tests come from them)', () => {
+  it('has every S2 and S3 component, each with stories (visual snapshots and story tests come from them)', () => {
     const dirs = readdirSync(COMPONENTS_DIR);
-    for (const name of S2_COMPONENTS) {
+    for (const name of [...S2_COMPONENTS, ...S3_COMPONENTS]) {
       expect(dirs, name).toContain(name);
       expect(readdirSync(new URL(`${name}/`, COMPONENTS_DIR)), name).toContain(
         `${name}.stories.tsx`,

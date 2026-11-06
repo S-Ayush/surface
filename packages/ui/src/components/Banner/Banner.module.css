@@ -1,0 +1,51 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--control-lg);
+  padding: var(--space-4) var(--space-8) var(--space-4) var(--space-16);
+  color: var(--text-primary);
+}
+
+/* Text stays --text-primary on every *-subtle surface (contrast-tested); colour is in the icon. */
+.info {
+  background: var(--info-subtle);
+}
+
+.info .icon {
+  color: var(--info);
+}
+
+.warning {
+  background: var(--warning-subtle);
+}
+
+.warning .icon {
+  color: var(--warning);
+}
+
+.danger {
+  background: var(--danger-subtle);
+}
+
+.danger .icon {
+  color: var(--danger);
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.message {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}

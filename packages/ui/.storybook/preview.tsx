@@ -1,5 +1,6 @@
 import type { Decorator, Preview } from '@storybook/react-vite';
-import { TooltipProvider } from '../src/components/Tooltip/Tooltip.js';
+import { overlayManager } from '../src/overlays/manager.js';
+import { OverlayProvider } from '../src/overlays/OverlayProvider.js';
 import { PlatformProvider, type Platform } from '../src/platform.js';
 import { THEMES, type Theme } from '../src/tokens.gen.js';
 import '../src/styles/index.css';
@@ -18,15 +19,19 @@ const withThemeAndPlatform: Decorator = (Story, context) => {
   document.documentElement.setAttribute('data-theme', theme);
   return (
     <PlatformProvider platform={platform}>
-      <TooltipProvider>
+      <OverlayProvider>
         <Story />
-      </TooltipProvider>
+      </OverlayProvider>
     </PlatformProvider>
   );
 };
 
 const preview: Preview = {
   decorators: [withThemeAndPlatform],
+  // The overlay manager is app-wide: start every story without leftover toasts or banners.
+  beforeEach: () => {
+    overlayManager.clear();
+  },
   globalTypes: {
     theme: {
       description: 'Colour theme',

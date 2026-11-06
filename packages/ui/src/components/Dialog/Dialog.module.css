@@ -1,0 +1,100 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: var(--backdrop);
+}
+
+/* Only while open: a closing dialog has no animation, so Radix unmounts it at once. */
+.backdrop[data-state='open'] {
+  animation: fade var(--dur-base) var(--ease-out);
+}
+
+/* Top-aligned rather than centred, so a dialog does not jump while its content grows. */
+.content {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  width: calc(100vw - var(--space-32));
+  max-height: calc(88vh - var(--space-24));
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-e2);
+  color: var(--text-primary);
+  transform: translateX(-50%);
+}
+
+.content[data-state='open'] {
+  animation: enter var(--dur-base) var(--ease-out);
+}
+
+.content:focus-visible {
+  outline: none;
+}
+
+.sm {
+  max-width: var(--dialog-sm);
+}
+
+.md {
+  max-width: var(--dialog-md);
+}
+
+.lg {
+  max-width: var(--dialog-lg);
+}
+
+.header {
+  /* Room for the close button, which is positioned over the header's end. */
+  padding: var(--space-16) var(--space-48) var(--space-8) var(--space-20);
+}
+
+.close {
+  position: absolute;
+  top: var(--space-16);
+  right: var(--space-16);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg-size);
+  font-weight: var(--text-lg-weight);
+  line-height: var(--text-lg-line);
+}
+
+.description {
+  margin: 0;
+  padding: 0 var(--space-20) var(--space-8);
+  color: var(--text-secondary);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-8) var(--space-20);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16) var(--space-16);
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion sets --motion-shift to 0px and --motion-scale to 1: only the fade remains. */
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, var(--motion-shift)) scale(var(--motion-scale));
+  }
+}

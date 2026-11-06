@@ -83,6 +83,13 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'spinner-stroke': px(2),
   'tooltip-max-width': px(280),
   'empty-state-max-width': px(360),
+  // Overlays (§5.2): dialog widths sm/md/lg, and anchored surfaces.
+  'dialog-sm': px(420),
+  'dialog-md': px(560),
+  'dialog-lg': px(720),
+  'menu-min-width': px(200),
+  'popover-max-width': px(360),
+  'toast-width': px(360),
 
   // Radius (§2.5)
   'radius-xs': px(4),
@@ -104,9 +111,10 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'z-base': '0',
   'z-sticky': '10',
   'z-sidebar': '20',
-  'z-popover': '40',
-  'z-modal': '50',
-  'z-command-menu': '60',
+  // One level for every stacking overlay (popover, menu, dialog, command menu): they portal to
+  // <body> in the order they open, so a menu opened inside a dialog lands above it. Separate
+  // levels put a picker inside a modal behind the modal (PLAN-005 S3 review).
+  'z-overlay': '50',
   'z-toast': '70',
   'z-tooltip': '80',
 
