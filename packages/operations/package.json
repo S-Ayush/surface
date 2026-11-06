@@ -16,15 +16,18 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p scripts/tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "registry:lint": "tsx --conditions=@surface/source scripts/registry.ts lint",
+    "registry:snapshot": "tsx --conditions=@surface/source scripts/registry.ts snapshot"
   },
   "dependencies": {
     "@surface/domain": "workspace:*",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@surface/config": "workspace:*"
+    "@surface/config": "workspace:*",
+    "tsx": "^4.23.15"
   }
 }

@@ -18,6 +18,8 @@
     "test": "turbo run test",
     "test:int": "turbo run test:int",
     "check": "pnpm build && pnpm lint && pnpm typecheck && pnpm test",
+    "registry:lint": "pnpm --filter @surface/operations registry:lint",
+    "registry:snapshot": "pnpm --filter @surface/operations registry:snapshot && prettier --write packages/operations/catalog.snapshot.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "changeset": "changeset",

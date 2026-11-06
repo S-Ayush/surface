@@ -34,6 +34,7 @@ If the code you need to write would contradict a spec, **stop and say so**. Fix 
 | `pnpm test` / `pnpm test:int`           | Unit tests / integration tests (`*.int.test.ts`, real Postgres)                                                                   |
 | `pnpm --filter @surface/<pkg> <script>` | Run a script in one package (e.g. `pnpm --filter @surface/server test`)                                                           |
 | `pnpm lint:deps`                        | Package boundary check only                                                                                                       |
+| `pnpm registry:lint`                    | SPEC-003 §11 operation rules (also run by `pnpm test`); `pnpm registry:snapshot` records the released catalog                     |
 | `pnpm format`                           | Prettier write                                                                                                                    |
 | `pnpm --filter @surface/server dev`     | Server in watch mode (uses `apps/server/dev.env`)                                                                                 |
 

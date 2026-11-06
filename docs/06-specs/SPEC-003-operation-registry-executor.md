@@ -250,6 +250,14 @@ Fails the build if any operation:
 7. breaks the naming pattern, or has a summary over 80 chars
 8. has a *breaking* schema change versus the last released catalog snapshot (a removed field, a newly required field, or a narrowed type) without a `deprecated` replacement
 
+How the rules are applied (D2):
+- `pnpm registry:lint` prints the problems; a unit test runs the same lint, so `pnpm check` and CI fail on any. Rule 2's run against the seed fixture is a server contract test, and internal operations are exempt from it (their examples need test-only fixtures).
+- Rule 3: "used by the web client" means the mutation declares `ui` (§3.1).
+- Rule 4: any `uuid`-format string in an input outside a reference type. Exempt: the top-level `id` of a `create*` operation (a client-generated id, E7), and internal operations.
+- Rule 5: verbs starting `delete`, `remove`, `purge` or `deactivate`. Role changes are flagged `destructive` by review, not by name.
+- Rule 6: verbs starting `list`. The operation is a query, its input carries every `listInput` field unchanged (same bounds and defaults, none required), and its output has the connection shape.
+- Rule 8: `packages/operations/catalog.snapshot.json` holds the public operations' compact schemas (type, required, enum, format) as last released; `pnpm registry:snapshot` rewrites it on release. Inputs break when a field is removed, newly required (unless under a new optional parent), or narrowed (a type, `null` or an enum value no longer accepted, or a format added). Outputs break when a field is removed, no longer always present, or widened (a new type or `null`, or an enum dropped); new enum values in outputs are additive. A changed `kind` breaks. A released operation may disappear only if the snapshot shows it deprecated and its replacement exists; a deprecation must point at a public operation.
+
 ## 12. Edge cases
 
 | # | Case | Behaviour |
@@ -292,3 +300,4 @@ Fails the build if any operation:
 | Q6 | Which isolation level does the executor use? (added 2026-11-06, PLAN-003 S4) | Mutations `READ COMMITTED`: concurrent writes to a row wait for its lock and the last write wins (sync-protocol §5); handlers that read, then write, lock with `FOR UPDATE`. Queries `REPEATABLE READ READ ONLY`, one snapshot. Serialization failures and deadlocks still retry per E5. |
 | Q7 | What is `OrderBy`? (added 2026-11-06, PLAN-003 S5) | One key, `{ field, direction }`, with id as the tie-break and nulls last. Views order by one field, with reverse (PRD FR-VIEW-04), and one key keeps cursors and indexes simple. A text sort key (such as a fractional manual order, M2) must compare bytewise (`COLLATE "C"`), so the client and the database agree. |
 | D1 | (2026-11-06, PLAN-003 S5) What do filters mean for missing values, case, time and sets? | §7.4: two-valued logic with negations including missing values; ICU full-Unicode case folding for `contains`; relative values resolved in shared code at millisecond precision; no text ordering. |
+| D2 | (2026-11-06, PLAN-003 S7) How are the §11 rules decided where the text leaves room? | As listed under §11: `ui` marks web mutations; raw uuids are allowed only as a create's own `id` and in internal ops; destructive and list rules go by verb prefix; rule 8 compares compact schemas of public operations, with new output enum values allowed. |

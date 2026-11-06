@@ -96,7 +96,21 @@ export class OperationDefinitionError extends Error {
  * can't: name shape, domain, summary and description. The registry lint (S7) adds the rest.
  */
 export function definitionProblems(def: AnyOperation): string[] {
-  const problems: string[] = [];
+  return definitionChecks(def).map((problem) => problem.message);
+}
+
+/** A definition problem and the registry-lint rule it breaks (SPEC-003 §11). */
+export interface DefinitionCheck {
+  readonly rule: 1 | 7;
+  readonly message: string;
+}
+
+/** The checks `defineOperation` runs, each tagged with its §11 rule for `registry:lint`. */
+export function definitionChecks(def: AnyOperation): DefinitionCheck[] {
+  const problems: DefinitionCheck[] = [];
+  const add = (rule: 1 | 7, message: string): void => {
+    problems.push({ rule, message });
+  };
   // Runtime guards repeat some type-level rules because plain-JS callers and casts exist.
   const name: unknown = def.name;
   const kind: unknown = def.kind;
@@ -105,37 +119,37 @@ export function definitionProblems(def: AnyOperation): string[] {
   const description: unknown = def.description;
 
   if (typeof name !== 'string' || !OPERATION_NAME_PATTERN.test(name)) {
-    problems.push('name must be <domain>.<verb> with a camelCase verb, like team.update');
+    add(7, 'name must be <domain>.<verb> with a camelCase verb, like team.update');
   }
   if (kind !== 'query' && kind !== 'mutation') {
-    problems.push('kind must be "query" or "mutation"');
+    add(7, 'kind must be "query" or "mutation"');
   }
   if (!isOperationDomain(domain)) {
-    problems.push(
+    add(
+      7,
       `domain "${String(domain)}" is not in domain-model §7. Use one of the listed domains, like team`,
     );
   }
   if (typeof summary !== 'string' || summary.trim() === '') {
-    problems.push('summary is required, like "Update a team\'s name"');
+    add(1, 'summary is required, like "Update a team\'s name"');
   } else {
     if (summary.length > SUMMARY_MAX_LENGTH) {
-      problems.push(
-        `summary must be ${SUMMARY_MAX_LENGTH} characters or fewer (${summary.length})`,
-      );
+      add(7, `summary must be ${SUMMARY_MAX_LENGTH} characters or fewer (${summary.length})`);
     }
     if (!/^\p{Lu}/u.test(summary)) {
-      problems.push('summary must start with a capital letter, like "Update a team"');
+      add(7, 'summary must start with a capital letter, like "Update a team"');
     }
   }
   if (typeof description !== 'string' || description.trim() === '') {
-    problems.push('description is required: say what it changes and which references it accepts');
+    add(1, 'description is required: say what it changes and which references it accepts');
   } else if (description.length > DESCRIPTION_MAX_LENGTH) {
-    problems.push(
+    add(
+      7,
       `description must be ${DESCRIPTION_MAX_LENGTH} characters or fewer (${description.length})`,
     );
   }
   if (kind === 'query' && def.optimistic !== undefined) {
-    problems.push('queries cannot have optimistic(): only mutations change the store');
+    add(7, 'queries cannot have optimistic(): only mutations change the store');
   }
   return problems;
 }
