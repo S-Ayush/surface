@@ -49,11 +49,20 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 >   - **S3:** `ResolveActor` (`kind`, `userId?`, `groups`) is a structural subset of the planned `Actor`. Resolved rows carry `syncGroups` for `p.canSee`. `p.teamMember` needs membership for **public** teams too, which neither the groups nor the resolved team row provide; S3 must add it (e.g. `teamIds` on the actor).
 >   - **S4:** call `resolveRefs` at step 7 inside the transaction, and map `RefPlanError` and stub errors to `INTERNAL`.
 
-### S3: Actor & permission predicates · S
+### S3: Actor & permission predicates · S · ✅ Done 2026-11-06
 - `Actor` = `{ kind: user|api|mcp|system, userId?, role?, groups: string[], apiKey?: {scope, teamIds, allowDestructive} }`.
 - Predicate helper `p`: `any`, `admin`, `self`, `teamMember`, `owner`, `canSee`, each with a human-readable failure reason.
 - Key-scope checks (read keys allow queries only; `destructive` requires `allowDestructive`; `teamIds` narrowing). These are unit-tested now and wired to real keys in M6.
 - Test helpers `actorFor(user)` and `systemActor()`. Sessions are wired in PLAN-001 S3.
+
+> **As built (2026-11-06).**
+> - **Where:** `packages/domain/src/permissions.ts` holds `Actor`, `ApiKeyScope`, `syncGroupsFor`, `userActor`, `systemActor`, `canSeeGroups`, and `bindPredicates(actor) → { p, allowedWho() }`, so the client's command-menu pre-check runs the same code. `PermissionPredicates`, `ResolvedRef(s)` moved there from `operations`, which re-exports them and adds `evaluatePermission(def, actor, refs, input)` and `forbiddenReason`. Key scope is server-only: `apps/server/src/executor/key-scope.ts` (`keyScopeProblem`, `narrowToKeyTeams`, `refOutsideKeyTeams`, `teamIdOf`). Test helpers `actorFor(user, via?)` and `systemActor` are in `apps/server/test/helpers.ts`.
+> - **Deviation (Actor shape):** `Actor` gains `memberOf: string[]` (every team the user belongs to). `p.teamMember` needs public-team membership, which sync groups don't carry. PLAN-001 S3 fills it from `team_memberships` together with `groups`.
+> - **Predicates:** `false` for a missing reference; every row must pass for a list, and an empty list fails; the system actor passes every predicate (permissions.md §1). Each failing predicate records who it allows ("Admins", "members of Engineering", "that user themselves", "its creator"/"its owner", "people who can see it", "signed-in users"); the reason is `Only <who, joined with "or"> can <summary, first letter lowercased>.`, or `You don't have permission to <summary>.` when no audience was recorded.
+> - **Key scope:** read keys get `FORBIDDEN` for mutations, and destructive ops need `allowDestructive`, with reasons that say which key to use. `teamIds` narrowing works in two steps. First, private-team groups and memberships outside the key are dropped before resolving. Second, after resolving, `refOutsideKeyTeams` finds refs belonging to other teams (team id, or `teamId` on statuses and labels). The executor must report those as `NOT_FOUND`, never `FORBIDDEN`. Admin operations need no extra rule: the owner's role plus `read_write` already apply.
+> - **Notes for later slices:**
+>   - **S4:** order: `keyScopeProblem` (step 3) → `narrowToKeyTeams` → `resolveRefs` → `refOutsideKeyTeams` → `NOT_FOUND` → `evaluatePermission` (step 8).
+>   - **S5:** list queries for a key with `teamIds` must also filter by team in SQL, because public teams share the `workspace` group.
 
 ### S4: Executor pipeline · L
 - `apps/server/src/executor/execute.ts` implementing the SPEC-003 §6 steps 1–14.

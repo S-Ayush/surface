@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import { isOperationDomain, type OperationDomain } from './domains.js';
 import type { OptimisticStore } from './optimistic.js';
-import type { PermissionPredicates, ResolvedRefs } from './permission.js';
+import type { PermissionPredicates, ResolvedRefs } from '@surface/domain';
 import type { OperationUi } from './ui.js';
 
 export type OperationKind = 'query' | 'mutation';

@@ -2,6 +2,13 @@ import { createServer } from 'node:net';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import {
+  userActor,
+  type Actor,
+  type ApiKeyScope,
+  type Membership,
+  type Role,
+} from '@surface/domain';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { loadConfig, type Config } from '../src/config.js';
@@ -68,4 +75,22 @@ export async function freePort(): Promise<number> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   if (address === null || typeof address === 'string') throw new Error('no TCP port assigned');
   return address.port;
+}
+
+export { systemActor } from '@surface/domain';
+
+/**
+ * The actor for a test user (PLAN-003 S3). Sessions build the same thing from the database in
+ * PLAN-001 S3. Pass `via` for an API-key or MCP actor.
+ */
+export function actorFor(
+  user: { id: string; role?: Role; memberships?: readonly Membership[] },
+  via?: { kind: 'api' | 'mcp'; apiKey: ApiKeyScope },
+): Actor {
+  return userActor({
+    userId: user.id,
+    role: user.role ?? 'member',
+    memberships: user.memberships ?? [],
+    ...(via ? { via } : {}),
+  });
 }

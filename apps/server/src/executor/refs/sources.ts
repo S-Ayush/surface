@@ -12,19 +12,15 @@ import {
   parseTeamRef,
   parseUserRef,
   REF_AVAILABLE_FROM,
+  type Actor,
   type RefEntity,
   type RefType,
 } from '@surface/domain';
 import type { Queryable } from '../../db/pool.js';
 import { SurfaceError, type ErrorCandidate } from '../errors.js';
 
-/** Who is resolving. A structural subset of the executor's `Actor` (PLAN-003 S3). */
-export interface ResolveActor {
-  readonly kind: 'user' | 'api' | 'mcp' | 'system';
-  /** The user, or the API key's owner. Absent for the system actor. */
-  readonly userId?: string;
-  readonly groups: readonly string[];
-}
+/** What resolution needs from the actor: `me`, and the groups for visibility. */
+export type ResolveActor = Pick<Actor, 'kind' | 'userId' | 'groups'>;
 
 export interface LookupContext {
   readonly db: Queryable;
