@@ -189,7 +189,7 @@ React components ──observe──► MobX object pool (models by id, computed
 | **Idempotency** | `(clientId, seq)` dedupe on `/sync/mutate`. `clientMutationId` on the API and MCP. Job steps keyed by entity and step. |
 | **Errors** | Typed codes: `INVALID_INPUT`, `NOT_FOUND`, `FORBIDDEN`, `CONFLICT`, `RATE_LIMITED`, `CLIENT_OUTDATED`, `INTERNAL` |
 | **Rate limits** | Per IP on auth. Per session and per API key on mutations. |
-| **Security headers** | Strict CSP (no inline scripts), HSTS behind the proxy, SameSite=Lax cookies, CSRF token on cookie-auth POSTs |
+| **Security headers** | Strict CSP (no inline scripts except the theme bootstrap, allowed by its hash: SPEC-004 §15), HSTS behind the proxy, SameSite=Lax cookies, CSRF token on cookie-auth POSTs |
 | **Observability** | Request and operation logs with duration and actor. Metrics: op latency, sync lag (commit → broadcast), WS connections, job queue depth, bootstrap size and time. |
 | **Config** | Only environment variables (`SURFACE_URL`, `DATABASE_URL`, `SESSION_SECRET`, `SMTP_URL`, `UPLOAD_MAX_MB`, `MCP_ENABLED`, `BACKUP_SCHEDULE`, `BACKUP_RETENTION`, `SURFACE_ROLE`) |
 | **Versioning** | SemVer. Each release bumps `schemaHash` when synced models change. The server rejects outdated clients with `CLIENT_OUTDATED`, and the client reloads. |

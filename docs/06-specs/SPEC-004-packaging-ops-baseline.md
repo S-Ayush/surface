@@ -21,6 +21,7 @@ Before any feature exists we need (a) a monorepo where client and server share c
 - `/healthz`, `/readyz`, structured logs, optional `/metrics`
 - Install, upgrade, and reverse-proxy documentation
 - The "no outbound calls" guarantee and its test
+- The Content-Security-Policy header (§15)
 
 **Out of scope:** scheduled backups and `surface restore` (M7: FR-OPS-05/06) · the System page (M7) · S3 (v2) · Kubernetes (later). M0 documents a **manual** `pg_dump` backup command.
 
@@ -257,6 +258,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | AC-11 | Logs are JSON. A test greps logs from an auth and API-key flow and finds no passwords, tokens, or cookies. | CI |
 | AC-12 | `surface doctor` reports each failure condition in §12 correctly (fixture per condition). | integration |
 | AC-13 | Running with an external `DATABASE_URL` (no `db` service) works end to end. | CI |
+| AC-14 | Every response carries the §15 policy. It allows the theme bootstrap by its sha256 hash and has no `'unsafe-inline'`, `'unsafe-eval'` or wildcard source. | unit |
 
 ## 14. Decisions (open questions resolved with the proposed defaults, 2026-11-06)
 
@@ -270,3 +272,24 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | D2 | (2026-11-06, PLAN-004 S4) What does `doctor`'s "`SURFACE_URL` reachability (local only)" mean, and is a failure fatal? | One `GET <SURFACE_URL>/healthz` from the Surface host itself, never through a third-party service. It is only a **warning**, because a host often cannot resolve its own public name (split DNS, hairpin NAT), and because the no-egress rule (FR-OPS-09) must hold even when the operator runs `doctor`. |
 | D3 | (2026-11-06, PLAN-004 S5) Which GHCR owner (Q1)? | `ghcr.io/s-ayush/surface`, overridable with `SURFACE_IMAGE` in `.env`. |
 | D4 | (2026-11-06, PLAN-004 S6) Build the full §4 pipeline now? | No, by decision of the user. CI runs stages 1, 2 and 4 now (static, unit, build including the Docker image for amd64, unpushed). Stage 3 integration, 5 e2e, 6 install smoke, the no-egress / log-scan / image checks, multi-arch, nightly and release are built once the app is up, together with PLAN-004 S8. Until then AC-2, AC-3, AC-4 (in CI), AC-5, AC-7, AC-8, AC-10, AC-11 and AC-13 are not enforced by CI. |
+| D5 | (2026-11-06, PLAN-004 S9) How does the CSP allow the inline theme bootstrap (PLAN-005 S1)? | By its sha256 hash, computed at startup from the `index.html` the server serves (§15). Architecture's "no inline scripts" stands for everything else. A nonce would need the page rewritten per request; a hash fixed at build time could drift from the file the image ships. |
+
+## 15. Security headers (PLAN-004 S9)
+
+Every response, the JSON API and errors included, carries this `Content-Security-Policy`:
+
+| Directive | Sources | Why |
+|---|---|---|
+| `default-src` | `'self'` | Nothing loads from another origin (no CDNs, no external fonts, FR-OPS-09). |
+| `script-src` | `'self'` + `'sha256-…'` for each inline script in the served `index.html` | The theme bootstrap must run before the first paint (PLAN-005 S1). There is one inline script, and an `apps/web` test keeps it one. No `'unsafe-inline'`, no `'unsafe-eval'`. |
+| `style-src` | `'self'` | The build ships one stylesheet. React sets `style` through the CSSOM, which CSP doesn't restrict. |
+| `font-src` | `'self' data:` | Vite inlines small font files as `data:` URIs. |
+| `img-src` | `'self' data: blob:` | Inlined images and local previews of files being uploaded. |
+| `connect-src` | `'self'` | The API and the same-origin WebSocket (`/sync/ws`). |
+| `object-src`, `base-uri` | `'none'` | No plugins; a `<base>` tag can't redirect relative script URLs. |
+| `form-action` | `'self'` | Forms post only to the server. |
+| `frame-ancestors` | `'none'` | Surface can't be framed (clickjacking). |
+
+- The server reads `index.html` once at startup. When the web app isn't built, `script-src` is `'self'` only.
+- A library that probes for `eval` (Zod checks whether it can compile schemas) is refused, and falls back. Turn the probe off rather than allow `'unsafe-eval'`.
+- HSTS and the cookie flags in the architecture's security row come with auth (PLAN-001 S3) and the reverse-proxy settings; they are not part of this section.

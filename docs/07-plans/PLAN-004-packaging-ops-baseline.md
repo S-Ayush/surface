@@ -185,6 +185,37 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 - **External DB test (AC-13):** compose with `docker-compose.external-db.yml` against a separate Postgres container.
 - **Manual check:** the 15-minute install on a fresh Ubuntu LTS VM is recorded in the release checklist.
 
+### S9: Content-Security-Policy · S · ✅ Done 2026-11-06
+Added on 2026-11-06 for session C's handoff (PLAN-005 S1): the theme bootstrap is an inline script, so a strict CSP must allow it by hash.
+- `apps/server/src/http/security-headers.ts`: the SPEC-004 §15 policy on every response, with `script-src` allowing the inline scripts of the served `index.html` by sha256 hash.
+- **Tests:** AC-14 (`security-headers.test.ts`), plus a check in a real browser.
+
+> **As built (2026-11-06).**
+> - **Versions:** no new packages.
+> - **Code:**
+>   - `security-headers.ts` exports `inlineScriptHashes(html)`, `contentSecurityPolicy(hashes)` and `registerSecurityHeaders(app, indexHtml)` (an `onSend` hook).
+>   - `buildApp` reads `index.html` once through `readIndexHtml(webDir)` (new in `http/static.ts`) and registers the hook before anything else, so error and 404 responses carry it too.
+>   - `test/helpers.ts`: `fakeWebDir(indexHtml?)`.
+> - **Tests:** `security-headers.test.ts` (6) covers:
+>   - hashes of exact script text (whitespace, non-ASCII, `type="module"`), checked against `openssl`, not `node:crypto`;
+>   - `src` scripts skipped, and duplicates listed once;
+>   - the page's `script-src` is `'self'` plus the hash;
+>   - no `'unsafe-inline'`/`'unsafe-eval'`/`*`, with `object-src`/`base-uri`/`frame-ancestors` set to `'none'`;
+>   - the same policy on the page, an asset, an API 404 and `/healthz`;
+>   - `'self'` only without a web build.
+>
+>   With the hook removed, the 3 app-level tests fail.
+> - **Browser check (manual, once; CI has no browser jobs yet, SPEC-004 §14 D4):** Playwright Chromium against `buildApp` serving the real `apps/web/dist`:
+>   - the theme bootstrap ran (`data-theme` was `dark` and `light` with each colour scheme);
+>   - the app rendered and the 13 fonts loaded;
+>   - an injected inline `<script>` and an `onerror` handler were both refused.
+>
+>   The one other violation is Zod's caught `eval` probe (`allowsEval`), which falls back to non-JIT parsing. `z.config({ jitless: true })` in the web entry point removes it; that file is `apps/web`'s, so it is listed as a follow-up in session A's log.
+> - **Notes for later:**
+>   - **The deferred e2e stage:** add a Playwright test that loads the app and fails on any `securitypolicyviolation`.
+>   - **PLAN-002 S4:** check that `connect-src 'self'` admits the `/sync/ws` WebSocket in every supported browser (CSP Level 3 matches same-origin `ws:`/`wss:`).
+>   - **PLAN-001 S3:** HSTS and cookie flags are not part of this slice.
+
 ## 2. Modules touched
 Root config, `packages/config`, `apps/server/{src/config.ts, src/app.ts, src/db/*, bin/surface.ts}`, `apps/web` (hello), `docker/*`, `.github/workflows/*`, `e2e/*`, `scripts/*`, `README.md`, `docs/ops/*`.
 
@@ -207,6 +238,7 @@ Only the bootstrap migration `0000_extensions` (`pg_trgm`); history lives in the
 | AC-11 | CI log-scan job |
 | AC-12 | `apps/server/test/doctor.int.test.ts` (each condition against real Postgres, SMTP and HTTP fixtures) + `apps/server/test/doctor.test.ts` (verdicts, incl. PG < 17, no contrib, full disk). A missing ICU collation runs through doctor with a made-up collation name (`doctor.int.test.ts`, "collations (E8)"), because postgres:17 always has ICU. E2 is covered by AC-9, E4 waits for the sync hub. |
 | AC-13 | CI external-db job |
+| AC-14 | `apps/server/test/security-headers.test.ts` |
 
 ## 5. Risks & mitigations
 

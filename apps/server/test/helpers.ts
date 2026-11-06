@@ -59,10 +59,10 @@ export async function testApp(overrides: Partial<Config> = {}): Promise<TestApp>
 }
 
 /** A fake built web app: index.html plus one hashed asset. */
-export function fakeWebDir(): string {
+export function fakeWebDir(indexHtml = '<!doctype html><title>Surface</title>'): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'surface-web-'));
   mkdirSync(path.join(dir, 'assets'));
-  writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>Surface</title>');
+  writeFileSync(path.join(dir, 'index.html'), indexHtml);
   writeFileSync(path.join(dir, 'assets', 'index-abc123.js'), 'console.log(1)');
   writeFileSync(path.join(dir, 'favicon.svg'), '<svg/>');
   return dir;

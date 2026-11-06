@@ -5,7 +5,7 @@
  * - Unknown paths that want HTML get `index.html` (client-side routing).
  * - Unknown paths under server prefixes get a JSON 404.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -24,6 +24,12 @@ export const SERVER_PREFIXES = [
 ];
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
+
+/** The built app page, or undefined when the web app isn't built. */
+export function readIndexHtml(webDir: string): string | undefined {
+  const indexFile = path.join(webDir, 'index.html');
+  return existsSync(indexFile) ? readFileSync(indexFile, 'utf8') : undefined;
+}
 
 export async function registerWebApp(app: FastifyInstance, webDir: string): Promise<void> {
   const indexFile = path.join(webDir, 'index.html');

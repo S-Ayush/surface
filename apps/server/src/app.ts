@@ -14,7 +14,8 @@ import { registerErrorHandler } from './http/errors.js';
 import { registerHealthRoutes } from './http/health.js';
 import { registerMetrics } from './http/metrics.js';
 import { registerOpsRoutes, type ActorResolver } from './http/ops.js';
-import { registerWebApp } from './http/static.js';
+import { registerSecurityHeaders } from './http/security-headers.js';
+import { readIndexHtml, registerWebApp } from './http/static.js';
 import type { Lifecycle } from './lifecycle.js';
 
 /** The operations API (SPEC-003 §9). Left out by tests that don't need a database. */
@@ -67,6 +68,8 @@ export async function buildApp({
     if (lifecycle.state === 'draining') reply.header('connection', 'close');
   });
 
+  const webDir = config.webDir ?? defaultWebDir();
+  registerSecurityHeaders(app, readIndexHtml(webDir));
   registerErrorHandler(app);
   const metrics = config.metricsEnabled ? registerMetrics(app) : undefined;
   registerHealthRoutes(app, lifecycle, info);
@@ -79,7 +82,7 @@ export async function buildApp({
       version: info.version,
     });
   }
-  await registerWebApp(app, config.webDir ?? defaultWebDir());
+  await registerWebApp(app, webDir);
 
   return app;
 }
