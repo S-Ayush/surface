@@ -121,7 +121,22 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 - `pnpm dev` = start the dev Postgres, run migrations, then the server (tsx watch) and Vite (proxying `/api`, `/sync`, `/auth`, `/files`, and the WebSocket to the server).
 - **Tests:** a local script `scripts/docker-smoke.sh` (build, compose up, wait for `/readyz`, compose down).
 
-### S6: CI pipeline · M
+### S6: CI pipeline · M · ✅ Done 2026-11-06 (minimal; rest deferred)
+> **As built:** `.github/workflows/ci.yml` only, scoped down by the user on 2026-11-06 (SPEC-004 §14 D4). On every PR and on main, with `contents: read` and cancel-superseded on PRs:
+> - **`check`:** `pnpm install --frozen-lockfile` → build → lint (ESLint, dependency-cruiser, Prettier) → typecheck → unit tests. Node from `.nvmrc`, pnpm from `packageManager`, pnpm store cached by `setup-node`.
+> - **`pr-title`:** commitlint on the PR title (the squash subject). The title goes through `env`, never interpolated into the script.
+> - **`image`:** `docker/Dockerfile` built for linux/amd64 with buildx and the GHA cache, not pushed.
+> - **Verified locally:** actionlint (rhysd/actionlint image) reports no problems. Commitlint accepts `feat(server): …` and rejects a plain sentence. The frozen install and `pnpm check` are green. **Not yet run on GitHub** (the repo has no remote), and the amd64 image build is unverified locally (only arm64 was built).
+> - **Deferred until the app is up:**
+>   - stage 3, integration: `pnpm test:int` with a Postgres 17 service container and `TEST_DATABASE_URL`, session A's handoff, answered as deferred;
+>   - stage 5 e2e and stage 6 install smoke;
+>   - the no-egress (AC-10), log-scan (AC-11) and image-check (AC-4) jobs (`scripts/docker-smoke.sh` stays available locally, `SURFACE_SMOKE_READ_ONLY=1` for AC-4);
+>   - multi-arch builds and the push to GHCR (AC-5);
+>   - `nightly.yml` and `release.yml`;
+>   - the Turborepo remote cache.
+>
+>   AC-2 is therefore only partly met: stages 1, 2 and 4 run.
+> - **Before stage 3 is enabled:** session A's flaky `startup.int.test.ts` (handoff in session B's file) must be fixed.
 - `.github/workflows/ci.yml` with stages 1–6 (SPEC-004 §4), using a pnpm store cache and the Turborepo remote cache (optional).
 - **Integration** uses a Postgres 17 service container.
 - **Build image:** buildx. PRs build amd64; main builds amd64 + arm64 (native arm64 runner if available, else QEMU), pushed to `ghcr.io/<org>/surface:edge`.
@@ -135,7 +150,8 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 ### S7: Install & ops docs · S
 - `README.md` (15-minute install), `docs/ops/reverse-proxy.md` (Caddy, nginx, Traefik with WebSocket notes), `upgrade.md`, `backup-manual.md`, `troubleshooting.md`.
 
-### S8: Install smoke & upgrade test · S *(finishes after PLAN-001 S2)*
+### S8: Install smoke & upgrade test · S *(finishes after PLAN-001 S2)* · ⏸ Deferred
+> **Deferred** by the user on 2026-11-06 (SPEC-004 §14 D4), together with the CI test stages: install smoke (AC-3), restart e2e (AC-8), external-DB test (AC-13), upgrade test (AC-7). Build them once the app is up.
 - `e2e/install-smoke.spec.ts`: from a clean compose with only `.env.example` values filled in, read the setup token from `docker compose logs app`, complete setup, create a team (AC-3, scripted part).
 - **Upgrade test (AC-7):** once `v0.1.0` exists, CI starts the previous release image, seeds it, swaps to the new image, then checks data and migrations. Until then the job is skipped with a TODO linked to the first release.
 - **External DB test (AC-13):** compose with `docker-compose.external-db.yml` against a separate Postgres container.
