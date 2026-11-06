@@ -21,6 +21,7 @@ import { Lifecycle } from './lifecycle.js';
 import { createLogger } from './logger.js';
 import { installProcessHandlers } from './shutdown.js';
 import { StartupError } from './startup-error.js';
+import { syncRegistry } from './sync/registry.js';
 
 export interface StartOptions {
   logger?: Logger;
@@ -66,14 +67,21 @@ export async function startServer(
   if (unhandled.length > 0) {
     throw new StartupError(`No handler is registered for: ${unhandled.join(', ')}.`);
   }
+  const resolveActor = options.resolveActor ?? noSignedInActor;
   const app = await buildApp({
     config,
     lifecycle,
     logger,
     info,
+    sync: {
+      pool,
+      // Engine fixtures (DebugItem) only outside production, like internal operations.
+      registry: syncRegistry({ includeFixtures: config.nodeEnv !== 'production' }),
+      resolveActor,
+    },
     ops: {
       registry,
-      resolveActor: options.resolveActor ?? noSignedInActor,
+      resolveActor,
       createExecutor: (metrics) =>
         createExecutor({
           pool,

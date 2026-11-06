@@ -83,11 +83,14 @@ export function registerOpsRoutes(app: FastifyInstance, deps: OpsRoutesDeps): vo
   });
 }
 
-/** The actor, or `undefined` after answering 503 (starting) or 401 (nobody signed in). */
-async function signedIn(
+/**
+ * The actor, or `undefined` after answering 503 (starting) or 401 (nobody signed in). Shared
+ * with the sync routes (`sync/routes.ts`).
+ */
+export async function signedIn(
   request: FastifyRequest,
   reply: FastifyReply,
-  deps: OpsRoutesDeps,
+  deps: Pick<OpsRoutesDeps, 'lifecycle' | 'resolveActor'>,
 ): Promise<Actor | undefined> {
   if (deps.lifecycle.state === 'starting') {
     // Migrations may still be running; tables an operation needs may not exist yet.

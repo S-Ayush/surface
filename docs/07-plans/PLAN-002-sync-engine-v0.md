@@ -64,10 +64,33 @@ Implements: [SPEC-002](../06-specs/SPEC-002-sync-engine-v0.md) · Protocol: [syn
 >   - **S5:** write `client_mutations` in the mutation's transaction, and pass `{ clientId, seq }` to the executor (it reaches `flush`).
 >   - **PLAN-001 S1:** each new synced model needs `SYNCED_MODELS` (`groupsOf` may query through the transaction) and a `SYNCED_TABLES` entry; the lint test fails until both exist.
 
-### S3: Bootstrap endpoint · M
+### S3: Bootstrap endpoint · M · ✅ Done 2026-11-07
 - `GET /sync/bootstrap`: a `REPEATABLE READ` transaction that reads `max(sync_id)` and streams `meta`, then the rows of every **eager** model filtered by `sync_groups && userGroups` (server-side cursors, 1,000 rows per fetch), then `end`. gzip via `@fastify/compress`.
 - The server-side model registry maps synced models to their table, columns, and eager or content strategy. It is generated from the shared model definitions, to avoid duplicating them.
 - **Tests:** snapshot consistency under concurrent writes (no row newer than `lastSyncId`), group filtering (AC-11, bootstrap part), throughput with 150k fixture rows.
+
+> **As built (2026-11-07).**
+> - **Versions:** no new packages. gzip uses `node:zlib`, not `@fastify/compress` as planned: one streamed route needs no plugin (CLAUDE.md: prefer the platform).
+> - **Structure:**
+>   - `sync/models.ts`: each synced model gains `def` (its `@surface/domain/model` definition) and `fixture`.
+>   - `sync/registry.ts`: `syncRegistry({ includeFixtures })` builds `{ models, eager, schemaHash }`, with `schemaHash` = `computeSchemaHash` over the same definitions as the client. It maps each declared field to its column and throws at startup when one is missing. `clientRow(model, row, visibleGroups)` gives declared fields only, instants as ISO with milliseconds, and `groups` = `sync_groups ∩ visible`.
+>   - `sync/bootstrap.ts`: `bootstrapFrames(…)` is an async generator over one `REPEATABLE READ READ ONLY` transaction: `lastSyncId` from `sync_state`, counts, `meta`, a `DECLARE … CURSOR` per eager model with `FETCH 1000`, `end`. It always rolls back on an early close or an error, and destroys the connection if even that fails.
+>   - `sync/routes.ts`: `registerSyncRoutes` (`GET /sync/bootstrap`) reads the first frame before answering, so a database error is a `500`, not a cut-off `200`. It streams NDJSON (gzip when accepted), sets `no-store`, and logs errors without logging a client's hang-up.
+>   - Wiring: `AppDeps.sync`, built in `server.ts` with `includeFixtures: nodeEnv !== 'production'`, sharing `resolveActor`. `signedIn` is now exported from `http/ops.ts` for both route sets.
+> - **Spec decisions:** SPEC-002 §4.5 is new, with Q7 (API keys get `403`) and Q8 (the `groups` field convention; fixtures out of the production hash). sync-protocol §4.1 lists the errors, gzip and `groups`. `?groups=` (partial bootstrap) answers `400` until M7.
+> - **Fix to S2 (D's S8 handoff):** `debug.create`'s `optimistic()` inserted `syncGroups` and `archivedAt`, which the client's `DebugItem` model doesn't have. It now inserts `groups`. Covered by `operations/test/debug-optimistic.test.ts`, which failed first.
+> - **Tests:**
+>   - `sync-registry.test.ts` (7): the hash equals the client's, fixtures are out in production, the column map, a missing column is refused by name, the client row's shape (valid for `DebugItem.rowSchema` and the wire codec), groups cut to the connection, ISO instants.
+>   - `sync-routes.test.ts` (11): `401`, `503` + `Retry-After`, `403` for an API key, `400` for `?groups=`, and `Accept-Encoding` parsing.
+>   - `sync-groups.int.test.ts` (8, AC-11 bootstrap part; not held, leak test): decoded with the client's `NdjsonDecoder` and `decodeBootstrapFrame`. It checks that a user outside private team X gets none of X's rows nor another user's, a shared row arrives without X's group, and `meta.groups` holds only the actor's own groups. A member gets X's rows with X's group. `meta.rows` = `end.rows` = the row count, `lastSyncId` = `sync_state`, and the hash is the registry's. Rows pass `DebugItem.rowSchema`, the archived row is marked, gzip gives the same rows, and no transaction is left open. Planted bugs, each caught: no groups filter (2 tests fail), full groups sent (1), no archived flag (1).
+> - **Held criteria, checked by hand (README §6)** against Postgres 17 with a temporary test, not committed:
+>   - **Snapshot consistency:** 3,000 rows. A bootstrap was paused after 500 rows while 200 creates and 200 renames committed (`lastSyncId` 3000 → 3400). The stream still returned exactly the 3,000 rows of `meta`, with no new rows and no renamed titles.
+>   - **Throughput:** 150,000 rows over real HTTP with gzip took 1.2 s (≈ 125k rows/s server side), 3.8 MB on the wire (20.3 MB plain).
+>   - **Hang-up:** a client that closed after the first chunk left no open transaction, and every pool connection was idle again.
+> - **Notes for later slices:**
+>   - **S4:** project delta rows with `clientRow(model, data, connectionGroups)`; `sync_log.data` uses the same field names (camelCase), so `syncGroups` is there. Reuse `signedIn` and `registry.schemaHash` for `resync(schema)`.
+>   - **D's S6 handoff (7):** when an edit also unarchives a row, the repo must log `U` and `V` together. No operation does that yet; the first one that does (PLAN-001) needs it.
+>   - **PLAN-001 S1:** each real model needs `def` and a column per declared field. Declare `groups` on models whose visibility the client must track (purge on leaving a team).
 
 ### S4: Sync hub & WebSocket · L
 - `LISTEN sync` on a dedicated connection. On notify, read new `sync_log` rows after `broadcastedUpTo` in order.
@@ -180,7 +203,7 @@ Additive tables. `debug_items` exists only in dev and test (the migration is gua
 | AC-8 | ⏸ held (perf) `e2e/perf/bootstrap.perf.ts` (nightly) |
 | AC-9 | `sync-client/test/live.test.ts` "catches up on 1,000 changes made while it was away" (client side, S7) + ⏸ held (integration) `server/test/sync-catchup.int.test.ts` |
 | AC-10 | `sync-client/test/resync.test.ts` (+ `server/test/sync-resync.int.test.ts`, ⏸ held) |
-| AC-11 | `server/test/sync-groups.int.test.ts` (bootstrap, catch-up, live; not held: leak test, §6) |
+| AC-11 | `server/test/sync-groups.int.test.ts` (bootstrap: written in S3; catch-up and live: S4; not held: leak test, §6) |
 | AC-12 | `server/test/sync-lint.test.ts` (ESLint rule) + `server/test/repo-guard.int.test.ts` (both written in S2) |
 | AC-13 | Manual check, recorded in the S10 PR |
 

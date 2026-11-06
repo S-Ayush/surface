@@ -27,5 +27,5 @@ anywhere else in `src/`, and in tests a trigger audits every write so the test e
 mutation that wrote a row it didn't log (SPEC-002 AC-12). Adding a synced model means:
 
 1. the Drizzle table, with `sync_groups` and its GIN index;
-2. an entry in `SYNCED_MODELS` (`table`, `groupsOf`, `teamColumn`);
+2. an entry in `SYNCED_MODELS` (`table`, `def` from `@surface/domain/model`, `fixture`, `groupsOf`, `teamColumn`); every declared field needs a column of the same name (`groups` comes from `sync_groups`), which the sync registry checks at startup;
 3. the table in `SYNCED_TABLES` in `packages/config/eslint.js` (a test fails until it is).

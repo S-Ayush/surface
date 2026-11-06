@@ -56,7 +56,9 @@ Content is split into separate tables or models on the server (e.g. `issue_conte
 - Archived rows are sent with `"archived":true` on the frame. For live rows the server may omit the field or send `false`. Clients keep archived rows, because a later `V` packet carries only the id.
 - `meta.rows` is the exact number of `row` frames that follow (counted in the same snapshot), so the client can show bootstrap progress. `end.rows` repeats it, so the client can detect a truncated stream.
 - Rows are read inside one `REPEATABLE READ` snapshot, which includes `max(sync_id)`. That makes the snapshot consistent with `lastSyncId`.
-- Optional `?groups=team:<id>` gives a **partial bootstrap** for groups added later (see §6).
+- Optional `?groups=team:<id>` gives a **partial bootstrap** for groups added later (see §6). Until M7 the server answers it with `400`.
+- A model's `groups` field, if it declares one, holds the row's sync groups cut to the receiving connection's groups (SPEC-002 Q6, Q8).
+- The body is gzip-encoded when `Accept-Encoding` allows it. Errors before the first frame use the SPEC-003 body: `401` (not signed in), `403` (an API key), `400`, `503` (starting).
 - The client writes rows to IDB in chunks (worker) and becomes interactive once the `end` frame arrives.
 
 ### 4.2 Content: `GET /sync/content?parent=issue:<id>[,issue:<id>…]`

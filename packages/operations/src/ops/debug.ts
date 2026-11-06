@@ -75,13 +75,13 @@ export const debugCreate = defineOperation({
   examples: [{ id: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6f', title: 'First item' }],
   internal: true,
   optimistic: (store, input) => {
-    // Timestamps are the server's; the overlay shows the row until the delta replaces it.
+    // The shared `DebugItem` model's shape (`@surface/domain/model`): the client row carries
+    // its groups as `groups`; timestamps and archive state stay the server's.
     store.insert('DebugItem', {
       id: input.id,
       title: input.title,
       counter: 0,
-      syncGroups: input.groups,
-      archivedAt: null,
+      groups: input.groups,
     });
   },
 });

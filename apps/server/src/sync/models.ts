@@ -1,8 +1,9 @@
 /**
  * Synced models the repo layer may write, with how each computes its sync groups
- * (permissions.md §2). PLAN-002 S2 extends this into the sync registry; PLAN-001 S1 adds the
- * workspace, user and team models.
+ * (permissions.md §2). `sync/registry.ts` builds the sync registry (bootstrap, schema hash) from
+ * it; PLAN-001 S1 adds the workspace, user and team models.
  */
+import { DebugItem, type ModelDef } from '@surface/domain/model';
 import type { SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
@@ -11,6 +12,10 @@ import { debugItems } from '../db/schema/index.js';
 export const SYNCED_MODELS = {
   DebugItem: {
     table: debugItems,
+    /** The shared definition the client holds (`@surface/domain/model`); see `sync/registry.ts`. */
+    def: DebugItem,
+    /** Engine fixture (PLAN-002 header): left out of the production registry and schema hash. */
+    fixture: true,
     /**
      * Who may see a row (permissions.md §2), from the row and, for models whose groups derive
      * from another row (an issue's team), the transaction. Debug items carry their groups as
@@ -30,7 +35,12 @@ export const SYNCED_MODELS = {
   },
 } as const satisfies Record<
   string,
-  { readonly teamColumn: PgColumn | null; readonly [other: string]: unknown }
+  {
+    readonly def: ModelDef;
+    readonly fixture: boolean;
+    readonly teamColumn: PgColumn | null;
+    readonly [other: string]: unknown;
+  }
 >;
 
 export type ModelName = keyof typeof SYNCED_MODELS;

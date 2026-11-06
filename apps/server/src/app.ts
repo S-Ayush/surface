@@ -17,6 +17,7 @@ import { registerMetrics } from './http/metrics.js';
 import { registerOpsRoutes, type ActorResolver } from './http/ops.js';
 import { registerSecurityHeaders } from './http/security-headers.js';
 import { readIndexHtml, registerWebApp } from './http/static.js';
+import { registerSyncRoutes, type SyncRoutesDeps } from './sync/routes.js';
 import type { Lifecycle } from './lifecycle.js';
 
 /** The operations API (SPEC-003 §9). Left out by tests that don't need a database. */
@@ -33,7 +34,11 @@ export interface AppDeps {
   logger: Logger;
   info?: BuildInfo;
   ops?: OpsDeps;
+  /** The sync routes (PLAN-002 S3+). Left out by tests that don't need a database. */
+  sync?: SyncDeps;
 }
+
+export type SyncDeps = Omit<SyncRoutesDeps, 'lifecycle'>;
 
 /** Accept a caller's X-Request-Id only if it is short and safe to log. */
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;
@@ -44,6 +49,7 @@ export async function buildApp({
   logger,
   info = buildInfo(),
   ops,
+  sync,
 }: AppDeps): Promise<FastifyInstance> {
   // Widened to Fastify's base logger type so the instance keeps its default generics.
   const loggerInstance: FastifyBaseLogger = logger;
@@ -84,6 +90,7 @@ export async function buildApp({
       version: info.version,
     });
   }
+  if (sync) registerSyncRoutes(app, { ...sync, lifecycle });
   await registerWebApp(app, webDir, indexHtml !== undefined);
 
   return app;
