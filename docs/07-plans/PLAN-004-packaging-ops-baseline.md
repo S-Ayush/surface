@@ -147,7 +147,34 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 - `.github/workflows/nightly.yml` holds a perf job placeholder, which is filled in by PLAN-002 S10.
 - `.github/workflows/release.yml`: on tag `v*`, build multi-arch, push `x.y.z`, `x.y`, `latest`, and generate the GitHub release from changesets.
 
-### S7: Install & ops docs · S
+### S7: Install & ops docs · S · ✅ Done 2026-11-06
+> **As built:** `README.md` and `docs/ops/{reverse-proxy, upgrade, backup-manual, troubleshooting}.md`. No code changes and no new dependencies. SPEC-004 §11 updated to match.
+> - **Written for the current build, and says so:** there is no published image yet, so the README's step 2 builds `ghcr.io/s-ayush/surface:latest` from a clone (`git clone https://github.com/s-ayush/surface.git`, the OCI `source` label). Step 6 says the setup link arrives with PLAN-001 S2; until then the app shows the shell. **PLAN-001 S2 should update README step 6** once the token is logged, and the first release should drop step 2's build.
+> - **Spec update (SPEC-004 §11):** the backup command is `docker compose exec -T db pg_dump …`. Without `-T`, Compose can allocate a terminal and add carriage returns to the dump.
+> - **The three notes from S5 are covered** in troubleshooting.md: the anonymous `/data` volume leaving empty orphans after `down`/`up` (`docker volume prune`, never `down -v`), a write test for the `uploads` volume because doctor only checks `/data`, and `--stop-timeout 20` for plain `docker run`.
+> - **Verified against a real stack** (local image, project `surface-s7`, port 3200):
+>   - the README secret one-liner under GNU sed (64- and 48-character hex, nothing else in `.env` changed);
+>   - `up -d`, both services healthy, `Surface is ready` in the logs, `/readyz` 200, `surface doctor` exit 0 with only the public-URL warning, `surface version`, and `run --rm app doctor` / `migrate`;
+>   - a backup → change → restore round trip, for both a database row and the uploaded files (owned by 10001 after restore), with no carriage returns in the dump; `pg_dump` from the app container through `$DATABASE_URL`;
+>   - one more dangling volume after `down`/`up`;
+>   - a `POSTGRES_PASSWORD` changed after the first start fails with the documented 28P01 message;
+>   - the Compose errors for a missing `.env` and an empty password;
+>   - the nginx example passes `nginx -t` (nginx 1.27), the host Caddyfile and `Caddyfile.example` pass `caddy adapt`, and the Traefik override merges with `ports: !reset []` removing the published port.
+> - **Review fixes:**
+>   - **Client address:** with `TRUST_PROXY=true`, Fastify trusts every hop, so a client-sent `X-Forwarded-For` would be believed. Now:
+>     - nginx sets `X-Forwarded-For $remote_addr` instead of appending;
+>     - README step 4a sets `TRUST_PROXY=false`;
+>     - reverse-proxy.md recommends `SURFACE_BIND`, because Docker-published ports bypass ufw/firewalld.
+>
+>     Proposed to session A: make `true` mean one hop (Handoffs).
+>   - **Backups:** the cron one-liner is now `backup.sh` (`pipefail`, `umask 077`, write then rename, count-based retention only after both dumps succeed).
+>   - **Your own database:** `COMPOSE_FILE` in `.env` (new commented entry in `.env.example`) replaces `-f` on every command and keeps the Traefik override working.
+>   - Config errors documented as the plain-text block they are; the password fix uses `\password`; failed-migration and rollback advice covers migrations already committed in the same upgrade; compose files come from the release tag; setup link warning before sharing logs; `docker volume prune` caveat for Docker < 23; the Caddyfile-directory pitfall.
+> - **Re-verified after the fixes:**
+>   - `COMPOSE_FILE` read from `.env` selects the external-DB file and merges the Traefik override (no `db`, no published port);
+>   - `backup.sh` keeps 14 of each kind and creates files with mode 600; with the database stopped it exits 1 and leaves every existing backup untouched;
+>   - the edited nginx example passes `nginx -t`.
+> - **Not verified:** the clone URL (the repository has no remote yet), `\password` for a changed password, WebSocket upgrades through any proxy (there is no `/sync` route yet), real certificates, the tag-based compose upgrade (no tags yet), the cron line and `logger`, and a complete 15-minute install on a fresh Ubuntu VM (AC-3, S8).
 - `README.md` (15-minute install), `docs/ops/reverse-proxy.md` (Caddy, nginx, Traefik with WebSocket notes), `upgrade.md`, `backup-manual.md`, `troubleshooting.md`.
 
 ### S8: Install smoke & upgrade test · S *(finishes after PLAN-001 S2)* · ⏸ Deferred

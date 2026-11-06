@@ -125,7 +125,7 @@ services:
 volumes: { pgdata: {}, uploads: {}, backups: {}, caddy_data: {}, caddy_config: {} }
 ```
 
-- **Using an external DB:** set `DATABASE_URL` in `.env` and use `docker-compose.external-db.yml`, the same file without the `db` service (`docker compose -f docker-compose.external-db.yml up -d`). It refuses to start without `DATABASE_URL`.
+- **Using an external DB:** set `DATABASE_URL` in `.env` and use `docker-compose.external-db.yml`, the same file without the `db` service (`docker compose -f docker-compose.external-db.yml up -d`, or `COMPOSE_FILE=docker-compose.external-db.yml` in `.env` so every command uses it). It refuses to start without `DATABASE_URL`.
 - **`DATABASE_URL` is not composed by compose:** Surface builds the default from `POSTGRES_PASSWORD` and URL-encodes it, so URL-special characters in the password are safe. Compose itself expands `$` in `.env`, so a literal `$` is written `$$` (the generated hex passwords need nothing). `app` receives `POSTGRES_PASSWORD` through the same interpolation as `db`, so a value exported in the shell can't make them disagree. `docker-compose.yml` refuses to start without it.
 - **Compose-level settings in `.env`:** `SURFACE_VERSION` (tag), `SURFACE_IMAGE` (repository), `SURFACE_BIND`, `SURFACE_PORT`. Surface ignores them.
 - **Caddy example:** `surface.example.com { reverse_proxy app:3000 }` (WebSocket upgrade works by default). There are also notes for nginx (`Upgrade`/`Connection` headers, `proxy_read_timeout 1h`) and Traefik.
@@ -220,11 +220,11 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 
 | Doc | Content |
 |---|---|
-| `README.md` | What Surface is, plus a **15-minute install**: prerequisites (Docker Engine + Compose plugin, 2 vCPU / 2 GB / 20 GB) → download `docker/` → fill `.env` → `docker compose up -d` → open the setup URL from `docker compose logs app` |
+| `README.md` | What Surface is, plus a **15-minute install**: prerequisites (Docker Engine + Compose plugin, 2 vCPU / 2 GB / 20 GB) → get `docker/` (a clone of the repository) → fill `.env` → `docker compose up -d` → open the setup URL from `docker compose logs app`. Until the first release is published, the image is built from the clone. |
 | `docs/ops/reverse-proxy.md` | Caddy (recommended), nginx, Traefik. WebSocket and timeout notes. |
 | `docs/ops/upgrade.md` | Bump `SURFACE_VERSION`, then `docker compose pull && docker compose up -d`. Covers rollback policy (DB migrations are forward-only, so take a backup first). |
-| `docs/ops/backup-manual.md` (M0) | `docker compose exec db pg_dump -U surface surface > surface-$(date +%F).sql`, plus copying the uploads volume |
-| `docs/ops/troubleshooting.md` | `surface doctor`, common errors (wrong `SURFACE_URL`, proxy without WebSocket upgrade, DB auth) |
+| `docs/ops/backup-manual.md` (M0) | `docker compose exec -T db pg_dump -U surface surface \| gzip > surface-$(date +%F).sql.gz` (`-T`: no terminal, so no carriage returns in the dump), the uploads volume as a tarball, a daily backup script that never prunes after a failed dump, and a restore procedure |
+| `docs/ops/troubleshooting.md` | `surface doctor`, every startup error with its fix, common errors (wrong `SURFACE_URL`, proxy without WebSocket upgrade, DB auth, a `POSTGRES_PASSWORD` changed after the first start), `/data` permissions and leftover anonymous volumes |
 
 ## 12. Edge cases
 
