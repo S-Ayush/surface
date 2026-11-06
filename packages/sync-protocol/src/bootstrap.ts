@@ -22,12 +22,20 @@ export const bootstrapMetaSchema = z.object({
   lastSyncId: syncIdSchema,
   groups: z.array(syncGroupSchema),
   serverTime: z.iso.datetime({ offset: true }),
+  /** Exact number of `row` frames that follow (same snapshot), for the progress bar (SPEC-002 §7). */
+  rows: z.int().nonnegative(),
 });
 
+/**
+ * `archived: true` marks a row the server has archived; absent or `false`
+ * means live. Clients keep archived rows, because a later `V` packet
+ * (unarchive) carries only the id.
+ */
 export const bootstrapRowSchema = z.object({
   t: z.literal('row'),
   m: modelNameSchema,
   d: rowSchema,
+  archived: z.boolean().optional(),
 });
 
 /** Last frame. `rows` is the number of `row` frames sent, so a truncated stream is detectable. */

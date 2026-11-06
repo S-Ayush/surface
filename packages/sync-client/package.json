@@ -15,9 +15,14 @@
   "dependencies": {
     "@surface/domain": "workspace:*",
     "@surface/operations": "workspace:*",
-    "@surface/sync-protocol": "workspace:*"
+    "@surface/sync-protocol": "workspace:*",
+    "idb": "^8.0.4",
+    "mobx": "^7.1.4"
   },
   "devDependencies": {
-    "@surface/config": "workspace:*"
+    "@surface/config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "fake-indexeddb": "^6.2.7",
+    "fast-check": "^4.10.2"
   }
 }

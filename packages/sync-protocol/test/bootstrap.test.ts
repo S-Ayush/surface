@@ -31,6 +31,7 @@ describe('bootstrap frames', () => {
       lastSyncId: 18234,
       groups: ['workspace', `team:${ID}`, `user:${ID}`],
       serverTime: '2026-11-06T10:00:00.000Z',
+      rows: 151234,
     });
     expect(meta).toMatchObject({ t: 'meta', lastSyncId: 18234 });
     expect(decodeBootstrapFrame({ t: 'row', m: 'Team', d: { id: ID, key: 'ENG' } })).toEqual({
@@ -55,7 +56,7 @@ describe('bootstrap frames', () => {
     ['an unknown frame type', { t: 'rows' }],
     [
       'a meta frame without a schema hash',
-      { t: 'meta', lastSyncId: 1, groups: [], serverTime: '2026-11-06T10:00:00Z' },
+      { t: 'meta', lastSyncId: 1, groups: [], serverTime: '2026-11-06T10:00:00Z', rows: 0 },
     ],
     [
       'a meta frame with an unknown sync group',
@@ -65,6 +66,7 @@ describe('bootstrap frames', () => {
         lastSyncId: 1,
         groups: ['team:ENG'],
         serverTime: '2026-11-06T10:00:00Z',
+        rows: 0,
       },
     ],
     [
@@ -75,6 +77,7 @@ describe('bootstrap frames', () => {
         lastSyncId: -1,
         groups: [],
         serverTime: '2026-11-06T10:00:00Z',
+        rows: 0,
       },
     ],
     [
@@ -85,6 +88,17 @@ describe('bootstrap frames', () => {
         lastSyncId: 2 ** 60,
         groups: [],
         serverTime: '2026-11-06T10:00:00Z',
+        rows: 0,
+      },
+    ],
+    [
+      'a meta frame without a row count',
+      {
+        t: 'meta',
+        schemaHash: HASH,
+        lastSyncId: 1,
+        groups: [],
+        serverTime: '2026-11-06T10:00:00Z',
       },
     ],
     ['a row without an id', { t: 'row', m: 'Team', d: { key: 'ENG' } }],
@@ -93,6 +107,17 @@ describe('bootstrap frames', () => {
     ['an end frame with a fractional count', { t: 'end', rows: 1.5 }],
   ])('rejects %s', (_case, frame) => {
     expect(() => decodeBootstrapFrame(frame)).toThrow(ProtocolError);
+  });
+
+  it('accepts archived as either boolean, so a server may always send it', () => {
+    for (const archived of [true, false]) {
+      expect(decodeBootstrapFrame({ t: 'row', m: 'Team', d: { id: ID }, archived })).toMatchObject({
+        archived,
+      });
+    }
+    expect(() => decodeBootstrapFrame({ t: 'row', m: 'Team', d: { id: ID }, archived: 1 })).toThrow(
+      ProtocolError,
+    );
   });
 
   it('does not echo row data in errors, since rows can hold user content', () => {

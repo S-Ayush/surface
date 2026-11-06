@@ -16,5 +16,6 @@
 | [0012](0012-mcp-shape.md) | MCP shape |
 | [0013](0013-deployment-docker.md) | Deployment & packaging |
 | [0014](0014-file-storage.md) | File storage |
+| [0015](0015-client-model-immutability.md) | Client model immutability (supersedes the enforcement clause of 0003) |
 
 Format: context → options → decision → consequences. An accepted ADR is never edited in substance; a new ADR supersedes it.

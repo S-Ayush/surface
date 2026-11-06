@@ -47,8 +47,12 @@ export const bootstrapFrame: fc.Arbitrary<BootstrapFrame> = fc.oneof(
     lastSyncId: syncId,
     groups: fc.array(syncGroup, { maxLength: 4 }),
     serverTime: isoTime,
+    rows: fc.nat(),
   }),
-  fc.record({ t: fc.constant('row' as const), m: modelName, d: row }),
+  fc.record(
+    { t: fc.constant('row' as const), m: modelName, d: row, archived: fc.boolean() },
+    { requiredKeys: ['t', 'm', 'd'] },
+  ),
   fc.record({ t: fc.constant('end' as const), rows: fc.nat() }),
 );
 

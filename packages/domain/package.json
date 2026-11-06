@@ -12,6 +12,11 @@
       "@surface/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./model": {
+      "@surface/source": "./src/model/index.ts",
+      "types": "./dist/model/index.d.ts",
+      "default": "./dist/model/index.js"
     }
   },
   "scripts": {

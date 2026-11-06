@@ -127,12 +127,16 @@ A lint rule (`surface/no-synced-table-writes`) forbids direct `db.insert/update/
 
 ### 5.1 Packages and modules
 ```
+packages/domain/src/model/   defineModel(name, {load, fields, refs, indexes}): shared with the server registry
+packages/sync-protocol/      computeSchemaHash(models), wire codecs
 packages/sync-client/
-  model-registry.ts     defineModel(name, {fields, refs, load: 'eager'|'content'}) → schemaHash
-  object-pool.ts        Map<model, Map<id, ModelInstance>>; observable instances
-  indexes.ts            incremental secondary indexes (declared per model)
-  idb/worker.ts         IndexedDB access off main thread (stores: rows per model, meta, pending)
-  bootstrap.ts          NDJSON stream reader → worker chunks → pool
+  pool.ts, instance.ts  Map<model, Map<id, ModelInstance>>; per-field observable, frozen instances, base + overlay (ADR-0015)
+  indexes.ts            incremental secondary indexes (declared per model, or implied by a backRef)
+  storage/              SyncStorage: IndexedDB (worker.ts, rpc.ts), memory fallback; stores: rows per model, meta, pending
+  bootstrap.ts          NDJSON stream reader → storage chunks → pool
+  hydrate.ts, store.ts  warm start; start-up sequence and status
+  persistence.ts        storage failure handling: fenced generation vs lost storage (E5, E6)
+  locks.ts              cross-tab replica lock (Web Locks: shared to hydrate, exclusive to bootstrap; E5)
   socket.ts             WS lifecycle, ping/pong, backoff, gap detection
   queue.ts              pending mutations, seq, flusher, results handling
   overlay.ts            base ⊕ optimistic(pending) recomputation

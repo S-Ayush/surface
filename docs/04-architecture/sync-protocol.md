@@ -1,6 +1,6 @@
 # Surface: Sync Protocol (v1)
 
-Status: **Draft v0.2** · Date: 2026-11-06 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
+Status: **Draft v0.3** · Date: 2026-11-06 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
 
 This is the contract between `packages/sync-client` and `apps/server`. Every wire type here lives in `packages/sync-protocol`, as a Zod codec. Decoders strip unknown keys instead of rejecting them, so additive changes stay compatible. Changes are listed in §11.
 
@@ -45,15 +45,16 @@ Content is split into separate tables or models on the server (e.g. `issue_conte
 
 ### 4.1 Bootstrap: `GET /sync/bootstrap` → `application/x-ndjson` (gzip)
 ```jsonc
-{"t":"meta","schemaHash":"9f2c…","lastSyncId":18234,"groups":["workspace","team:0192…","user:0193…"],"serverTime":"…"}
+{"t":"meta","schemaHash":"9f2c…","lastSyncId":18234,"groups":["workspace","team:0192…","user:0193…"],"serverTime":"…","rows":151234}
 {"t":"row","m":"Team","d":{"id":"…","key":"ENG", …}}
 {"t":"row","m":"Issue","d":{"id":"…","teamId":"…","number":42, …}}
 …
 {"t":"end","rows":151234}
 ```
 - `schemaHash` is 64 lowercase hex characters (§8). `serverTime` is an ISO 8601 timestamp. `groups` are the connection's sync groups (§6).
-- Every row `d` is a JSON object with a UUID `id`. Its other fields are checked by the client store against the model definition, not by the wire codec.
-- `end.rows` is the number of `row` frames sent, so the client can detect a truncated stream.
+- Every row `d` is a JSON object with a UUID `id`. Its other fields are checked by the client store against the model definition, not by the wire codec. Columns the model does not declare are dropped.
+- Archived rows are sent with `"archived":true` on the frame. For live rows the server may omit the field or send `false`. Clients keep archived rows, because a later `V` packet carries only the id.
+- `meta.rows` is the exact number of `row` frames that follow (counted in the same snapshot), so the client can show bootstrap progress. `end.rows` repeats it, so the client can detect a truncated stream.
 - Rows are read inside one `REPEATABLE READ` snapshot, which includes `max(sync_id)`. That makes the snapshot consistent with `lastSyncId`.
 - Optional `?groups=team:<id>` gives a **partial bootstrap** for groups added later (see §6).
 - The client writes rows to IDB in chunks (worker) and becomes interactive once the `end` frame arrives.
@@ -85,6 +86,7 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 - Packet ids are strictly increasing and greater than `prev`. Ids can skip, because the stream is filtered by sync groups. At most 500 packets per message.
 - `ack` lists this connection's own mutations that committed in the `sync_log` range the message covers. `packets` may be **empty only when `ack` is not**: a mutation can write rows this client cannot see, and its pending entry must still be confirmed. A message with neither is invalid.
 - `G` packets are decoded in v0 because they take part in the ordering. Until M7, the client handles one with a full re-bootstrap.
+- **Archived state changes only through `A` and `V`.** `I` inserts a live row, and `U` replaces the row's fields but keeps whether it is archived. An edit that also unarchives a row ("any edit" in state-machines.md §2) emits both `U` and `V` in the same transaction. This keeps a client that applied the stream identical to one that cold-started from a bootstrap (whose `row.archived` reflects the same state).
 
 **Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10).
 
@@ -220,4 +222,5 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-06 | v0.3 | PLAN-002 S6: `meta.rows` (required), the exact row count, for the progress bar; `row.archived` (optional boolean; `true` = archived) so a cold start matches clients that saw the `A` packet. While v0.3 was unreleased, `archived` was first `true`-only and was widened to boolean before release. Also stated: archived state changes only through `A`/`V`; `U` keeps it (§4.3) | Session A (Handoffs) |
 | 2026-11-06 | v0.2 | PLAN-002 S1 codecs: `deltas.prev`; acks without packets; `schemaHash` in the WebSocket URL; close codes; batch rules (1–100, consecutive seqs); `lastSeq` on `SEQ_GAP`; `CLIENT_OUTDATED` = 426; schema hash definition; `presence` deferred to M4 | Session A (session-d-sync-client.md, Handoffs) |
