@@ -170,6 +170,8 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 
 ## 9. Acceptance criteria
 
+> **Held (2026-11-06): tests that need a browser, a running stack or Postgres are not written for now** (D1 in §11): criteria whose test is `e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e` or `integration` are held until the hold is lifted. Still written: unit and property tests, the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5).
+
 | AC | Criterion | Test |
 |---|---|---|
 | AC-1 | On a fresh install the setup token appears in the logs. `/setup` without the token cannot complete. | e2e |
@@ -202,3 +204,4 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 | Q1 | Allow password-less accounts (magic link only) when SMTP is configured? | No: a password is always required in v1, and magic link is an *additional* way to log in |
 | Q2 | Should email addresses be visible to all members? | Yes (internal tool) |
 | Q3 | Should Admins be able to edit other users' profiles? | No: only roles and reset links |
+| D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |

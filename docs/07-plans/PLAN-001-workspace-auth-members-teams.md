@@ -23,7 +23,7 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 - A setup guard on every route while setup is incomplete (API returns 503 `SETUP_REQUIRED`; web redirects).
 - **Setup wizard UI** (3 steps, keyboard-advance) in `apps/web/src/routes/setup`.
 - **Tests:** AC-1 (token required), AC-2 (atomic, with a kill-mid-setup integration test using fault injection), E1 (concurrent setup).
-- Unblocks PLAN-004 S8 (install smoke).
+- Unblocks PLAN-004 S8 (install smoke; deferred, SPEC-004 D4).
 
 ### S3: Password auth, sessions, CSRF · L
 - `@node-rs/argon2` with m = 19 MiB, t = 2, p = 1 (AC-9). Minimum password length 10.
@@ -67,12 +67,12 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 - The key-suggestion algorithm lives in `packages/domain` (shared, so the client suggests instantly while the user types).
 - Web: create-team modal, Settings → Teams (browse with join buttons), team General and Members settings, and the team ⋯ menu join/leave. The sidebar team list comes from PLAN-005 S4.
 - **Tests:** AC-11 (key rules and suggestions), AC-12 (create shows in another tab < 150 ms), AC-13 (membership changes live), E11, E12.
-- **Unblocks:** PLAN-002 S10 (team-rename demo e2e).
+- **Unblocks:** PLAN-002 S10 (inspector and UI hooks; its demo e2e is held, SPEC-002 D1).
 
 ### S9: Hardening & lint · S
 - Registry lint passes for every SPEC-001 op (AC-16): summaries, keywords, examples, and `ui` metadata for command-menu use ("Create team", "Invite member…", "Rename team…", "Join team…").
 - Log events for the M7 audit log: `auth.*`, `user.*`.
-- Install smoke (PLAN-004 S8) is enabled with a full setup and first team.
+- ~~Install smoke (PLAN-004 S8) is enabled with a full setup and first team.~~ Held with PLAN-004 S8 (SPEC-004 D4).
 - A security review of the auth slice (checklist: enumeration, timing, CSRF, cookie flags, token single-use, rate limits, log redaction).
 
 ## 2. Modules touched
@@ -83,22 +83,24 @@ Additive tables only. A rollback before any release is a code revert. After a re
 
 ## 4. Test plan (AC → test)
 
+> ⏸ **Tests that need a browser, a running stack or Postgres are held** since 2026-11-06 (SPEC-001 D1, [plans README §6](README.md#6-testing-hold-e2e-smoke-and-integration)): rows marked held get no test for now, and the markers override the slices' "Tests:" bullets. Unit and property tests in the same row are still written, and so are the sync property suite and private-team leak tests.
+
 | AC | Test |
 |---|---|
-| AC-1 | `e2e/setup-token.spec.ts` |
-| AC-2 | `server/test/setup-atomic.int.test.ts` |
-| AC-3 | `e2e/no-smtp.spec.ts` (full J1 with invite and reset links) |
-| AC-4 | `e2e/smtp-flows.spec.ts` (Mailpit) |
-| AC-5 | `server/test/login-enumeration.int.test.ts` |
-| AC-6 | `server/test/login-lockout.int.test.ts` |
-| AC-7 | `server/test/session-cookie.int.test.ts` |
-| AC-8 | `e2e/session-revoke.spec.ts` |
+| AC-1 | ⏸ held (e2e) `e2e/setup-token.spec.ts` |
+| AC-2 | ⏸ held (integration) `server/test/setup-atomic.int.test.ts` |
+| AC-3 | ⏸ held (e2e) `e2e/no-smtp.spec.ts` (full J1 with invite and reset links) |
+| AC-4 | ⏸ held (e2e) `e2e/smtp-flows.spec.ts` (Mailpit) |
+| AC-5 | ⏸ held (integration) `server/test/login-enumeration.int.test.ts` |
+| AC-6 | ⏸ held (integration) `server/test/login-lockout.int.test.ts` |
+| AC-7 | ⏸ held (integration) `server/test/session-cookie.int.test.ts` |
+| AC-8 | ⏸ held (e2e) `e2e/session-revoke.spec.ts` |
 | AC-9 | `server/test/password-hash.test.ts` |
-| AC-10 | `server/test/set-role.int.test.ts` |
-| AC-11 | `domain/test/team-key.test.ts` + `server/test/team-create.int.test.ts` |
-| AC-12, AC-13 | `e2e/teams-realtime.spec.ts` |
-| AC-14 | `server/test/admin-permissions.int.test.ts` + `e2e/admin-routes.spec.ts` |
-| AC-15 | `e2e/profile-realtime.spec.ts` |
+| AC-10 | `server/test/last-admin-guard.test.ts` (the guard's decision, unit) (+ `server/test/set-role.int.test.ts`, ⏸ held) |
+| AC-11 | `domain/test/team-key.test.ts` (+ `server/test/team-create.int.test.ts`, ⏸ held) |
+| AC-12, AC-13 | ⏸ held (e2e) `e2e/teams-realtime.spec.ts` |
+| AC-14 | ⏸ held (integration + e2e) `server/test/admin-permissions.int.test.ts`, `e2e/admin-routes.spec.ts` |
+| AC-15 | ⏸ held (e2e) `e2e/profile-realtime.spec.ts` |
 | AC-16 | CI registry lint |
 
 ## 5. Risks & mitigations

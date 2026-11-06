@@ -215,7 +215,7 @@ M0 Foundations ─► M1 Core issues ─► M2 Views & nav ─► M3 Planning �
 
 - **Cadence:** 2-week cycles (run inside Surface from M1). Each milestone takes roughly 1–3 cycles.
 - **Definition of Ready (spec):** acceptance criteria are testable, domain changes are listed, sync groups are identified, open questions are resolved.
-- **Definition of Done (slice):** acceptance criteria pass in e2e, sync tests are green, perf budget is met, shortcut and `Cmd+K` entries exist, the docs are updated.
+- **Definition of Done (slice):** acceptance criteria have passing tests (held criteria excepted: since 2026-11-06, tests that need a browser, a running stack or Postgres are on hold, see [plans README §6](07-plans/README.md#6-testing-hold-e2e-smoke-and-integration)), sync tests are green, perf budget is met (measured once perf tests resume), shortcut and `Cmd+K` entries exist, the docs are updated.
 - **Change control:** if a decision changes, write a new ADR that supersedes the old one. Never silently edit an accepted ADR.
 
 ---

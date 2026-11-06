@@ -52,7 +52,7 @@ flowchart LR
 | 1 | 004·S1–S4 | 004·S5–S6 (Docker, CI) → 005·S1 |
 | 2 | 003·S1–S4 | 005·S2–S3 · 002·S1 |
 | 3 | 003·S5–S7 · 002·S2 | 002·S6–S7 |
-| 4 | 002·S3–S5 | 002·S8 · 004·S7–S8 (docs, install smoke) |
+| 4 | 002·S3–S5 | 002·S8 · 004·S7 (docs; S8 install smoke deferred) |
 | 5 | 002·S9 · 001·S1–S3 | 005·S4 (shell on the real store) |
 | 6 | 001·S4–S7 | 005·S5–S6 |
 | 7 | 001·S8–S9 · 002·S10 | 005·S7–S8 |
@@ -69,8 +69,25 @@ flowchart LR
 
 - [ ] **Demo (METHODOLOGY M0):** two tabs, rename a team in one, and it updates in the other in < 150 ms. The change survives an offline reload.
 - [ ] **Keyboard-only demo** (SPEC-005 AC-1)
-- [ ] **Install smoke:** fresh VM to first team in < 15 min (SPEC-004 AC-3)
-- [ ] **Sync property suite** at 1,000 cases green on main (SPEC-002 AC-2/3)
-- [ ] All ACs of SPEC-001 to SPEC-005 have passing tests
+- [ ] ⏸ **Install smoke:** fresh VM to first team in < 15 min (SPEC-004 AC-3). Held (§6).
+- [ ] Demos above: run by hand while e2e is held (§6).
+- [ ] **Sync property suite** at 1,000 cases green on main (SPEC-002 AC-2/3). Not held (§6).
+- [ ] All ACs of SPEC-001 to SPEC-005 have passing tests, except those held under §6
 - [ ] Release `v0.1.0` image published (amd64 + arm64)
 - [ ] Retro held. PRD and METHODOLOGY updated with what we learned. M1 specs (SPEC-010+) are next.
+
+## 6. Testing hold: e2e, smoke and integration
+
+**Since 2026-11-06, by decision of the user, for faster development:** tests that need a browser, a running stack or Postgres are not written, with the exceptions below. They are added later, when the user lifts the hold.
+
+- **Held:** e2e (Playwright), `e2e perf`, `perf`, smoke, `manual / e2e` and integration (`*.int.test.ts`) tests. A criterion whose only test is one of these is **held**: its row in the plan's test table is marked ⏸, and no test is written yet. ⏸ markers override the "Tests:" bullets in a slice's body.
+- **Not held, written as usual:**
+  - unit and property (fast-check) tests, including the unit parts of any held criterion. `pnpm check` is the gate;
+  - the **sync property suite** (SPEC-002 AC-2/AC-3, PLAN-002 S9), against the real executor and Postgres;
+  - **private-team leak tests** that need Postgres: the `permissions.md` §5 checklist and SPEC-002 AC-11 (bootstrap, catch-up and live deltas filtered by sync groups). A slice that adds a query, a delta path or a read operation adds its leak tests in `*.int.test.ts`.
+- **Existing integration tests are kept** (PLAN-003, PLAN-004, PLAN-002 S2 and anything else already on main). They still run with `pnpm test:int`; run them when you change code they cover. Don't delete them.
+- **Recorded in** SPEC-001, SPEC-002 and SPEC-005 decision D1, and SPEC-004 D4 (CI stages, install smoke).
+- **Known risk while held:** catch-up and resync (SPEC-002 AC-9/AC-10) and the auth flows (SPEC-001) are only covered by unit tests. Review these areas with extra care, and write their integration tests first when the hold lifts.
+- **Slices affected:** PLAN-004 S8 (deferred); PLAN-002 S10 (inspector and UI hooks only); PLAN-005 S8 (accessibility and polish; the M0 demo is run by hand).
+- **In "As built",** a slice says which held criteria it checked by hand.
+- **Lifting the hold:** write the tests named in the plans' ⏸ rows, then remove the markers and this section.

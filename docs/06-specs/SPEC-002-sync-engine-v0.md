@@ -182,6 +182,8 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 
 ## 9. Acceptance criteria
 
+> **Held (2026-11-06): tests that need a browser, a running stack or Postgres are not written for now** (D1 in §11): criteria whose test is `e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e` or `integration` are held until the hold is lifted. Still written: unit and property tests, the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5).
+
 | AC | Criterion | Test |
 |---|---|---|
 | AC-1 | **Ordering:** 20 concurrent writers × 500 mutations each produce `sync_id`s that are gap-free and in commit order (verified by replaying `sync_log`). | integration (stress) |
@@ -218,3 +220,4 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Q4 | (2026-11-06, PLAN-002 S2) What does `data` hold for archive and unarchive? | The full row, like I and U. An unarchive must be able to re-insert a row a client dropped (archived rows need not be in the eager set), and full rows keep every non-delete packet an idempotent upsert. |
 | Q5 | (2026-11-06, PLAN-002 S2) How does a change of a row's groups reach clients? | Two packets with consecutive ids: `D` with the old groups, then `U` with the new ones. Users who see both delete and re-insert (one batch); users who only saw the old groups delete; users who only see the new groups upsert. This keeps the hub's filter a plain `groups && clientGroups`. |
 | Q6 | (2026-11-06, PLAN-002 S2 review) Which of a row's groups does a client receive? | Only the ones it is in: bootstrap and the hub send `syncGroups` intersected with the connection's groups. The client needs a row's groups to purge it when it leaves a team (sync-protocol §6) and for `p.canSee`, and the intersection answers both. The full list could name a private team the user isn't in (a project shared by several private teams). `sync_log.data` keeps the full list: it is server-only. |
+| D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |

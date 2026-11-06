@@ -18,7 +18,7 @@ You'll be told the base branch (usually `main`), the plan file and slice, and th
 
 ## Check
 
-1. **Acceptance criteria:** is each AC the slice claims actually covered by a test that would fail if the behaviour broke? Name any AC that has no test or only a weak one.
+1. **Acceptance criteria:** is each AC the slice claims actually covered by a test that would fail if the behaviour broke? Name any AC that has no test or only a weak one. ACs whose test row is marked ⏸ held (tests that need a browser, a running stack or Postgres are on hold: `docs/07-plans/README.md` §6) are not findings; check their unit parts instead. Private-team leak tests and the sync property suite are not held: a missing one is a finding.
 2. **Correctness:** look for logic errors, unhandled edge cases from the spec's `E-n` list, error paths, races, resource leaks (connections, timers), and wrong HTTP status or error codes.
 3. **Invariants:**
    - writes to synced tables only through the repo layer;

@@ -92,6 +92,7 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 - **Restyle** the PLAN-001 screens (setup, login, invite, settings) with the final components.
 
 ### S8: M0 demo, accessibility & polish · M
+- ⏸ **Held (SPEC-005 D1):** the demo e2e is not written for now; run the demo by hand and record it in "As built".
 - **Keyboard-only M0 demo e2e (AC-1):** log in → `Mod+K` → "Create team" → submit → `O T` opens it → `?` → `Alt+Shift+T`.
 - **axe sweep** (AC-12) over every shell page, the command menu, the help overlay, settings, and all Storybook stories (CI).
 - Performance pass: React profiler on the sidebar and command menu under 50 teams and 500 commands.
@@ -105,23 +106,25 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 
 ## 4. Test plan (AC → test)
 
+> ⏸ **Tests that need a browser, a running stack or Postgres are held** since 2026-11-06 (SPEC-005 D1, [plans README §6](README.md#6-testing-hold-e2e-smoke-and-integration)): rows marked held get no test for now, and the markers override the slices' "Tests:" bullets. Unit and property tests in the same row are still written, and so are the sync property suite and private-team leak tests.
+
 | AC | Test |
 |---|---|
-| AC-1 | `e2e/m0-keyboard-demo.spec.ts` |
-| AC-2 | `e2e/command-menu-permissions.spec.ts` |
-| AC-3 | `web/test/command-ranking.test.ts` + e2e |
-| AC-4 | `e2e/command-menu-nested.spec.ts` |
-| AC-5, AC-6 | `web/test/shortcuts-engine.test.ts` + `e2e/shortcuts.spec.ts` |
+| AC-1 | ⏸ held (e2e) `e2e/m0-keyboard-demo.spec.ts` (demo run by hand) |
+| AC-2 | ⏸ held (e2e) `e2e/command-menu-permissions.spec.ts` |
+| AC-3 | `web/test/command-ranking.test.ts` (+ e2e, ⏸ held) |
+| AC-4 | ⏸ held (e2e) `e2e/command-menu-nested.spec.ts` |
+| AC-5, AC-6 | `web/test/shortcuts-engine.test.ts` (+ `e2e/shortcuts.spec.ts`, ⏸ held) |
 | AC-7 | `web/test/shortcuts-conflicts.test.ts` (CI) |
 | AC-8 | `web/test/shortcut-help.test.ts` |
-| AC-9 | `e2e/perf/command-menu.perf.ts` |
-| AC-10 | `e2e/preferences-sync.spec.ts` |
+| AC-9 | ⏸ held (perf) `e2e/perf/command-menu.perf.ts` |
+| AC-10 | ⏸ held (e2e) `e2e/preferences-sync.spec.ts` |
 | AC-11 | `pnpm test:tokens` + Stylelint |
-| AC-12 | `e2e/a11y.spec.ts` + `pnpm test:storybook` (addon-vitest + addon-a11y, both themes) |
+| AC-12 | `pnpm test:storybook` (addon-vitest + addon-a11y, both themes) (+ `e2e/a11y.spec.ts`, ⏸ held) |
 | AC-13 | `packages/ui/visual/stories.visual.ts` (`pnpm test:visual`, pinned Playwright image) |
-| AC-14 | `e2e/system-banners.spec.ts` (simulated conditions) |
-| AC-15 | `e2e/route-guards.spec.ts` |
-| AC-16 | `e2e/responsive.spec.ts` (375 × 812) |
+| AC-14 | ⏸ held (e2e) `e2e/system-banners.spec.ts` (simulated conditions) |
+| AC-15 | ⏸ held (e2e) `e2e/route-guards.spec.ts` |
+| AC-16 | ⏸ held (e2e) `e2e/responsive.spec.ts` (375 × 812) |
 
 ## 5. Risks & mitigations
 

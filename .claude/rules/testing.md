@@ -11,7 +11,7 @@ paths:
 - **Kinds:**
   - `*.test.ts(x)` are unit tests: no Docker or network, fast, run by `pnpm test`.
   - `*.int.test.ts` need Postgres: run by `pnpm test:int` with Testcontainers locally (Docker via Colima) or a CI service container. Each file gets its own database.
-  - `e2e/` holds Playwright tests against the built app or the compose stack.
+  - `e2e/` holds Playwright tests against the built app or the compose stack. **On hold** (`docs/07-plans/README.md` §6): don't write e2e, perf, smoke or new `*.int.test.ts` tests for now; plan rows marked ⏸ stay unwritten. Exceptions, still written: the sync property suite and private-team leak tests. Keep and run the existing integration tests when you change code they cover.
 - **Acceptance criteria:** each spec AC maps to a named test in the plan's test plan table. When you add the test, use that file name. If you can't, update the table.
 - **Behaviour first:** assert observable behaviour (HTTP status and body, emitted rows, rendered text), not private internals. Name tests as a sentence about behaviour.
 - **Determinism:**

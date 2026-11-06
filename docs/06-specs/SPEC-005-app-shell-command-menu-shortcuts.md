@@ -134,6 +134,8 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. In M0: 
 
 ## 10. Acceptance criteria
 
+> **Held (2026-11-06): tests that need a browser, a running stack or Postgres are not written for now** (D1 in §11): criteria whose test is `e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e` or `integration` are held until the hold is lifted. Still written: unit and property tests, the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5).
+
 | AC | Criterion | Test |
 |---|---|---|
 | AC-1 | **Keyboard-only M0 demo:** log in → `Mod+K` → "Create team" → fill and submit → `O T` opens the new team → `?` lists shortcuts → `Alt+Shift+T` toggles the theme, all without a mouse. | e2e |
@@ -160,3 +162,4 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. In M0: 
 | Q1 | Should the default home be My issues, or the first team's issues? | My issues (from M2). Until M2, the first team's home. |
 | Q2 | Should frecency data sync across devices? | No: `localStorage` only (a convenience) |
 | Q3 | Should the sidebar width sync across devices? | No (per device) |
+| D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |

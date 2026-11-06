@@ -24,7 +24,7 @@ Implement slice **$1** of **$0**.
 ## 3. Build
 
 - Before writing code, post a short plan: the files to add or change, and the AC → test mapping.
-- Implement in small steps. Write the tests for each AC alongside the code, and run the package tests often.
+- Implement in small steps. Write the tests for each AC alongside the code, and run the package tests often. Skip test rows marked ⏸ held (tests that need a browser, a running stack or Postgres: `docs/07-plans/README.md` §6), even where the slice's "Tests:" bullet asks for them; write their unit parts, still write private-team leak tests and the sync property suite, and say in "As built" which held ACs you checked by hand.
 - Follow `CLAUDE.md` and the `.claude/rules/` that apply. Don't widen scope beyond the slice. Note follow-ups instead.
 
 ## 4. Verify

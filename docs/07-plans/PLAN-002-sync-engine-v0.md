@@ -99,6 +99,7 @@ Implements: [SPEC-002](../06-specs/SPEC-002-sync-engine-v0.md) · Protocol: [syn
 ### S10: Inspector, UI hooks, demo e2e & perf · M *(after PLAN-001 S8)*
 - **Sync inspector panel** (dev builds, plus `?debug=sync` for Admins): state, `lastSyncId`, lag, queue, recent packets, rejections, row counts, IDB size, "Force resync".
 - **UI hooks** consumed by PLAN-005: `useConnectionState()`, `usePendingCount()`, `onRejected`, `onOutdated`, `useBootstrapProgress()`.
+- ⏸ **Held (SPEC-002 D1):** the e2e and perf bullets below wait for the e2e hold to lift; S10 now delivers the inspector and the UI hooks.
 - **E2E with real models** (team rename): tab-to-tab < 150 ms p95 over 100 trials (AC-4), offline rename, reload, then online (AC-6), and server rejection via a team removed meanwhile (AC-7).
 - **Perf suite:** a reference-scale seed (`scripts/seed-reference-scale.ts`, eager rows only, about 150k) with a cold bootstrap < 10 s and a warm start < 1.5 s (AC-8), plus delta apply < 5 ms per 100 packets. Wired into the nightly workflow.
 - AC-13 is a manual check with the inspector during AC-6 (recorded in the PR).
@@ -111,20 +112,22 @@ Additive tables. `debug_items` exists only in dev and test (the migration is gua
 
 ## 4. Test plan (AC → test)
 
+> ⏸ **Tests that need a browser, a running stack or Postgres are held** since 2026-11-06 (SPEC-002 D1, [plans README §6](README.md#6-testing-hold-e2e-smoke-and-integration)): rows marked held get no test for now, and the markers override the slices' "Tests:" bullets. Unit and property tests in the same row are still written, and so are the sync property suite and private-team leak tests.
+
 | AC | Test |
 |---|---|
-| AC-1 | `server/test/sync-ordering.stress.int.test.ts` |
-| AC-2 | `sync-client/test/sim/convergence.prop.test.ts` |
-| AC-3 | `sync-client/test/sim/exactly-once.prop.test.ts` |
-| AC-4 | `e2e/sync-realtime.spec.ts` (two browser contexts, 100 trials, p95 assertion) |
-| AC-5 | `sync-client/test/optimistic-frame.test.ts` + `e2e/sync-optimistic.spec.ts` |
-| AC-6 | `e2e/sync-offline.spec.ts` (Playwright `context.setOffline`, reload) |
-| AC-7 | `sync-client/test/rejection.test.ts` + `e2e/sync-rejection.spec.ts` |
-| AC-8 | `e2e/perf/bootstrap.perf.ts` (nightly) |
-| AC-9 | `server/test/sync-catchup.int.test.ts` |
-| AC-10 | `server/test/sync-resync.int.test.ts` + `sync-client/test/resync.test.ts` |
-| AC-11 | `server/test/sync-groups.int.test.ts` (bootstrap, catch-up, live) |
-| AC-12 | ESLint rule test + `server/test/repo-guard.int.test.ts` |
+| AC-1 | `server/test/sync-ordering.stress.int.test.ts` (written in S2) |
+| AC-2 | `sync-client/test/sim/convergence.prop.test.ts` (not held: real executor and Postgres, §6) |
+| AC-3 | `sync-client/test/sim/exactly-once.prop.test.ts` (not held: real executor and Postgres, §6) |
+| AC-4 | ⏸ held (e2e) `e2e/sync-realtime.spec.ts` (two browser contexts, 100 trials, p95 assertion) |
+| AC-5 | `sync-client/test/optimistic-frame.test.ts` (+ `e2e/sync-optimistic.spec.ts`, ⏸ held) |
+| AC-6 | ⏸ held (e2e) `e2e/sync-offline.spec.ts` (Playwright `context.setOffline`, reload) |
+| AC-7 | `sync-client/test/rejection.test.ts` (+ `e2e/sync-rejection.spec.ts`, ⏸ held) |
+| AC-8 | ⏸ held (perf) `e2e/perf/bootstrap.perf.ts` (nightly) |
+| AC-9 | ⏸ held (integration) `server/test/sync-catchup.int.test.ts` |
+| AC-10 | `sync-client/test/resync.test.ts` (+ `server/test/sync-resync.int.test.ts`, ⏸ held) |
+| AC-11 | `server/test/sync-groups.int.test.ts` (bootstrap, catch-up, live; not held: leak test, §6) |
+| AC-12 | `server/test/sync-lint.test.ts` (ESLint rule) + `server/test/repo-guard.int.test.ts` (both written in S2) |
 | AC-13 | Manual check, recorded in the S10 PR |
 
 ## 5. Risks & mitigations
