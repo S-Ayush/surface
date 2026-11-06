@@ -1,0 +1,7 @@
+{
+  "extends": "@surface/config/tsconfig.web.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src", "test"]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@surface/operations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Operation definitions shared by client and server (ADR-0011).",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@surface/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@surface/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@surface/config": "workspace:*"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@surface/editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Rich text editor (TipTap) configuration and extensions.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@surface/config": "workspace:*"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@surface/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Surface server: HTTP API, sync hub, MCP, auth, jobs.",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch --conditions=@surface/source src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@surface/domain": "workspace:*",
+    "@surface/operations": "workspace:*",
+    "@surface/sync-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@surface/config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "tsx": "^4.23.15"
+  }
+}

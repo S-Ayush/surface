@@ -1,0 +1,27 @@
+{
+  "name": "@surface/sync-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sync wire types and codecs (bootstrap frames, deltas, mutation batches).",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "@surface/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@surface/config": "workspace:*"
+  }
+}
