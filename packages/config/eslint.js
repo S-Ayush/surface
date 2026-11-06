@@ -11,6 +11,12 @@ const REACT_FILES = [
   'packages/editor/**/*.{ts,tsx}',
 ];
 
+/** Hex colours, px lengths and colour functions inside inline style values (esquery regex). */
+const INLINE_STYLE_RAW_VALUE =
+  '/#[0-9a-fA-F]{3,8}\\b|\\dpx\\b|\\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\\(/';
+const INLINE_STYLE_MESSAGE =
+  'Inline styles use tokens only (var(--…)): no hex, px or colour functions (design-system §5.4).';
+
 /**
  * Surface ESLint flat config.
  * @param {{ rootDir: string }} options  rootDir = repository root (for typed linting).
@@ -51,6 +57,24 @@ export function surfaceEslint({ rootDir }) {
       files: REACT_FILES,
       extends: [reactHooks.configs.flat.recommended],
       languageOptions: { globals: globals.browser },
+    },
+    {
+      // AC-11 (lint part) for TSX: Stylelint covers CSS files, this covers inline `style={…}`.
+      // Values must be tokens (var(--…)) or computed numbers, never hex, px or colour functions.
+      files: ['apps/web/src/**/*.tsx', 'packages/ui/src/**/*.tsx', 'packages/editor/src/**/*.tsx'],
+      rules: {
+        'no-restricted-syntax': [
+          'error',
+          {
+            selector: `JSXAttribute[name.name='style'] Literal[value=${INLINE_STYLE_RAW_VALUE}]`,
+            message: INLINE_STYLE_MESSAGE,
+          },
+          {
+            selector: `JSXAttribute[name.name='style'] TemplateElement[value.raw=${INLINE_STYLE_RAW_VALUE}]`,
+            message: INLINE_STYLE_MESSAGE,
+          },
+        ],
+      },
     },
     prettier,
   );

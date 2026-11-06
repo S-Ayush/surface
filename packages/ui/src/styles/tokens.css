@@ -56,6 +56,23 @@
   --border-width: 1px;
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
+  --avatar-xs: 16px;
+  --avatar-sm: 20px;
+  --avatar-md: 24px;
+  --avatar-lg: 32px;
+  --presence-size: 8px;
+  --checkbox-size: 16px;
+  --switch-width: 28px;
+  --switch-height: 16px;
+  --switch-thumb: 12px;
+  --kbd-height: 18px;
+  --swatch-size: 20px;
+  --progress-height: 4px;
+  --avatar-xs-font: 0.6154rem;
+  --avatar-sm-font: 0.6923rem;
+  --spinner-stroke: 2px;
+  --tooltip-max-width: 280px;
+  --empty-state-max-width: 360px;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -83,6 +100,9 @@
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-in: cubic-bezier(0.4, 0, 1, 1);
   --motion-shift: 4px;
+  --dur-spin: 800ms;
+  --dur-loop: 1600ms;
+  --skeleton-delay: 150ms;
   --motion-scale: 0.98;
 }
 
@@ -170,9 +190,11 @@
   --label-blue: var(--hue-blue);
   --label-violet: var(--hue-violet);
   --label-pink: var(--hue-pink);
+  --on-label: var(--gray-12);
   --shadow-e1: 0 0 0 1px rgb(22 24 29 / 0.06), 0 4px 12px rgb(22 24 29 / 0.08);
   --shadow-e2: 0 0 0 1px rgb(22 24 29 / 0.06), 0 12px 32px rgb(22 24 29 / 0.14);
   --shadow-e3: 0 0 0 1px rgb(22 24 29 / 0.08), 0 8px 24px rgb(22 24 29 / 0.16);
+  --pressed-shade: rgb(0 0 0 / 0.14);
   --backdrop: rgb(22 24 29 / 0.32);
 }
 
@@ -258,9 +280,11 @@
   --label-blue: var(--hue-blue);
   --label-violet: var(--hue-violet);
   --label-pink: var(--hue-pink);
+  --on-label: var(--gray-1);
   --shadow-e1: 0 0 0 1px var(--border-default), 0 4px 16px rgb(0 0 0 / 0.4);
   --shadow-e2: 0 0 0 1px var(--border-default), 0 16px 40px rgb(0 0 0 / 0.55);
   --shadow-e3: 0 0 0 1px var(--border-default), 0 12px 32px rgb(0 0 0 / 0.6);
+  --pressed-shade: rgb(0 0 0 / 0.22);
   --backdrop: rgb(0 0 0 / 0.6);
 }
 
@@ -348,9 +372,11 @@
     --label-blue: var(--hue-blue);
     --label-violet: var(--hue-violet);
     --label-pink: var(--hue-pink);
+    --on-label: var(--gray-1);
     --shadow-e1: 0 0 0 1px var(--border-default), 0 4px 16px rgb(0 0 0 / 0.4);
     --shadow-e2: 0 0 0 1px var(--border-default), 0 16px 40px rgb(0 0 0 / 0.55);
     --shadow-e3: 0 0 0 1px var(--border-default), 0 12px 32px rgb(0 0 0 / 0.6);
+    --pressed-shade: rgb(0 0 0 / 0.22);
     --backdrop: rgb(0 0 0 / 0.6);
   }
 }

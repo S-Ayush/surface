@@ -1,0 +1,26 @@
+.content {
+  z-index: var(--z-tooltip);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  max-width: var(--tooltip-max-width);
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-e1);
+  color: var(--text-primary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+  animation: enter var(--dur-fast) var(--ease-out);
+}
+
+.kbd kbd {
+  background: var(--bg-hover);
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-shift));
+  }
+}

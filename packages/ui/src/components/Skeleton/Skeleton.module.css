@@ -1,0 +1,50 @@
+.root {
+  display: block;
+  width: 100%;
+  border-radius: var(--radius-xs);
+  background: var(--bg-active);
+  opacity: 0;
+  animation:
+    appear var(--dur-fast) var(--ease-out) var(--skeleton-delay) forwards,
+    pulse var(--dur-loop) ease-in-out var(--skeleton-delay) infinite;
+}
+
+.text {
+  height: var(--text-base-size);
+  margin: calc((var(--text-base-line) - var(--text-base-size)) / 2) 0;
+}
+
+.row {
+  height: var(--row-height);
+  border-radius: var(--radius-sm);
+}
+
+.circle {
+  width: var(--avatar-md);
+  height: var(--avatar-md);
+  border-radius: var(--radius-full);
+}
+
+.block {
+  height: 100%;
+  min-height: var(--control-lg);
+  border-radius: var(--radius-md);
+}
+
+@keyframes appear {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    background: var(--bg-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root {
+    animation: appear var(--dur-fast) var(--ease-out) var(--skeleton-delay) forwards;
+  }
+}

@@ -1,0 +1,61 @@
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
+.list {
+  display: flex;
+  gap: var(--space-4);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: var(--control-lg);
+  padding: 0 var(--space-8);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.trigger:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.trigger[data-state='active'] {
+  color: var(--text-primary);
+}
+
+.trigger[data-state='active']::after {
+  position: absolute;
+  right: var(--space-8);
+  bottom: calc(var(--border-width) * -1);
+  left: var(--space-8);
+  height: var(--focus-ring-width);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  content: '';
+}
+
+.trigger:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.trigger:focus-visible {
+  outline-offset: calc(var(--focus-ring-width) * -1);
+}
+
+.content {
+  padding-top: var(--space-16);
+}
+
+.content:focus-visible {
+  outline-offset: var(--focus-ring-offset);
+}

@@ -68,6 +68,8 @@ export const semanticColors = {
   'label-blue': same('hue-blue'),
   'label-violet': same('hue-violet'),
   'label-pink': same('hue-pink'),
+  // Text on a label-hue fill, e.g. avatar initials.
+  'on-label': { light: 'gray-12', dark: 'gray-1' },
 } as const satisfies Readonly<Record<string, Themed>>;
 
 export type SemanticColor = keyof typeof semanticColors;

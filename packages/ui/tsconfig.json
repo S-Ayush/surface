@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src", "tokens"]
+  "include": ["src", "tokens", ".storybook/*.ts", ".storybook/*.tsx"]
 }

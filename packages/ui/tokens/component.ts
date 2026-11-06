@@ -65,6 +65,25 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'focus-ring-width': px(2),
   'focus-ring-offset': px(2),
 
+  // Component sizes (§5.1). Kept here so component CSS never needs raw px.
+  'avatar-xs': px(16),
+  'avatar-sm': px(20),
+  'avatar-md': px(24),
+  'avatar-lg': px(32),
+  'presence-size': px(8),
+  'checkbox-size': px(16),
+  'switch-width': px(28),
+  'switch-height': px(16),
+  'switch-thumb': px(12),
+  'kbd-height': px(18),
+  'swatch-size': px(20),
+  'progress-height': px(4),
+  'avatar-xs-font': rem(8),
+  'avatar-sm-font': rem(9),
+  'spinner-stroke': px(2),
+  'tooltip-max-width': px(280),
+  'empty-state-max-width': px(360),
+
   // Radius (§2.5)
   'radius-xs': px(4),
   'radius-sm': px(6),
@@ -101,6 +120,11 @@ export const componentTokens: Readonly<Record<string, string>> = {
   // Movement of entering overlays. Reduced motion swaps in `reducedMotionTokens`, leaving only the
   // opacity change (§2.6).
   'motion-shift': px(4),
+  // Looping indicators (Spinner, Skeleton pulse, indeterminate progress) and the skeleton delay
+  // (§4 "Loading": skeletons appear only after 150 ms, so fast loads never flash).
+  'dur-spin': '800ms',
+  'dur-loop': '1600ms',
+  'skeleton-delay': '150ms',
   'motion-scale': '0.98',
 };
 
@@ -120,6 +144,11 @@ export const themedComponentTokens: Readonly<Record<string, Readonly<Record<Them
   'shadow-e3': {
     light: '0 0 0 1px rgb(22 24 29 / 0.08), 0 8px 24px rgb(22 24 29 / 0.16)',
     dark: '0 0 0 1px var(--border-default), 0 12px 32px rgb(0 0 0 / 0.6)',
+  },
+  // Darkens a solid button while pressed.
+  'pressed-shade': {
+    light: 'rgb(0 0 0 / 0.14)',
+    dark: 'rgb(0 0 0 / 0.22)',
   },
   backdrop: {
     light: 'rgb(22 24 29 / 0.32)',

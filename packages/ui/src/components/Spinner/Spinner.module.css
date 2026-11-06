@@ -1,0 +1,42 @@
+.root {
+  display: inline-block;
+  flex: none;
+  border: var(--spinner-stroke) solid var(--border-strong);
+  border-top-color: currentcolor;
+  border-radius: var(--radius-full);
+  animation: spin var(--dur-spin) linear infinite;
+}
+
+/* Reduced motion: no rotation, only an opacity pulse (design-system §2.6). */
+@media (prefers-reduced-motion: reduce) {
+  .root {
+    animation: pulse var(--dur-loop) ease-in-out infinite;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.sm {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.md {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+
+.lg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}

@@ -1,0 +1,34 @@
+.root {
+  display: grid;
+  grid-template-columns: repeat(6, var(--swatch-size));
+  gap: var(--space-8);
+}
+
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--swatch-size);
+  height: var(--swatch-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  color: var(--on-label);
+  cursor: pointer;
+}
+
+.swatch:hover {
+  box-shadow:
+    0 0 0 var(--border-width) var(--bg-panel),
+    0 0 0 var(--focus-ring-width) var(--border-control);
+}
+
+.indicator {
+  display: inline-flex;
+}
+
+.indicator > svg {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  stroke-width: 3;
+}

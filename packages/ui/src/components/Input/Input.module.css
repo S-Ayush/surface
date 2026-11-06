@@ -1,0 +1,33 @@
+.box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: 0 var(--space-8);
+}
+
+.sm {
+  height: var(--control-sm);
+  font-size: var(--text-sm-size);
+}
+
+.md {
+  height: var(--control-md);
+  font-size: var(--text-base-size);
+}
+
+.lg {
+  height: var(--control-lg);
+  font-size: var(--text-base-size);
+}
+
+.slot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--text-tertiary);
+}
+
+.slot > svg {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}

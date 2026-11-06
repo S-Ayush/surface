@@ -8,7 +8,6 @@ export default {
     '**/node_modules/**',
     '**/dist/**',
     '**/coverage/**',
-    '**/storybook-static/**',
     'packages/ui/src/styles/tokens.css',
   ],
   rules: {

@@ -1,0 +1,8 @@
+/* Story canvas: the app background, so contrast matches the product. */
+body {
+  background: var(--bg-app);
+}
+
+#storybook-root {
+  color: var(--text-primary);
+}

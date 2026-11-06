@@ -1,0 +1,66 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.box {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--checkbox-size);
+  height: var(--checkbox-size);
+  padding: 0;
+  border: var(--border-width) solid var(--border-control);
+  border-radius: var(--radius-xs);
+  background: var(--bg-panel);
+  color: var(--on-accent);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.box[data-state='unchecked']:hover:not(:disabled) {
+  border-color: var(--text-tertiary);
+}
+
+.box[data-state='checked'],
+.box[data-state='indeterminate'] {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.box:disabled {
+  border-color: var(--border-default);
+  background: var(--bg-hover);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.indicator {
+  display: inline-flex;
+}
+
+.indicator > svg {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  stroke-width: 2.5;
+}
+
+.indicator[data-state='indeterminate'] .check,
+.indicator[data-state='checked'] .minus {
+  display: none;
+}
+
+.label {
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.label[data-disabled='true'] {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}

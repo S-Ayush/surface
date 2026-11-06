@@ -10,20 +10,48 @@
   },
   "scripts": {
     "tokens": "tsx scripts/build-tokens.ts",
-    "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json && tsc -p scripts/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json && tsc -p scripts/tsconfig.json && tsc -p visual/tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run",
-    "test:tokens": "vitest run test/contrast.test.ts"
+    "test": "vitest run --project unit",
+    "test:tokens": "vitest run test/contrast.test.ts",
+    "test:storybook": "vitest run --project storybook-light --project storybook-dark",
+    "storybook": "storybook dev --port 6006 --no-open --disable-telemetry --no-version-updates",
+    "storybook:build": "storybook build --disable-telemetry --quiet --output-dir dist/storybook",
+    "test:visual": "pnpm storybook:build && visual/run-in-docker.sh",
+    "test:visual:update": "pnpm storybook:build && visual/run-in-docker.sh --update-snapshots",
+    "test:visual:run": "playwright test -c visual/playwright.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
-    "@fontsource-variable/jetbrains-mono": "^5.3.0"
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "lucide-react": "^1.70.0",
+    "radix-ui": "^1.8.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@storybook/addon-a11y": "^10.6.6",
+    "@storybook/addon-vitest": "^10.6.6",
+    "@storybook/react-vite": "^10.6.6",
     "@surface/config": "workspace:*",
     "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "@vitest/browser": "^5.1.0",
+    "@vitest/browser-playwright": "^5.1.0",
+    "playwright": "^1.65.0",
     "prettier": "^3.9.10",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "storybook": "^10.6.6",
+    "storybook-addon-pseudo-states": "^10.6.6",
     "stylelint": "^18.0.0",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   }
 }

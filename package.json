@@ -24,7 +24,10 @@
     "docker:smoke": "scripts/docker-smoke.sh",
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
     "ui:tokens": "pnpm --filter @surface/ui tokens",
-    "test:tokens": "pnpm --filter @surface/ui test:tokens"
+    "test:tokens": "pnpm --filter @surface/ui test:tokens",
+    "storybook": "pnpm --filter @surface/ui storybook",
+    "test:storybook": "pnpm --filter @surface/ui test:storybook",
+    "test:visual": "pnpm --filter @surface/ui test:visual"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",

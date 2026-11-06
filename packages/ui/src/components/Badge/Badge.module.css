@@ -1,0 +1,24 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--kbd-height);
+  height: var(--kbd-height);
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs-size);
+  font-weight: var(--text-xs-weight);
+  font-feature-settings: var(--font-features-numeric);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.neutral {
+  background: var(--bg-active);
+  color: var(--text-secondary);
+}
+
+.accent {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}

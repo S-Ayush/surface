@@ -1,0 +1,139 @@
+.root {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.root:disabled {
+  cursor: not-allowed;
+}
+
+.root[aria-busy='true'] {
+  cursor: progress;
+}
+
+.sm {
+  height: var(--control-sm);
+  padding: 0 var(--space-8);
+  font-size: var(--text-sm-size);
+}
+
+.md {
+  height: var(--control-md);
+  padding: 0 var(--space-12);
+  font-size: var(--text-base-size);
+}
+
+.lg {
+  height: var(--control-lg);
+  padding: 0 var(--space-16);
+  font-size: var(--text-base-size);
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.icon > svg {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kbd {
+  margin-left: var(--space-2);
+}
+
+/* Variants */
+.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.primary:hover:not(:disabled),
+.primary:active:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.primary:active:not(:disabled),
+.danger:active:not(:disabled) {
+  background-image: linear-gradient(var(--pressed-shade), var(--pressed-shade));
+}
+
+.primary .kbd kbd {
+  border-color: transparent;
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+.secondary {
+  border-color: var(--border-default);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.secondary:active:not(:disabled),
+.ghost:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.danger:hover:not(:disabled),
+.danger:active:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+.danger .kbd kbd {
+  border-color: transparent;
+  background: var(--danger-hover);
+  color: var(--on-danger);
+}
+
+.root:disabled,
+.root:disabled:hover {
+  border-color: var(--border-subtle);
+  background: var(--bg-hover);
+  color: var(--text-disabled);
+}
+
+.ghost:disabled {
+  border-color: transparent;
+  background: transparent;
+}

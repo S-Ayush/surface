@@ -1,0 +1,28 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.label {
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  font-weight: var(--weight-medium);
+  line-height: var(--text-sm-line);
+}
+
+.hint,
+.error {
+  margin: 0;
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.hint {
+  color: var(--text-tertiary);
+}
+
+.error {
+  color: var(--danger);
+}

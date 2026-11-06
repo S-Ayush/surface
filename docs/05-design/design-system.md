@@ -56,6 +56,7 @@ Themes switch by setting `data-theme="light|dark"` on `<html>`. `system` follows
 | `--accent-subtle` | `#E2F3F2` | `#123130` | Accent backgrounds |
 | `--on-accent` | `#FFFFFF` | `#04201F` | Text on the accent colour |
 | `--focus-ring` | `#16908C` | `#4ED2CD` | 2 px ring with a 2 px offset |
+| `--on-label` | `#16181D` | `#0E1013` | Avatar initials on a `--label-<hue>` fill |
 | `--danger` / `--warning` / `--success` / `--info` | `#D03A3A` / `#B86E0C` / `#2B9255` / `#3569D4` | `#F06868` / `#EBA33F` / `#4FC47D` / `#6E9EF6` | Feedback, and semantic icons |
 
 > **Corrections (2026-11-06, PLAN-005 S1):** the contrast test failed four light-theme proposals: `--accent` `#0E8A87` (white text on it was 4.2:1, and as link text 4.2:1), `--focus-ring` `#2BB0AC` (2.7:1), and `--text-tertiary` `#666D7C` (4.3:1 on `--bg-active`); `--accent-hover` darkened with the accent. `--bg-selected` was merged with `--accent-subtle` and dark `--bg-hover` with `--border-subtle` (each within 2 RGB steps) so the primitive scales stay at 12 steps. Added tokens: `--danger-hover`, `--on-danger`, `--{danger,warning,success,info}-subtle`, `--label-<hue>`, and `--border-control` (inputs need a 3:1 edge, WCAG 1.4.11; `--text-disabled` shares its new, darker value). `tnum` is applied only where numbers align (`--font-features-numeric`), not to all text. The source of truth is `packages/ui/tokens/*.ts`.
@@ -175,7 +176,7 @@ Built on **Radix primitives** wherever a primitive exists (ADR-0004). Every comp
 | **Checkbox · Switch · Radio** | | Radix |
 | **SegmentedControl** | 2–5 options (e.g. List/Board) | Arrow keys |
 | **Tabs** | Header view tabs and settings tabs | Radix Tabs, arrow keys |
-| **Kbd** | Renders `Mod` as ⌘ on macOS and Ctrl elsewhere. Sequences render as `G` then `I`. | `aria-label` with the spoken form |
+| **Kbd** | Renders `Mod` as ⌘ on macOS and Ctrl elsewhere. Sequences render as `G` then `I`. | Visually hidden spoken form (`aria-label` is not allowed on `<kbd>`). Inside a Button the Kbd is `aria-hidden` and the button sets `aria-keyshortcuts`. |
 | **Tooltip** | Text plus optional Kbd | Radix Tooltip. Not used for essential information. |
 | **Avatar · AvatarGroup** | 16/20/24/32 px. Initials fallback with a hashed palette colour. Optional presence dot. | `alt` = name |
 | **Badge / Count** | Neutral or accent. For sidebar counts and tab counts. | |
@@ -209,6 +210,8 @@ Built on **Radix primitives** wherever a primitive exists (ADR-0004). Every comp
 | **EmojiPicker** | Reactions and icons (M1) |
 | **SidebarNavItem · SidebarSection** | Icon, label, count, active state, drag to reorder (favorites), collapsible sections |
 | **ViewToolbar** | Filter button plus active filter chips, Display options popover, and save-view affordance |
+
+> **As built (2026-11-06, PLAN-005 S2):** SegmentedControl and ColorPicker are Radix RadioGroups. Kbd speaks shortcuts through visually hidden text ("Command K"), because `aria-label` is not allowed on `<kbd>`. A Button with a `shortcut` hides its Kbd and sets `aria-keyshortcuts` (`ariaKeyShortcuts()` in `keys.ts`). Avatar initials use `--on-label` on the palette hue. Tooltips need one `TooltipProvider` at the app root. Storybook is `pnpm storybook` (not `pnpm ui:storybook`), story tests are `pnpm test:storybook`, and visual snapshots are `pnpm test:visual` (pinned Playwright Docker image).
 
 ### 5.4 Component acceptance checklist (applies to every component)
 - [ ] Light and dark themes, all states (default, hover, active, focus-visible, disabled, error, loading)

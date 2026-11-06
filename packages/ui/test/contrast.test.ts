@@ -6,7 +6,7 @@
 // on a surface must not be used as text on it (see the header of tokens/semantic.ts).
 import { describe, expect, it } from 'vitest';
 import { contrastRatio, luminance, resolveColor } from '../tokens/contrast.js';
-import { THEMES } from '../tokens/primitives.js';
+import { LABEL_HUES, THEMES } from '../tokens/primitives.js';
 import type { SemanticColor } from '../tokens/semantic.js';
 
 const TEXT = 4.5;
@@ -31,6 +31,8 @@ const FORM_SURFACES = [
   'bg-panel',
   'bg-elevated',
 ] as const satisfies readonly SemanticColor[];
+
+const LABEL_TOKENS = LABEL_HUES.map((hue) => `label-${hue}` as const);
 
 /** Banner and toast surfaces. */
 const FEEDBACK_SUBTLE = [
@@ -101,6 +103,9 @@ const USAGE = {
   'label-blue': label,
   'label-violet': label,
   'label-pink': label,
+  'on-label': {
+    checks: [text(LABEL_TOKENS, 'avatar initials on a palette fill')],
+  },
 } as const satisfies Record<SemanticColor, Usage>;
 
 function isSemantic(name: string): name is SemanticColor {
