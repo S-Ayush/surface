@@ -61,12 +61,75 @@ async function until(condition: () => Promise<boolean>, what: string, timeoutMs 
   }
 }
 
+/** Sessions waiting for the migrations lock in the database `client` is connected to. */
+async function migrationsLockWaiters(client: pg.Client): Promise<number> {
+  // A bigint advisory key is split across classid (high 32 bits) and objid (low 32 bits).
+  const { rowCount } = await client.query(
+    `SELECT 1 FROM pg_locks
+      WHERE locktype = 'advisory' AND NOT granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND ((classid::bigint << 32) | objid::bigint) = $1::bigint`,
+    [LOCKS.migrations],
+  );
+  return rowCount ?? 0;
+}
+
+/** Starts `pg_advisory_lock(key)` on a new connection; it waits while `key` is held. */
+async function waitForLock(url: string, key: string) {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  const { rows } = await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+  const locked = client.query('SELECT pg_advisory_lock($1)', [key]);
+  return { client, pid: rows[0]?.pid, locked };
+}
+
 async function tableExists(pool: pg.Pool, table: string): Promise<boolean> {
   const { rows } = await pool.query<{ t: string | null }>('SELECT to_regclass($1) AS t', [table]);
   return rows[0]?.t != null;
 }
 
 describe('startup sequence', () => {
+  it('counts only waiters for the migrations lock in its own database', async () => {
+    // Other test files wait on advisory locks too (createTestDatabase, other servers); their
+    // waits must not look like this server waiting for migrations.
+    db = await createTestDatabase({ migrated: false });
+    const other = await createTestDatabase({ migrated: false });
+    const holders = [
+      new pg.Client({ connectionString: other.url }),
+      new pg.Client({ connectionString: db.url }),
+    ];
+    const waiters: Awaited<ReturnType<typeof waitForLock>>[] = [];
+    const observer = new pg.Client({ connectionString: db.url });
+    try {
+      await Promise.all([...holders, observer].map((c) => c.connect()));
+      const [otherHolder, sameHolder] = holders;
+      // The migrations lock, waited on in another database…
+      await otherHolder?.query('SELECT pg_advisory_lock($1)', [LOCKS.migrations]);
+      waiters.push(await waitForLock(other.url, LOCKS.migrations));
+      // …and another lock, waited on in this database.
+      await sameHolder?.query('SELECT pg_advisory_lock($1)', [LOCKS.sync]);
+      waiters.push(await waitForLock(db.url, LOCKS.sync));
+      await until(async () => {
+        const { rows } = await observer.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+             AND pid = ANY($1)`,
+          [waiters.map((w) => w.pid)],
+        );
+        return rows[0]?.n === 2;
+      }, 'both unrelated waits');
+
+      expect(await migrationsLockWaiters(observer)).toBe(0);
+    } finally {
+      await Promise.all(holders.map((c) => c.end().catch(() => undefined)));
+      for (const w of waiters) {
+        await w.locked.catch(() => undefined);
+        await w.client.end().catch(() => undefined);
+      }
+      await observer.end().catch(() => undefined);
+      await other.drop();
+    }
+  });
+
   it('is not ready while migrations wait for the lock, then ready with db and migrations checks', async () => {
     db = await createTestDatabase({ migrated: false });
     // Another "replica" holds the migrations lock, so startup stops at step 3.
@@ -77,12 +140,10 @@ describe('startup sequence', () => {
       const logs = captureLogs();
       const server = await start(db.url, { logger: pino({ level: 'info' }, logs.stream) });
 
-      await until(async () => {
-        const { rowCount } = await holder.query(
-          "SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted",
-        );
-        return rowCount === 1;
-      }, 'the server to wait for the migrations lock');
+      await until(
+        async () => (await migrationsLockWaiters(holder)) === 1,
+        'the server to wait for the migrations lock',
+      );
       expect(await readyz(server)).toMatchObject({ status: 503, body: { status: 'starting' } });
       expect((await server.app.inject({ url: '/healthz' })).statusCode).toBe(200);
       expect(logs.lines.map((l) => l.msg)).toContain(

@@ -164,7 +164,7 @@ All configuration is through environment variables, validated at startup with a 
 **Startup** (`surface serve`):
 1. Load and validate config (fail fast).
 2. Connect to the DB with retry for up to 60 s, logging "waiting for database…". Wrong credentials, a `pg_hba.conf` rejection (with a hint about `?sslmode=require`) or a missing database fail at once, with the server's reason and never the password.
-3. Check the Postgres version (≥ 17). An unsupported server exits with instructions before anything is changed.
+3. Check the Postgres version (≥ 17) and that the ICU collation `und-x-icu` exists (text filters lowercase with it, SPEC-003 §7.4). An unsupported server exits with instructions before anything is changed.
 4. Under `pg_advisory_lock(LOCKS.migrations)`, so concurrent replicas wait their turn:
    - create the required extensions (`pg_trgm`) if missing and permitted; otherwise exit with the SQL an administrator must run (E8). Nothing else has been changed at that point;
    - run **migrations**. A failed migration exits non-zero, with the DB unchanged by it (each migration runs in its own transaction). History is kept in `schema_migrations`, including the Surface version that applied each migration (used for E7).

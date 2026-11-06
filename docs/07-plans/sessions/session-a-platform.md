@@ -50,6 +50,7 @@ Never merge to main unless I ask, and then use README §5.
 | To | Request | Why / blocking? | Status |
 |---|---|---|---|
 | B | Add `pnpm test:int` to CI using a Postgres 17 service container. Set `TEST_DATABASE_URL` to a superuser URL. | Integration tests (PLAN-004 S3) must run in CI | open |
+| B | `surface doctor`: add a "Collations" check, a problem when `und-x-icu` is missing. Reuse `REQUIRED_COLLATIONS` / `checkCollations()` from `src/db/checks.ts` (on `main` once `p003-s5-queries` merges), and add the row to the SPEC-004 §9 doctor table. | Startup now fails without ICU (SPEC-004 §8 step 3); doctor should report it first | open |
 
 ## Log (append-only)
 
@@ -74,3 +75,4 @@ Never merge to main unless I ask, and then use README §5.
 | 2026-11-06 | PLAN-003 S5 | p003-s5-queries | built | Lists (keyset cursors, visibility in SQL, count, groupBy), `fields` projection (AC-7), `debug.listItems`, migration `0002_debug_items_ms`. E's handoffs done: `timestamptz(3)` rule, ICU collation startup check. `pnpm check` + `pnpm test:int` (11 files + perf) green. SPEC-003 §7.1–7.3 + Q7. |
 | 2026-11-06 | PLAN-003 S5 | p003-s5-queries | committed | `a6ed7f7`. |
 | 2026-11-06 | PLAN-003 S6 | p003-s5-queries | built | `POST /api/ops/:name`, `GET /api/ops`, `/api/openapi.json`; idempotency (migration `0003_api_idempotency`), token-bucket limits, pg-boss 12.38.1 with the hourly prune. New error code `UNAUTHENTICATED` (401). Wired into `app.ts`/`server.ts` (unowned; built by A in PLAN-004). `pnpm check` + `pnpm test:int` (14 files + perf) green; real server booted against postgres:17 and curled. For PLAN-001 S3: `ActorResolver` + CSRF. |
+| 2026-11-06 | Session E handoffs | p003-s5-queries | done | (a) `timestamptz(3)` rule and (b) ICU check were built in S5 (`a6ed7f7`); added the SPEC-004 §8 step 3 wording. (c) Flaky AC-9: `startup.int.test.ts` now counts only waiters on `LOCKS.migrations` in its own database; a new test with unrelated waits (another database, another key) failed on the old query (2) and passes on the new one. Also fixed a second intermittent failure seen in `test:int`: `test/db.ts` `drop()` force-dropped while `Pool#end()` sockets were still closing (unhandled FATAL 57P01); it now waits for the database's backends to leave first (`test-db.int.test.ts` failed 2/2 before). Handoff to B: doctor collation check. |

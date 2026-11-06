@@ -16,6 +16,9 @@ import { LOCKS } from '../src/db/locks.js';
 
 export const silentLog = pino({ level: 'silent' });
 
+/** How long `drop()` waits for connections to close before terminating them. */
+const DROP_WAIT_MS = 10_000;
+
 /** Superuser URL for `database` on the test cluster. */
 export function testDatabaseUrl(database: string): string {
   const url = new URL(inject('pgAdminUrl'));
@@ -62,7 +65,21 @@ export async function createTestDatabase({ migrated = true } = {}): Promise<Test
     pool,
     drop: async () => {
       await pool.end();
-      await withAdmin((client) => client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
+      await withAdmin(async (client) => {
+        // `Pool#end()` resolves before its sockets close, and other pools on this database may
+        // still be closing. FORCE would terminate them mid-close, which surfaces as an unhandled
+        // FATAL 57P01 in the running file. So wait for them; FORCE only clears leaks.
+        const deadline = Date.now() + DROP_WAIT_MS;
+        while (Date.now() < deadline) {
+          const { rows } = await client.query<{ n: number }>(
+            'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1',
+            [name],
+          );
+          if (rows[0]?.n === 0) break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        await client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      });
     },
   };
 }
