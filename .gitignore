@@ -11,3 +11,7 @@ test-results/
 !.env.example
 .DS_Store
 /data/
+
+# Personal Claude Code overrides (shared config is committed)
+.claude/settings.local.json
+CLAUDE.local.md
