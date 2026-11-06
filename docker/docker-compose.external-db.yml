@@ -1,0 +1,49 @@
+# Surface with your own PostgreSQL 17+ (SPEC-004 §6). There is no `db` service:
+# set DATABASE_URL in .env, e.g. postgres://surface:password@db.internal:5432/surface
+# (add ?sslmode=require for most managed databases).
+#
+#   docker compose -f docker-compose.external-db.yml up -d
+#
+# The database user must be allowed to create the pg_trgm extension, or an
+# administrator creates it once: CREATE EXTENSION pg_trgm;
+#
+# A DATABASE_URL exported in your shell wins over .env. Compose expands `$` in
+# .env: write a literal $ in the password as $$ (or URL-encode it as %24).
+name: surface
+
+services:
+  app:
+    image: ${SURFACE_IMAGE:-ghcr.io/s-ayush/surface}:${SURFACE_VERSION:-latest}
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env to your PostgreSQL connection URL}
+    ports:
+      - '${SURFACE_BIND:-0.0.0.0}:${SURFACE_PORT:-3000}:3000'
+    volumes:
+      - uploads:/data/uploads
+      - backups:/data/backups
+    # Surface drains requests for up to 10 s and exits by 15 s (SPEC-004 §8);
+    # Docker's default 10 s would kill it before the database pool is closed.
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  caddy:
+    profiles: ['proxy']
+    image: caddy:2
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  uploads: {}
+  backups: {}
+  caddy_data: {}
+  caddy_config: {}

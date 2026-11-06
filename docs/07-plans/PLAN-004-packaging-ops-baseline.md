@@ -80,7 +80,41 @@ Implements: [SPEC-004](../06-specs/SPEC-004-packaging-ops-baseline.md) · Status
 - `apps/server/bin/surface.ts` (commander): `serve`, `migrate`, `version` (version, commit, schemaHash placeholder), `doctor` (config, DB, PG version, extensions, `/data` writable, disk free, SMTP connect when set). `setup-token` and `reset-password` are registered and implemented in PLAN-001.
 - **Tests:** a `doctor` fixture per failure condition (AC-12).
 
-### S5: Docker image & compose · M
+### S5: Docker image & compose · M · ✅ Done 2026-11-06
+> **As built:** `docker/{Dockerfile, Dockerfile.dockerignore, healthcheck.js, docker-compose.yml, docker-compose.external-db.yml, docker-compose.dev.yml, .env.example, Caddyfile.example}`, `scripts/{dev.mjs, docker-smoke.sh}`. Image `ghcr.io/s-ayush/surface` (SPEC-004 §14 D3). No new dependencies.
+> - **Image:** about **102 MB compressed** (gzip of `docker save`, arm64) and 517 MB unpacked, against a 250 MB budget. The app is 62 MB (drizzle-orm 17 MB, zod 8 MB).
+>   - `pnpm deploy --legacy --prod` keeps pnpm 10 from requiring `inject-workspace-packages` for the whole workspace. It needs the network: deploy re-resolves, so `--offline` fails.
+>   - The server package now has `"files": ["bin", "dist", "migrations"]`, so `src/`, `test/` and `dev.env` stay out of the image.
+>   - `postgresql-client-17` comes from apt.postgresql.org, because bookworm ships 15. The repository key is fetched in a throwaway `pgdg-key` stage and trusted only if its fingerprint matches (`PGDG_KEY_FINGERPRINT`), so the runtime image needs neither curl nor gpg. npm, corepack and yarn are removed from the runtime image.
+>   - **Exception to CLAUDE.md rule 7:** `healthcheck.js` reads `PORT`/`HOST` itself (trimmed, blank = unset, like `loadConfig()`), because the health check must not load the app or its config. Recorded in SPEC-004 §5.
+>   - `/app` is owned by root; `/data/{uploads,backups}` are owned by 10001. `surface` is on `PATH` (`/usr/local/bin/surface` → `/app/bin/surface.js`), so `docker compose exec app surface doctor` works.
+>   - The build context is an allow-list (`Dockerfile.dockerignore`), so no root `.dockerignore` is needed.
+> - **Build platform:** every stage runs on the target platform, so native production dependencies (argon2 in PLAN-001) get the right binaries. If arm64 under QEMU proves too slow in S6, compile on `$BUILDPLATFORM` and run only `pnpm deploy` per target.
+> - **`VOLUME ["/data"]`** (as SPEC-004 §5), with `uploads` and `backups` as named volumes beneath it. `/data` therefore stays writable under `read_only: true`, which is what AC-4 asks for.
+> - **Compose deviations from the §6 outline** (spec updated):
+>   - compose doesn't build `DATABASE_URL` from `POSTGRES_PASSWORD`; `loadConfig()` does and URL-encodes it. Compose still expands `$` in `.env` (write `$$`). `app` gets `POSTGRES_PASSWORD` through the same interpolation as `db`, so a value exported in the shell can't make them disagree;
+>   - `stop_grace_period: 20s` on `app`: Surface drains for up to 10 s and exits by 15 s, and Docker's default 10 s would SIGKILL it mid-drain;
+>   - `POSTGRES_PASSWORD` (bundled) and `DATABASE_URL` (external) are required by interpolation, so compose fails early with a clear message;
+>   - `docker-compose.external-db.yml` is a standalone file, because `depends_on: db` would otherwise still start the bundled database;
+>   - Caddy gets `caddy_config` and `443/udp` (HTTP/3), and `depends_on: app`.
+> - **`.env.example`** lives in `docker/` next to the compose files, which is what users download (SPEC-004 §3). It documents every §7 variable plus the compose-level ones, `DATA_DIR` included.
+> - **`pnpm dev`** = `scripts/dev.mjs`: `compose up --wait` → `surface migrate` → `pnpm --parallel` server `dev` + web `dev`.
+>   - **One dev database per checkout:** the compose project is `surface-dev-<folder>`, e.g. `surface-dev-surface-b`, so worktrees never share or stop each other's container and volume. `pnpm db:migrate` and `pnpm dev:db:down` go through the same script (`dev.mjs db:migrate` / `db:down`).
+>   - Ctrl-C is not forwarded again (the terminal already signals the whole process group), so the server shuts down gracefully instead of seeing a second signal.
+>   - It doesn't use `turbo run dev`: Turbo 2's strict env mode would drop the overrides below.
+>   - Overrides: `PORT`, `SURFACE_DEV_WEB_PORT` and `SURFACE_DEV_PG_PORT`; `SURFACE_URL` and `DATABASE_URL` follow. Node `--env-file` gives the environment precedence over `dev.env`.
+>   - The Vite proxy (`apps/web/vite.config.ts`, added with the user's approval) forwards every `SERVER_PREFIXES` route, matching whole path segments as the server does (`/api/x` yes, `/apikeys` no), with `/sync` as `ws: true`. It keeps the Host header and uses `strictPort`.
+>   - Root scripts added: `dev:db:down`, `db:migrate`, `docker:smoke`.
+> - **Verified:**
+>   - `scripts/docker-smoke.sh` passes, both normally and with `SURFACE_SMOKE_READ_ONLY=1` (`read_only: true` + tmpfs `/tmp`). It checks `/readyz`, that `/` serves the web app, the Docker health check, uid 10001, a clean `surface doctor`, and JSON-only logs.
+>   - `pnpm dev` on ports 3200/5200 was ready in about 5 s. `/readyz` and the API 404 answered through Vite. `doctor` passed in dev, and Ctrl-C left no listeners.
+> - **For S6:**
+>   - The image-checks job can reuse `docker-smoke.sh` (with `SURFACE_SMOKE_READ_ONLY=1`) and add the compressed-size check.
+>   - Inside the container the public-URL check warns, because `localhost:<published port>` is the container itself. That is expected.
+>   - `src/main.ts` is still the entry for the server's `dev`/`start` scripts; the image uses `bin/surface.js`.
+>   - The release job must set the image's `SURFACE_VERSION` build argument (OCI label) from the same version `surface version` reports (`apps/server/package.json`).
+> - **For S7 docs:** `VOLUME ["/data"]` creates an anonymous volume, so `down`/`up` without `-v` leaves orphans. `doctor`'s "/data writable" doesn't prove the `uploads` volume is writable. For plain `docker run`, use `--stop-timeout 20`.
+
 - `docker/Dockerfile` per SPEC-004 §5 (deps, build, runtime). Uses `pnpm deploy --prod` for a minimal server bundle, plus `postgresql-client-17`, tini, and uid 10001.
 - `docker/healthcheck.js` (GET `/healthz`).
 - `docker/docker-compose.yml`, `docker-compose.external-db.yml` (no `db` service), `docker-compose.dev.yml` (Postgres only, for `pnpm dev`), `.env.example` (fully commented), `Caddyfile.example`.

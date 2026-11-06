@@ -1,0 +1,19 @@
+# Build context for docker/Dockerfile (BuildKit reads <Dockerfile>.dockerignore).
+# Allow-list: only what the build needs, so local secrets and caches never reach it.
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!turbo.json
+!apps/
+!packages/
+!docker/healthcheck.js
+
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+**/*.log
+**/.env*
+**/dev.env
+**/*.tsbuildinfo

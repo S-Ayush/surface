@@ -8,7 +8,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:db:down": "node scripts/dev.mjs db:down",
+    "db:migrate": "node scripts/dev.mjs db:migrate",
     "build": "turbo run build",
     "lint": "turbo run lint && pnpm lint:deps && pnpm format:check",
     "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
@@ -18,7 +20,8 @@
     "check": "pnpm build && pnpm lint && pnpm typecheck && pnpm test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "changeset": "changeset"
+    "changeset": "changeset",
+    "docker:smoke": "scripts/docker-smoke.sh"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.3",

@@ -30,9 +30,10 @@ Before any feature exists we need (a) a monorepo where client and server share c
 surface/
 ├─ apps/{web,server}
 ├─ packages/{domain,operations,sync-client,sync-protocol,ui,editor,config}
-├─ docker/{Dockerfile, docker-compose.yml, docker-compose.dev.yml, Caddyfile.example, .env.example}
+├─ docker/{Dockerfile, Dockerfile.dockerignore, healthcheck.js, docker-compose.yml,
+│          docker-compose.external-db.yml, docker-compose.dev.yml, Caddyfile.example, .env.example}
 ├─ e2e/                      Playwright tests + fixtures
-├─ scripts/                  seed-reference-scale.ts, release.ts
+├─ scripts/                  dev.mjs, docker-smoke.sh, seed-reference-scale.ts, release.ts
 ├─ docs/
 ├─ package.json  pnpm-workspace.yaml  turbo.json  .nvmrc  .editorconfig
 ```
@@ -48,7 +49,7 @@ surface/
 | Commits | Conventional Commits. Changesets for release notes. |
 | Node | `.nvmrc` = 24 (LTS) |
 
-**Developer loop:** `pnpm dev` starts the Postgres container (`docker-compose.dev.yml`), the server in watch mode, and Vite with an HMR proxy to the server. `pnpm db:migrate`, `pnpm db:seed` (demo workspace), and `pnpm db:seed:ref` (reference scale, NFR-10) are also available.
+**Developer loop:** `pnpm dev` starts the Postgres container (`docker-compose.dev.yml`), applies migrations, then runs the server in watch mode and Vite with an HMR proxy to the server (open `http://localhost:5173`). `PORT`, `SURFACE_DEV_WEB_PORT` and `SURFACE_DEV_PG_PORT` move the server, Vite and Postgres to other ports (`SURFACE_URL` and `DATABASE_URL` follow). Each checkout gets its own dev database (compose project `surface-dev-<folder>`), so git worktrees never share one. `pnpm dev:db:down` stops it, keeping its data. `pnpm db:migrate`, `pnpm db:seed` (demo workspace), and `pnpm db:seed:ref` (reference scale, NFR-10) are also available.
 
 ## 4. CI pipeline
 
@@ -88,6 +89,7 @@ CMD ["serve"]
 |---|---|
 | Architectures | linux/amd64, linux/arm64 |
 | User | Non-root uid 10001. Writable dirs: `/data` only. Read-only root filesystem compatible. |
+| Health check | `healthcheck.js` GETs `/healthz` on loopback. It is the one reader of `PORT`/`HOST` outside `loadConfig()` (same trimming rules), because it must not load the application or its configuration. |
 | Size target | < 250 MB compressed |
 | Contents | Server bundle, web static assets (served by the server, immutable hashed filenames), `pg_dump`/`pg_restore` 17, the `surface` CLI |
 | Labels | OCI labels: version, revision, source |
@@ -99,30 +101,33 @@ CMD ["serve"]
 name: surface
 services:
   app:
-    image: ghcr.io/<org>/surface:${SURFACE_VERSION:-latest}
-    env_file: .env
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://surface:${POSTGRES_PASSWORD}@db:5432/surface}
+    image: ${SURFACE_IMAGE:-ghcr.io/s-ayush/surface}:${SURFACE_VERSION:-latest}
+    env_file: .env          # DATABASE_URL defaults to postgres://surface:<POSTGRES_PASSWORD>@db:5432/surface (§7)
+    environment: { POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?}" }   # the same value `db` gets
     ports: ["${SURFACE_BIND:-0.0.0.0}:${SURFACE_PORT:-3000}:3000"]
     volumes: ["uploads:/data/uploads", "backups:/data/backups"]
     depends_on: { db: { condition: service_healthy } }
+    stop_grace_period: 20s  # > the 15 s shutdown of §8; Docker's default 10 s would SIGKILL mid-drain
     restart: unless-stopped
   db:
     image: postgres:17
-    environment: { POSTGRES_USER: surface, POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}", POSTGRES_DB: surface }
+    environment: { POSTGRES_USER: surface, POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?}", POSTGRES_DB: surface }
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck: { test: ["CMD-SHELL","pg_isready -U surface"], interval: 5s, retries: 20 }
     restart: unless-stopped
   caddy:                                   # optional: docker compose --profile proxy up -d
     profiles: ["proxy"]
     image: caddy:2
-    ports: ["80:80","443:443"]
-    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro","caddy_data:/data"]
+    ports: ["80:80","443:443","443:443/udp"]       # 443/udp: HTTP/3
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro","caddy_data:/data","caddy_config:/config"]
+    depends_on: [app]
     restart: unless-stopped
-volumes: { pgdata: {}, uploads: {}, backups: {}, caddy_data: {} }
+volumes: { pgdata: {}, uploads: {}, backups: {}, caddy_data: {}, caddy_config: {} }
 ```
 
-- **Using an external DB:** set `DATABASE_URL` in `.env` and run `docker compose up -d app`. The `db` service is then unused. The docs show this as an alternative compose file without `db`.
+- **Using an external DB:** set `DATABASE_URL` in `.env` and use `docker-compose.external-db.yml`, the same file without the `db` service (`docker compose -f docker-compose.external-db.yml up -d`). It refuses to start without `DATABASE_URL`.
+- **`DATABASE_URL` is not composed by compose:** Surface builds the default from `POSTGRES_PASSWORD` and URL-encodes it, so URL-special characters in the password are safe. Compose itself expands `$` in `.env`, so a literal `$` is written `$$` (the generated hex passwords need nothing). `app` receives `POSTGRES_PASSWORD` through the same interpolation as `db`, so a value exported in the shell can't make them disagree. `docker-compose.yml` refuses to start without it.
+- **Compose-level settings in `.env`:** `SURFACE_VERSION` (tag), `SURFACE_IMAGE` (repository), `SURFACE_BIND`, `SURFACE_PORT`. Surface ignores them.
 - **Caddy example:** `surface.example.com { reverse_proxy app:3000 }` (WebSocket upgrade works by default). There are also notes for nginx (`Upgrade`/`Connection` headers, `proxy_read_timeout 1h`) and Traefik.
 
 ## 7. Configuration
@@ -262,3 +267,4 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | Q4 | Which CI provider? | GitHub Actions (the stages are portable) |
 | D1 | (2026-11-06, PLAN-004 S3) Where do compatibility checks run relative to migrations? | §8 reordered: version check, then extensions and migrations together under the migrations lock. An incompatible database is never partly migrated, and concurrent replicas never race on `CREATE EXTENSION`. |
 | D2 | (2026-11-06, PLAN-004 S4) What does `doctor`'s "`SURFACE_URL` reachability (local only)" mean, and is a failure fatal? | One `GET <SURFACE_URL>/healthz` from the Surface host itself, never through a third-party service. It is only a **warning**, because a host often cannot resolve its own public name (split DNS, hairpin NAT), and because the no-egress rule (FR-OPS-09) must hold even when the operator runs `doctor`. |
+| D3 | (2026-11-06, PLAN-004 S5) Which GHCR owner (Q1)? | `ghcr.io/s-ayush/surface`, overridable with `SURFACE_IMAGE` in `.env`. |

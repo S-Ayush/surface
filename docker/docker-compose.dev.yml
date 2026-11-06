@@ -1,0 +1,26 @@
+# PostgreSQL for development only. Matches apps/server/dev.env; never use these
+# credentials anywhere else. Run it through scripts/dev.mjs (`pnpm dev`,
+# `pnpm db:migrate`, `pnpm dev:db:down`), which names the compose project after the
+# checkout (surface-dev-<folder>), so each worktree has its own container and volume.
+#
+# Another checkout already on 5432? Set SURFACE_DEV_PG_PORT; DATABASE_URL follows.
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: surface
+      POSTGRES_PASSWORD: surface
+      POSTGRES_DB: surface
+    ports:
+      - '127.0.0.1:${SURFACE_DEV_PG_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U surface -d surface']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata: {}

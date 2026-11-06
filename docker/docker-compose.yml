@@ -1,0 +1,70 @@
+# Surface with its bundled PostgreSQL (SPEC-004 §6).
+#
+#   cp .env.example .env      # then fill in the required values
+#   docker compose up -d
+#   docker compose logs app   # the setup URL is printed here
+#
+# With Caddy for HTTPS:  cp Caddyfile.example Caddyfile, then
+#                        docker compose --profile proxy up -d
+# With your own PostgreSQL, use docker-compose.external-db.yml instead.
+name: surface
+
+services:
+  app:
+    image: ${SURFACE_IMAGE:-ghcr.io/s-ayush/surface}:${SURFACE_VERSION:-latest}
+    env_file: .env
+    environment:
+      # The value `db` gets too: a POSTGRES_PASSWORD exported in the shell would
+      # otherwise reach `db` (interpolation) but not `app` (env_file).
+      # DATABASE_URL defaults to postgres://surface:<POSTGRES_PASSWORD>@db:5432/surface,
+      # URL-encoded by Surface. Compose expands `$` in .env: write a literal $ as $$.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (generate one with openssl rand -hex 24)}
+    ports:
+      - '${SURFACE_BIND:-0.0.0.0}:${SURFACE_PORT:-3000}:3000'
+    volumes:
+      - uploads:/data/uploads
+      - backups:/data/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    # Surface drains requests for up to 10 s and exits by 15 s (SPEC-004 §8);
+    # Docker's default 10 s would kill it before the database pool is closed.
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: surface
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (generate one with openssl rand -hex 24)}
+      POSTGRES_DB: surface
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U surface -d surface']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  caddy:
+    profiles: ['proxy']
+    image: caddy:2
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  pgdata: {}
+  uploads: {}
+  backups: {}
+  caddy_data: {}
+  caddy_config: {}

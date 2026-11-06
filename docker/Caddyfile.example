@@ -1,0 +1,15 @@
+# Caddy in front of Surface, with automatic HTTPS (SPEC-004 §6).
+#
+#   cp Caddyfile.example Caddyfile    # replace the domain below
+#   docker compose --profile proxy up -d
+#
+# - The domain must match SURFACE_URL in .env (https://surface.example.com).
+# - Its DNS record must point at this host, and ports 80 and 443 must be open,
+#   for Caddy to obtain the certificate.
+# - Set SURFACE_BIND=127.0.0.1 in .env so Surface is reachable only through Caddy.
+# - WebSocket upgrades (live updates) and long-lived connections work as is.
+
+surface.example.com {
+	encode zstd gzip
+	reverse_proxy app:3000
+}
