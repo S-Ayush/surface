@@ -220,6 +220,22 @@ Added on 2026-11-06 for session C's handoff (PLAN-005 S1): the theme bootstrap i
 >   - **PLAN-002 S4:** check that `connect-src 'self'` admits the `/sync/ws` WebSocket in every supported browser (CSP Level 3 matches same-origin `ws:`/`wss:`).
 >   - **PLAN-001 S3:** HSTS and cookie flags are not part of this slice.
 
+### S10: Trust exactly one proxy hop · S · ✅ Done 2026-11-06
+Added on 2026-11-06 for session B's handoff (S7 review): `TRUST_PROXY=true` trusted every hop, so the client address was whatever the client put first in `X-Forwarded-For`.
+- `TRUST_PROXY=true` trusts only the nearest hop; SPEC-004 §7 and D6; the reverse-proxy guide and `.env.example` say what is trusted.
+- **Tests:** `client-address.test.ts`.
+
+> **As built (2026-11-06).**
+> - **Versions:** no new packages.
+> - **Code:** `buildApp` passes `trustProxy: trustNearestHop` (`(address, hop) => hop === 0`) when `TRUST_PROXY=true`, else `false`. The config variable stays a boolean.
+> - **Deviation from the handoff:** it proposed `trustProxy: 1`. In Fastify 5.12+ a hop count trusts **nobody** (it can't validate the immediate peer, so it fails closed), which would silently log the proxy's address for every client. The test caught it. A function keeps the intended meaning.
+> - **Tests:** `client-address.test.ts` (3), read from the request log's `remoteAddress`. It covers:
+>   - behind one proxy, the address that proxy appended wins over a spoofed earlier entry; this test failed before the change, logging the spoofed address;
+>   - a proxy that replaces the header;
+>   - `TRUST_PROXY=false` ignores the header.
+> - **Docs:** the reverse-proxy guide now says appending works (only the last entry is read) and still says to make the proxy the only way in. Its `SURFACE_BIND` advice is unchanged: with `TRUST_PROXY=true`, a client that reaches port 3000 directly is taken for the proxy.
+> - **Notes for later:** **PLAN-001 S3:** per-IP sign-in limits use `request.ip`, which is now the proxy-appended address. Two proxies in a row (a CDN, then nginx) would need `TRUST_PROXY` to accept a list of proxy addresses; not supported in v1 (D6).
+
 ## 2. Modules touched
 Root config, `packages/config`, `apps/server/{src/config.ts, src/app.ts, src/db/*, src/http/security-headers.ts, bin/surface.ts}`, `apps/web` (hello), `docker/*`, `.github/workflows/*`, `e2e/*`, `scripts/*`, `README.md`, `docs/ops/*`.
 

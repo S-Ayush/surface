@@ -10,13 +10,13 @@ Caddy is the simplest choice: it gets certificates on its own and needs one line
 | Forward everything at the root path to `app:3000` (or `127.0.0.1:3000` from the host) | Surface can't be served under a sub-path such as `/surface/`. |
 | Pass WebSocket upgrades on `/sync/` | Live updates. Without them the app shows "Live updates unavailable". |
 | Keep upgraded connections open for an hour or more | Live updates hold one WebSocket per browser tab for as long as the tab is open. |
-| Keep the `Host` header, set `X-Forwarded-Proto`, and set `X-Forwarded-For` to the client's address, **replacing** any value the client sent | Surface records the client address (sign-in limits will count attempts per address) and knows the request came over HTTPS. |
+| Keep the `Host` header, set `X-Forwarded-Proto`, and put the client's address **last** in `X-Forwarded-For` (replacing the header or appending to it; Surface reads only the last entry) | Surface records the client address (sign-in limits will count attempts per address) and knows the request came over HTTPS. |
 | Accept request bodies a little larger than `UPLOAD_MAX_MB` (25 MB by default) | File uploads, plus the form encoding around them. |
 | Serve exactly the origin in `SURFACE_URL` | Sign-in checks the browser's origin against it. |
 
-Then make the proxy the only way in. With `TRUST_PROXY=true` (the default), Surface believes the
-`X-Forwarded-*` headers of whoever connects, so a client that reaches port 3000 directly can claim
-any address.
+Then make the proxy the only way in. With `TRUST_PROXY=true` (the default), Surface treats
+whoever connects to port 3000 as the proxy and believes the last entry of its `X-Forwarded-*`
+headers, so a client that reaches port 3000 directly can claim any address.
 
 - If the proxy runs on the same host, set `SURFACE_BIND=127.0.0.1` in `.env`.
 - If it runs on another machine, set `SURFACE_BIND` to this host's private address that the proxy
@@ -61,8 +61,9 @@ forwarded headers itself, ignoring any the client sent. Nothing else is needed.
 
 ## nginx
 
-nginx needs the WebSocket headers spelled out, and must replace the client's `X-Forwarded-For`
-rather than append to it.
+nginx needs the WebSocket headers spelled out. The example replaces the client's
+`X-Forwarded-For` with `$remote_addr`; appending with `$proxy_add_x_forwarded_for` works too,
+because Surface reads only the last entry.
 
 ```nginx
 # Sends "Connection: upgrade" only when the client asked for an upgrade.

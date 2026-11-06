@@ -149,7 +149,7 @@ All configuration is through environment variables, validated at startup with a 
 | `SURFACE_ROLE` | | all | all \| web \| worker |
 | `LOG_LEVEL` | | info | |
 | `METRICS_ENABLED` | | false | Exposes `/metrics` |
-| `TRUST_PROXY` | | true | Honour `X-Forwarded-*` from the reverse proxy |
+| `TRUST_PROXY` | | true | Trust the one reverse proxy in front: the client address is the last `X-Forwarded-For` entry (the one that proxy added), and `X-Forwarded-Proto`/`-Host` are read from it. Set `false` when Surface is reachable without a proxy (D6). |
 | `BACKUP_SCHEDULE`, `BACKUP_RETENTION` | | — | Effective in M7 |
 | `PORT`, `HOST` | | 3000, 0.0.0.0 | Listen address *inside* the container. The host-side binding is `SURFACE_BIND`/`SURFACE_PORT` in compose. |
 | `SURFACE_WEB_DIR` | | `apps/web/dist` | Location of the built web app. Set by the image; rarely changed. |
@@ -273,6 +273,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | D3 | (2026-11-06, PLAN-004 S5) Which GHCR owner (Q1)? | `ghcr.io/s-ayush/surface`, overridable with `SURFACE_IMAGE` in `.env`. |
 | D4 | (2026-11-06, PLAN-004 S6) Build the full §4 pipeline now? | No, by decision of the user. CI runs stages 1, 2 and 4 now (static, unit, build including the Docker image for amd64, unpushed). Stage 3 integration, 5 e2e, 6 install smoke, the no-egress / log-scan / image checks, multi-arch, nightly and release are built once the app is up, together with PLAN-004 S8. Until then AC-2, AC-3, AC-4 (in CI), AC-5, AC-7, AC-8, AC-10, AC-11 and AC-13 are not enforced by CI. |
 | D5 | (2026-11-06, PLAN-004 S9) How does the CSP allow the inline theme bootstrap (PLAN-005 S1)? | By its sha256 hash, computed at startup from the `index.html` the server serves (§15). Architecture's "no inline scripts" stands for everything else. A nonce would need the page rewritten per request; a hash fixed at build time could drift from the file the image ships. |
+| D6 | (2026-11-06, PLAN-004 S10) What does `TRUST_PROXY=true` trust? | Exactly one hop: the peer that connects to the server is the proxy, and nothing before it. Fastify's `trustProxy: true` trusts every hop, so the client address became the left-most `X-Forwarded-For` entry, which the client writes; per-IP sign-in limits (ADR-0007) could then be bypassed. A hop count (`1`) trusts nobody in Fastify 5.12+, so the server passes a function that trusts hop 0 only. Behind two proxies (a CDN in front of the proxy) the address is the first proxy's; that setup isn't supported in v1. |
 
 ## 15. Security headers (PLAN-004 S9)
 

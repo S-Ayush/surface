@@ -34,6 +34,14 @@ export interface AppDeps {
   ops?: OpsDeps;
 }
 
+/**
+ * SPEC-004 §7, D6: `TRUST_PROXY=true` trusts exactly the one reverse proxy in front, so the
+ * client address is the X-Forwarded-For entry that proxy appended. Fastify's `true` trusts every
+ * hop (the client writes the left-most entry itself), and a hop count (`1`) trusts none in
+ * Fastify 5.12+, so the rule is a function: only the socket peer (hop 0) is a proxy.
+ */
+const trustNearestHop = (_address: string, hop: number): boolean => hop === 0;
+
 /** Accept a caller's X-Request-Id only if it is short and safe to log. */
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -48,7 +56,7 @@ export async function buildApp({
   const loggerInstance: FastifyBaseLogger = logger;
   const app = Fastify({
     loggerInstance,
-    trustProxy: config.trustProxy,
+    trustProxy: config.trustProxy ? trustNearestHop : false,
     requestIdHeader: false,
     logController: new LogController({ requestIdLogLabel: 'reqId' }),
     genReqId: (req) => {
