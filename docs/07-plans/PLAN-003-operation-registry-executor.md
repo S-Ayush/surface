@@ -6,13 +6,29 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 
 ## 1. Slices
 
-### S1: Registry core (`packages/operations`) · M
+### S1: Registry core (`packages/operations`) · M · ✅ Done 2026-11-06
 - `defineOperation()` with the full field set of SPEC-003 §3.1, typed generics so `input` and `output` types flow to the client `dispatch` and the server `handler`.
 - A `registry` map built from an explicit `index.ts` barrel (no filesystem globbing, so the code is tree-shakeable for the client).
 - Name, domain, and summary validation at definition time (throws in dev and tests).
 - **Schema export:** `toJsonSchema()` (Zod JSON Schema export plus `x-surface-ref` annotations) and `toCompactSchema()` (flat field map).
 - `ui` metadata types (title, icon, contexts, shortcut).
 - **Tests:** definition validation, schema export snapshots, compact schema token estimate < 400 (AC-10).
+
+> **As built (2026-11-06).**
+> - **Versions:** `zod` ^4.6.7 added to `@surface/operations` (the server already pins the same version, so both share one Zod instance and one metadata registry). No other new dependencies; JSON Schema export uses Zod 4's built-in `z.toJSONSchema` (draft 2020-12, `unrepresentable: 'any'`).
+> - **Structure:** `src/define.ts` (`defineOperation`, `OperationDef`, `AnyOperation`, `InputOf` / `ParsedInputOf` / `OutputOf`, `definitionProblems`, `OperationDefinitionError`), `domains.ts`, `permission.ts`, `optimistic.ts`, `ui.ts`, `registry.ts` (`createRegistry`), `schema.ts` (`toJsonSchema`, `toCompactSchema`, `estimateTokens`), and `ops/index.ts` with the explicit `ALL_OPERATIONS` list and the `registry` built from it (empty until S4). `SURFACE_REF_KEY = 'x-surface-ref'` lives in `packages/domain/src/refs.ts`, so S2's reference types can set it without depending on `operations`.
+> - **Typing:** generics are `Name`, `Kind`, `In`, `Out`. `InputOf` is the caller side (`z.input`, used by `examples` and client `dispatch`); `ParsedInputOf` is what `permission`, `optimistic` and handlers get (`z.output`). Callbacks use method syntax so concrete ops are assignable to `AnyOperation`. `optimistic` on a query is a type error and a runtime error.
+> - **Deviations:**
+>   - Definition checks run **always**, not only in dev/tests: they are cheap, run once at module load, and avoid reading the environment in a shared package.
+>   - Checked at definition time: name pattern, `kind`, domain, summary (non-empty, ≤ 80, starts with a capital), description (non-empty, ≤ 400), no `optimistic` on queries. Keyword and example counts, example validity and the other lint rules stay in S7.
+>   - The name prefix is **not** required to equal `domain`, because domain-model §7 files `reaction.toggle` under `comment`, `projectUpdate.*` under `update`, `apiKey.*` under `platform`, and so on. A `debug` domain was added for internal test ops (S4, PLAN-002 `DebugItem`).
+> - **Notes for later slices:**
+>   - **S2:** reference schemas must carry `.meta({ [SURFACE_REF_KEY]: 'TeamRef', description: '<accepted formats>' })`; the annotation survives `.optional()`, `.nullable()`, `.describe()` and arrays, and both exports read it. `packages/domain` needs `zod` as a dependency for the ref types (CLAUDE.md's "no deps" for domain means no workspace deps; dependency-cruiser enforces exactly that).
+>   - **S3:** implement `PermissionPredicates` (`permission.ts`). Refs arrive as `ResolvedRefs` keyed by input field; a ref is a row or an array of rows. Every predicate returns `false` for `undefined`, and for an array every element must pass.
+>   - **S4:** add `debug.echo` / `debug.touch` to `ops/` and to `ALL_OPERATIONS`; AC-10's test then covers them automatically. `registry.get()` returns `undefined` for unknown names; nearest-name suggestions for `UNKNOWN_OPERATION` are the executor's job.
+>   - **S6 / M6:** `toCompactSchema(schema, io)` gives `{ path: { type, required?, enum?, format?, default?, description? } }`; nested paths use `.`, array elements `[]`, and a non-object root uses the key `$`. `toJsonSchema` output keeps its `$schema` key; strip it when embedding in OpenAPI.
+>   - **PLAN-002 S8 (session D):** implement `OptimisticStore` (`optimistic.ts`): `now`, `get`, `patch`, `insert`, `archive`, `remove`, with model names as strings and refs in any accepted form.
+>   - **AC-10:** `estimateTokens` is chars ÷ 3 (deliberately high). The registry is empty, so the test currently runs against the SPEC-003 §3 `team.update` shape and a §7.1 list shape (`test/fixtures.ts`), plus every registered op as they arrive.
 
 ### S2: Reference types & resolvers · M
 - `packages/domain/refs.ts`: Zod ref types `TeamRef`, `UserRef`, `StatusRef`, `LabelRef` (and stubs for Issue, Cycle, Project, Initiative, Document, View, which throw "not available until M1+").

@@ -1,3 +1,9 @@
-// Operation Registry (SPEC-003). defineOperation() and the registry land in PLAN-003 S1.
-export type { StatusCategory } from '@surface/domain';
-export const OPERATIONS_PACKAGE = '@surface/operations';
+// Operation Registry (SPEC-003, ADR-0011): one definition drives every surface.
+export * from './define.js';
+export * from './domains.js';
+export * from './optimistic.js';
+export * from './permission.js';
+export * from './registry.js';
+export * from './schema.js';
+export * from './ui.js';
+export * from './ops/index.js';

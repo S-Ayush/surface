@@ -59,3 +59,5 @@ Never merge to main unless I ask, and then use README §5.
 | 2026-11-06 | PLAN-004 S2 | p004-s1-s2-skeleton | merged | Server skeleton |
 | 2026-11-06 | PLAN-004 S3 | p004-s3-db | built, in review | 58 unit + 18 integration tests green. Awaiting /review findings, then /commit + merge. |
 | 2026-11-06 | PLAN-004 S3 | p004-s3-db | committed | All 9 review findings fixed (extensions under the migrations lock, `prepareDatabase()`, 28000 message, lock-based AC-9 test, fatal-exit test). Ready to merge to `main`. |
+| 2026-11-06 | PLAN-004 S3 | p004-s3-db | merged | Already on `main` (`00c9ef5`) when this session resumed; the worktrees for B, C, D branch from it. |
+| 2026-11-06 | PLAN-003 S1 | p003-s1-registry | built, in review | `defineOperation`, registry, `toJsonSchema` / `toCompactSchema`, `OptimisticStore` and `PermissionPredicates` interfaces. 40 unit tests; `pnpm check` green. Shared-file changes: `zod` added to `packages/operations/package.json` via `pnpm add` (lockfile regenerated). For D: S8 can start once this is on `main`; implement `OptimisticStore` from `packages/operations/src/optimistic.ts`. |
