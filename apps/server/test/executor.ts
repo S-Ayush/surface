@@ -10,15 +10,20 @@ import {
   defineOperation,
   type AnyOperation,
 } from '@surface/operations';
-import { sql } from 'drizzle-orm';
+import { getTableName, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { pino } from 'pino';
 import { z } from 'zod';
 import { handler, type Handler } from '../src/executor/context.js';
 import { SurfaceError } from '../src/executor/errors.js';
-import { createExecutor, type ExecutorDeps } from '../src/executor/execute.js';
-import { passthroughRepo } from '../src/executor/repo.js';
+import {
+  createExecutor,
+  type ExecutorDeps,
+  type PostHandlerCheck,
+} from '../src/executor/execute.js';
+import { SYNCED_MODELS } from '../src/sync/models.js';
+import { syncRepo } from '../src/sync/repo.js';
 import { HANDLERS } from '../src/handlers/index.js';
 import { createTestDatabase, type TestDatabase } from './db.js';
 import { actorFor, captureLogs } from './helpers.js';
@@ -53,6 +58,7 @@ export async function executorHarness(): Promise<ExecutorHarness> {
        ($2, 'SEC', 'Security', true, $3)`,
     [teams.eng, teams.sec, [`team:${teams.sec}`]],
   );
+  await auditSyncedWrites(db.pool);
   const pool = new pg.Pool({
     connectionString: db.url,
     max: 10,
@@ -68,6 +74,45 @@ export async function executorHarness(): Promise<ExecutorHarness> {
     },
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// AC-12 (SPEC-002), runtime half: every write to a synced table is audited, and the test
+// executor fails any mutation that wrote a row its repo didn't log.
+
+const tableOfModel = new Map(
+  Object.entries(SYNCED_MODELS).map(([model, { table }]) => [model, getTableName(table)]),
+);
+
+async function auditSyncedWrites(pool: pg.Pool): Promise<void> {
+  const triggers = [...tableOfModel.values()].map(
+    (table) => `CREATE TRIGGER audit_write AFTER INSERT OR UPDATE OR DELETE ON public.${table}
+       FOR EACH ROW EXECUTE FUNCTION ${FIXTURE_SCHEMA}.audit_write();`,
+  );
+  await pool.query(`
+    CREATE TABLE ${FIXTURE_SCHEMA}.write_audit (tx xid8 NOT NULL, tbl text NOT NULL, id uuid NOT NULL);
+    CREATE FUNCTION ${FIXTURE_SCHEMA}.audit_write() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      INSERT INTO ${FIXTURE_SCHEMA}.write_audit
+        VALUES (pg_current_xact_id(), TG_TABLE_NAME, CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END);
+      RETURN NULL;
+    END $$;
+    ${triggers.join('\n')}
+  `);
+}
+
+/** Fails a mutation that wrote a synced row its repo didn't log (a write around the repo). */
+export const repoWritesOnly: PostHandlerCheck = async ({ op, tx, changes }) => {
+  if (op.kind === 'query') return; // read-only: nothing to audit
+  const { rows } = await tx.execute<{ tbl: string; id: string }>(sql`
+    SELECT DISTINCT tbl, id::text AS id FROM ${sql.identifier(FIXTURE_SCHEMA)}.write_audit
+    WHERE tx = pg_current_xact_id_if_assigned()`);
+  const logged = new Set(changes.map((c) => `${tableOfModel.get(c.model)}:${c.id}`));
+  const unlogged = rows.filter((r) => !logged.has(`${r.tbl}:${r.id}`));
+  if (unlogged.length > 0) {
+    const rowList = unlogged.map((r) => `${r.tbl} ${r.id}`).join(', ');
+    throw new Error(`${op.name} wrote synced rows outside the repo layer: ${rowList}`);
+  }
+};
 
 // ---------------------------------------------------------------------------------------------
 // Test-only operations (never registered outside tests)
@@ -132,6 +177,21 @@ export const createItem = defineOperation({
   permission: (p) => p.any(),
   destructive: false,
   examples: [{ id: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e', title: 'x' }],
+});
+
+/** Updates a debug item with raw SQL, around the repo: the write audit must catch it. */
+export const sideWrite = defineOperation({
+  name: 'debug.sideWrite',
+  kind: 'mutation',
+  domain: 'debug',
+  summary: 'Write a debug item around the repo',
+  description: 'Test operation: renames a debug item with raw SQL, so sync_log never hears of it.',
+  keywords: ['write around repo', 'unlogged write'],
+  input: z.object({ id: z.uuid() }),
+  output: z.object({ ok: z.boolean() }),
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ id: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e' }],
 });
 
 /** Fails with a serialization error the first `failures` attempts (E5). */
@@ -253,6 +313,10 @@ const TEST_HANDLERS: Handler[] = [
     });
     return { id: row.id };
   }),
+  handler(sideWrite, async (ctx, input) => {
+    await ctx.tx.execute(sql`UPDATE debug_items SET title = 'unlogged' WHERE id = ${input.id}`);
+    return { ok: true };
+  }),
   handler(flaky, (_ctx, input) => {
     flakyAttempts++;
     if (flakyAttempts <= input.failures) {
@@ -278,6 +342,7 @@ const TEST_HANDLERS: Handler[] = [
 ];
 
 export const TEST_OPERATIONS: readonly AnyOperation[] = [
+  sideWrite,
   teamNote,
   explode,
   sneakyWrite,
@@ -300,6 +365,8 @@ export function testExecutor(pool: pg.Pool, overrides: Partial<ExecutorDeps> = {
     log,
     allowInternal: true,
     backoff: () => 0,
+    // A test that passes its own checks replaces the write audit.
+    checks: [repoWritesOnly],
     ...overrides,
   });
   return { executor, logs };
@@ -329,8 +396,9 @@ export async function seedDebugItem(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const repo = passthroughRepo(drizzle({ client, casing: 'snake_case' }), new Date());
+    const repo = syncRepo(drizzle({ client, casing: 'snake_case' }), new Date());
     const row = await repo.insert('DebugItem', { id: randomUUID(), title, syncGroups: groups });
+    await repo.flush({});
     await client.query('COMMIT');
     return row.id;
   } finally {

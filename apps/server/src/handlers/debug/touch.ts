@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { debugItems } from '../../db/schema/index.js';
 import { SurfaceError } from '../../executor/errors.js';
 import { handler } from '../../executor/context.js';
+import { debugItemOutput } from './item.js';
 
 export default handler(debugTouch, async (ctx, input) => {
   // Visibility first: an item the actor can't see is NOT_FOUND, like any other invisible row.
@@ -19,10 +20,5 @@ export default handler(debugTouch, async (ctx, input) => {
     // `item.counter` may be stale under concurrent touches; the increment is exactly one.
     changes: { counter: { from: touched.counter - 1, to: touched.counter } },
   });
-  return {
-    id: touched.id,
-    title: touched.title,
-    counter: touched.counter,
-    updatedAt: touched.updatedAt.toISOString(),
-  };
+  return debugItemOutput(touched);
 });

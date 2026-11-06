@@ -4,6 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import { defineConfig } from 'eslint/config';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import noSyncedTableWrites from './eslint-rules/no-synced-table-writes.js';
 
 const REACT_FILES = [
   'apps/web/**/*.{ts,tsx}',
@@ -16,6 +17,17 @@ const INLINE_STYLE_RAW_VALUE =
   '/#[0-9a-fA-F]{3,8}\\b|\\dpx\\b|\\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\\(/';
 const INLINE_STYLE_MESSAGE =
   'Inline styles use tokens only (var(--…)): no hex, px or colour functions (design-system §5.4).';
+
+/**
+ * Synced tables (SPEC-002 §4.1) and the sync-log tables only the repo layer writes: the Drizzle
+ * export and the SQL name. `apps/server/test/sync-lint.test.ts` checks this list against the
+ * server's `SYNCED_MODELS`, so a new synced model can't be left out.
+ */
+export const SYNCED_TABLES = [
+  { identifier: 'debugItems', name: 'debug_items' },
+  { identifier: 'syncLog', name: 'sync_log' },
+  { identifier: 'syncState', name: 'sync_state' },
+];
 
 /**
  * Surface ESLint flat config.
@@ -75,6 +87,13 @@ export function surfaceEslint({ rootDir }) {
           },
         ],
       },
+    },
+    {
+      // AC-12 (SPEC-002): synced tables are written only by the repo layer.
+      files: ['apps/server/src/**/*.ts'],
+      ignores: ['apps/server/src/sync/repo.ts'],
+      plugins: { surface: { rules: { 'no-synced-table-writes': noSyncedTableWrites } } },
+      rules: { 'surface/no-synced-table-writes': ['error', { tables: SYNCED_TABLES }] },
     },
     prettier,
   );

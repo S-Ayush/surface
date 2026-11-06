@@ -25,7 +25,7 @@ import {
   type ListModel,
   type Page,
 } from './list.js';
-import type { Repo } from './repo.js';
+import type { Repo } from '../sync/repo.js';
 
 /** A domain event as a handler emits it (events.md envelope, minus what the executor fills in). */
 export interface DomainEvent {

@@ -139,7 +139,7 @@ At dispatch time the runner records the **inverse operation**, computed from the
 - When membership changes, the server emits a `G` packet **to that user only**:
   - **added:** the client calls `GET /sync/bootstrap?groups=<added>`, then continues with deltas.
   - **removed:** the client deletes every row whose groups are now all invisible, from memory and from IDB.
-- A row's `groups` can change (e.g. a project loses its last public team). The server then emits `D` for users who lose visibility and `I` for users who gain it, computed from the old and new groups.
+- A row's `groups` can change (e.g. a project loses its last public team). The repo logs `D` with the old groups, then `U` (the full row) with the new ones, under consecutive ids: users who lose visibility get only the `D`, users who gain it only the `U` (an upsert), and users who keep it get both in one batch (SPEC-002 Q5).
 
 ---
 

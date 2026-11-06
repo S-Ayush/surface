@@ -37,10 +37,17 @@ import { INTERNAL_MESSAGE, SurfaceError, type ErrorIssue, type OperationError } 
 import { checkClientMutationId, claim, idempotencyOwner, record } from './idempotency.js';
 import { keyScopeProblem, narrowToKeyTeams, refOutsideKeyTeams } from './key-scope.js';
 import { loggableError } from './log-error.js';
-import { noMetrics, operationMetrics, type OperationMetrics } from './metrics.js';
+import {
+  noMetrics,
+  noSyncMetrics,
+  operationMetrics,
+  syncMetrics,
+  type OperationMetrics,
+  type SyncMetrics,
+} from './metrics.js';
 import { unlimited, type RateLimiter } from './rate-limit.js';
 import { refNotFound, refPlan, resolveRefs, single, valueAt } from './refs/resolve.js';
-import { passthroughRepo, type RepoFactory, type RowChange, type TransactionRepo } from './repo.js';
+import { syncRepo, type RepoFactory, type RowChange, type TransactionRepo } from '../sync/repo.js';
 import { nearestNames } from './suggest.js';
 import { inTransaction, jitterBackoff, postgresCode } from './transaction.js';
 
@@ -75,6 +82,8 @@ interface TransactionOutcome {
   readonly result: unknown;
   readonly lastSyncId: number | undefined;
   readonly replayed?: true;
+  /** When the sync lock was taken, if it was: it is held until the commit. */
+  readonly lockedAt?: number;
 }
 
 export interface ExecuteOptions {
@@ -121,8 +130,9 @@ export interface Executor {
 export function createExecutor(deps: ExecutorDeps): Executor {
   const handlers = handlerMap(deps.registry, deps.handlers);
   const metrics: OperationMetrics = deps.metrics ? operationMetrics(deps.metrics) : noMetrics;
+  const syncLock: SyncMetrics = deps.metrics ? syncMetrics(deps.metrics) : noSyncMetrics;
   const rateLimiter = deps.rateLimiter ?? unlimited;
-  const repoFactory = deps.repoFactory ?? passthroughRepo;
+  const repoFactory = deps.repoFactory ?? syncRepo;
   const checks = deps.checks ?? [];
   const clock = deps.clock ?? (() => new Date());
   const transactionOptions = { retries: deps.retries ?? 3, backoff: deps.backoff ?? jitterBackoff };
@@ -174,7 +184,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     const viewer = narrowToKeyTeams(actor);
 
     // 6–12
-    const { result, lastSyncId, replayed } = await inTransaction(
+    const { result, lastSyncId, replayed, lockedAt } = await inTransaction(
       deps.pool,
       { ...transactionOptions, readOnly: def.kind === 'query' },
       async (client): Promise<TransactionOutcome> => {
@@ -264,9 +274,14 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         if (owner !== undefined && clientMutationId !== undefined) {
           await record(tx, owner, clientMutationId, output.data, flushed.lastSyncId);
         }
-        return { result: output.data, lastSyncId: flushed.lastSyncId };
+        return {
+          result: output.data,
+          lastSyncId: flushed.lastSyncId,
+          ...(flushed.lockedAt === undefined ? {} : { lockedAt: flushed.lockedAt }),
+        };
       },
     );
+    if (lockedAt !== undefined) syncLock.observeLockHold((performance.now() - lockedAt) / 1000);
 
     // 13. Result
     return {

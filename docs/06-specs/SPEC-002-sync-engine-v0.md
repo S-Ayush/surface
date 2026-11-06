@@ -73,7 +73,7 @@ CREATE TABLE sync_log (
   model       text   NOT NULL,
   model_id    uuid   NOT NULL,
   action      char(1) NOT NULL CHECK (action IN ('I','U','A','V','D')),
-  data        jsonb,                        -- full row for I/U; null otherwise
+  data        jsonb,                        -- full row for I/U/A/V; null for D (Q4)
   groups      text[] NOT NULL,
   client_id   uuid,                         -- origin, for acks
   client_seq  bigint,
@@ -104,7 +104,11 @@ repo.flushSyncLog(tx, {clientId, seq})
   → UPDATE sync_state SET last_sync_id = last_sync_id + n RETURNING last_sync_id
   → INSERT INTO sync_log … (ids last-n+1 … last)
 ```
-A lint rule and a test forbid direct `db.insert/update/delete` on synced tables outside `repo`.
+- `flush` with nothing buffered takes no lock and writes nothing, so queries and no-op mutations never wait on `SYNC_LOCK`.
+- When an update changes a row's groups, the repo logs `D` with the **old** groups, then `U` with the new ones, under consecutive ids (Q5). Clients filter packets by `groups && clientGroups` only, so that is how users who lose sight of the row drop it and users who gain it get it.
+- The lock is held from `pg_advisory_xact_lock` to commit. The executor records the hold time as `surface_sync_lock_hold_seconds` (§10).
+
+A lint rule (`surface/no-synced-table-writes`) forbids direct `db.insert/update/delete` and raw SQL writes on synced tables outside `repo`, and in tests a write audit fails any mutation that wrote a synced row it didn't log (AC-12).
 
 ### 4.3 Broadcast hub
 - After commit, run `NOTIFY sync, '<last_sync_id>'`.
@@ -209,3 +213,5 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Q1 | Should mutations go over the WebSocket instead of HTTP POST? | HTTP in v0 (simpler retries and debugging). Revisit if latency matters. |
 | Q2 | Should the sync-log `data` column hold full rows or diffs? | Full rows (idempotent upserts). Revisit if log size becomes a problem. |
 | Q3 | Should the hub run per process or as a dedicated role? | Per process, with NOTIFY fan-out, so a multi-process setup works too |
+| Q4 | (2026-11-06, PLAN-002 S2) What does `data` hold for archive and unarchive? | The full row, like I and U. An unarchive must be able to re-insert a row a client dropped (archived rows need not be in the eager set), and full rows keep every non-delete packet an idempotent upsert. |
+| Q5 | (2026-11-06, PLAN-002 S2) How does a change of a row's groups reach clients? | Two packets with consecutive ids: `D` with the old groups, then `U` with the new ones. Users who see both delete and re-insert (one batch); users who only saw the old groups delete; users who only see the new groups upsert. This keeps the hub's filter a plain `groups && clientGroups`. |

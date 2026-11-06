@@ -14,13 +14,38 @@ Implements: [SPEC-002](../06-specs/SPEC-002-sync-engine-v0.md) · Protocol: [syn
 - `computeSchemaHash(modelDefs)`: a stable hash of the synced model names, fields, and types.
 - **Tests:** round-trip codecs, a partial-chunk NDJSON decoder, schemaHash stability.
 
-### S2: Sync tables & repo layer (server) · L
+### S2: Sync tables & repo layer (server) · L · ✅ Done 2026-11-06
 - Migrations: `sync_log`, `sync_state` (seeded with 0), `client_mutations`. The `sync_groups text[] NOT NULL` convention is documented in `db/README.md`.
 - `apps/server/src/sync/repo.ts`: `insert`, `update` (reads back the full row), `archive`, `unarchive`, `purge`. Each computes `groups` with a per-model `groupsOf(row, tx)` function and buffers changes.
 - `flushSyncLog(tx, origin)`: `pg_advisory_xact_lock(SYNC_LOCK)`, bump `sync_state`, bulk-insert into `sync_log`. Wired into the executor (it replaces the PLAN-003 passthrough repo).
 - **Lint rule:** a custom ESLint rule (`no-synced-table-writes`) that bans `db.insert/update/delete` on tables tagged `synced` outside `sync/repo.ts`. There is also a runtime guard in tests (AC-12).
 - `DebugItem` schema plus ops.
 - **Tests:** an ordering stress test with 20 workers × 500 mutations, replaying `sync_log` to verify the IDs are gap-free and in commit order (AC-1); lock hold-time metric < 2 ms.
+
+> **As built (2026-11-06).**
+> - **Versions:** no new packages.
+> - **Migrations:** `0004_sync_tables` (`sync_log` with the action CHECK and a GIN index on `groups`, `sync_state` with a single-row CHECK, `client_mutations`, and `debug_items.archived_at`), `0005_seed_sync_state` (custom: the `sync_state` row at 0). All instants are `timestamptz(3)`. Sync scope per table and the `sync_groups` convention: `apps/server/src/db/README.md`.
+> - **Repo (`apps/server/src/sync/repo.ts`)** replaces the PLAN-003 passthrough, which is deleted (it wrote synced tables without logging them):
+>   - `insert`, `update`, `archive`, `unarchive`, `purge`, `changes()`, and `flush(origin)` → `{ lastSyncId?, lockedAt? }`. `update`/`archive`/`unarchive` lock the row and read its old groups first (`SELECT … FOR UPDATE`), write, then recompute groups with `groupsOf(row, tx)` (now async-capable, with the transaction) and store them if they changed.
+>   - A groups change logs `D` (old groups) then `U` (new groups); `A`/`V` carry the full row. Both are new spec decisions (SPEC-002 Q4, Q5; sync-protocol §6 updated).
+>   - `flush` with nothing buffered takes no lock. Otherwise: `pg_advisory_xact_lock(LOCKS.sync)`, `UPDATE sync_state … RETURNING`, one multi-row `INSERT INTO sync_log`. `data` is the row as JSON (camelCase keys, ISO timestamps with milliseconds, `syncGroups` included).
+>   - The executor uses `syncRepo` by default and records `surface_sync_lock_hold_seconds` (lock taken → commit) on the metrics registry.
+> - **Operations:** `debug.create` (client-generated `id`, optional `groups`, default `workspace`), `debug.rename`, `debug.delete` (destructive), all internal, with handlers that check visibility first (invisible → `NOT_FOUND`). All four write ops, `debug.touch` included, now have `optimistic()` for session D's queue and overlay.
+> - **AC-12:**
+>   - **Static:** `surface/no-synced-table-writes` (`packages/config/eslint-rules/`, wired in `packages/config/eslint.js` for `apps/server/src/**` except `sync/repo.ts`) flags Drizzle `insert/update/delete` on a listed table and raw SQL that inserts into, updates, deletes from or truncates one. The table list `SYNCED_TABLES` lives in `packages/config/eslint.js`; `server/test/sync-lint.test.ts` (RuleTester) checks it equals `SYNCED_MODELS` plus `sync_log`/`sync_state`.
+>   - **Runtime (tests):** `executorHarness()` installs an audit trigger on every synced table, and `testExecutor()` runs `repoWritesOnly` as a post-handler check, so **every executor integration test** fails a mutation that wrote a synced row its repo didn't log (`repo-guard.int.test.ts`). Queries are skipped (read-only).
+> - **Tests:**
+>   - `sync-ordering.stress.int.test.ts` (AC-1): 20 workers × 500 executor mutations (touch, rename, create on 8 contended rows, seeded PRNG). An observer polls during the run and checks every snapshot shows exactly ids `start+1 … max` (no hole); then ids are contiguous, `sync_state` agrees, every result's `lastSyncId` is its log row, and replaying the log reproduces the table. 15–25 s. A planted bug (ids from a sequence, no lock to commit) gave 1,348 holes and failed.
+>   - `sync-lock.perf.int.test.ts` (§10 budget, run alone): 8 writers × 1,000 touches; ≥ 95 % of holds ≤ 2 ms, best of 3. Probe: ≥ 98 % ≤ 2 ms from 1 to 20 writers.
+>   - `sync-repo.int.test.ts`: I/U/A/V/D in order with full rows and groups, groups change as D+U (and a reordered set is not a change), origin recorded, an empty flush takes no lock, `NOT_FOUND` logs nothing, the debug ops each return their change's sync id, a rolled-back mutation and a query log nothing, an invisible item is `NOT_FOUND` worded like a missing one.
+> - **Deviations:**
+>   - §3 says `debug_items` exists only in dev and test. It has been in the main migrations since PLAN-003 S4: the table stays empty in production, and its operations are internal, which the executor refuses in production. Moving it would mean a migration split; not worth it for an empty table.
+>   - `client_mutations` is created here but first written in S5.
+>   - The `NOTIFY` after commit (§4.3) is S4's.
+> - **Notes for later slices:**
+>   - **S3/S4:** read `sync_log` with `groups && $groups`; apply D-then-U for groups changes as described; `data` is already the client row shape.
+>   - **S5:** write `client_mutations` in the mutation's transaction, and pass `{ clientId, seq }` to the executor (it reaches `flush`).
+>   - **PLAN-001 S1:** each new synced model needs `SYNCED_MODELS` (`groupsOf` may query through the transaction) and a `SYNCED_TABLES` entry; the lint test fails until both exist.
 
 ### S3: Bootstrap endpoint · M
 - `GET /sync/bootstrap`: a `REPEATABLE READ` transaction that reads `max(sync_id)` and streams `meta`, then the rows of every **eager** model filtered by `sync_groups && userGroups` (server-side cursors, 1,000 rows per fetch), then `end`. gzip via `@fastify/compress`.

@@ -4,14 +4,22 @@
  * workspace, user and team models.
  */
 import type { SQL } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { debugItems } from '../db/schema/index.js';
 
 export const SYNCED_MODELS = {
   DebugItem: {
     table: debugItems,
-    /** Debug items carry their groups as data, so tests can put them anywhere. */
-    groupsOf: (row: { syncGroups: string[] }): string[] => row.syncGroups,
+    /**
+     * Who may see a row (permissions.md §2), from the row and, for models whose groups derive
+     * from another row (an issue's team), the transaction. Debug items carry their groups as
+     * data, so tests can put them anywhere.
+     */
+    groupsOf: (
+      row: { readonly syncGroups: readonly string[] },
+      _tx: NodePgDatabase,
+    ): readonly string[] | Promise<readonly string[]> => row.syncGroups,
     /**
      * The column naming the row's team (the team's own `id` for Team), or `null` for
      * workspace-wide models. Reads by a key limited to some teams filter on it in SQL,
@@ -39,6 +47,11 @@ export type ModelPatch<M extends ModelName> = {
   [K in Exclude<keyof ModelTable<M>['$inferInsert'], 'id' | 'createdAt' | 'updatedAt'>]?:
     ModelTable<M>['$inferInsert'][K] | SQL;
 };
+
+/** Models with an `archivedAt` column, which `repo.archive` and `repo.unarchive` set. */
+export type ArchivableModel = {
+  [M in ModelName]: 'archivedAt' extends keyof ModelRow<M> ? M : never;
+}[ModelName];
 
 export function isModelName(value: string): value is ModelName {
   return Object.hasOwn(SYNCED_MODELS, value);

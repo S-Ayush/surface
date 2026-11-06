@@ -29,6 +29,20 @@
       "when": 1793967431632,
       "tag": "0003_api_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793984027813,
+      "tag": "0004_sync_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793984028328,
+      "tag": "0005_seed_sync_state",
+      "breakpoints": true
     }
   ]
 }

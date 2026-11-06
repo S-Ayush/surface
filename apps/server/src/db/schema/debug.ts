@@ -16,6 +16,8 @@ export const debugItems = pgTable(
     // (SPEC-003 §7.4), and list cursors carry the exact value.
     createdAt: timestamp({ withTimezone: true, precision: 3 }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true, precision: 3 }).notNull().defaultNow(),
+    /** Set by `repo.archive`, cleared by `repo.unarchive` (PLAN-002 S2). */
+    archivedAt: timestamp({ withTimezone: true, precision: 3 }),
   },
   (t) => [index('debug_items_sync_groups_idx').using('gin', t.syncGroups)],
 );
