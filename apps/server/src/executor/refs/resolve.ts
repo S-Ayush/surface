@@ -10,7 +10,7 @@ import type { Queryable } from '../../db/pool.js';
 import { refPlan, type RefLocation } from './plan.js';
 import { lookup, type ResolveActor } from './sources.js';
 
-export type { ResolveActor } from './sources.js';
+export { refNotFound, type ResolveActor } from './sources.js';
 export { refPlan, RefPlanError, type RefLocation } from './plan.js';
 
 /**
@@ -51,7 +51,8 @@ export async function resolveRefs(
   return resolved;
 }
 
-function valueAt(input: unknown, path: RefLocation['path']): unknown {
+/** The value at a field path of the parsed input. */
+export function valueAt(input: unknown, path: RefLocation['path']): unknown {
   let current: unknown = input;
   for (const segment of path) {
     if (typeof current !== 'object' || current === null) return undefined;
@@ -60,7 +61,7 @@ function valueAt(input: unknown, path: RefLocation['path']): unknown {
   return current;
 }
 
-function single(ref: ResolvedRef | undefined): RefEntity | undefined {
+export function single(ref: ResolvedRef | undefined): RefEntity | undefined {
   return ref === undefined || isList(ref) ? undefined : ref;
 }
 

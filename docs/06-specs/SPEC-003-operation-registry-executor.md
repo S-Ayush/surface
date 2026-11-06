@@ -62,7 +62,7 @@ export default handler(teamUpdate, async (ctx, input) => {
 |---|---|---|
 | `name` | ✓ | `^[a-z][a-zA-Z]*\.[a-z][a-zA-Z]*$`. Unique. Immutable once released (renaming = new op + deprecation). |
 | `kind` | ✓ | `query` must not write. Enforced by a read-only transaction. |
-| `domain` | ✓ | One of the domain list in [domain-model §7](../03-domain/domain-model.md#7-operations-catalogue-seed-for-the-operation-registry) |
+| `domain` | ✓ | One of the domain list in [domain-model §7](../03-domain/domain-model.md#7-operations-catalogue-seed-for-the-operation-registry), or `debug` for internal test operations (`internal: true`, never callable in production) |
 | `summary` | ✓ | ≤ 80 chars, imperative ("Update…", "List…") |
 | `description` | ✓ | ≤ 400 chars. Mentions accepted reference formats and side effects. |
 | `keywords` | ✓ | ≥ 2 natural-language phrasings a user or AI might use |
@@ -93,7 +93,7 @@ Inputs accept **human-friendly references**. The executor resolves them to rows 
 Resolver rules:
 - **Ambiguous** names → `INVALID_INPUT` with candidates (`"2 projects named 'Launch': …"`).
 - **Scoped** refs (status, cycle, team label) resolve *after* their scope ref, using dependency order declared by the ref type.
-- Resolution runs in the executor's transaction, so the snapshot is consistent with the handler.
+- Resolution runs in the executor's transaction. Queries share one snapshot with the handler. Mutations run `READ COMMITTED` (Q6), so a referenced row can change or be deleted between resolution and the handler. A foreign-key violation from that race (`23503`) returns `CONFLICT` ("Something this change refers to was changed or deleted meanwhile. Reload and try again."), never `INTERNAL`.
 - The client has equivalent resolvers over the local store, used by `optimistic()` and command-menu parsing.
 - **Names and keys** match case-insensitively. When several rows differ only by case, an exact-case match wins; otherwise the name is ambiguous. (Q4)
 - **Ids of scoped refs** resolve only within their scope: a status id from another team is `NOT_FOUND`, the same as an unknown id.

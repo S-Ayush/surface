@@ -44,7 +44,7 @@ describe('actors', () => {
   });
 
   it('builds API and MCP actors that act as their owner, narrowed by the key', () => {
-    const apiKey = { scope: 'read' as const, teamIds: [], allowDestructive: false };
+    const apiKey = { id: 'key-1', scope: 'read' as const, teamIds: [], allowDestructive: false };
     const actor = userActor({
       userId: 'u-1',
       role: 'admin',

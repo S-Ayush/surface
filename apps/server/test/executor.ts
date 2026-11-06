@@ -10,6 +10,7 @@ import {
   defineOperation,
   type AnyOperation,
 } from '@surface/operations';
+import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { pino } from 'pino';
@@ -41,6 +42,10 @@ export async function executorHarness(): Promise<ExecutorHarness> {
     CREATE TABLE ${FIXTURE_SCHEMA}.teams (
       id uuid PRIMARY KEY, key text NOT NULL UNIQUE, name text NOT NULL,
       private boolean NOT NULL, sync_groups text[] NOT NULL);
+    -- Not synced: only here so a handler can hit a foreign-key violation (SPEC-003 Q6).
+    CREATE TABLE ${FIXTURE_SCHEMA}.notes (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      team_id uuid NOT NULL REFERENCES ${FIXTURE_SCHEMA}.teams (id));
   `);
   await db.pool.query(
     `INSERT INTO ${FIXTURE_SCHEMA}.teams VALUES
@@ -159,6 +164,51 @@ export const oldEcho = defineOperation({
   deprecated: { since: '0.1.0', replacedBy: 'debug.echo' },
 });
 
+/** A query with a team reference and no I/O in its handler (AC-11 with resolution). */
+export const teamEcho = defineOperation({
+  name: 'debug.teamEcho',
+  kind: 'query',
+  domain: 'debug',
+  summary: 'Echo a team key',
+  description: 'Test operation: resolves a team reference and returns its key.',
+  keywords: ['team echo', 'resolve team'],
+  input: z.object({ team: TeamRef }),
+  output: z.object({ team: z.string() }),
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ team: 'ENG' }],
+});
+
+/** Casts its input to uuid in SQL, so Postgres fails with a class-22 error quoting it. */
+export const badCast = defineOperation({
+  name: 'debug.badCast',
+  kind: 'query',
+  domain: 'debug',
+  summary: 'Cast a value to uuid in SQL',
+  description: 'Test operation: a bad cast must not put the value in the logs.',
+  keywords: ['bad cast', 'invalid text representation'],
+  input: z.object({ value: z.string() }),
+  output: z.object({ ok: z.boolean() }),
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ value: 'not-a-uuid' }],
+});
+
+/** Inserts a note for a team that doesn't exist: a foreign-key violation (23503). */
+export const orphanNote = defineOperation({
+  name: 'debug.orphanNote',
+  kind: 'mutation',
+  domain: 'debug',
+  summary: 'Add a note for a missing team',
+  description: 'Test operation: stands in for a reference deleted after resolution.',
+  keywords: ['orphan note', 'foreign key'],
+  input: z.object({ teamId: z.uuid() }),
+  output: z.object({ ok: z.boolean() }),
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ teamId: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e' }],
+});
+
 let flakyAttempts = 0;
 export function resetFlaky(): void {
   flakyAttempts = 0;
@@ -169,6 +219,9 @@ const TEST_HANDLERS: Handler[] = [
     calls.teamNote++;
     const team = ctx.refs.team;
     const key = team !== undefined && 'key' in team ? String(team.key) : '?';
+    if (team !== undefined && 'id' in team) {
+      ctx.emit({ type: 'debug.noted', subject: { type: 'team', id: team.id }, changes: {} });
+    }
     return Promise.resolve({ team: key, note: input.note });
   }),
   handler(explode, (_ctx, input) => {
@@ -210,6 +263,18 @@ const TEST_HANDLERS: Handler[] = [
     return Promise.resolve({ attempts: flakyAttempts });
   }),
   handler(oldEcho, () => Promise.resolve({ ok: true })),
+  handler(teamEcho, (ctx) => {
+    const team = ctx.refs.team;
+    return Promise.resolve({ team: team !== undefined && 'key' in team ? String(team.key) : '?' });
+  }),
+  handler(badCast, async (ctx, input) => {
+    await ctx.tx.execute(sql`SELECT ${input.value}::uuid`);
+    return { ok: true };
+  }),
+  handler(orphanNote, async (ctx, input) => {
+    await ctx.tx.execute(sql`INSERT INTO notes (team_id) VALUES (${input.teamId})`);
+    return { ok: true };
+  }),
 ];
 
 export const TEST_OPERATIONS: readonly AnyOperation[] = [
@@ -219,6 +284,9 @@ export const TEST_OPERATIONS: readonly AnyOperation[] = [
   createItem,
   flaky,
   oldEcho,
+  teamEcho,
+  badCast,
+  orphanNote,
 ];
 
 /** An executor over the real registry plus the test operations, with captured logs. */

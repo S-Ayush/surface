@@ -44,18 +44,24 @@ export function refOutsideKeyTeams(
   actor: Actor,
   plan: readonly RefLocation[],
   refs: ResolvedRefs,
-): RefLocation | undefined {
+): { readonly location: RefLocation; readonly index?: number } | undefined {
   const teamIds = actor.apiKey?.teamIds;
   if (teamIds === undefined || teamIds.length === 0) return undefined;
-  return plan.find((location) => {
+  const outside = (type: RefType, row: RefEntity) => {
+    const teamId = teamIdOf(type, row);
+    return teamId !== null && !teamIds.includes(teamId);
+  };
+  for (const location of plan) {
     const resolved = refs[location.key];
-    if (resolved === undefined) return false;
-    const rows: readonly RefEntity[] = 'id' in resolved ? [resolved] : resolved;
-    return rows.some((row) => {
-      const teamId = teamIdOf(location.type, row);
-      return teamId !== null && !teamIds.includes(teamId);
-    });
-  });
+    if (resolved === undefined) continue;
+    if ('id' in resolved) {
+      if (outside(location.type, resolved)) return { location };
+    } else {
+      const index = resolved.findIndex((row) => outside(location.type, row));
+      if (index >= 0) return { location, index };
+    }
+  }
+  return undefined;
 }
 
 /** The team a resolved row belongs to, or `null` for workspace-wide rows (users, workspace labels). */

@@ -3,6 +3,8 @@
  * small edit distance of the request; failing that, names in the same domain.
  */
 export function nearestNames(name: string, candidates: readonly string[], limit = 3): string[] {
+  // Edit distance is O(n·m); names arrive unbounded through MCP bodies (M6). No real name is this long.
+  if (name.length > MAX_NAME_LENGTH) return [];
   const target = name.toLowerCase();
   const maxDistance = Math.max(2, Math.floor(target.length / 4));
   const scored = candidates
@@ -17,6 +19,8 @@ export function nearestNames(name: string, candidates: readonly string[], limit 
       : scored.filter(({ candidate }) => candidate.toLowerCase().startsWith(`${domain}.`));
   return pool.slice(0, limit).map(({ candidate }) => candidate);
 }
+
+const MAX_NAME_LENGTH = 100;
 
 /** Levenshtein distance; names are short, so the O(n·m) table is fine. */
 export function editDistance(a: string, b: string): number {

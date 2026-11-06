@@ -48,6 +48,8 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 >   - **PLAN-001 S1:** the resolvers query `teams(id, key, name, private, sync_groups)`, `users(id, email, name, display_name, role, active, sync_groups)`, `workflow_statuses(id, team_id, name, category, sync_groups)` and `labels(id, team_id, parent_id, name, is_group, sync_groups)`. Keep those names, or update `refs/sources.ts`. Store `users.email` lowercase and `teams.key` uppercase (the lookups compare directly). Add `lower(display_name)` / `lower(name)` indexes if lookups show up in profiles. Then switch `resolvers.int.test.ts` from its `ref_fixture` schema to the real tables.
 >   - **S3:** `ResolveActor` (`kind`, `userId?`, `groups`) is a structural subset of the planned `Actor`. Resolved rows carry `syncGroups` for `p.canSee`. `p.teamMember` needs membership for **public** teams too, which neither the groups nor the resolved team row provide; S3 must add it (e.g. `teamIds` on the actor).
 >   - **S4:** call `resolveRefs` at step 7 inside the transaction, and map `RefPlanError` and stub errors to `INTERNAL`.
+>
+> **Review fixes (2026-11-06).** Label and status lookups filter by the row's own `sync_groups`, not only through the scope team; `resolvers.int.test.ts` now has a status and a label inside ENG with SEC's group, hidden from non-members by name and by id. The executor's backstop `NOT_FOUND` (`refOutsideKeyTeams`) now uses the same per-type messages as the resolvers (`refNotFound()`), so a key-narrowed reference reads exactly like a missing one. `scopedTo(ref, field)` takes a top-level input field only.
 
 ### S3: Actor & permission predicates · S · ✅ Done 2026-11-06
 - `Actor` = `{ kind: user|api|mcp|system, userId?, role?, groups: string[], apiKey?: {scope, teamIds, allowDestructive} }`.
@@ -93,7 +95,7 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 > - **Security fix found while testing:** Drizzle's query errors carry bound **parameters** in `message`, `stack` and `params`. `loggableError()` logs only the SQL text and Postgres's error fields (`code`, `constraint`, `table`, …) and drops `detail`, which quotes values. `executor-readonly.int.test.ts` asserts that no bound value reaches the log. **Any other code that logs DB errors should use `loggableError()`.**
 > - **Repo:** `passthroughRepo` implements `insert`, `update` (patch values may be `SQL`, e.g. atomic increments), `purge`, `changes()` and a no-op `flush()`. `archive`/`unarchive` wait for a model with `archivedAt` (PLAN-002 S2 / PLAN-001 S1). It does not recompute groups on update.
 > - **Tests:**
->   - integration: `executor-stages.int.test.ts` (AC-3, plus E4, E5, E7, E8 and logging); `executor-readonly.int.test.ts` (AC-4, E3, no parameter leak); `executor-atomic.int.test.ts` (AC-5, and NOT_FOUND for an invisible item); `executor-concurrency.int.test.ts` (AC-12 on `debug.touch`, since `team.update` arrives in PLAN-001: 50/50 succeed, no lost updates); `executor-overhead.int.test.ts` (AC-11);
+>   - integration: `executor-stages.int.test.ts` (AC-3, plus E4, E5, E7, E8 and logging); `executor-readonly.int.test.ts` (AC-4, E3, no parameter leak); `executor-atomic.int.test.ts` (AC-5, and NOT_FOUND for an invisible item); `executor-concurrency.int.test.ts` (AC-12 on `debug.touch`, since `team.update` arrives in PLAN-001: 50/50 succeed, no lost updates); `executor-overhead.int.test.ts` (AC-11; renamed `executor-overhead.perf.int.test.ts` by the review fixes below);
 >   - unit: `executor-unit.test.ts` (suggestions, uuidv7, retry detection, the HTTP mapping, a handler for every registered op);
 >   - the harness `test/executor.ts` holds test-only ops and a fixture `teams` table, reached through the pool's `search_path`.
 > - **AC-11 as a test, not a bench:** Vitest benches can't fail CI, so the plan's `bench/executor.bench.ts` became `test/executor-overhead.int.test.ts`. It runs 500 samples after 100 warm-ups and prints p50/p95. Locally, p95 was 0.6 ms alone but **1.7 ms when run alongside the other integration files**. If it flakes in CI, run it in its own Vitest invocation instead of raising the limit.
@@ -108,6 +110,16 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 >     - replace `passthroughRepo` with the sync-logging repo, via `repoFactory`;
 >     - `flush()` returns `lastSyncId`, which the outbox rows already record;
 >     - NOTIFY after commit is still to be added.
+
+> **Review fixes (2026-11-06).**
+> - **`ctx.query.get` honours the key's teams:** `SYNCED_MODELS` entries declare `teamColumn` (`null` for `DebugItem`), and `get` adds `team_column IN keyTeams` when the actor's key has `teamIds`. **PLAN-001 S1 must set `teamColumn` for every team-owned model and add a key-team leak test for `query.get`.**
+> - **Foreign-key races:** `23503` maps to `CONFLICT` (SPEC-003 §4 reworded: under `READ COMMITTED`, resolution and the handler don't share a snapshot).
+> - **Logging:** class-22 Postgres errors (bad casts and the like quote the value in `message`) are logged with `code`, `severity` and `routine` only.
+> - **Events:** `debug.touch` reports `from: counter - 1` (the read value could be stale under concurrency); the outbox actor carries `apiKeyId` (`ApiKeyScope` gained `id`); outbox ids come from a monotonic `uuidv7()` (ordered within a millisecond).
+> - **Smaller:** a failed `BEGIN` marks the connection broken; suggestions skip names over 100 characters.
+> - **Tests added:** a deferred constraint trigger that fails at COMMIT, after the outbox insert (AC-5: neither row nor event survives); a foreign-key violation returns `CONFLICT`; a bad cast's value stays out of the log; AC-12 checks every event goes from n-1 to n, once per n; key actors' events carry `apiKeyId`.
+> - **AC-11 rework:** the test is now `executor-overhead.perf.int.test.ts`, run after the other integration files by `vitest.perf.config.js` with no file parallelism (`test:int` runs both). Each sample subtracts a raw `BEGIN READ ONLY; COMMIT` on the same pool run right after it, so load affects both sides; a second case resolves a `TeamRef` (`debug.teamEcho`). Logs go to a non-parsing stream. Locally: `debug.echo` p95 0.05 ms, `debug.teamEcho` p95 0.32 ms.
+> - **Deferred:** the `INVALID_INPUT` "see the operation's input schema" hint lands with S6, where the catalog URL exists.
 
 ### S5: Queries: filter engine, lists, shaping · L
 - `packages/domain/filter`: the Filter AST type, a Zod schema, and a **client evaluator** (`matches(row, filter, ctx)`) with relative values (`me`, durations).
@@ -127,6 +139,7 @@ Implements: [SPEC-003](../06-specs/SPEC-003-operation-registry-executor.md) · S
 - `pnpm registry:lint` (in CI stage 1) implementing the 8 rules of SPEC-003 §11, plus contract tests that run every op's `examples` against the seed fixture.
 - `catalog.snapshot.json` is committed. Rule 8 diffs the current catalog against the snapshot, and `pnpm registry:snapshot` updates it on release.
 - **Negative fixtures:** one deliberately broken op per rule in `packages/operations/test/lint-fixtures/` (AC-9).
+- **From the S1–S4 review:** rule 4 (an example that runs against the seed fixture) exempts `internal: true` ops, whose examples need test-only fixtures.
 
 ## 2. Modules touched
 `packages/operations/*`, `packages/domain/{refs,filter}/*`, `apps/server/src/executor/*`, `apps/server/src/http/ops.ts`, `apps/server/src/jobs/` (pg-boss bootstrap), migrations (`event_outbox`, `api_idempotency`, pg-boss schema), `scripts/registry-lint.ts`.
@@ -139,7 +152,7 @@ New tables `event_outbox` and `api_idempotency`, plus the pg-boss schema. All ar
 | AC | Test |
 |---|---|
 | AC-1 | `server/test/ops-surfaces.int.test.ts` |
-| AC-2 | `server/test/resolvers.int.test.ts` |
+| AC-2 | `server/test/resolvers.int.test.ts` (the M0 reference types; extended as each milestone adds its types) |
 | AC-3 | `server/test/executor-stages.int.test.ts` (one case per stage) |
 | AC-4 | `server/test/executor-readonly.int.test.ts` |
 | AC-5 | `server/test/executor-atomic.int.test.ts` |
@@ -148,7 +161,7 @@ New tables `event_outbox` and `api_idempotency`, plus the pg-boss schema. All ar
 | AC-8 | `server/test/idempotency.int.test.ts` |
 | AC-9 | `operations/test/lint.test.ts` with fixtures |
 | AC-10 | `operations/test/compact-schema.test.ts` |
-| AC-11 | `server/test/executor-overhead.int.test.ts` (p95 over 500 samples; a bench cannot fail CI) |
+| AC-11 | `server/test/executor-overhead.perf.int.test.ts` (p95 of execution minus a paired raw transaction, over 500 samples, run alone; a bench cannot fail CI) |
 | AC-12 | `server/test/executor-concurrency.int.test.ts` |
 
 ## 5. Risks & mitigations

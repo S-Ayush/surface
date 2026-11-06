@@ -28,6 +28,23 @@ it('stops a query that writes, leaves nothing behind, and logs the bug', async (
   expect(logged).not.toContain('canary-title-7f3a');
 });
 
+it('keeps the value out of the log when Postgres rejects it in a cast', async () => {
+  const { executor, logs } = testExecutor(h.pool);
+  // Class 22 errors quote the offending value in their message ("invalid input syntax for
+  // type uuid: \"…\""), and that value can be user input or a secret.
+  const canary = 'canary-cast-91bd';
+  const result = await executor.execute(
+    'debug.badCast',
+    { value: canary },
+    actors(h.teams).engMember,
+  );
+
+  expect(result).toMatchObject({ ok: false, error: { code: 'INTERNAL' } });
+  const logged = JSON.stringify(logs.lines.find((l) => l.msg === 'operation failed'));
+  expect(logged).toContain('"code":"22P02"');
+  expect(logged).not.toContain(canary);
+});
+
 it('lets queries read normally', async () => {
   const { executor } = testExecutor(h.pool);
   expect(await executor.execute('debug.echo', { text: 'ro' }, actors(h.teams).engMember)).toEqual({

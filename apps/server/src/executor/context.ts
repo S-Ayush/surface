@@ -5,8 +5,9 @@
  */
 import type { Actor, ResolvedRefs } from '@surface/domain';
 import type { AnyOperation, ParsedInputOf } from '@surface/operations';
-import { and, arrayOverlaps, eq } from 'drizzle-orm';
+import { and, arrayOverlaps, eq, inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type { z } from 'zod';
 import { SYNCED_MODELS, type ModelName, type ModelRow } from '../sync/models.js';
@@ -23,7 +24,10 @@ export interface DomainEvent {
 
 /** Read helpers that apply the actor's visibility in SQL. */
 export interface QueryHelpers {
-  /** The row if it exists and the actor can see it; otherwise `undefined` (report `NOT_FOUND`). */
+  /**
+   * The row if it exists and the actor can see it (sync groups, and an API key's teams);
+   * otherwise `undefined`, which the handler reports as `NOT_FOUND`.
+   */
   get<M extends ModelName>(model: M, id: string): Promise<ModelRow<M> | undefined>;
 }
 
@@ -59,11 +63,17 @@ export function handler<Op extends AnyOperation>(
 export function queryHelpers(tx: NodePgDatabase, actor: Actor): QueryHelpers {
   return {
     async get(model, id) {
-      const { table } = SYNCED_MODELS[model];
+      const { table, teamColumn } = SYNCED_MODELS[model];
+      const keyTeams = actor.apiKey?.teamIds ?? [];
+      const teamFilter: PgColumn | null = teamColumn;
       const visible =
         actor.kind === 'system'
           ? eq(table.id, id)
-          : and(eq(table.id, id), arrayOverlaps(table.syncGroups, [...actor.groups]));
+          : and(
+              eq(table.id, id),
+              arrayOverlaps(table.syncGroups, [...actor.groups]),
+              keyTeams.length > 0 && teamFilter ? inArray(teamFilter, [...keyTeams]) : undefined,
+            );
       const [row] = await tx.select().from(table).where(visible).limit(1);
       return row;
     },

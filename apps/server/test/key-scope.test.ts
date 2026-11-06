@@ -38,6 +38,7 @@ const mutation = op('mutation', false);
 const destructive = op('mutation', true);
 
 const key = (overrides: Partial<ApiKeyScope> = {}): ApiKeyScope => ({
+  id: 'key-1',
   scope: 'read_write',
   teamIds: [],
   allowDestructive: false,
@@ -98,7 +99,7 @@ describe('team narrowing', () => {
     const eng = { id: 'eng' };
     const ops = { id: 'ops' };
     expect(refOutsideKeyTeams(narrowed, plan, { team: eng, user: { id: 'u-9' } })).toBeUndefined();
-    expect(refOutsideKeyTeams(narrowed, plan, { team: ops })?.key).toBe('team');
+    expect(refOutsideKeyTeams(narrowed, plan, { team: ops })?.location.key).toBe('team');
     expect(
       refOutsideKeyTeams(narrowed, plan, {
         team: eng,
@@ -107,7 +108,7 @@ describe('team narrowing', () => {
           { id: 'l1', teamId: null },
           { id: 'l2', teamId: 'ops' },
         ],
-      })?.key,
-    ).toBe('labels');
+      }),
+    ).toMatchObject({ location: { key: 'labels' }, index: 1 });
   });
 });

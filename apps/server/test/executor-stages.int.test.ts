@@ -32,7 +32,12 @@ beforeEach(() => {
 });
 
 const denyAll: RateLimiter = { take: () => ({ allowed: false, retryAfterSeconds: 7 }) };
-const readKey: ApiKeyScope = { scope: 'read', teamIds: [], allowDestructive: false };
+const readKey: ApiKeyScope = {
+  id: randomUUID(),
+  scope: 'read',
+  teamIds: [],
+  allowDestructive: false,
+};
 
 function failed(result: ExecuteResult) {
   if (result.ok) throw new Error(`expected a failure, got ${JSON.stringify(result)}`);
@@ -118,7 +123,12 @@ describe('7: reference resolution', () => {
       { id: randomUUID(), memberships: [{ teamId: h.teams.eng, private: false }] },
       {
         kind: 'api',
-        apiKey: { scope: 'read_write', teamIds: [h.teams.sec], allowDestructive: false },
+        apiKey: {
+          id: randomUUID(),
+          scope: 'read_write',
+          teamIds: [h.teams.sec],
+          allowDestructive: false,
+        },
       },
     );
     expect(
@@ -230,6 +240,26 @@ describe('9–13: handler and result', () => {
         changes: { counter: { from: 0, to: 1 } },
       },
     ]);
+  });
+
+  it('records the API key on events from key actors', async () => {
+    const { executor } = testExecutor(h.pool);
+    const apiKeyId = randomUUID();
+    const viaKey = actorFor(
+      { id: randomUUID(), memberships: [{ teamId: h.teams.eng, private: false }] },
+      {
+        kind: 'mcp',
+        apiKey: { id: apiKeyId, scope: 'read_write', teamIds: [], allowDestructive: false },
+      },
+    );
+    expect(
+      await executor.execute('debug.teamNote', { team: 'ENG', note: 'hi' }, viaKey),
+    ).toMatchObject({ ok: true });
+    const { rows } = await h.pool.query<{ actor: unknown }>(
+      `SELECT actor FROM event_outbox WHERE actor->>'apiKeyId' = $1`,
+      [apiKeyId],
+    );
+    expect(rows).toEqual([{ actor: { kind: 'mcp', userId: viaKey.userId, apiKeyId } }]);
   });
 });
 

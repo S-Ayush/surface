@@ -39,11 +39,17 @@ export async function inTransaction<T>(
   let broken: Error | undefined;
   try {
     for (let attempt = 0; ; attempt++) {
-      await client.query(
-        options.readOnly
-          ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'
-          : 'BEGIN ISOLATION LEVEL READ COMMITTED READ WRITE',
-      );
+      try {
+        await client.query(
+          options.readOnly
+            ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'
+            : 'BEGIN ISOLATION LEVEL READ COMMITTED READ WRITE',
+        );
+      } catch (error) {
+        // A connection that can't even BEGIN is unusable: destroy it.
+        broken = error instanceof Error ? error : new Error(String(error));
+        throw error;
+      }
       try {
         const result = await fn(client);
         await client.query('COMMIT');
@@ -73,9 +79,15 @@ export async function inTransaction<T>(
 }
 
 export function isRetryable(error: unknown): boolean {
+  const code = postgresCode(error);
+  return code !== undefined && RETRYABLE.has(code);
+}
+
+/** The Postgres SQLSTATE of an error, looking through wrappers (Drizzle sets `cause`). */
+export function postgresCode(error: unknown): string | undefined {
   for (let e: unknown = error; typeof e === 'object' && e !== null; e = Reflect.get(e, 'cause')) {
     const code: unknown = Reflect.get(e, 'code');
-    if (typeof code === 'string' && RETRYABLE.has(code)) return true;
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) return code;
   }
-  return false;
+  return undefined;
 }

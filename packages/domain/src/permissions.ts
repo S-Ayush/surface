@@ -9,6 +9,8 @@ export type Role = 'admin' | 'member';
 
 /** What an API key may do (permissions.md §3.5). Wired to real keys in M6. */
 export interface ApiKeyScope {
+  /** The key's id, recorded as `actor.apiKeyId` in events and audit (events.md envelope). */
+  readonly id: string;
   readonly scope: 'read' | 'read_write';
   /** Teams the key is limited to. Empty means every team the owner can see. */
   readonly teamIds: readonly string[];

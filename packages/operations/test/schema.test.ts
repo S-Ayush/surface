@@ -25,8 +25,8 @@ describe('toJsonSchema', () => {
             "type": "string",
           },
           "team": {
-            "description": "Team key like ENG (any case), or team id",
-            "minLength": 1,
+            "description": "Team key like ENG (any case), or a team id",
+            "maxLength": 320,
             "type": "string",
             "x-surface-ref": "TeamRef",
           },
@@ -71,7 +71,7 @@ describe('toCompactSchema', () => {
           "type": "string",
         },
         "team": {
-          "description": "Team key like ENG (any case), or team id",
+          "description": "Team key like ENG (any case), or a team id",
           "required": true,
           "type": "TeamRef",
         },
@@ -126,7 +126,7 @@ describe('toCompactSchema', () => {
       'owner.team': {
         type: 'TeamRef',
         required: true,
-        description: 'Team key like ENG (any case), or team id',
+        description: 'Team key like ENG (any case), or a team id',
       },
       'owner.note': { type: 'string' },
       labels: { type: 'object[]', required: true },
@@ -152,7 +152,7 @@ describe('toCompactSchema', () => {
       lead: {
         type: 'TeamRef|null',
         required: true,
-        description: 'Team key like ENG (any case), or team id',
+        description: 'Team key like ENG (any case), or a team id',
       },
     });
     expect(toCompactSchema(z.array(z.uuid()), 'output')).toEqual({

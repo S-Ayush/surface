@@ -1,16 +1,13 @@
-import { SURFACE_REF_KEY } from '@surface/domain';
+import { TeamRef } from '@surface/domain';
 import { z } from 'zod';
 import { defineOperation } from '../src/index.js';
 
-/**
- * Stand-ins shaped like the SPEC-003 §3 example. The real reference types arrive in
- * PLAN-003 S2 and the real team operations in PLAN-001; these fixtures are not registered.
- */
-export const TeamRef = z
-  .string()
-  .min(1)
-  .meta({ [SURFACE_REF_KEY]: 'TeamRef', description: 'Team key like ENG (any case), or team id' });
+export { TeamRef };
 
+/**
+ * Stand-ins shaped like the SPEC-003 §3 example, using the real reference types. The real team
+ * operations arrive in PLAN-001; these fixtures are not registered.
+ */
 const Color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const TimeZone = z.string().min(1);
 

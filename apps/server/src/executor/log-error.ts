@@ -3,6 +3,7 @@
  * parameters in `params`, `message` and `stack`, and parameters can be secrets (token hashes,
  * password hashes) or personal data. Log the SQL text and Postgres's own error fields instead.
  * Postgres `detail` is dropped too: for constraint violations it quotes the offending values.
+ * Errors from database drivers other than Postgres are not expected here.
  */
 
 export function loggableError(error: unknown): unknown {
@@ -12,12 +13,12 @@ export function loggableError(error: unknown): unknown {
     return { type: 'DrizzleQueryError', query: error.query, cause: loggableError(error.cause) };
   }
   if (typeof error.code === 'string' && typeof error.severity === 'string') {
-    // pg DatabaseError: its message and stack never include parameters.
-    return pick(
-      error,
-      ['message', 'code', 'severity', 'constraint', 'table', 'column', 'routine', 'stack'],
-      'DatabaseError',
-    );
+    // pg DatabaseError. Data exceptions (SQLSTATE class 22) quote the offending value in the
+    // message and stack (`invalid input syntax for type uuid: "…"`), so keep only their code.
+    const fields = error.code.startsWith('22')
+      ? ['code', 'severity', 'routine']
+      : ['message', 'code', 'severity', 'constraint', 'table', 'column', 'routine', 'stack'];
+    return pick(error, fields, 'DatabaseError');
   }
   if (error instanceof Error) {
     return {

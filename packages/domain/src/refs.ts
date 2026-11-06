@@ -237,7 +237,8 @@ export const ViewRef = namedRef('ViewRef', 'view');
 
 /**
  * Re-scopes a scoped reference to another input field, e.g. a status that belongs to the
- * team in `toTeam`: `scopedTo(StatusRef, 'toTeam')`. The scope field must be a `TeamRef`.
+ * team in `toTeam`: `scopedTo(StatusRef, 'toTeam')`. The scope field must be a `TeamRef` at the
+ * top level of the input: the resolver looks it up by key, not by dot-path.
  */
 export function scopedTo<T extends z.ZodType>(ref: T, field: string): T {
   return ref.meta({ ...ref.meta(), [SURFACE_REF_SCOPE_KEY]: field });

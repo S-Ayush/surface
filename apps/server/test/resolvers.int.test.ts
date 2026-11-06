@@ -43,6 +43,8 @@ const ids = {
   engPerfType: randomUUID(),
   engPerfArea: randomUUID(),
   secClassified: randomUUID(),
+  engSecret: randomUUID(),
+  engHush: randomUUID(),
 };
 const SEC_GROUP = `team:${ids.sec}`;
 
@@ -119,6 +121,8 @@ beforeAll(async () => {
   await q(status, [ids.engReviewLower, ids.eng, 'review', 'started', ['workspace']]);
   await q(status, [ids.opsTodo, ids.ops, 'Todo', 'unstarted', ['workspace']]);
   await q(status, [ids.secTodo, ids.sec, 'Todo', 'unstarted', [SEC_GROUP]]);
+  // Rows inside a visible team whose own groups hide them: only the row's groups filter these.
+  await q(status, [ids.engSecret, ids.eng, 'Secret', 'started', [SEC_GROUP]]);
 
   const label = 'INSERT INTO ref_fixture.labels VALUES ($1, $2, $3, $4, $5, $6)';
   await q(label, [ids.wsBug, null, null, 'Bug', false, ['workspace']]);
@@ -129,6 +133,7 @@ beforeAll(async () => {
   await q(label, [ids.engPerfType, ids.eng, ids.engType, 'Perf', false, ['workspace']]);
   await q(label, [ids.engPerfArea, ids.eng, ids.engArea, 'Perf', false, ['workspace']]);
   await q(label, [ids.secClassified, ids.sec, null, 'Classified', false, [SEC_GROUP]]);
+  await q(label, [ids.engHush, ids.eng, null, 'Hush', false, [SEC_GROUP]]);
 });
 
 afterAll(async () => {
@@ -341,6 +346,19 @@ describe('StatusRef', () => {
       idOf(await resolve(statusOp, { team: 'SEC', status: 'Todo' }, secMember), 'status'),
     ).toBe(ids.secTodo);
   });
+
+  it('filters statuses by their own sync groups, by name and by id', async () => {
+    for (const status of ['Secret', ids.engSecret]) {
+      const error = await failure(statusOp, { team: 'ENG', status }, member);
+      expect(error.code).toBe('NOT_FOUND');
+      expect(error.message).toBe(
+        `Status "${status}" not found in ENG. Use a status name of that team, or a status id.`,
+      );
+      expect(idOf(await resolve(statusOp, { team: 'ENG', status }, secMember), 'status')).toBe(
+        ids.engSecret,
+      );
+    }
+  });
 });
 
 describe('LabelRef', () => {
@@ -381,6 +399,17 @@ describe('LabelRef', () => {
     expect(
       idOf(await resolve(labelOp, { team: 'SEC', labels: ['classified'] }, secMember), 'labels'),
     ).toEqual([ids.secClassified]);
+  });
+
+  it('filters labels by their own sync groups, by name and by id', async () => {
+    for (const label of ['Hush', ids.engHush]) {
+      expect((await failure(labelOp, { team: 'ENG', labels: [label] }, member)).code).toBe(
+        'NOT_FOUND',
+      );
+      expect(
+        idOf(await resolve(labelOp, { team: 'ENG', labels: [label] }, secMember), 'labels'),
+      ).toEqual([ids.engHush]);
+    }
   });
 });
 

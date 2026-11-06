@@ -78,8 +78,37 @@ function invalid(ctx: LookupContext, message: string, candidates?: ErrorCandidat
   });
 }
 
-function notFound(ctx: LookupContext, message: string): SurfaceError {
-  return new SurfaceError('NOT_FOUND', message, { issues: [{ path: ctx.path, message }] });
+/**
+ * The `NOT_FOUND` for a reference. One template per type, shared with the executor's key-scope
+ * backstop, so every path that hides a row says exactly the same thing (permissions.md §5).
+ */
+export function refNotFound(
+  type: RefType,
+  value: string,
+  path: readonly (string | number)[],
+  scopeTeam?: RefEntity,
+): SurfaceError {
+  const teamKey = scopeTeam ? String(scopeTeam.key) : undefined;
+  const message = ((): string => {
+    switch (type) {
+      case 'TeamRef':
+        return `Team "${value}" not found. Use a team key like ENG, or a team id.`;
+      case 'UserRef':
+        return `User "${value}" not found. Use an email, a display name, "me", or a user id.`;
+      case 'StatusRef':
+        return `Status "${value}" not found in ${teamKey ?? 'the team'}. Use a status name of that team, or a status id.`;
+      case 'LabelRef':
+        return `Label "${value}" not found in ${teamKey ? `${teamKey} or the workspace labels` : 'the workspace labels'}. Use a label name or a label id.`;
+      case 'IssueRef':
+      case 'CycleRef':
+      case 'ProjectRef':
+      case 'InitiativeRef':
+      case 'DocumentRef':
+      case 'ViewRef':
+        return `${type.replace(/Ref$/, '')} "${value}" not found.`;
+    }
+  })();
+  return new SurfaceError('NOT_FOUND', message, { issues: [{ path, message }] });
 }
 
 /**
@@ -145,8 +174,7 @@ async function lookupTeam(value: string, ctx: LookupContext): Promise<TeamRow> {
     ));
   }
   const [team] = rows;
-  if (!team)
-    throw notFound(ctx, `Team "${value}" not found. Use a team key like ENG, or a team id.`);
+  if (!team) throw refNotFound('TeamRef', value, ctx.path);
   return team;
 }
 
@@ -198,10 +226,7 @@ async function lookupUser(value: string, ctx: LookupContext): Promise<UserRow> {
 
   const picked = pickByName(rows, (row) => row.displayName === value.trim());
   if (picked === undefined) {
-    throw notFound(
-      ctx,
-      `User "${value}" not found. Use an email, a display name, "me", or a user id.`,
-    );
+    throw refNotFound('UserRef', value, ctx.path);
   }
   if (isAmbiguous(picked)) {
     throw invalid(
@@ -256,10 +281,7 @@ async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRo
 
   const picked = pickByName(rows, (row) => row.name === value.trim());
   if (picked === undefined) {
-    throw notFound(
-      ctx,
-      `Status "${value}" not found in ${teamKey}. Use a status name of that team, or a status id.`,
-    );
+    throw refNotFound('StatusRef', value, ctx.path, team);
   }
   if (isAmbiguous(picked)) {
     throw invalid(
@@ -317,7 +339,7 @@ async function lookupLabel(value: string, ctx: LookupContext): Promise<LabelRow>
 
   const picked = pickByName(pool, (row) => row.name === value.trim());
   if (picked === undefined) {
-    throw notFound(ctx, `Label "${value}" not found in ${where}. Use a label name or a label id.`);
+    throw refNotFound('LabelRef', value, ctx.path, team);
   }
   if (isAmbiguous(picked)) {
     throw invalid(

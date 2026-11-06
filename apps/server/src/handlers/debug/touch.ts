@@ -16,7 +16,8 @@ export default handler(debugTouch, async (ctx, input) => {
   ctx.emit({
     type: 'debug.touched',
     subject: { type: 'debug_item', id: touched.id },
-    changes: { counter: { from: item.counter, to: touched.counter } },
+    // `item.counter` may be stale under concurrent touches; the increment is exactly one.
+    changes: { counter: { from: touched.counter - 1, to: touched.counter } },
   });
   return {
     id: touched.id,

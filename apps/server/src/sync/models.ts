@@ -4,6 +4,7 @@
  * workspace, user and team models.
  */
 import type { SQL } from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import { debugItems } from '../db/schema/index.js';
 
 export const SYNCED_MODELS = {
@@ -11,8 +12,18 @@ export const SYNCED_MODELS = {
     table: debugItems,
     /** Debug items carry their groups as data, so tests can put them anywhere. */
     groupsOf: (row: { syncGroups: string[] }): string[] => row.syncGroups,
+    /**
+     * The column naming the row's team (the team's own `id` for Team), or `null` for
+     * workspace-wide models. Reads by a key limited to some teams filter on it in SQL,
+     * because public teams share the `workspace` group (permissions.md §3.5, §5 item 8).
+     * Every model must state it; PLAN-001 S1 adds the first team-owned ones.
+     */
+    teamColumn: null,
   },
-} as const;
+} as const satisfies Record<
+  string,
+  { readonly teamColumn: PgColumn | null; readonly [other: string]: unknown }
+>;
 
 export type ModelName = keyof typeof SYNCED_MODELS;
 export type ModelTable<M extends ModelName> = (typeof SYNCED_MODELS)[M]['table'];

@@ -24,6 +24,10 @@ describe('nearestNames', () => {
     expect(nearestNames('completely.different', names)).toEqual([]);
   });
 
+  it('skips the search for absurdly long names', () => {
+    expect(nearestNames(`team.${'x'.repeat(10_000)}`, names)).toEqual([]);
+  });
+
   it('computes edit distance', () => {
     expect(editDistance('kitten', 'sitting')).toBe(3);
     expect(editDistance('', 'abc')).toBe(3);
@@ -31,12 +35,19 @@ describe('nearestNames', () => {
 });
 
 describe('uuidv7', () => {
-  it('is a version 7, RFC 9562 variant UUID that sorts by time', () => {
-    const a = uuidv7(1_700_000_000_000);
-    const b = uuidv7(1_700_000_000_001);
-    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(a < b).toBe(true);
-    expect(a.slice(0, 13)).toBe('018bcfe5-6800');
+  it('is a version 7, RFC 9562 variant UUID carrying the current time', () => {
+    const before = Date.now();
+    const id = uuidv7();
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    const ms = parseInt(id.replaceAll('-', '').slice(0, 12), 16);
+    expect(ms).toBeGreaterThanOrEqual(before);
+    expect(ms).toBeLessThanOrEqual(Date.now() + 1);
+  });
+
+  it('keeps creation order for ids made in the same millisecond', () => {
+    const ids = Array.from({ length: 5000 }, () => uuidv7());
+    expect([...ids].sort()).toEqual(ids);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 

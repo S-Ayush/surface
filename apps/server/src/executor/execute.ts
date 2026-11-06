@@ -32,10 +32,10 @@ import { keyScopeProblem, narrowToKeyTeams, refOutsideKeyTeams } from './key-sco
 import { loggableError } from './log-error.js';
 import { noMetrics, operationMetrics, type OperationMetrics } from './metrics.js';
 import { unlimited, type RateLimiter } from './rate-limit.js';
-import { refPlan, resolveRefs } from './refs/resolve.js';
+import { refNotFound, refPlan, resolveRefs, single, valueAt } from './refs/resolve.js';
 import { passthroughRepo, type RepoFactory, type RowChange, type TransactionRepo } from './repo.js';
 import { nearestNames } from './suggest.js';
-import { inTransaction, jitterBackoff } from './transaction.js';
+import { inTransaction, jitterBackoff, postgresCode } from './transaction.js';
 
 /** Step 10: automations and invariant checks, run after the handler inside the transaction. */
 export type PostHandlerCheck = (state: {
@@ -147,9 +147,17 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         const refs = await resolveRefs(def, input, viewer, client);
         const outside = refOutsideKeyTeams(viewer, refPlan(def), refs);
         if (outside) {
-          throw new SurfaceError('NOT_FOUND', `${outside.key} not found.`, {
-            issues: [{ path: outside.path, message: 'Not found.' }],
-          });
+          const { location, index } = outside;
+          const value = valueAt(input, location.path);
+          const list: readonly unknown[] | undefined = Array.isArray(value) ? value : undefined;
+          const item = index !== undefined && list ? list[index] : value;
+          const scope = location.scope === undefined ? undefined : single(refs[location.scope]);
+          throw refNotFound(
+            location.type,
+            typeof item === 'string' ? item : String(item),
+            index === undefined ? location.path : [...location.path, index],
+            scope,
+          );
         }
 
         // 8. Permission
@@ -192,10 +200,14 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         if (events.length > 0) {
           await tx.insert(eventOutbox).values(
             events.map((event) => ({
-              id: uuidv7(now.getTime()),
+              id: uuidv7(),
               type: event.type,
               occurredAt: now,
-              actor: { kind: actor.kind, ...(actor.userId ? { userId: actor.userId } : {}) },
+              actor: {
+                kind: actor.kind,
+                ...(actor.userId ? { userId: actor.userId } : {}),
+                ...(actor.apiKey ? { apiKeyId: actor.apiKey.id } : {}),
+              },
               subject: event.subject,
               changes: event.changes ?? null,
               data: event.data ?? null,
@@ -312,6 +324,9 @@ function invalidInput(error: z.ZodError): SurfaceError {
   });
 }
 
+const CHANGED_MEANWHILE =
+  'Something this change refers to was changed or deleted meanwhile. Reload and try again.';
+
 function toOperationError(
   error: unknown,
   operation: string | undefined,
@@ -320,6 +335,12 @@ function toOperationError(
   const op = operation !== undefined ? { operation } : {};
   if (error instanceof SurfaceError) {
     return { code: error.code, ...op, message: error.message, ...error.details, correlationId };
+  }
+  if (postgresCode(error) === '23503') {
+    // Mutations run READ COMMITTED (SPEC-003 Q6): a row resolved at step 7 can be deleted by
+    // another transaction before the handler references it. That's a race, not a bug
+    // (sync-protocol §5.4), so the caller may retry.
+    return { code: 'CONFLICT', ...op, message: CHANGED_MEANWHILE, correlationId };
   }
   // E3, E4: anything unexpected is a bug. Its details are logged, never returned.
   return { code: 'INTERNAL', ...op, message: INTERNAL_MESSAGE, correlationId };
