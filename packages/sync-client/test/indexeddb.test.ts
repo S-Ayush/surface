@@ -8,12 +8,13 @@ import { uniqueName } from './support/storage.js';
 const HASH = 'b'.repeat(64);
 
 describe('IndexedDB replica', () => {
-  it('creates meta, pending and one row store per model', async () => {
+  it('creates meta, the queue stores and one row store per model', async () => {
     const name = uniqueName();
     const storage = await IndexedDbStorage.open(name, ['DebugItem', 'Card']);
     await storage.close();
     const db = await openDB(name);
     expect([...db.objectStoreNames].sort()).toEqual([
+      'clients',
       'meta',
       'pending',
       'row:Card',
@@ -39,6 +40,7 @@ describe('IndexedDB replica', () => {
     await after.close();
     const db = await openDB(name);
     expect([...db.objectStoreNames].sort()).toEqual([
+      'clients',
       'meta',
       'pending',
       'row:Board',

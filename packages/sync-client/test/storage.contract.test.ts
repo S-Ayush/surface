@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import type { StoredChange, SyncStorage } from '../src/storage/types.js';
-import { StorageFencedError } from '../src/storage/types.js';
+import type { PendingRecord, QueueClaim, StoredChange, SyncStorage } from '../src/storage/types.js';
+import { QueueFencedError, StorageFencedError } from '../src/storage/types.js';
 import { debugRow, id } from './support/models.js';
 import { BACKENDS, closePorts, uniqueName } from './support/storage.js';
 
@@ -208,5 +208,154 @@ describe.each(BACKENDS)('$name storage', (backend) => {
     expect(await readAll(storage)).toEqual([{ row: debugRow(1), archived: false }]);
     expect((await storage.readMeta())?.lastSyncId).toBe(10);
     await storage.close();
+  });
+
+  describe('mutation queue (PLAN-002 S8)', () => {
+    const CLIENT = '0190f4c4-0000-7000-8000-0000000000a1';
+    const OTHER = '0190f4c4-0000-7000-8000-0000000000b2';
+    const entry = (seq: number, clientId = CLIENT): PendingRecord => ({
+      clientId,
+      seq,
+      op: 'debug.touch',
+      input: { id: id(seq) },
+      at: '2026-11-06T10:00:00.000Z',
+    });
+    /** `fresh: null`: adopt only. */
+    const claim = (
+      owner: string,
+      now: number,
+      more: { clientId?: string; fresh?: string | null } = {},
+    ): QueueClaim => {
+      const fresh = more.fresh === undefined ? OTHER : more.fresh;
+      return {
+        owner,
+        now,
+        leaseUntil: now + 15_000,
+        ...(fresh === null ? {} : { fresh }),
+        ...(more.clientId === undefined ? {} : { clientId: more.clientId }),
+      };
+    };
+
+    it('claims a named queue, stores entries in seq order, and keeps them through a re-bootstrap', async () => {
+      const storage = await backend.open(uniqueName(), MODELS);
+      expect(await storage.claimQueue(claim('tab-a', 0, { clientId: CLIENT }))).toEqual({
+        client: { clientId: CLIENT, nextSeq: 1, owner: 'tab-a', leaseUntil: 15_000 },
+        pending: [],
+      });
+      await storage.writeQueue({
+        clientId: CLIENT,
+        owner: 'tab-a',
+        nextSeq: 4,
+        put: [entry(3), entry(1), entry(2)],
+      });
+      await storage.writeQueue({
+        clientId: CLIENT,
+        owner: 'tab-a',
+        remove: [1],
+        put: [{ ...entry(2), lastSyncId: 40 }],
+      });
+      await storage.beginBootstrap(start());
+      await storage.clear();
+
+      const queue = await storage.readQueue();
+      expect(queue.clients).toEqual([
+        { clientId: CLIENT, nextSeq: 4, owner: 'tab-a', leaseUntil: 15_000 },
+      ]);
+      expect(queue.pending).toEqual([{ ...entry(2), lastSyncId: 40 }, entry(3)]);
+      await storage.close();
+    });
+
+    it('fences the old owner once another tab claims its queue', async () => {
+      const name = uniqueName();
+      const a = await backend.open(name, MODELS);
+      const b = await backend.open(name, MODELS);
+      await a.claimQueue(claim('tab-a', 0, { clientId: CLIENT }));
+      await b.claimQueue(claim('tab-b', 0, { clientId: CLIENT }));
+      await expect(
+        a.writeQueue({ clientId: CLIENT, owner: 'tab-a', put: [entry(1)] }),
+      ).rejects.toBeInstanceOf(QueueFencedError);
+      await b.writeQueue({ clientId: CLIENT, owner: 'tab-b', put: [entry(1)] });
+      expect((await b.readQueue()).pending).toEqual([entry(1)]);
+      await a.close();
+      await b.close();
+    });
+
+    it('without a named queue, adopts one whose lease ran out, else starts a new one', async () => {
+      const storage = await backend.open(uniqueName(), MODELS);
+      await storage.claimQueue(claim('tab-a', 0, { clientId: CLIENT })); // lease until 15 s
+      await storage.writeQueue({ clientId: CLIENT, owner: 'tab-a', put: [entry(1)] });
+      const early = await storage.claimQueue(claim('tab-b', 10_000));
+      expect(early?.client).toMatchObject({ clientId: OTHER, owner: 'tab-b', nextSeq: 1 });
+      const late = await storage.claimQueue(claim('tab-c', 20_000));
+      expect(late?.client).toMatchObject({ clientId: CLIENT, owner: 'tab-c' });
+      await storage.close();
+    });
+
+    it('adopts an abandoned queue with mutations before an empty one, and returns them with the claim', async () => {
+      const storage = await backend.open(uniqueName(), MODELS);
+      const EMPTY = '0190f4c4-0000-7000-8000-000000000001'; // sorts before CLIENT
+      await storage.claimQueue(claim('tab-a', 0, { clientId: EMPTY }));
+      await storage.claimQueue(claim('tab-b', 0, { clientId: CLIENT }));
+      await storage.writeQueue({
+        clientId: CLIENT,
+        owner: 'tab-b',
+        nextSeq: 3,
+        put: [entry(1), entry(2)],
+      });
+
+      const adopted = await storage.claimQueue(claim('tab-c', 20_000));
+      expect(adopted).toEqual({
+        client: { clientId: CLIENT, nextSeq: 3, owner: 'tab-c', leaseUntil: 35_000 },
+        pending: [entry(1), entry(2)],
+      });
+      await storage.close();
+    });
+
+    it('leaves an expired queue with nothing pending to its tab, and forgets abandoned empty ones (review M1)', async () => {
+      const storage = await backend.open(uniqueName(), MODELS);
+      const THIRD = '0190f4c4-0000-7000-8000-0000000000c3';
+      const FOURTH = '0190f4c4-0000-7000-8000-0000000000d4';
+      const ids = async () => (await storage.readQueue()).clients.map((c) => c.clientId);
+      await storage.claimQueue(claim('tab-a', 0, { clientId: CLIENT })); // empty, lease until 15 s
+
+      // Its tab may only be frozen: adopting an empty queue gains nothing and fences it.
+      const b = await storage.claimQueue(claim('tab-b', 20_000));
+      expect(b?.client.clientId).toBe(OTHER);
+      expect(await ids()).toEqual([CLIENT, OTHER]);
+
+      // B closes cleanly (lease 0): its empty queue is forgotten at the next claim.
+      await storage.writeQueue({ clientId: OTHER, owner: 'tab-b', leaseUntil: 0 });
+      await storage.claimQueue(claim('tab-c', 21_000, { fresh: THIRD }));
+      expect(await ids()).toEqual([CLIENT, THIRD]);
+
+      // A day after their leases ended, empty queues are forgotten too.
+      await storage.claimQueue(claim('tab-d', 36_000 + 86_400_000 + 1, { fresh: FOURTH }));
+      expect(await ids()).toEqual([FOURTH]);
+      await storage.close();
+    });
+
+    it('without `fresh`, only adopts: nothing to adopt claims nothing (review M1)', async () => {
+      const storage = await backend.open(uniqueName(), MODELS);
+      expect(await storage.claimQueue(claim('tab-a', 0, { fresh: null }))).toBeUndefined();
+      expect((await storage.readQueue()).clients).toEqual([]);
+
+      await storage.claimQueue(claim('tab-b', 0, { clientId: CLIENT }));
+      await storage.writeQueue({ clientId: CLIENT, owner: 'tab-b', put: [entry(1)] });
+      const adopted = await storage.claimQueue(claim('tab-c', 20_000, { fresh: null }));
+      expect(adopted).toMatchObject({
+        client: { clientId: CLIENT, owner: 'tab-c' },
+        pending: [entry(1)],
+      });
+      await storage.close();
+    });
+
+    it('cannot write a queue nobody claimed', async () => {
+      const storage = await backend.open(uniqueName(), MODELS);
+      await expect(
+        storage.writeQueue({ clientId: CLIENT, owner: 'tab-a', put: [entry(1)] }),
+      ).rejects.toBeInstanceOf(QueueFencedError);
+      expect((await storage.readQueue()).pending).toEqual([]);
+      await storage.close();
+    });
   });
 });

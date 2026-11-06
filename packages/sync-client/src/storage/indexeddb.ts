@@ -1,8 +1,9 @@
 /**
  * IndexedDB storage (PLAN-002 S6), meant to run inside the storage worker.
- * Object stores: `meta`, `pending` (PLAN-002 S8) and one `row:<Model>` store
- * per synced model, keyed by row id. When the model list changes, the database
- * version is bumped and the row stores are rebuilt; `pending` survives.
+ * Object stores: `meta`, the mutation queue (`clients`, and `pending` keyed by
+ * `[clientId, seq]`; PLAN-002 S8) and one `row:<Model>` store per synced
+ * model, keyed by row id. When the store list changes, the database version is
+ * bumped and the row stores are rebuilt; the queue survives.
  *
  * Every write transaction re-reads `meta` and checks the generation first (the
  * fence described in `types.ts`).
@@ -12,22 +13,32 @@ import { openDB } from 'idb';
 import type {
   BootstrapRecord,
   BootstrapStart,
+  PendingRecord,
+  ClaimedQueue,
+  QueueClaim,
+  QueueSnapshot,
+  QueueWrite,
   RowPage,
   StoredChange,
+  StoredClient,
   StoredMeta,
   StoredRecord,
   SyncStorage,
 } from './types.js';
 import {
   META_KEY,
+  QueueFencedError,
   StorageClosedError,
   StorageFencedError,
   newGeneration,
+  planClaim,
   recordFor,
 } from './types.js';
 
 const META_STORE = 'meta';
 const PENDING_STORE = 'pending';
+const CLIENTS_STORE = 'clients';
+const QUEUE_STORES = [CLIENTS_STORE, PENDING_STORE];
 const rowStore = (model: string) => `row:${model}`;
 
 type Tx = IDBPTransaction<unknown, string[], 'readwrite'>;
@@ -45,13 +56,13 @@ export class IndexedDbStorage implements SyncStorage {
 
   /** Open (or create, or migrate) the replica database `name` for these models. */
   static async open(name: string, models: readonly string[]): Promise<IndexedDbStorage> {
-    const wanted = new Set([META_STORE, PENDING_STORE, ...models.map(rowStore)]);
+    const wanted = new Set([META_STORE, ...QUEUE_STORES, ...models.map(rowStore)]);
     // Filled in once open; the version-change callbacks below may fire any time after.
     const opened: { storage?: IndexedDbStorage } = {};
     const callbacks = {
       upgrade(db: IDBPDatabase) {
         for (const store of [...db.objectStoreNames]) {
-          // Row stores are rebuilt from the server; pending mutations must survive (E8).
+          // Row stores are rebuilt from the server; the queue must survive (E8).
           if (!wanted.has(store) || store === META_STORE) db.deleteObjectStore(store);
         }
         for (const store of wanted) {
@@ -166,6 +177,60 @@ export class IndexedDbStorage implements SyncStorage {
     await tx.done;
   }
 
+  async readQueue(): Promise<QueueSnapshot> {
+    const tx = this.#open().transaction(QUEUE_STORES);
+    const [clients, pending] = await Promise.all([
+      tx.objectStore(CLIENTS_STORE).getAll(),
+      tx.objectStore(PENDING_STORE).getAll(),
+    ]);
+    // `pending` is ordered by its `[clientId, seq]` key; other entries are skipped.
+    return {
+      clients: clients.filter(isStoredClient),
+      pending: pending.filter(isPendingRecord).map(withoutKey),
+    };
+  }
+
+  async claimQueue(claim: QueueClaim): Promise<ClaimedQueue | undefined> {
+    const tx = this.#open().transaction(QUEUE_STORES, 'readwrite');
+    const [clients, records] = await Promise.all([
+      tx.objectStore(CLIENTS_STORE).getAll(),
+      tx.objectStore(PENDING_STORE).getAll(),
+    ]);
+    // Ordered by the `[clientId, seq]` key.
+    const pending = records.filter(isPendingRecord).map(withoutKey);
+    const waiting = new Set(pending.map((record) => record.clientId));
+    const plan = planClaim(clients.filter(isStoredClient), claim, (id) => waiting.has(id));
+    // Forgotten queues are empty: only their client records go.
+    for (const clientId of plan.forget) await tx.objectStore(CLIENTS_STORE).delete(clientId);
+    const { client } = plan;
+    if (client !== undefined) await tx.objectStore(CLIENTS_STORE).put(client);
+    await tx.done;
+    if (client === undefined) return undefined;
+    return { client, pending: pending.filter((record) => record.clientId === client.clientId) };
+  }
+
+  async writeQueue(write: QueueWrite): Promise<void> {
+    const tx = this.#open().transaction(QUEUE_STORES, 'readwrite');
+    const clients = tx.objectStore(CLIENTS_STORE);
+    const current: unknown = await clients.get(write.clientId);
+    if (!isStoredClient(current) || current.owner !== write.owner) {
+      tx.done.catch(() => undefined);
+      tx.abort();
+      throw new QueueFencedError();
+    }
+    await clients.put({
+      ...current,
+      nextSeq: write.nextSeq ?? current.nextSeq,
+      leaseUntil: write.leaseUntil ?? current.leaseUntil,
+    } satisfies StoredClient);
+    const pending = tx.objectStore(PENDING_STORE);
+    for (const seq of write.remove ?? []) await pending.delete([write.clientId, seq]);
+    for (const record of write.put ?? []) {
+      await pending.put({ ...record, key: [record.clientId, record.seq] });
+    }
+    await tx.done;
+  }
+
   async clear(): Promise<void> {
     const tx = this.#write([...this.#models].map(rowStore));
     for (const model of this.#models) await tx.objectStore(rowStore(model)).clear();
@@ -242,7 +307,8 @@ function openUnblocked(
 }
 
 function storeKey(store: string): string {
-  return store === PENDING_STORE ? 'key' : 'id';
+  if (store === PENDING_STORE) return 'key';
+  return store === CLIENTS_STORE ? 'clientId' : 'id';
 }
 
 /** Check the generation inside `tx`; abort and throw if another tab moved on. */
@@ -269,6 +335,32 @@ function isStoredMeta(value: unknown): value is StoredMeta {
     Array.isArray(value.groups) &&
     (value.state === 'bootstrapping' || value.state === 'ready')
   );
+}
+
+function isStoredClient(value: unknown): value is StoredClient {
+  return (
+    isObject(value) &&
+    typeof value.clientId === 'string' &&
+    typeof value.nextSeq === 'number' &&
+    typeof value.owner === 'string' &&
+    typeof value.leaseUntil === 'number'
+  );
+}
+
+function isPendingRecord(value: unknown): value is PendingRecord & { key: unknown } {
+  return (
+    isObject(value) &&
+    typeof value.clientId === 'string' &&
+    typeof value.seq === 'number' &&
+    typeof value.op === 'string' &&
+    typeof value.at === 'string' &&
+    'input' in value &&
+    (value.lastSyncId === undefined || typeof value.lastSyncId === 'number')
+  );
+}
+
+function withoutKey({ key: _key, ...record }: PendingRecord & { key: unknown }): PendingRecord {
+  return record;
 }
 
 function isStoredRecord(value: unknown): value is StoredRecord {

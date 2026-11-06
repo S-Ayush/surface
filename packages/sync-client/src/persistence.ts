@@ -16,7 +16,7 @@
 import type { IObservableValue } from 'mobx';
 import { observable, runInAction } from 'mobx';
 import type { SyncStorage } from './storage/types.js';
-import { StorageFencedError } from './storage/types.js';
+import { QueueFencedError, StorageFencedError } from './storage/types.js';
 
 export const MEMORY_FALLBACK_WARNING =
   'Offline storage is unavailable, so changes are lost if you close this tab.';
@@ -71,6 +71,21 @@ export class Persistence {
     } catch (error) {
       if (error instanceof StorageFencedError) this.#fenced.add(generation);
       else this.lose(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+  }
+
+  /**
+   * Like `write`, for the mutation queue. `QueueFencedError` is rethrown: the
+   * queue must stop, but storage itself is fine.
+   */
+  async writeQueue<T>(operation: (storage: SyncStorage) => Promise<T>): Promise<T | undefined> {
+    if (this.#lost.get() !== undefined) return undefined;
+    try {
+      return await operation(this.storage);
+    } catch (error) {
+      if (error instanceof QueueFencedError) throw error;
+      this.lose(error instanceof Error ? error.message : String(error));
       return undefined;
     }
   }

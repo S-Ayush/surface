@@ -203,6 +203,18 @@ export class ObjectPool implements ReadonlyPool {
     return this.findBy(refDef.model, refDef.field, instance.id);
   }
 
+  /** Every base (server) row of a model, untracked. For the overlay engine. */
+  baseRows(model: string): RowState[] {
+    const rows: RowState[] = [];
+    for (const entry of this.#table(model).entries.values()) if (entry.base) rows.push(entry.base);
+    return rows;
+  }
+
+  /** Whether the pool holds this model. */
+  has(model: string): boolean {
+    return this.#tables.has(model);
+  }
+
   /** The base (server) state of a row, untracked. For the overlay engine and tests. */
   baseOf(model: string, id: string): RowState | undefined {
     return this.#table(model).entries.get(id)?.base;

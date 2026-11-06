@@ -1,13 +1,19 @@
 /**
  * The client sync store: owns the pool, the replica storage, the start-up
- * sequence (SPEC-002 §3.1–3.2) and the live connection with delta apply
- * (§3.4, §3.6). The mutation queue and overlay (PLAN-002 S8) plug in here.
+ * sequence (SPEC-002 §3.1–3.2), the live connection with delta apply (§3.4,
+ * §3.6), and local mutations: `dispatch`, the queue and the overlay (§3.3,
+ * §3.5, PLAN-002 S8).
  *
  * Once ready, the store connects the socket and applies each `deltas`
  * message to the pool at once, then persists it as one storage write. Storage
- * writes, starts and resyncs run one at a time, in order.
+ * writes, starts and resyncs run one at a time, in order. Each message also
+ * confirms the mutations it covers, and the overlay is rebuilt in the same
+ * MobX batch, so a view never sees a change twice or not at all.
  */
+import type { ClientRefResolver } from '@surface/domain';
 import type { ModelDef } from '@surface/domain/model';
+import type { AnyOperation, InputOf, OperationRegistry } from '@surface/operations';
+import { registry as defaultRegistry } from '@surface/operations';
 import type { DeltasMessage, ResyncMessage, SyncGroup } from '@surface/sync-protocol';
 import {
   ProtocolError,
@@ -16,7 +22,7 @@ import {
   encodeSocketConnectParams,
 } from '@surface/sync-protocol';
 import type { IObservableValue } from 'mobx';
-import { observable, runInAction } from 'mobx';
+import { observable, reaction, runInAction } from 'mobx';
 import type { BootstrapProgress, FetchLike } from './bootstrap.js';
 import { ClientOutdatedError, bootstrap } from './bootstrap.js';
 import { planDeltas } from './deltas.js';
@@ -24,13 +30,20 @@ import type { HydrateResult } from './hydrate.js';
 import { hydrate } from './hydrate.js';
 import type { LockMode, ReplicaLocks } from './locks.js';
 import { replicaLockName, webLocks } from './locks.js';
+import { OverlayEngine } from './overlay.js';
+import type { QueueOwnership } from './owner.js';
+import { claimQueue } from './owner.js';
 import { Persistence } from './persistence.js';
 import type { ReadonlyPool } from './pool.js';
 import { ObjectPool } from './pool.js';
+import type { MutationOutcome, PendingView, Rejection } from './queue.js';
+import { MutationQueue } from './queue.js';
+import { createClientRefResolver, poolRefSource } from './refs.js';
 import type { StorageConnector } from './storage/open.js';
 import { openStorage, replicaName } from './storage/open.js';
+import { QueueFencedError } from './storage/types.js';
 import type { ConnectionState, OnlineSource, SocketFactory, Timers, Verdict } from './socket.js';
-import { SyncSocket, socketUrl, webSocketFactory, windowOnline } from './socket.js';
+import { SyncSocket, globalTimers, socketUrl, webSocketFactory, windowOnline } from './socket.js';
 import { randomUuid } from './uuid.js';
 
 /** `outdated`: the server runs another schema; the page must reload (E7). */
@@ -56,18 +69,36 @@ export interface SyncStoreOptions {
   readonly baseUrl?: string;
   /** How to open the replica; defaults to IndexedDB in a worker with a memory fallback. */
   readonly connectStorage?: StorageConnector;
-  /** Cross-tab locks; defaults to `navigator.locks` where available (see `locks.ts`). */
-  readonly locks?: ReplicaLocks;
+  /**
+   * Cross-tab locks; defaults to `navigator.locks` where available (see
+   * `locks.ts`). `null`: none, as on a plain-HTTP origin.
+   */
+  readonly locks?: ReplicaLocks | null;
   readonly chunkSize?: number;
   readonly connection?: ConnectionOptions;
   /**
-   * This tab's client id (E5). Defaults to a fresh UUID.
-   * TODO(PLAN-002 S8): persist it with the pending queue, so resends dedupe (E4).
+   * The client id of this store's first new mutation queue (E5); defaults to a
+   * fresh UUID. For tests: it must never have been used before, or the server
+   * takes seq 1 for a resend. Later starts (after `close`) always use a fresh
+   * id, and a start that adopts a queue left by a closed tab keeps that id.
    */
   readonly clientId?: string;
   /** Close code 4001: the session was revoked; send the user to login (E10). */
   readonly onSessionRevoked?: () => void;
+  /** Operations that pending mutations name; defaults to every operation. */
+  readonly operations?: OperationRegistry;
+  /** The server rejected a mutation; its effect is gone (SPEC-002 §3.5): show a toast. */
+  readonly onRejected?: (rejection: Rejection) => void;
+  /** The server runs a newer schema (`CLIENT_OUTDATED`): show the reload banner (E7). */
+  readonly onOutdated?: () => void;
+  /** Epoch ms, for mutation timestamps and queue leases; defaults to `Date.now`. */
+  readonly clock?: () => number;
 }
+
+/** Rejections kept for the inspector (SPEC-002 §5.4). */
+const RECENT_REJECTIONS = 20;
+/** Another tab took over this tab's queue while it had work in it. */
+const QUEUE_LOST = new QueueFencedError().message;
 
 /** Rejected deliveries of one message before the store re-bootstraps instead. */
 const REJECTED_MESSAGE_LIMIT = 3;
@@ -108,15 +139,33 @@ export class SyncStore {
   /** The same message rejected on reconnect after reconnect, at one position. */
   #rejected: { at: number; count: number } | undefined;
   readonly #error = observable.box<string | undefined>(undefined);
-  readonly clientId: string;
+  readonly #overlay: OverlayEngine;
+  readonly #refs: ClientRefResolver;
+  /** The queue this tab owns; set by a start, cleared by `close`. */
+  readonly #mutations: IObservableValue<MutationQueue | undefined> = observable.box(undefined, {
+    deep: false,
+  });
+  readonly #rejections = observable.array<Rejection>([], { deep: false });
+  /**
+   * The id a new queue gets if no queue is adopted. Never reused once a start
+   * may have sent under it: a new queue starts at seq 1, and the server would
+   * answer a reused `(clientId, seq)` with the old result (review B1).
+   */
+  #freshClientId: string;
+  /** This tab's queue-owner token (see `owner.ts`). */
+  readonly #tab = randomUuid();
+  /** Another tab took this tab's queue (with work in it) over: failed until a new start. */
+  #lost = false;
 
   constructor(options: SyncStoreOptions) {
     this.#options = options;
     this.#pool = new ObjectPool(options.models);
     this.schemaHash = computeSchemaHash(options.models);
     this.#replica = replicaName(options.workspaceId, options.userId);
-    this.#locks = options.locks ?? webLocks();
-    this.clientId = options.clientId ?? randomUuid();
+    this.#locks = options.locks === null ? undefined : (options.locks ?? webLocks());
+    this.#freshClientId = options.clientId ?? randomUuid();
+    this.#refs = createClientRefResolver(poolRefSource(this.#pool), () => options.userId);
+    this.#overlay = new OverlayEngine(this.#pool, () => options.userId);
     const connection = options.connection ?? {};
     const online = connection.online ?? windowOnline();
     this.#socket = new SyncSocket({
@@ -140,6 +189,64 @@ export class SyncStore {
       ...(connection.random ? { random: connection.random } : {}),
       ...(online ? { online } : {}),
     });
+    // SPEC-002 §3.6: queue while offline; send once connected on a usable replica.
+    reaction(
+      () => this.connection === 'online' && this.status === 'ready' && this.#mutations.get(),
+      (queue) => {
+        if (queue) queue.setOnline(true);
+      },
+    );
+    reaction(
+      () => this.connection === 'online',
+      (online) => {
+        if (!online) this.#mutations.get()?.setOnline(false);
+      },
+    );
+  }
+
+  /**
+   * The id this tab sends mutations and connects under: its queue's, once a
+   * start has claimed one (an adopted queue keeps its id). Observable.
+   */
+  get clientId(): string {
+    return this.#mutations.get()?.clientId ?? this.#freshClientId;
+  }
+
+  /** Resolves references (`ENG`, `me`, a status name) against the replica (SPEC-003 §4). */
+  get refs(): ClientRefResolver {
+    return this.#refs;
+  }
+
+  /** Mutations not yet confirmed, in seq order, for the offline badge and inspector. Observable. */
+  get pending(): readonly PendingView[] {
+    return this.#mutations.get()?.pending ?? [];
+  }
+
+  /** The most recent rejections, newest last, for the inspector. Observable. */
+  get rejections(): readonly Rejection[] {
+    return this.#rejections;
+  }
+
+  /**
+   * Run a mutation locally and queue it for the server (SPEC-002 §3.3). The
+   * input is validated first (`InvalidInputError`, nothing queued); then its
+   * `optimistic()` effect shows before this returns. The promise settles when
+   * the server's change reaches the replica (`confirmed`) or the server
+   * rejects it (`rejected`, effect rolled back). It stays pending if the store
+   * closes first: the mutation stays queued and the next start sends it.
+   */
+  dispatch<Op extends AnyOperation>(op: Op, input: InputOf<Op>): Promise<MutationOutcome> {
+    const queue = this.#mutations.get();
+    if (this.status === 'outdated') {
+      throw new Error('Surface was updated. Reload the page to keep working.');
+    }
+    if (this.#lost) throw new Error(QUEUE_LOST);
+    if (queue === undefined || queue.stopped) {
+      throw new Error(
+        'Changes cannot be saved yet. Wait for the workspace to load, then try again.',
+      );
+    }
+    return queue.dispatch(op, input);
   }
 
   /** The replica, for views to read (ADR-0015). Reactive. */
@@ -245,6 +352,7 @@ export class SyncStore {
   close(): Promise<void> {
     this.#socket.stop();
     this.#resyncPending = false;
+    this.#mutations.get()?.setOnline(false);
     this.#abort.abort();
     this.#abort = new AbortController();
     // Queued, so the running task settles first and a later `start` runs after.
@@ -252,8 +360,13 @@ export class SyncStore {
       this.#socket.stop(); // in case the task that just settled connected anyway
       this.#started = undefined;
       this.#rejected = undefined;
+      this.#lost = false;
+      // Queued mutations stay in storage; the next start (or another tab) sends them.
+      await this.#mutations.get()?.stop();
       const persistence = this.#persistence.get();
       runInAction(() => {
+        this.#mutations.set(undefined);
+        this.#overlay.rebuild([]);
         this.#error.set(undefined);
         this.#persistence.set(undefined);
         this.#position.set(undefined);
@@ -268,6 +381,7 @@ export class SyncStore {
 
   async #start(signal: AbortSignal): Promise<'warm' | 'cold'> {
     const persistence = await this.#openPersistence(signal);
+    await this.#claimQueue(persistence, signal);
     this.#setStatus('hydrating');
     const warm =
       (await this.#locked(persistence, 'shared', signal, () => this.#hydrate(persistence))) ??
@@ -283,7 +397,6 @@ export class SyncStore {
     if (warm === undefined) return 'cold';
     // Closed while the last read was in flight: never report ready after close.
     signal.throwIfAborted();
-    // TODO(PLAN-002 S8): re-apply the overlay from persisted pending mutations here.
     const { lastSyncId, groups, generation } = warm.meta;
     this.#ready({
       lastSyncId,
@@ -291,6 +404,132 @@ export class SyncStore {
       generation: persistence.isCurrent(generation) ? generation : undefined,
     });
     return 'warm';
+  }
+
+  get #timers(): Timers {
+    return this.#options.connection?.timers ?? globalTimers;
+  }
+
+  /** Adopt a queue left by a closed tab, or start one (SPEC-002 E5, `owner.ts`). */
+  async #claimQueue(persistence: Persistence, signal: AbortSignal): Promise<void> {
+    // A stopped queue (taken over) is replaced: a new start is like a reload.
+    if (this.#mutations.get()?.stopped === false) return;
+    const ownership = await claimQueue({
+      persistence,
+      replica: this.#replica,
+      locks: this.#locks,
+      fresh: this.#freshClientId,
+      owner: this.#tab,
+      clock: this.#options.clock ?? Date.now,
+      timers: this.#timers,
+      onLost: () => this.#queueLost(persistence),
+      isIdle: () => this.#mutations.get()?.pending.length === 0,
+      onAdopt: (adopted) => this.#adopt(adopted, persistence),
+    });
+    // A fresh id is used up once a queue has it: the next new queue needs another (review B1).
+    if (ownership.clientId === this.#freshClientId) this.#freshClientId = randomUuid();
+    const queue = this.#newQueue(ownership, persistence);
+    runInAction(() => {
+      this.#lost = false;
+      this.#mutations.set(queue);
+    });
+    if (signal.aborted) {
+      // `close` already ran its task or is about to; make sure the claim is let go.
+      await queue.stop();
+      runInAction(() => this.#mutations.set(undefined));
+      signal.throwIfAborted();
+    }
+  }
+
+  #newQueue(ownership: QueueOwnership, persistence: Persistence): MutationQueue {
+    const queue: MutationQueue = new MutationQueue(ownership, persistence, {
+      fetch: this.#options.fetch,
+      baseUrl: this.#options.baseUrl ?? '',
+      schemaHash: this.schemaHash,
+      registry: this.#options.operations ?? defaultRegistry,
+      timers: this.#timers,
+      random: this.#options.connection?.random ?? Math.random,
+      clock: this.#options.clock ?? Date.now,
+      replicaAt: () => (this.status === 'ready' ? this.#position.get()?.lastSyncId : undefined),
+      onPush: (mutation) => this.#overlay.push(mutation),
+      onRebuild: () => this.#overlay.rebuild(queue.mutations),
+      onRejected: (rejection) => {
+        runInAction(() => {
+          this.#rejections.push(rejection);
+          if (this.#rejections.length > RECENT_REJECTIONS) this.#rejections.shift();
+        });
+        try {
+          this.#options.onRejected?.(rejection);
+        } catch {
+          // The app's handler (a toast) must not break sync; it reports its own bugs.
+        }
+      },
+      onOutdated: () => this.#outdated(),
+      onFenced: () => this.#queueLost(persistence),
+    });
+    return queue;
+  }
+
+  /**
+   * Lease mode: switch to a queue left with work by a tab that is gone, if
+   * this tab's own queue is still empty and the replica is usable.
+   */
+  #adopt(ownership: QueueOwnership, persistence: Persistence): boolean {
+    const current = this.#mutations.get();
+    const position = this.#position.get();
+    if (current === undefined || current.stopped || current.pending.length > 0) return false;
+    if (this.status !== 'ready' || position === undefined) return false;
+    // Not released: the lease now covers the adopted queue (`owner.ts`).
+    void current.stop({ release: false });
+    const queue = this.#newQueue(ownership, persistence);
+    runInAction(() => {
+      this.#mutations.set(queue);
+      this.#confirm(position.lastSyncId, [], true);
+    });
+    this.#redial();
+    return true;
+  }
+
+  /**
+   * Another tab took this tab's queue over, or forgot it (lease mode). With
+   * nothing of ours in it, carry on with a new queue; otherwise stop, and say
+   * how to recover.
+   */
+  #queueLost(persistence: Persistence): void {
+    const queue = this.#mutations.get();
+    if (queue === undefined || queue.stopped) return;
+    void queue.stop();
+    if (queue.pending.length === 0) {
+      runInAction(() => this.#mutations.set(undefined));
+      const signal = this.#abort.signal;
+      void this.#enqueue(async () => {
+        await this.#claimQueue(persistence, signal);
+        if (this.status === 'ready') this.#redial();
+      }).catch(() => undefined);
+      return;
+    }
+    this.#socket.stop();
+    runInAction(() => {
+      this.#lost = true;
+      this.#status.set('failed');
+      this.#error.set(QUEUE_LOST);
+    });
+  }
+
+  /** Reconnect under the current `clientId`: acks are addressed to the connection's. */
+  #redial(): void {
+    const state = this.#socket.state;
+    if (state === 'disconnected' || state === 'revoked') return;
+    this.#socket.stop();
+    this.#socket.start();
+  }
+
+  /** The server runs a newer build (E7): stop, and ask for a reload once. */
+  #outdated(): void {
+    this.#socket.stop();
+    if (this.status === 'outdated') return;
+    this.#setStatus('outdated');
+    this.#options.onOutdated?.();
   }
 
   #hydrate(persistence: Persistence): Promise<HydrateResult | undefined> {
@@ -304,11 +543,11 @@ export class SyncStore {
       try {
         return await task(signal);
       } catch (error) {
-        const status = signal.aborted
-          ? 'idle'
-          : error instanceof ClientOutdatedError
-            ? 'outdated'
-            : 'failed';
+        if (!signal.aborted && error instanceof ClientOutdatedError) {
+          this.#outdated();
+          throw error;
+        }
+        const status = signal.aborted ? 'idle' : 'failed';
         runInAction(() => {
           this.#status.set(status);
           if (status === 'failed') {
@@ -330,7 +569,7 @@ export class SyncStore {
   #receive(message: DeltasMessage | ResyncMessage): Verdict {
     if (message.t === 'resync') {
       if (message.reason === 'schema') {
-        this.#setStatus('outdated');
+        this.#outdated();
         return 'pause';
       }
       this.#resyncFromServer();
@@ -357,7 +596,6 @@ export class SyncStore {
       this.#resyncFromServer();
       return 'pause';
     }
-    // TODO(PLAN-002 S8): confirm `message.ack` against the pending queue.
     switch (plan.kind) {
       case 'gap':
         return 'reconnect';
@@ -366,11 +604,22 @@ export class SyncStore {
         this.#resyncFromServer();
         return 'pause';
       case 'none':
+        // A repeat, or acks for mutations whose rows this client cannot see.
+        runInAction(() => this.#confirm(position.lastSyncId, message.ack, false));
         return 'ok';
       case 'apply': {
         this.#rejected = undefined;
-        this.#pool.applyBase(plan.base);
-        runInAction(() => this.#position.set({ ...position, lastSyncId: plan.lastSyncId }));
+        runInAction(() => {
+          this.#pool.applyBase(plan.base);
+          this.#position.set({ ...position, lastSyncId: plan.lastSyncId });
+          const touched = plan.base.some((change) =>
+            this.#overlay.dependsOn(
+              change.model,
+              change.kind === 'upsert' ? change.row.id : change.id,
+            ),
+          );
+          this.#confirm(plan.lastSyncId, message.ack, touched);
+        });
         const persistence = this.#persistence.get();
         const { generation } = position;
         if (persistence && generation !== undefined) {
@@ -383,6 +632,21 @@ export class SyncStore {
         return 'ok';
       }
     }
+  }
+
+  /**
+   * Drop the mutations the replica now includes (sync-protocol.md §5.2 step 2)
+   * and rebuild the overlay if that or the base change can alter it (step 3).
+   */
+  #confirm(
+    lastSyncId: number,
+    acks: readonly { clientId: string; seq: number }[],
+    baseTouched: boolean,
+  ): void {
+    const queue = this.#mutations.get();
+    if (queue === undefined) return;
+    const confirmed = queue.confirm(lastSyncId, acks);
+    if (confirmed || baseTouched) this.#overlay.rebuild(queue.mutations);
   }
 
   #resyncFromServer(): void {
@@ -443,9 +707,13 @@ export class SyncStore {
   }
 
   #ready(position: ReplicaPosition): void {
+    // The queue was taken over meanwhile (review m5): stay failed until a new start.
+    if (this.#lost) throw new QueueFencedError();
     runInAction(() => {
       this.#error.set(undefined);
       this.#position.set(position);
+      // SPEC-002 §3.2 step 2: pending mutations show on top of the new base.
+      this.#confirm(position.lastSyncId, [], true);
       this.#progress.set(undefined);
       this.#status.set('ready');
     });

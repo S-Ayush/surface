@@ -19,8 +19,12 @@ function holdableLocks() {
   let gate: Promise<void> | undefined;
   let open: () => void = () => undefined;
   const locks: ReplicaLocks = {
-    async request<T>(_name: string, options: { mode: string }, task: () => Promise<T>) {
-      const result = await task();
+    async request<T>(
+      _name: string,
+      options: { mode: string },
+      task: (lock: unknown) => Promise<T>,
+    ) {
+      const result = await task({ name: _name });
       if (options.mode === 'exclusive' && gate) await gate;
       return result;
     },

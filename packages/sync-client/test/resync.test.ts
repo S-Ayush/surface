@@ -4,16 +4,18 @@
  * change asks for a reload.
  */
 import { openDB } from 'idb';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { FetchLike } from '../src/bootstrap.js';
-import { ObjectPool } from '../src/pool.js';
+import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import { replicaName } from '../src/storage/open.js';
 import { META_KEY } from '../src/storage/types.js';
 import type { SyncStore } from '../src/store.js';
 import { FakeHub } from './support/hub.js';
 import { gatedResponse } from './support/server.js';
-import { clientItems, liveStore, serverItems, until } from './support/live.js';
-import { DebugItem, debugRow, id } from './support/models.js';
+import { clientItems, eventually, idle, liveStore, serverItems, until } from './support/live.js';
+import { debugRename, debugTouch } from './support/ops.js';
+import type { ManualTimers } from './support/timers.js';
+import { DebugItem, TEST_MODELS, id } from './support/models.js';
 import { closePorts, connectViaRpc, uniqueName } from './support/storage.js';
 
 afterAll(closePorts);
@@ -24,67 +26,80 @@ function seededHub(): FakeHub {
   return hub;
 }
 
-/** Stands in for the overlay engine (PLAN-002 S8), which owns the writable pool. */
-function writablePool(store: SyncStore): ObjectPool {
-  const pool: unknown = store.pool;
-  if (!(pool instanceof ObjectPool)) throw new Error('expected the object pool');
-  return pool;
+/** Run timers until the store is connected again (its retries share the timers). */
+async function reconnect(store: SyncStore, timers: ManualTimers): Promise<void> {
+  for (let i = 0; i < 10 && store.connection !== 'online'; i += 1) {
+    timers.runNext();
+    await idle(2);
+  }
+  await until(() => store.connection === 'online');
+}
+
+async function persistedQueue(workspaceId: string) {
+  const storage = await IndexedDbStorage.open(
+    replicaName(workspaceId, 'user-1'),
+    TEST_MODELS.map((model) => model.name),
+  );
+  try {
+    return await storage.readQueue();
+  } finally {
+    await storage.close();
+  }
 }
 
 describe.each([
   ['too_old', 'a long time offline (E8)'],
   ['groups', 'changed sync groups'],
 ] as const)('resync(%s): %s', (reason, _why) => {
-  it('re-bootstraps, keeps overlays and pending mutations, then reconnects from the new position', async () => {
+  it('re-bootstraps, keeps a dispatched mutation and its effect, reconnects, then sends it (review M4)', async () => {
     const workspaceId = uniqueName('ws');
     const hub = seededHub();
     const { store, timers } = liveStore(hub, { workspaceId, connectStorage: connectViaRpc });
     await store.start();
     await until(() => store.connection === 'online');
 
-    // A pending mutation (S8) and its optimistic overlay.
-    const db = await openDB(replicaName(workspaceId, 'user-1'));
-    await db.put('pending', { key: 'pending-1', op: 'debug.rename' });
-    db.close();
-    writablePool(store).setOverlay('DebugItem', id(7), { row: debugRow(7), archived: false });
+    // A pending mutation the server cannot take yet, and its optimistic effect.
+    hub.failRequests = Number.POSITIVE_INFINITY;
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => timers.pending.includes(500));
+    expect(store.pool.get(DebugItem, id(1))?.counter).toBe(2);
 
     hub.last.close();
-    hub.upsert(1, { title: 'Changed while away' });
+    hub.upsert(1, { title: 'Changed while away', counter: 10 });
     hub.remove(2);
     if (reason === 'too_old') hub.retainedFrom = hub.head; // the log before here is pruned
-    timers.runNext();
-    if (reason === 'groups') {
-      await until(() => store.connection === 'online');
-      hub.last.send({ t: 'resync', reason: 'groups' });
-    }
-
-    await until(
-      () => store.status === 'ready' && store.connection === 'online' && hub.bootstraps === 2,
-    );
+    await reconnect(store, timers);
+    if (reason === 'groups') hub.last.send({ t: 'resync', reason: 'groups' });
+    await eventually(() => hub.bootstraps === 2);
+    await until(() => store.status === 'ready' && store.connection === 'online');
     expect(hub.last.since).toBe(hub.head);
-    expect(store.pool.get(DebugItem, id(7))).toBeDefined();
-    const { [id(7)]: overlay, ...base } = clientItems(store);
-    expect(overlay).toBeDefined();
-    expect(base).toEqual(serverItems(hub));
 
-    const after = await openDB(replicaName(workspaceId, 'user-1'));
-    expect(await after.get('pending', 'pending-1')).toEqual({
-      key: 'pending-1',
-      op: 'debug.rename',
+    // The new base, with the pending touch still on top, and still persisted.
+    expect(store.pool.get(DebugItem, id(1))).toMatchObject({
+      title: 'Changed while away',
+      counter: 11,
     });
-    after.close();
+    expect(store.pending).toMatchObject([{ seq: 1, op: 'debug.touch' }]);
+    expect((await persistedQueue(workspaceId)).pending).toMatchObject([{ seq: 1 }]);
 
-    // And live deltas flow again.
+    // And live deltas flow again; the mutation goes out once the server takes it.
     hub.upsert(3, { title: 'Live again' });
     expect(store.pool.get(DebugItem, id(3))?.title).toBe('Live again');
+    hub.failRequests = 0;
+    while (store.pending.length > 0 && timers.runNext() !== undefined) await idle(2);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    expect(hub.executed()).toBe(1);
+    expect(clientItems(store)).toEqual(serverItems(hub));
+    expect(serverItems(hub)[id(1)]?.counter).toBe(11);
     await store.close();
   });
 });
 
 describe('resync(schema): the server was updated (E7)', () => {
-  it('asks for a reload, without re-bootstrapping or reconnecting', async () => {
+  it('asks for a reload once, without re-bootstrapping or reconnecting', async () => {
     const hub = seededHub();
-    const { store, timers } = liveStore(hub);
+    const onOutdated = vi.fn();
+    const { store, timers } = liveStore(hub, { onOutdated });
     await store.start();
     await until(() => store.connection === 'online');
 
@@ -96,47 +111,53 @@ describe('resync(schema): the server was updated (E7)', () => {
     expect(timers.pending).toEqual([]);
     expect(hub.bootstraps).toBe(1);
     expect(hub.connections).toHaveLength(2);
+    expect(onOutdated).toHaveBeenCalledOnce(); // review m1: not only for a mutate 426
     await store.close();
   });
 
   it('is outdated, not failed, when the bootstrap itself comes from a newer server', async () => {
     const hub = seededHub();
     hub.schemaHash = 'f'.repeat(64);
-    const { store } = liveStore(hub);
+    const onOutdated = vi.fn();
+    const { store } = liveStore(hub, { onOutdated });
     await expect(store.start()).rejects.toMatchObject({ name: 'ClientOutdatedError' });
     expect(store.status).toBe('outdated');
+    expect(onOutdated).toHaveBeenCalledOnce();
     expect(hub.connections).toHaveLength(0);
   });
 });
 
 describe('a reload after a server update (E7, AC-10 client part)', () => {
-  it('re-bootstraps a replica of the old schema and keeps pending mutations', async () => {
+  it('re-bootstraps a replica of the old schema and keeps pending mutations (review M4)', async () => {
     const workspaceId = uniqueName('ws');
     const hub = seededHub();
-    const before = liveStore(hub, { workspaceId, connectStorage: connectViaRpc }).store;
-    await before.start();
-    await before.close();
+    const before = liveStore(hub, { workspaceId, connectStorage: connectViaRpc });
+    await before.store.start();
+    await until(() => before.store.connection === 'online');
+    hub.failRequests = Number.POSITIVE_INFINITY;
+    void before.store.dispatch(debugRename, { id: id(1), title: 'Made before the update' });
+    await eventually(() => before.timers.pending.includes(500));
+    await before.store.close();
 
     // The replica was written by the previous build: same models, another hash.
     const db = await openDB(replicaName(workspaceId, 'user-1'));
     const meta: unknown = await db.get('meta', META_KEY);
     if (typeof meta !== 'object' || meta === null) throw new Error('expected a stored meta');
     await db.put('meta', { ...meta, schemaHash: 'e'.repeat(64) }, META_KEY);
-    await db.put('pending', { key: 'pending-1', op: 'debug.rename' });
     db.close();
 
-    hub.upsert(1, { title: 'Changed by the update' });
-    const after = liveStore(hub, { workspaceId, connectStorage: connectViaRpc }).store;
-    expect(await after.start()).toBe('cold');
-    expect(clientItems(after)).toEqual(serverItems(hub));
-    await after.close();
+    hub.upsert(2, { title: 'Changed by the update' });
+    const after = liveStore(hub, { workspaceId, connectStorage: connectViaRpc });
+    expect(await after.store.start()).toBe('cold');
+    expect(after.store.pool.get(DebugItem, id(1))?.title).toBe('Made before the update');
+    expect(after.store.pool.get(DebugItem, id(2))?.title).toBe('Changed by the update');
+    expect(after.store.pending).toMatchObject([{ seq: 1, op: 'debug.rename' }]);
 
-    const check = await openDB(replicaName(workspaceId, 'user-1'));
-    expect(await check.get('pending', 'pending-1')).toEqual({
-      key: 'pending-1',
-      op: 'debug.rename',
-    });
-    check.close();
+    hub.failRequests = 0;
+    while (after.store.pending.length > 0 && after.timers.runNext() !== undefined) await idle(2);
+    expect(hub.executed()).toBe(1);
+    expect(clientItems(after.store)).toEqual(serverItems(hub));
+    await after.store.close();
   });
 });
 

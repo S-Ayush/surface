@@ -1,13 +1,16 @@
 // Client sync engine (SPEC-002 §5). Views use `SyncStore` and read through its
 // `ReadonlyPool`; the pool's writers, instance internals and storage stay
-// inside the package (ADR-0015). The mutation queue (PLAN-002 S8) builds on
-// this.
+// inside the package (ADR-0015). Changes go through `store.dispatch` (the
+// mutation queue and optimistic overlay, PLAN-002 S8); `store.refs` resolves
+// references the way the server does.
 import { SYNC_PROTOCOL_VERSION } from '@surface/sync-protocol';
 
 export const CLIENT_PROTOCOL_VERSION: number = SYNC_PROTOCOL_VERSION;
 
 export { SyncStore } from './store.js';
 export type { ConnectionOptions, ReplicaPosition, SyncStatus, SyncStoreOptions } from './store.js';
+export { InvalidInputError } from './queue.js';
+export type { MutationOutcome, PendingView, Rejection } from './queue.js';
 export type {
   ConnectionState,
   OnlineSource,

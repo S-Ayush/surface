@@ -85,6 +85,7 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 - `prev` is the id of the last packet the server sent **on this connection** before this message, or `since` for the first one. If `prev` is greater than the client's `lastSyncId`, the client has missed packets: it applies nothing from the message, closes the socket and reconnects with `since = lastSyncId` (SPEC-002 E1). If `prev` is less than or equal to `lastSyncId`, the message is contiguous with what the client has: it skips packets with `id ≤ lastSyncId` as duplicates (E2) and applies the rest. The server never needs to rely on the second case; it only makes a re-delivery harmless.
 - Packet ids are strictly increasing and greater than `prev`. Ids can skip, because the stream is filtered by sync groups. At most 500 packets per message.
 - `ack` lists this connection's own mutations that committed in the `sync_log` range the message covers. `packets` may be **empty only when `ack` is not**: a mutation can write rows this client cannot see, and its pending entry must still be confirmed. A message with neither is invalid.
+- **Catch-up carries acks too.** The catch-up from `since` includes the acks for every mutation of the connection's `clientId` that committed in `(since, head]`, in an ack-only message where none of its packets are visible. A client whose live ack was lost (the socket dropped) relies on this, because a change it cannot see is confirmed only by its ack: the client's `lastSyncId` never reaches it.
 - `G` packets are decoded in v0 because they take part in the ordering. Until M7, the client handles one with a full re-bootstrap.
 - **Archived state changes only through `A` and `V`.** `I` inserts a live row, and `U` replaces the row's fields but keeps whether it is archived. An edit that also unarchives a row ("any edit" in state-machines.md §2) emits both `U` and `V` in the same transaction. This keeps a client that applied the stream identical to one that cold-started from a bootstrap (whose `row.archived` reflects the same state).
 
@@ -114,6 +115,8 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 - **Whole-request errors** use the SPEC-003 §9 body `{"ok":false,"error":{"code","message","correlationId"}}`:
   - `426 CLIENT_OUTDATED`: `schemaHash` differs from the server's. The client shows the reload banner.
   - `400 SEQ_GAP`: the batch starts after `lastSeq + 1`. The body adds `"lastSeq": <n>`, the last seq the server processed for this client, so the client resends from `lastSeq + 1`.
+  - `413` (body over the limit, §9) and any other `400`/`422` with that body (a request the server read and refused): the same batch would fail forever, so the client sends smaller batches until the mutation at fault is alone, then rejects it locally (`PAYLOAD_TOO_LARGE`, or the server's code and message) and sends the rest. The seq it skipped makes the next batch a `SEQ_GAP`, which renumbers past it. The client also refuses at dispatch a mutation whose UTF-8 encoding exceeds 90 % of the limit.
+  - Anything else (5xx, a network error, an unreadable body) retries the same batch with backoff. A request with no answer after 30 s, or in flight when the socket drops, is abandoned and sent again; the server dedupes it.
 
 ---
 
@@ -124,6 +127,7 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 created ─► queued (persisted in IDB) ─► sent ─► acked(lastSyncId=N) ─► confirmed (client lastSyncId ≥ N, or an `ack` for its seq) ─► removed
                                           └──► rejected ─► removed + rebase + user-visible toast
 ```
+A mutation is sent only once it is persisted. If the replica has already reached N when the result arrives (a resend after a reload, answered from the server's record, gets no `ack`), it is confirmed at once. Each tab sends only the queue it owns; the next tab to start adopts a queue left behind (SPEC-002 E5).
 
 ### 5.2 Applying deltas (rebase)
 1. Apply each packet to the **base state** (upsert, archive, delete) and persist it to IDB.
@@ -135,7 +139,7 @@ created ─► queued (persisted in IDB) ─► sent ─► acked(lastSyncId=N) 
 
 ### 5.3 Offline
 - Offline is detected by WebSocket close plus failed pings. The UI shows an offline badge, and all eager data remains usable.
-- Mutations queue in IDB and survive reloads. On reconnect: **catch-up deltas first, then flush the queue** in seq order.
+- Mutations queue in IDB and survive reloads. On reconnect the queue flushes in seq order as soon as the socket is open, while catch-up runs. Confirmation waits for the replica to reach each commit (or its `ack`), so the order of catch-up and flush does not matter.
 - Content that was never hydrated shows "Available when online".
 
 ### 5.4 Conflicts
@@ -224,6 +228,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-06 | v0.4 | PLAN-002 S8, no wire change. Client: the queue flushes once the socket is open rather than after catch-up (§5.3); a result whose `lastSyncId` the replica has already passed confirms at once; queues are adopted across tabs (§5.1, SPEC-002 E5); `413` and other refused requests split the batch and reject the mutation at fault, and requests time out after 30 s (§4.4). Stated, for the server: catch-up carries the client's acks for `(since, head]` (§4.3) | Session A (Handoffs row 4) |
 | 2026-11-06 | v0.4 | PLAN-002 S7. Server: an upgrade without a valid session is accepted and closed with `4001`, not refused with `401` (§4.3). Clarified, no wire change: `prev > lastSyncId` is a gap; `prev ≤ lastSyncId` skips packets with `id ≤ lastSyncId` and applies the rest (§4.3, SPEC-002 E1) | Session A (Handoffs) |
 | 2026-11-06 | v0.3 | PLAN-002 S6: `meta.rows` (required), the exact row count, for the progress bar; `row.archived` (optional boolean; `true` = archived) so a cold start matches clients that saw the `A` packet. While v0.3 was unreleased, `archived` was first `true`-only and was widened to boolean before release. Also stated: archived state changes only through `A`/`V`; `U` keeps it (§4.3) | Session A (Handoffs) |
 | 2026-11-06 | v0.2 | PLAN-002 S1 codecs: `deltas.prev`; acks without packets; `schemaHash` in the WebSocket URL; close codes; batch rules (1–100, consecutive seqs); `lastSeq` on `SEQ_GAP`; `CLIENT_OUTDATED` = 426; schema hash definition; `presence` deferred to M4 | Session A (session-d-sync-client.md, Handoffs) |

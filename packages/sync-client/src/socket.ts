@@ -86,7 +86,7 @@ export interface SyncSocketOptions {
   readonly online?: OnlineSource;
 }
 
-const globalTimers: Timers = {
+export const globalTimers: Timers = {
   setTimeout: (callback, ms) => setTimeout(callback, ms),
   clearTimeout: (handle) => {
     if (handle !== undefined) clearTimeout(handle as ReturnType<typeof setTimeout>);

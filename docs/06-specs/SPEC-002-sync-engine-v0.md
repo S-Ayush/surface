@@ -62,7 +62,7 @@ The mutation result has `status = error`. Remove it from the queue, recompute th
 ### 3.6 Offline and reconnect
 - The socket closes or pings fail, so the state becomes `offline`. Mutations keep queueing (state `queued`).
 - Reconnect uses backoff from 0.5 s to 30 s with jitter, and retries immediately on the `online` event.
-- On reconnect: `since = lastSyncId` → catch-up → flush the queue.
+- On reconnect: `since = lastSyncId` → catch-up, and the queue flushes as soon as the socket is open. A mutation is confirmed only once the replica reaches its commit (or its `ack` arrives), so sending during catch-up is safe.
 
 ## 4. Server design
 
@@ -177,7 +177,7 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | E2 | Duplicate packet after reconnect | Ignored (`id ≤ lastSyncId`) |
 | E3 | Server restart while a batch is in flight | The client retries the same batch. The server dedupes by seq. |
 | E4 | The client crashes after sending but before the ack is persisted | On restart the pending mutations are resent and deduped, and the stored results are returned |
-| E5 | Two tabs of the same user | Separate `clientId`s and queues. Both receive all deltas. |
+| E5 | Two tabs of the same user | Separate `clientId`s and queues. Both receive all deltas. A queue outlives its tab: another tab adopts a queue no open tab owns, so a reload resends under the same `clientId` (E4). With Web Locks (a lock per queue) the next tab to start adopts it at once. Without them (plain-HTTP origins) the owner renews a lease every 5 s; a queue whose lease lapsed (15 s) is adopted only if it still has pending mutations, at start or on a later renewal by a tab whose own queue is empty, so a reload picks its queue up within 15 s. A tab whose queue was adopted while it was still open (its timers were frozen) starts a new queue if it had nothing pending, and otherwise stops and asks for a reload. |
 | E6 | IDB quota exceeded or IDB unavailable (private mode) | Fall back to a memory-only store, with a warning banner. Offline persistence is disabled. |
 | E7 | `schemaHash` changes on deploy | Connected clients get `resync(schema)`, show the "reload" banner, and on reload the IDB is cleared and bootstrapped again |
 | E8 | A very long offline period (> 30 days) | `resync(too_old)` → re-bootstrap, then **flush the queue**. Pending mutations survive the re-bootstrap. |
@@ -197,7 +197,7 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | AC-3 | **Exactly-once:** across random client crashes and resends, every dispatched mutation is applied exactly once (verified via the `debug.touch` counter). | simulation |
 | AC-4 | **Real time:** a rename in tab A is visible in tab B in **< 150 ms p95** (LAN, 100 trials). | e2e perf |
 | AC-5 | **Optimistic:** the UI reflects a local rename in **< 16 ms** (the same frame) after dispatch. | e2e perf |
-| AC-6 | **Offline persistence:** offline, then rename, then reload while still offline: the rename is shown. Online again: the server gets it and tab B updates. | e2e |
+| AC-6 | **Offline persistence:** offline, then rename, then reload while still offline: the rename is shown (on plain-HTTP origins, without Web Locks, within 15 s of the reload; E5). Online again: the server gets it and tab B updates. | e2e |
 | AC-7 | **Rejection:** a mutation the server rejects reverts in the UI within one round-trip and shows a toast. The base state is unchanged. | e2e |
 | AC-8 | **Warm start** with 10k rows is interactive in **< 1.5 s**. **Cold bootstrap** of the reference-scale eager data (≈ 150k rows) completes in **< 10 s** on a LAN. | perf |
 | AC-9 | **Catch-up:** a client offline for 1,000 server changes catches up correctly on reconnect, with no duplicates and no gaps. | integration |
@@ -233,3 +233,5 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Date | Change | Why |
 |---|---|---|
 | 2026-11-06 | **E1:** `prev > lastSyncId` is a gap (reconnect); `prev ≤ lastSyncId` skips packets with `id ≤ lastSyncId` and applies the rest. It used to say `prev ≠ lastSyncId` means reconnect. **E10:** also covers a session revoked while offline: the hub accepts the upgrade and closes with `4001`. **E12** added. | PLAN-002 S7 reviews. An overlapping or resent message is harmless, so reconnecting on it only adds churn. A browser cannot see a refused upgrade's status, so a `401` would make the client retry forever. A bad row used to make the client reconnect forever with no visible error. Protocol side: [sync-protocol.md](../04-architecture/sync-protocol.md) v0.4. Approved by the user. |
+| 2026-11-06 | **§3.6:** the queue flushes once the socket is open, not after catch-up. **E5:** queues are adopted by the next tab (Web Lock, or a 15 s lease). | PLAN-002 S8. The protocol has no "caught up" signal, and confirmation already waits for the replica to reach each commit, so the order does not matter. Without adoption, a reload would leave its queue behind, and E4's resend under the same `clientId` could not happen. Decided at the start of S8 (the user chose Web Locks + lease). Approved by the user after the S8 review. |
+| 2026-11-06 | **E5:** without Web Locks, only queues with pending mutations are adopted, also on later lease renewals; a tab whose empty queue was taken carries on with a new one. **AC-6:** qualified for plain-HTTP origins (within 15 s). | PLAN-002 S8 review (M1). A reload there may not end its lease, so the reloaded tab first starts a new queue; adopting on renewal makes the offline rename reappear within 15 s instead of never in that session. Adopting empty queues fenced frozen tabs for nothing. Follows from the approved lease design; please confirm. |

@@ -6,14 +6,20 @@
  */
 import type { ModelRow } from '@surface/domain/model';
 import type {
+  Ack,
   BootstrapFrame,
   ClientMessage,
   DeltaPacket,
+  MutateRequest,
+  MutationResult,
   ServerMessage,
 } from '@surface/sync-protocol';
 import {
   CloseCode,
+  MAX_MUTATION_BATCH_BYTES,
+  MUTATE_PATH,
   decodeClientMessage,
+  decodeMutateRequest,
   decodeSocketConnectParams,
   encodeSocketMessage,
 } from '@surface/sync-protocol';
@@ -48,16 +54,190 @@ export class FakeHub {
   /** Packets per `deltas` message during catch-up. */
   pageSize = 500;
   bootstraps = 0;
+  /** The `(clientId, seq)` behind each sync id a client's own mutation wrote. */
+  readonly acks = new Map<number, Ack>();
+  /** Per client: the last seq processed and every stored result (`client_mutations`). */
+  readonly clients = new Map<string, { lastSeq: number; results: Map<number, MutationResult> }>();
+  /** Every mutate request received, in order. */
+  readonly mutateRequests: MutateRequest[] = [];
+  /** Faults: fail the next N requests before processing, or lose the next N responses after. */
+  failRequests = 0;
+  loseResponses = 0;
+  /** The body limit (Fastify's `bodyLimit`): a larger request gets a 413. */
+  maxBodyBytes = MAX_MUTATION_BATCH_BYTES;
+  /** Batches containing one of these ops are refused as a whole (400 `INVALID_INPUT`). */
+  readonly invalidOps = new Set<string>();
+  /** Held requests the client aborted. */
+  aborted = 0;
+  /** The UTF-8 size of every mutate request body, in order. */
+  readonly bodySizes: number[] = [];
+  /** Hold mutate responses until `release()`; requests are processed at once. */
+  holdResponses = false;
+  readonly #held: (() => void)[] = [];
+  #acking: Ack | undefined;
 
   constructor(head = 100) {
     this.head = head;
   }
 
-  /** `GET /sync/bootstrap` from the current state. */
-  readonly fetch: FetchLike = () => {
+  /** `GET /sync/bootstrap` from the current state, or `POST /sync/mutate`. */
+  readonly fetch: FetchLike = (url, init) => {
+    if (url.endsWith(MUTATE_PATH)) return this.#mutate(init);
     this.bootstraps += 1;
     return Promise.resolve(ndjsonResponse(this.snapshot()));
   };
+
+  /** Let held mutate responses through, in order. */
+  release(): void {
+    for (const send of this.#held.splice(0)) send();
+  }
+
+  /** How many times the server ran a mutation (not counting replays). */
+  executed(op?: string): number {
+    return this.mutateRequests
+      .flatMap((request) => request.mutations)
+      .filter((m) => op === undefined || m.op === op).length;
+  }
+
+  #mutate(init: RequestInit): Promise<Response> {
+    if (this.failRequests > 0) {
+      this.failRequests -= 1;
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }
+    if (typeof init.body !== 'string') throw new Error('The queue sends a JSON string body');
+    const respond = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    const size = new TextEncoder().encode(init.body).length;
+    this.bodySizes.push(size);
+    if (size > this.maxBodyBytes) {
+      return Promise.resolve(
+        respond(413, {
+          ok: false,
+          error: { code: 'PAYLOAD_TOO_LARGE', message: 'Too large', correlationId: 'c' },
+        }),
+      );
+    }
+    const request = decodeMutateRequest(JSON.parse(init.body));
+    if (request.mutations.some((m) => this.invalidOps.has(m.op))) {
+      return Promise.resolve(
+        respond(400, {
+          ok: false,
+          error: {
+            code: 'INVALID_INPUT',
+            message: 'This change is not valid on the server.',
+            correlationId: 'c',
+          },
+        }),
+      );
+    }
+    if (request.schemaHash !== this.schemaHash) {
+      return Promise.resolve(
+        respond(426, {
+          ok: false,
+          error: { code: 'CLIENT_OUTDATED', message: 'Reload', correlationId: 'c' },
+        }),
+      );
+    }
+    let client = this.clients.get(request.clientId);
+    if (client === undefined) {
+      this.clients.set(request.clientId, (client = { lastSeq: 0, results: new Map() }));
+    }
+    const first = request.mutations[0]?.seq ?? 1;
+    if (first > client.lastSeq + 1) {
+      return Promise.resolve(
+        respond(400, {
+          ok: false,
+          error: { code: 'SEQ_GAP', message: 'Gap', correlationId: 'c', lastSeq: client.lastSeq },
+        }),
+      );
+    }
+    const fresh = request.mutations.filter((m) => m.seq > (client?.lastSeq ?? 0));
+    this.mutateRequests.push({ ...request, mutations: fresh });
+    const results = request.mutations.map((mutation): MutationResult => {
+      const stored = client.results.get(mutation.seq);
+      if (stored) return stored;
+      const result = this.#execute(request.clientId, mutation.seq, mutation.op, mutation.input);
+      client.results.set(mutation.seq, result);
+      client.lastSeq = mutation.seq;
+      return result;
+    });
+    if (this.loseResponses > 0) {
+      this.loseResponses -= 1;
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }
+    const response = respond(200, { results });
+    if (!this.holdResponses) return Promise.resolve(response);
+    return new Promise((resolve, reject) => {
+      this.#held.push(() => resolve(response));
+      // Like `fetch`: an abort rejects the request (the server already ran it).
+      init.signal?.addEventListener('abort', () => {
+        this.aborted += 1;
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      });
+    });
+  }
+
+  /** The server side of the fixture operations (`ops.ts`), one transaction each. */
+  #execute(clientId: string, seq: number, op: string, input: unknown): MutationResult {
+    const fields = typeof input === 'object' && input !== null ? input : {};
+    const get = (key: string): unknown => (key in fields ? Reflect.get(fields, key) : undefined);
+    const itemId = String(get('id'));
+    const existing = this.rows.get(itemId);
+    const notFound = (): MutationResult => ({
+      seq,
+      status: 'error',
+      error: { code: 'NOT_FOUND', message: 'Debug item not found. It may have been deleted.' },
+    });
+    this.#acking = { clientId, seq };
+    try {
+      switch (op) {
+        case 'debug.create':
+          if (existing) {
+            return { seq, status: 'error', error: { code: 'CONFLICT', message: 'Exists' } };
+          }
+          this.#upsertRow({
+            id: itemId,
+            title: String(get('title')),
+            counter: 0,
+            groups: ['workspace'],
+          });
+          break;
+        case 'debug.rename':
+        case 'debug.broken':
+          if (!existing) return notFound();
+          this.#upsertRow({ ...existing.row, title: String(get('title')) });
+          break;
+        case 'debug.touch':
+          if (!existing) return notFound();
+          this.#upsertRow({ ...existing.row, counter: Number(existing.row.counter) + 1 });
+          break;
+        case 'debug.delete':
+          if (!existing) return notFound();
+          this.rows.delete(itemId);
+          this.#commit({ id: this.head + 1, a: 'D', m: 'DebugItem', mid: itemId });
+          break;
+        case 'debug.hide':
+          this.invisible();
+          this.acks.set(this.head, { clientId, seq });
+          for (const connection of this.live) connection.deliver();
+          break;
+        default:
+          return { seq, status: 'error', error: { code: 'UNKNOWN_OPERATION', message: op } };
+      }
+      return { seq, status: 'ok', lastSyncId: this.head };
+    } finally {
+      this.#acking = undefined;
+    }
+  }
+
+  #upsertRow(row: ModelRow): void {
+    const existing = this.rows.get(row.id);
+    this.rows.set(row.id, { row, archived: existing?.archived ?? false });
+    this.#commit({ id: this.head + 1, a: existing ? 'U' : 'I', m: 'DebugItem', d: { ...row } });
+  }
 
   /** The bootstrap frames of the current state (one REPEATABLE READ snapshot). */
   snapshot(): BootstrapFrame[] {
@@ -116,6 +296,7 @@ export class FakeHub {
   #commit(packet: DeltaPacket): void {
     this.head = packet.id;
     this.log.push(packet);
+    if (this.#acking) this.acks.set(packet.id, this.#acking);
     for (const connection of this.live) connection.deliver();
   }
 }
@@ -127,6 +308,8 @@ export class HubConnection {
   readonly received: ClientMessage[] = [];
   /** The id of the last packet sent on this connection (`prev` of the next message). */
   sent: number;
+  /** Acks are sent for sync ids up to here. */
+  ackedThrough: number;
   /** Messages sent to the client, in order. */
   readonly messages: ServerMessage[] = [];
   isOpen = false;
@@ -147,6 +330,7 @@ export class HubConnection {
     this.clientId = params.clientId;
     this.schemaHash = params.schemaHash;
     this.sent = params.since;
+    this.ackedThrough = params.since;
     this.client = {
       send: (data) => {
         this.received.push(decodeClientMessage(data));
@@ -167,7 +351,11 @@ export class HubConnection {
     else this.deliver();
   }
 
-  /** Send every logged packet after `sent`, in pages, each with its `prev`. */
+  /**
+   * Send every logged packet after `sent`, in pages, each with its `prev`, and
+   * the acks of this client's mutations they cover. Acks for mutations with
+   * no visible packet go in a message of their own (`packets: []`).
+   */
   deliver(): void {
     if (!this.isOpen || this.paused) return;
     const packets = this.hub.log.filter((packet) => packet.id > this.sent);
@@ -175,9 +363,21 @@ export class HubConnection {
       const page = packets.slice(start, start + this.hub.pageSize);
       const last = page.at(-1);
       if (last === undefined) break;
-      this.send({ t: 'deltas', prev: this.sent, packets: page, ack: [] });
+      const ack = this.#acksThrough(last.id);
+      this.send({ t: 'deltas', prev: this.sent, packets: page, ack });
       this.sent = last.id;
     }
+    const rest = this.#acksThrough(this.hub.head);
+    if (rest.length > 0) this.send({ t: 'deltas', prev: this.sent, packets: [], ack: rest });
+  }
+
+  /** This client's acks for sync ids after `ackedThrough`, up to `id`. */
+  #acksThrough(id: number): Ack[] {
+    const acks = [...this.hub.acks]
+      .filter(([at, ack]) => at > this.ackedThrough && at <= id && ack.clientId === this.clientId)
+      .map(([, ack]) => ack);
+    this.ackedThrough = Math.max(this.ackedThrough, id);
+    return acks;
   }
 
   send(message: ServerMessage): void {

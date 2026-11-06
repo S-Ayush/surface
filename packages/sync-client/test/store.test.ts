@@ -281,7 +281,11 @@ describe('closing the store', () => {
 describe('several tabs on one replica (E5)', () => {
   /** `navigator.locks`, calling `onRequest` whenever a lock is asked for. */
   const watchedLocks = (onRequest: (mode: string | undefined) => void) => ({
-    request: <T>(name: string, options: LockOptions, callback: () => Promise<T>): Promise<T> => {
+    request: <T>(
+      name: string,
+      options: LockOptions,
+      callback: (lock: unknown) => Promise<T>,
+    ): Promise<T> => {
       onRequest(options.mode);
       return navigator.locks.request(name, options, callback);
     },

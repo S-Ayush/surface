@@ -5,7 +5,7 @@
  * `StorageFencedError` thrown in the worker is one on the main thread too.
  */
 import type { SyncStorage } from './types.js';
-import { StorageFencedError } from './types.js';
+import { QueueFencedError, StorageFencedError } from './types.js';
 
 /** The part of `MessagePort` / `Worker` / worker `self` used here. */
 export interface MessagePortLike {
@@ -42,6 +42,9 @@ const STORAGE_METHODS = [
   'finishBootstrap',
   'readRows',
   'applyChanges',
+  'readQueue',
+  'claimQueue',
+  'writeQueue',
   'clear',
   'close',
 ] as const satisfies readonly StorageMethod[];
@@ -213,6 +216,9 @@ export async function connectStorage(
     finishBootstrap: typed('finishBootstrap'),
     readRows: typed('readRows'),
     applyChanges: typed('applyChanges'),
+    readQueue: typed('readQueue'),
+    claimQueue: typed('claimQueue'),
+    writeQueue: typed('writeQueue'),
     clear: typed('clear'),
     close: async () => {
       try {
@@ -227,6 +233,7 @@ export async function connectStorage(
 
 function revive(error: { name: string; message: string }): Error {
   if (error.name === 'StorageFencedError') return new StorageFencedError();
+  if (error.name === 'QueueFencedError') return new QueueFencedError();
   const revived = new Error(error.message);
   revived.name = error.name;
   return revived;
