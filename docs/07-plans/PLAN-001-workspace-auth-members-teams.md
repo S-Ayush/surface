@@ -144,6 +144,51 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - **S4–S6 (session E):** a new session (magic link, invite) is `store.createSession` plus both cookies, as in `routes.ts`; revoking sessions should delete them and call `closeSessions`, which reaches every replica. Handlers get it as `ctx.closeSessions`, with the session id on the actor, in A's follow-up after S3 (E's handoff).
 >   - **S5 (PLAN-002):** `POST /sync/mutate` is covered by the CSRF hook as it is; it gets the actor from `resolveActor`.
 
+> **As built, web half (session C, 2026-11-07, branch `p001-s3-web-login`).**
+> - **`app/http.ts`:**
+>   - `csrfFetch` sends `X-CSRF-Token` from the `surface_csrf` cookie on writes, and on `403 CSRF_INVALID` gets `GET /auth/session` and resends once. It is used for `POST /auth/logout`, and later for any `/api/ops` call from the web app.
+>   - `watchSession` only reports a `401` (E14). It wraps the sync client's fetch, which renews its own CSRF token (session D), so there is never a second retry.
+>   - Names come from `@surface/sync-protocol` (new workspace dependency of `apps/web`).
+> - **`app/auth.ts`:** `httpAuthClient` reads `{ ok, result }` from `/auth/capabilities` and `/auth/session`.
+>   - `GET /auth/session`: a `401` is no session, and so is `503 SETUP_REQUIRED` (the guards send every page to `/setup` then). Anything else is "can't reach the server".
+>   - Login: a refusal (`4xx`) shows the server's message as it is (AC-5's generic text, E13's "Try again in N minutes"). A `5xx` or no answer says to check the connection and try again.
+>   - `AuthState.login` reads the session back, then the guards send the user on to `next` or home (`followAuth`).
+>   - On a 4001 (E10) or a `401` from the sync client (E14), `AuthState.recheck(epoch)` asks `GET /auth/session`. Both go through the same check: after re-signing in elsewhere, an old-cookie request's `401` arrives alongside the 4001 (review M1).
+>     - Someone signed in: the shell reopens with a new store (Q11; the snapshot's `epoch` keys the shell).
+>     - Nobody: one more look after 1 s, because the signal can arrive before the browser holds the new cookie. Still nobody, and it is `/login?next=…`, the queue kept.
+>     - A check is tied to the session its store was opened for (`epoch`). One from an earlier store, or answered after the session changed, does nothing. Nor does one answered while the user's own logout is in flight (logout closes this tab's socket too; a counter, as logouts can overlap).
+>   - A logout whose answer is lost checks the session: gone means the logout happened (review m3).
+> - **`app/session-store.ts`:** `sessionAuthHooks` (the sync client's fetch and 4001 handler, both checking their session) and `runStore` (start and close through `StoreSequence`), so `ShellRoute`'s wiring is tested (review m1).
+> - **`app/stores.ts`:** `StoreSequence`, so a new session's store starts only after the previous one has closed and released its queue (SPEC-002 E5, session D's request).
+> - **`pages/LoginPage.tsx`** at `/login` (no longer a `ScreenId`):
+>   - email (`autocomplete=username`) and password, with a check before sending;
+>   - errors in a `role=alert` line;
+>   - while sending, the button shows `loading`;
+>   - `LoginSubmit` holds the one-at-a-time flag outside React state (two Enters in one frame would sign in twice, and under Q11 end each other) and turns an unexpected failure into the try-again message (review m4).
+>   - The magic-link button and "Forgot password?" come with S4's routes, and with them AC-3's SMTP test (both ways).
+> - **Tests:** `web/test/app-http.test.ts` (7), `app-auth.test.ts` (25: the late-answer races, the second look, checks tied to their session, a lost logout, overlapping logouts), `app-stores.test.ts` (4), `session-store.test.ts` (5) and `login-page.test.tsx` (7: `next` through the real route tree, the submit flow). Mutation-checked: 11 mutants, then 11 more after the review, all caught. Web tests 297 on this branch; 341 with E's S8 web half after rebasing onto `15e589b`.
+> - **Review (slice-reviewer, 0 blockers, 1 major, 4 minors, 5 nits), all fixed test-first:**
+>   - M1: the 401 path skipped the Q11 check.
+>   - m1: the wiring was untested.
+>   - m2: the AC-3 row overstated the test.
+>   - m3: a lost logout left a dead shell.
+>   - m4: the submit flow was untested, with no error path.
+>   - Nits: the logout counter, the submit flag, one `errorOf` in `http.ts` for both callers, a dead test branch, and this note.
+> - **Checked by hand** against the real server on `7863ebc`, with Postgres 17 in a throwaway container (removed):
+>   - a signed-out deep link went to `/login?next=` with the query kept;
+>   - the form's own check showed, then the server's wrong-password message;
+>   - a mixed-case email signed in, landing on `next` with the replica loaded;
+>   - the session survived a server restart;
+>   - logout sent the CSRF token (`200`, no retry) and landed on `/login` without `next`;
+>   - after 5 failures the page showed "Too many sign-in attempts. Try again in 15 minutes."
+> - **Found by that check, fixed by A on `p001-s3-followup`:**
+>   - Re-signing in, all tabs signed out. Q11's 4001 reached the tabs before the new cookie, and their `401` cleared it. Fix: no cookies on `GET /auth/session`'s `401`, and the replaced sockets close after the response.
+>   - Against `pnpm dev`, the client was always outdated: the dev registry hashed the engine fixtures. Fix: fixtures off unless a test opts in.
+>   - Until `p001-s3-followup` is on main:
+>     - signing in again while other tabs are open still signs them all out, as the `401` clears the new cookie;
+>     - run the server with `NODE_ENV=production` to try the web app.
+>   - The shell reopening after a 4001 was not seen by hand for these reasons; unit tests cover it. Check it by hand once the follow-up merges.
+
 ### S4: Mailer, magic link, password reset · M · mailer half built 2026-11-07; routes after S3
 - Mailer service (Nodemailer, from `SMTP_URL`). Sending happens **via the outbox and a job** (`email.send`), never inside request transactions. Plain HTML templates plus text alternatives (magic link, reset, invite).
 - `POST /auth/magic-link` (always 200; invalidates older unused links, E9) and `GET /auth/magic` (consume, then session).
@@ -338,7 +383,7 @@ Additive tables only. A rollback before any release is a code revert. After a re
 |---|---|
 | AC-1 | `server/test/setup-token.test.ts` (the link is logged, matches the stored hash) + `server/test/setup-routes.test.ts` "without the setup token cannot complete" + `server/test/setup-store.test.ts` "refuses a token that is not the current one" (unit parts, S2) + ⏸ held (e2e) `e2e/setup-token.spec.ts` (checked by hand in S2) |
 | AC-2 | ⏸ held (integration) `server/test/setup-atomic.int.test.ts` (checked by hand in S2, with a fault and a killed connection before `COMMIT`) |
-| AC-3 | ⏸ held (e2e) `e2e/no-smtp.spec.ts` (full J1 with invite and reset links) |
+| AC-3 | ⏸ held (e2e) `e2e/no-smtp.spec.ts` (full J1 with invite and reset links). The login page's SMTP branch arrives with S4's magic link, tested both ways there (`smtp: true` shows the button, `false` hides it); S3's login page has no magic-link option at all (`web/test/login-page.test.tsx`) |
 | AC-4 | ⏸ held (e2e) `e2e/smtp-flows.spec.ts` (Mailpit) |
 | AC-5 | `server/test/auth-routes.test.ts` "answers a wrong password and an unknown email alike, after the same work" (unit part, S3) + ⏸ held (integration) `server/test/login-enumeration.int.test.ts` (timing checked by hand in S3) |
 | AC-6 | `server/test/auth-routes.test.ts` "after 5 failures in 15 minutes refuses even the right password…" + `server/test/auth-attempts.test.ts` (unit parts, S3) + ⏸ held (integration) `server/test/login-lockout.int.test.ts` (checked by hand in S3, across a restart) |

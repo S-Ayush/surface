@@ -16,6 +16,7 @@ import {
 import { reaction } from 'mobx';
 import { MyIssuesPage } from '../pages/MyIssuesPage.js';
 import { NotFoundPage, StandaloneNotFoundPage } from '../pages/NotFoundPage.js';
+import { LoginPage } from '../pages/LoginPage.js';
 import { PublicPage } from '../pages/PublicPage.js';
 import { SettingsPage } from '../pages/SettingsPage.js';
 import { TeamHomePage } from '../pages/TeamHomePage.js';
@@ -111,7 +112,7 @@ const publicRoutes = [
     getParentRoute: () => rootRoute,
     path: '/login',
     beforeLoad: guarded('public'),
-    component: publicScreen('login', 'Log in'),
+    component: LoginPage,
   }),
   createRoute({
     getParentRoute: () => rootRoute,

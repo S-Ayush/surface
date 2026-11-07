@@ -1,10 +1,10 @@
 // The PLAN-001 screens the router hosts (SPEC-001 §7): the router owns the URLs and guards,
 // the features own the screens and register them in features/screens.ts. (/setup is PLAN-001
-// S2's wizard, routes/setup, which the router renders directly.)
+// S2's wizard, routes/setup, and /login is PLAN-001 S3's page, pages/LoginPage: the router
+// renders both directly.)
 import type { ComponentType } from 'react';
 
 export type ScreenId =
-  | 'login'
   | 'login/check-email'
   | 'forgot'
   | 'reset'

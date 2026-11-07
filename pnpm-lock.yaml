@@ -147,6 +147,9 @@ importers:
       '@surface/sync-client':
         specifier: workspace:*
         version: link:../../packages/sync-client
+      '@surface/sync-protocol':
+        specifier: workspace:*
+        version: link:../../packages/sync-protocol
       '@surface/ui':
         specifier: workspace:*
         version: link:../../packages/ui

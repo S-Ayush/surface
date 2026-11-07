@@ -15,7 +15,7 @@ import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/AppModel.js';
-import { AuthState, preAuthClient, type Session } from '../src/app/auth.js';
+import { AuthState, type Session } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
 import type { MembershipRow, TeamRow, UserRow } from '../src/features/teams/model.js';
 import { TeamGeneralScreen } from '../src/features/teams/TeamGeneralScreen.js';
@@ -43,7 +43,8 @@ class FakeApp extends AppModel {
     private readonly me: string,
     private readonly role: 'admin' | 'member' = 'member',
   ) {
-    super(new AuthState(preAuthClient(() => Promise.reject(new Error('unused')))));
+    const unused = () => Promise.reject(new Error('unused'));
+    super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
     const byModel = new Map<unknown, readonly unknown[]>(
       rows === null
         ? []

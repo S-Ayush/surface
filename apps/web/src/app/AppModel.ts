@@ -7,11 +7,14 @@ import type { SyncStore } from '@surface/sync-client';
 import { observable, runInAction } from 'mobx';
 import type { TeamSummary } from '../command-menu/model.js';
 import type { AuthState, Session } from './auth.js';
+import { StoreSequence } from './stores.js';
 import { actorOf, myTeams, teamByKey } from './workspace.js';
 
 export class AppModel {
   readonly auth: AuthState;
   readonly #store = observable.box<SyncStore | null>(null, { deep: false });
+  /** One store at a time: the next session's starts after the previous one has closed. */
+  readonly stores = new StoreSequence();
 
   constructor(auth: AuthState) {
     this.auth = auth;

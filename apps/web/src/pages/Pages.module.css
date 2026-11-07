@@ -21,6 +21,40 @@
   color: var(--text-primary);
 }
 
+/* A form on a public page (login): one card, centred by .public. */
+.card {
+  display: flex;
+  width: 100%;
+  max-width: var(--dialog-sm);
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-24);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+
+.title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-lg-size);
+  font-weight: var(--text-lg-weight);
+  line-height: var(--text-lg-line);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.formError {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
 .settings {
   display: flex;
   flex: 1;

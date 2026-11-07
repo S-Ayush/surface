@@ -9,7 +9,7 @@ import {
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/AppModel.js';
-import { AuthState, preAuthClient } from '../src/app/auth.js';
+import { AuthState } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
 import { SETTINGS, settingsNav, type SettingsSection } from '../src/app/settings.js';
 import { SettingsPage } from '../src/pages/SettingsPage.js';
@@ -18,7 +18,8 @@ import { ShellStore } from '../src/shell/ShellStore.js';
 
 class FakeApp extends AppModel {
   constructor(private readonly role: boolean | undefined) {
-    super(new AuthState(preAuthClient(() => Promise.reject(new Error('unused')))));
+    const unused = () => Promise.reject(new Error('unused'));
+    super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
   }
 
   override isAdmin = () => this.role;

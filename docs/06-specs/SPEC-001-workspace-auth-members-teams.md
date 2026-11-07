@@ -48,6 +48,8 @@ Keyboard: `Enter` advances each step. `Esc` does nothing (setup can't be skipped
 - Password login: on success, create a session and redirect to `?next=` or home. On failure show the generic *"Email or password is incorrect"*.
 - Magic link: `POST /auth/magic-link {email}` **always** answers *"If an account exists, we sent a link"*, so it can't be used to discover accounts. The link `/auth/magic?token=…` creates a session.
 
+- *As built (PLAN-001 S3 web half, 2026-11-07):* the page shows a refused sign-in's message as the server sends it, the lockout's "Try again in N minutes" included (E13). A server failure or no answer says to check the connection and try again. The magic-link button arrives with PLAN-001 S4's routes.
+
 ### 3.3 Password reset
 - **With SMTP:** `/forgot` takes an email and always answers the generic message. The email contains `/reset?token=…`, where the user sets a new password. Using it logs out all other sessions.
 - **Without SMTP:** `/forgot` explains *"Ask an Admin for a reset link"*. Admin: Settings → Members → ⋯ → **Generate reset link** → copy. The link is valid for 1 hour and single-use.

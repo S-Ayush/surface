@@ -19,6 +19,7 @@ function client({ signedInAs, setup = true, ...rest }: Fake) {
   const auth: AuthClient = {
     capabilities: () => Promise.resolve({ setupComplete: setup, smtp: false }),
     session: () => Promise.resolve(current),
+    login: () => Promise.resolve({ ok: false, message: 'Not in this test' }),
     logout: () => {
       current = null;
       return Promise.resolve();
@@ -36,7 +37,8 @@ const environment = (path: string) => ({
 });
 
 async function open(path: string, auth: AuthClient) {
-  const app = new AppModel(new AuthState(auth));
+  // The second look after a 4001 (AuthState.recheck) without a real wait.
+  const app = new AppModel(new AuthState(auth, { wait: () => Promise.resolve() }));
   const router = createAppRouter(app, environment(path));
   await router.load();
   return { app, router, href: () => router.state.location.href };
@@ -81,10 +83,15 @@ describe('AC-15: route guards in the router', () => {
   });
 
   it('sends a user whose session ends to /login, back to the page they were on', async () => {
-    const { app, router, href } = await open('/team/ENG', client({ signedInAs: SESSION }));
+    let ended = false;
+    const { app, router, href } = await open(
+      '/team/ENG',
+      client({ session: () => Promise.resolve(ended ? null : SESSION) }),
+    );
     const stop = followAuth(app, router);
-    // A revoked or expired session (SPEC-002 E10): nothing but the auth state changes.
-    app.auth.signedOut();
+    // A revoked or expired session (SPEC-002 E10, E14): the check finds nobody signed in.
+    ended = true;
+    void app.auth.recheck();
     await leaving(router, '/team/ENG');
     expect(href()).toBe('/login?next=%2Fteam%2FENG');
     stop();
@@ -126,13 +133,14 @@ describe('AC-15: route guards in the router', () => {
   });
 
   it('renders a public page without the shell', async () => {
-    const { app, router } = await open('/login', client({}));
+    const { app, router } = await open('/forgot', client({}));
     const html = renderToString(
       <AppContext value={app}>
         <RouterProvider router={router} />
       </AppContext>,
     );
-    expect(html).toContain('Log in isn&#x27;t available yet');
+    // A screen session E hasn't registered yet shows the placeholder (features/screens.ts).
+    expect(html).toContain('Reset your password isn&#x27;t available yet');
     expect(html).not.toContain('id="sidebar"');
   });
 });

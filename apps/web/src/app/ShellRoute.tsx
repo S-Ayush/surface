@@ -14,19 +14,35 @@ import type { AppModel } from './AppModel.js';
 import type { Session } from './auth.js';
 import { useApp, useObserved } from './context.js';
 import { gateView } from './gate.js';
+import { runStore, sessionAuthHooks } from './session-store.js';
 
 export function ShellRoute() {
   const app = useApp();
-  const session = useObserved(useCallback(() => app.session, [app]));
+  const current = useObserved(
+    useCallback(() => {
+      const snapshot = app.auth.snapshot;
+      return snapshot.status === 'ready' && snapshot.session !== null
+        ? { session: snapshot.session, epoch: snapshot.epoch }
+        : null;
+    }, [app]),
+  );
   // Signed out: the router's guard is already on its way to /login.
-  if (session === null) return null;
-  // A new identity gets a new store (and a fresh shell), never the previous user's replica.
-  return <SessionShell key={`${session.workspaceId}/${session.userId}`} session={session} />;
+  if (current === null) return null;
+  const { session, epoch } = current;
+  // Each session gets a new store and a fresh shell: never the previous user's replica, and a
+  // new socket after a 4001 even for the same user (the old one stays closed for good).
+  return (
+    <SessionShell
+      key={`${epoch}/${session.workspaceId}/${session.userId}`}
+      session={session}
+      epoch={epoch}
+    />
+  );
 }
 
-function SessionShell({ session }: { session: Session }) {
+function SessionShell({ session, epoch }: { session: Session; epoch: number }) {
   const app = useApp();
-  useSyncStore(app, session);
+  useSyncStore(app, session, epoch);
   return (
     <Shell>
       <StoreGate>
@@ -36,25 +52,21 @@ function SessionShell({ session }: { session: Session }) {
   );
 }
 
-/** The store records a failed start in its status, which StoreGate shows. */
-const failureShownByStatus = () => undefined;
-
 const OUTDATED_BANNER = 'store-outdated';
 
-function useSyncStore(app: AppModel, { userId, workspaceId }: Session): void {
+function useSyncStore(app: AppModel, { userId, workspaceId }: Session, epoch: number): void {
   useEffect(() => {
     // Before the first ready, StoreGate's own screen says the client is outdated.
     let readyOnce = false;
+    // E10, E14, SPEC-001 Q11: a 401 or a 4001 asks who is signed in now (app/session-store.ts).
+    const auth = sessionAuthHooks(app.auth, epoch, (url, init) => window.fetch(url, init));
     const store = new SyncStore({
       // The server's model set, so the schema hashes match (PLAN-001 S1 handoff).
       models: PRODUCTION_MODELS,
       workspaceId,
       userId,
-      fetch: (url, init) => window.fetch(url, init),
-      // SPEC-002 E10: the session was revoked; the guards send the user to /login.
-      onSessionRevoked: () => {
-        app.auth.signedOut();
-      },
+      fetch: auth.fetch,
+      onSessionRevoked: auth.onSessionRevoked,
       // SPEC-002 §3.5: the optimistic change is gone; say why.
       onRejected: (rejection) => {
         toast({ tone: 'danger', message: rejection.message });
@@ -78,14 +90,15 @@ function useSyncStore(app: AppModel, { userId, workspaceId }: Session): void {
       },
     );
     app.setStore(store);
-    store.start().catch(failureShownByStatus);
+    // Starts once the previous session's store has closed, so it can adopt the queue (E5).
+    const dispose = runStore(app.stores, store);
     return () => {
       stopWatching();
       banner.hide(OUTDATED_BANNER);
       app.setStore(null);
-      void store.close();
+      dispose();
     };
-  }, [app, userId, workspaceId]);
+  }, [app, userId, workspaceId, epoch]);
 }
 
 const reload = () => {
