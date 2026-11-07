@@ -12,7 +12,11 @@ import { actorOf, myTeams, teamByKey } from './workspace.js';
 
 export class AppModel {
   readonly auth: AuthState;
-  readonly #store = observable.box<SyncStore | null>(null, { deep: false });
+  /** The open store and the session (`AuthSnapshot.epoch`) it was opened for. */
+  readonly #open = observable.box<{ readonly store: SyncStore; readonly epoch: number } | null>(
+    null,
+    { deep: false },
+  );
   /** One store at a time: the next session's starts after the previous one has closed. */
   readonly stores = new StoreSequence();
 
@@ -20,13 +24,29 @@ export class AppModel {
     this.auth = auth;
   }
 
-  /** The store, while the shell has one open for the signed-in user. */
+  /**
+   * The store the shell opened for the current session. Null as soon as the session changes:
+   * until the new shell opens its own, the previous session's replica (maybe another user's) must
+   * not be read, and pages must not see its rows vanish as the stores swap (SPEC-005 E5).
+   */
   get store(): SyncStore | null {
-    return this.#store.get();
+    const open = this.#open.get();
+    const snapshot = this.auth.snapshot;
+    const current =
+      snapshot.status === 'ready' && snapshot.session !== null ? snapshot.epoch : undefined;
+    return open !== null && open.epoch === current ? open.store : null;
   }
 
-  setStore(store: SyncStore | null): void {
-    runInAction(() => this.#store.set(store));
+  /** The shell opened `store` for the session at `epoch`. */
+  openStore(store: SyncStore, epoch: number): void {
+    runInAction(() => this.#open.set({ store, epoch }));
+  }
+
+  /** The shell that opened `store` closed; a newer shell's store stays. */
+  closeStore(store: SyncStore): void {
+    runInAction(() => {
+      if (this.#open.get()?.store === store) this.#open.set(null);
+    });
   }
 
   get session(): Session | null {

@@ -89,13 +89,13 @@ function useSyncStore(app: AppModel, { userId, workspaceId }: Session, epoch: nu
         if (ready) readyOnce = true;
       },
     );
-    app.setStore(store);
+    app.openStore(store, epoch);
     // Starts once the previous session's store has closed, so it can adopt the queue (E5).
     const dispose = runStore(app.stores, store);
     return () => {
       stopWatching();
       banner.hide(OUTDATED_BANNER);
-      app.setStore(null);
+      app.closeStore(store);
       dispose();
     };
   }, [app, userId, workspaceId, epoch]);
