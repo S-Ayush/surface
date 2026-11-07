@@ -1,0 +1,54 @@
+import { describe, expect, it } from 'vitest';
+import { THEME_STORAGE_KEY } from '@surface/ui';
+import { toggleTheme, type ThemeEnvironment } from '../src/theme/toggleTheme.js';
+
+function environment(shown: string | null, stored: string | null, systemDark = false) {
+  const attrs = new Map<string, string>(shown === null ? [] : [['data-theme', shown]]);
+  const storage = new Map<string, string>(stored === null ? [] : [[THEME_STORAGE_KEY, stored]]);
+  const env: ThemeEnvironment = {
+    root: {
+      getAttribute: (name) => attrs.get(name) ?? null,
+      setAttribute: (name, value) => attrs.set(name, value),
+    },
+    storage: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
+    systemPrefersDark: () => systemDark,
+  };
+  return { env, attrs, storage };
+}
+
+describe('Alt+Shift+T theme toggle (local until S7)', () => {
+  it('flips the theme on screen and caches it for the first-paint bootstrap', () => {
+    const { env, attrs, storage } = environment('light', 'system');
+    expect(toggleTheme(env)).toBe('dark');
+    expect(attrs.get('data-theme')).toBe('dark');
+    expect(storage.get(THEME_STORAGE_KEY)).toBe('dark');
+    expect(toggleTheme(env)).toBe('light');
+  });
+
+  it('resolves the current theme when the attribute is missing', () => {
+    expect(toggleTheme(environment(null, null, true).env)).toBe('light');
+    expect(toggleTheme(environment(null, 'dark').env)).toBe('light');
+    expect(toggleTheme(environment(null, null, false).env)).toBe('dark');
+  });
+
+  it('still switches when storage is unavailable or throws', () => {
+    const { env, attrs } = environment('dark', null);
+    expect(toggleTheme({ ...env, storage: null })).toBe('light');
+    const throwing: ThemeEnvironment = {
+      ...env,
+      storage: {
+        getItem: () => {
+          throw new Error('blocked');
+        },
+        setItem: () => {
+          throw new Error('blocked');
+        },
+      },
+    };
+    expect(toggleTheme(throwing)).toBe('dark');
+    expect(attrs.get('data-theme')).toBe('dark');
+  });
+});

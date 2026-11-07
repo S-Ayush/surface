@@ -71,6 +71,9 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 
 | Date | Slice | Branch | State | Notes / handoffs |
 |---|---|---|---|---|
+| 2026-11-07 | Zod jitless (PLAN-004 S9 handoff from A) | p005-s5-shortcuts | built | `apps/web/src/zod-config.ts` imported first in `main.tsx`; `zod` added to `apps/web` (already in the lockfile). Unit-tested; not checked on a CSP-served build. Separate commit. |
+| 2026-11-07 | PLAN-005 S5 | p005-s5-shortcuts | built | Shortcut engine, registry, conflict check, `?` help, command handler registry (`apps/web/src/{shortcuts,commands,theme}`). SPEC-005 §5 gains "overlay capture" and E3 is refined (Alt/Ctrl letters by `event.code`, non-Latin fallback); shortcuts.md rules 2 and 5 and an `F8` row updated. `pnpm check` green (web 97 tests); checked by hand in Chromium. Waiting for /review and /commit. |
+| 2026-11-07 | PLAN-005 S5 review | p005-s5-shortcuts | fixed | slice-reviewer: 0 blockers, 2 majors, 6 minor, 3 nits; all fixed. M1: the second key of a sequence now passes the typing and overlay gate. M2: command handlers have explicit levels (`app` < `page` < `overlay`) instead of mount order. Minor: last-word help search, `Alt+<symbol>` rejected and `Mod+,` without Option, override direction checked, editor/page scopes overlap, `Mod+Enter` uses the focused form and respects a disabled or busy submit button, hint and `inBuild` tests. Nits: Zod comment, SPEC E3 "outside A–Z", stable `bindings` note. Each fix mutation-checked. Rebased onto `db3128c`; `pnpm check` green (web 112 tests); real page rechecked in Chromium. |
 
 ## Prompt
 

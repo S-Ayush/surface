@@ -68,13 +68,69 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 - `ShellStore`: focus/selection context API for pages (`useCommandContext(ctx)`), sidebar width and collapse persisted in `localStorage`.
 - **Tests:** AC-15 (guards), AC-16 (375 px drawer), E5 (lost team access → redirect and toast).
 
-### S5: Shortcut engine & help overlay · M
+### S5: Shortcut engine & help overlay · M · ✅ Done 2026-11-07
 - `apps/web/src/shortcuts/`: the registry (`shortcut({...})`), a single document `keydown` listener, scope stack (overlay, then component, then page, then global), input suppression (`isComposing`, editable targets, `[data-shortcuts=off]`), and sequences with a 1 s timeout and hint toast.
 - Key matching: `event.key` for printable keys, and `event.code` for `Mod+letter` (E3; tested with AZERTY and QWERTZ via synthetic events).
 - A **conflict and reserved-keys test** run in CI (AC-7).
 - The `?` help overlay is generated from the registry, grouped, searchable, and filtered by build milestone (AC-8).
 - M0 bindings: `Mod+K`, `?`, `[`, `Mod+,`, `Alt+Shift+T`, `Esc`, `G S`, `O T`.
 - **Tests:** AC-5, AC-6, AC-7, AC-8.
+
+> **As built:** no new dependencies for the engine. A separate commit before it adds `zod` (^4.6.7, already in the lockfile) to `apps/web` for `src/zod-config.ts` (`z.config({ jitless: true })`, imported first in `main.tsx`; `src/zod-config.test.ts` checks both). That closes session A's PLAN-004 S9 handoff: no `script-src eval` report from Zod's probe under the CSP. Checked by unit test only, not on a CSP-served build.
+> - **Structure:** `apps/web/src/shortcuts/`:
+>   - `chord.ts`: parsing and matching;
+>   - `registry.ts`: `shortcut()`, `SHORTCUTS`, `SCOPES`;
+>   - `conflicts.ts`: `findConflicts`, `findReserved`, `findInvalid`, `RESERVED_SHORTCUTS`;
+>   - `engine.ts`: `ShortcutEngine`, DOM-free, takes a structural key event;
+>   - `milestone.ts`: `BUILD_MILESTONE = 'M0'`;
+>   - `help.ts` and `ShortcutHelp.tsx`: the `?` dialog;
+>   - `ShortcutProvider.tsx`: the document listener, `useCommand`, `usePageScope`, hint toasts.
+>
+>   Commands live in `apps/web/src/commands/`: `catalog.ts` (`COMMANDS`, id → title; ids follow SPEC-005 §4.1, e.g. `nav:settings`, `toggle:theme`) and `registry.ts` (`CommandRegistry`). The registry holds runtime handlers `{ run, when? }` at a level, `app` < `page` < `overlay`. The highest level wins, and within a level the newest registration; unmounting restores the previous handler. Precedence is explicit because React runs a child's effects before its parent's: by mount order, a page's override would lose to the shell on a deep-link load and win after in-app navigation (review M2). `useCommand(id, run, { when?, level? })` registers once per id and level; `run` and `when` are read fresh on each key press. `App.tsx` now mounts `<OverlayProvider>` and `<ShortcutProvider>` around the placeholder page.
+> - **Bindings (M0):** `Mod+K`, `?`, `[`, `Mod+,`, `Alt+Shift+T`, `Esc`, `G S`, `O T`, `F8` (`native`: Radix's toast region handles it; it is listed in help and conflict-checked, but not dispatched) and `Mod+Enter` (`modal` scope, `shortcuts/dialogSubmit.ts`). It submits the form of the focused control (including a `form="id"` footer button) with that form's default submit button. It is unavailable while that button is `disabled` or `aria-busy`, as for a plain Enter, so it cannot submit twice while a request is in flight.
+>   - **Working now:** `?` (help) and `Alt+Shift+T`. The theme toggle is local until S7: it flips `data-theme` and writes `localStorage['surface.theme']`, and S7 routes it through `user.updatePreferences`.
+>   - **No handler yet:** the others show "<title> isn't available here" (a 2 s toast) until their slice registers one with `useCommand(id, run, { when?, level? })`. S4: `toggle:sidebar`, `nav:settings`, `ui:escape`. S6: `ui:command-menu`, `nav:open-team`. `Esc` stays silent.
+> - **Engine rules:**
+>   - **Scope order:** overlay (`topLayer()`: `modal` → modal, `popover`/`menu` → picker), then component scopes (`data-shortcut-scope="list"` on an ancestor of the focused element, innermost first), then page scopes (`usePageScope`, newest first), then `global`.
+>   - **Suppression** applies to every key of a sequence, not just the first (review M1): `G` then `S` typed into a field is text, and a menu opened between the keys stops it. While typing (text inputs, textarea, select, contenteditable, `[data-shortcuts="off"]`), only `Mod`/`Ctrl` chords and `Esc` fire. An open overlay also disables page scopes and plain global keys (SPEC-005 §5 "Overlay capture", added here), so a menu's type-ahead cannot start `G S`.
+>   - **Sequences:** 1 s timeout. A hint toast (`G… S: Go to settings`) stays until the sequence ends. A key that does not continue the sequence ends it and is then read on its own.
+>   - **Ignored keys:** IME composition (`isComposing`, keyCode 229), modifier-only keys, held-down repeats, and events a component already `preventDefault`ed (this is how the M1 editor takes `Mod+K`, E1).
+>   - **Page `Esc`:** runs only when `!overlayManager.isOverlayEscape(event)` (S3 handoff).
+>   - **Failures:** a command that throws or rejects shows a danger toast.
+> - **Key matching (E3, refined in SPEC-005):**
+>   - Letters with `Mod`, `Ctrl` or `Alt` match `event.code`. `Alt` is included because Option changes `event.key` on macOS.
+>   - Plain letters match `event.key`, case-insensitively, with Shift compared exactly. When the layout types a letter outside A–Z (Cyrillic, or `é` from a dead key), they fall back to `event.code`.
+>   - Other characters match `event.key`. Shift, Option and AltGr are not compared, so `[` typed with AltGr+5 on AZERTY works. `toChord` therefore rejects `Shift+<symbol>` (write `?`) and `Alt+<symbol>` (it could not be told apart from the plain symbol). `Mod+<symbol>` must be pressed without Option or AltGr.
+>   - Named keys match `event.key` with exact modifiers.
+>   - **For M1:** `Mod+Shift+7`, `Mod+Shift+.` and `Mod+Shift+,` (shortcuts.md §3.4, §3.7) are rejected by this rule. Decide code-based matching for Mod+Shift+symbol when they land.
+> - **Conflicts (AC-7):**
+>   - Two bindings conflict when their scopes overlap and one's keys equal or begin the other's. The check runs on both platforms (`Mod+K` = `Ctrl+K` off macOS).
+>   - Overlaps: `global` overlaps everything. The other pairs are in `OVERLAPPING`; for example, `modal` overlaps `editor` but not `list`.
+>   - Page scopes (`inbox`, `triage`) overlap every component scope.
+  - A deliberate override names the other binding in `shadows`, and only a less specific scope may be shadowed: global < page < component < overlay (`findInvalid`). The reserved list is checked in every chord of a sequence.
+> - **Help (AC-8):**
+>   - The help is a `Dialog` (lg) with a search field, focused on open, and groups in registry order (General, Navigation, Dialogs and pickers).
+>   - It lists only bindings with `milestone ≤ BUILD_MILESTONE`. The engine gets the same set from `inBuild()` in `registry.ts`.
+>   - Each query word must begin a word of the title or group; only the last word, still being typed, may be one letter ("go to s" finds settings, while "g s" is a key search). A query can also match the start of the keys as written, shown or spoken (`g s`, `⌘k`, `command k`).
+>   - A persistent `role="status"` paragraph says when nothing matches.
+> - **Tests:**
+>   - 112 web unit tests in all.
+>   - `test/shortcuts-engine.test.ts` covers AC-5, AC-6, E2, E3 (US, AZERTY, QWERTZ, Russian, Mac Option), scopes, the overlay rules, `Esc` and unavailable commands.
+>   - `test/shortcuts-conflicts.test.ts` covers AC-7, and `test/shortcut-help.test.tsx` covers AC-8 (pure grouping plus a server render). `commands-registry.test.ts` (levels, `when`, errors), `dialog-submit.test.ts` (default button, disabled and busy), `shortcut-hints.test.ts` (hint text, quiet over an overlay) and `theme-toggle.test.ts` cover the rest.
+>   - The engine tests use DOM-free fakes (`test/shortcut-fakes.ts`), since no DOM library is installed for unit tests.
+>   - Mutation-checked: removing typing suppression, overlay capture, the page-scope gate, Alt-by-code, AltGr, the non-Latin fallback guard, the sequence timeout, the IME guard, quiet `Esc`, prefix conflicts, the both-platforms check, the help and engine milestone filter (`inBuild`), the gate on a sequence's second key, command levels, the last-word search rule, `Alt+<symbol>` rejection, Option on `Mod+,`, override direction, the editor/page overlap, the disabled-submit guard and the quiet hint over an overlay each fails a test. Not unit-tested (no DOM): picking the focused form and passing its submitter to `requestSubmit`.
+> - **Checked by hand (e2e held):** in Chromium (headless Playwright), via a throwaway script on `pnpm --filter @surface/web dev` at port 5174:
+>   - `?` opens help with focus in the search; it shows 10 rows in 3 groups.
+>   - Searching "theme" leaves 1 row; "zzz" shows the empty message.
+>   - `Esc` closes help.
+>   - `Alt+Shift+T` flips the theme and caches it.
+>   - `G` shows the hint, which goes after 1 s. `G S` and `Mod+K` show "not available here".
+>   - Typing `g?[` in the search field types text only.
+>   - No console errors.
+> - **For S4/S6:**
+>   - Register handlers with `useCommand` inside `<ShortcutProvider>`. The shell uses the default `app` level, a page that overrides a shell command passes `level: 'page'`, and an overlay passes `'overlay'`.
+>   - Give focusable regions `data-shortcut-scope`, and call `usePageScope` for page scopes.
+>   - S6's command model should reuse `COMMANDS` ids and `CommandRegistry.isAvailable` for `when`. `when` takes no context yet; S6 adds `CommandContext`.
 
 ### S6: Command menu · L
 - `apps/web/src/command-menu/`: the Command model (SPEC-005 §4.1). **Sources:** registry operations with `ui` metadata (via `when` = context match plus a client-side permission pre-check using the shared predicate helpers on the store), navigation (route table plus live teams), and toggles.
@@ -116,7 +172,7 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 | AC-4 | ⏸ held (e2e) `e2e/command-menu-nested.spec.ts` |
 | AC-5, AC-6 | `web/test/shortcuts-engine.test.ts` (+ `e2e/shortcuts.spec.ts`, ⏸ held) |
 | AC-7 | `web/test/shortcuts-conflicts.test.ts` (CI) |
-| AC-8 | `web/test/shortcut-help.test.ts` |
+| AC-8 | `web/test/shortcut-help.test.tsx` |
 | AC-9 | ⏸ held (perf) `e2e/perf/command-menu.perf.ts` |
 | AC-10 | ⏸ held (e2e) `e2e/preferences-sync.spec.ts` |
 | AC-11 | `pnpm test:tokens` + Stylelint |

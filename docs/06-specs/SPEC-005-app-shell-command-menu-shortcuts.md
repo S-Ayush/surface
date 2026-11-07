@@ -73,6 +73,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. In M0: 
 
 - **One global `keydown` listener** at the document level resolves bindings in this order: active overlay scope, then focused component scope, then page scope, then `global`.
 - **Input suppression:** when `event.target` is an input, textarea, contenteditable, or inside `[data-shortcuts="off"]`, only `Mod+…` and `Esc` bindings are considered.
+- **Overlay capture** (added 2026-11-07, PLAN-005 S5): while an overlay is open (modal or picker scope), page scopes are inactive and `global` bindings follow the input-suppression rule (only `Mod+…` and `Esc`), so letters typed into a menu's type-ahead never start `G S`. Suppression and overlay capture apply to every key of a sequence. Component scopes inside the overlay (the editor in a dialog) stay active.
 - **Sequences:** a pending-sequence state with a 1 s timeout and a hint toast listing the possible continuations.
 - **Registry → help:** the `?` overlay is generated from the registry, grouped by `group`, filtered to bindings available in the current milestone build, and searchable.
 - **Bindings are commands:** each binding references a command id. The same `when` guard applies, and a disabled command makes its shortcut a no-op (with a subtle "not available here" hint).
@@ -126,7 +127,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. In M0: 
 |---|---|---|
 | E1 | `Mod+K` pressed inside the editor with a text selection | The editor's "insert link" wins (editor scope, M1). Without a selection, the command menu opens. |
 | E2 | A single-letter shortcut while an IME composition is active | Ignored (`event.isComposing`) |
-| E3 | Non-US keyboard layouts (e.g. `?` needs Shift, AZERTY) | Bindings match on `event.key` (the produced character) for printable keys, and on `event.code` for `Mod+` letter combinations. Tested with AZERTY and QWERTZ. |
+| E3 | Non-US keyboard layouts (e.g. `?` needs Shift, AZERTY) | Bindings match on `event.key` (the produced character) for printable keys, and on `event.code` for `Mod+` letter combinations. Tested with AZERTY and QWERTZ. **Refined 2026-11-07 (PLAN-005 S5):** letters combined with `Ctrl` or `Alt` also match on `event.code` (Option changes `event.key` on macOS: `Alt+Shift+T` types "ˇ"); a plain letter falls back to `event.code` when the layout types a letter outside A–Z (Russian, or `é` from a dead key); for other characters Shift, Option and AltGr are part of typing them and are not compared, so a symbol binding is written as the character (`?`, never `Shift+/` or `Alt+[`), and `Mod+<symbol>` must be pressed without Option or AltGr. Also tested with a Russian layout. |
 | E4 | A command's permission changes while the menu is open (role change via delta) | `when` re-evaluates reactively, and the item disappears |
 | E5 | A team is deleted or the user leaves it while viewing it | Redirect to home with a toast "You no longer have access to ENG" |
 | E6 | Very narrow viewport (< 768 px) | The sidebar becomes a drawer. The command menu is full-width. Shortcuts still work with a hardware keyboard. |

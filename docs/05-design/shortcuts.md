@@ -21,10 +21,10 @@ shortcut({
 
 **Rules**
 1. **`Mod`** = ⌘ on macOS, Ctrl on Windows and Linux. Never hard-code Cmd or Ctrl.
-2. **Inside text inputs and the editor,** only `Mod+…` combinations and `Esc` fire. Single-letter shortcuts are disabled while typing.
+2. **Inside text inputs and the editor,** only `Mod+…` combinations and `Esc` fire. Single-letter shortcuts are disabled while typing. The same applies to `global` bindings while an overlay is open (SPEC-005 §5, added 2026-11-07).
 3. **Sequences** (`G` then `I`) must be completed within 1 s. The first key shows a small hint toast ("G… I: Inbox, M: My issues…").
 4. **Scope resolution:** the most specific active scope wins (modal, then picker, then focused component scope, then page scope, then global).
-5. **Conflicts:** a CI test fails if two shortcuts in overlapping scopes share keys. The browser and OS reserved list (`Mod+T`, `Mod+W`, `Mod+N`, `Mod+Q`, `Mod+L`, `Mod+R`, `Mod+Shift+T`, `Mod+Tab`, `F5`, `F11`, `F12`) is blocked.
+5. **Conflicts:** a CI test fails if two shortcuts in overlapping scopes share keys, or if one's keys begin another's (`G` against `G S`). A binding that deliberately overrides one in a less specific scope names it in `shadows` (E1: the editor's `Mod+K`). The browser and OS reserved list (`Mod+T`, `Mod+W`, `Mod+N`, `Mod+Q`, `Mod+L`, `Mod+R`, `Mod+Shift+T`, `Mod+Tab`, `F5`, `F11`, `F12`) is blocked.
 6. **Every shortcut maps to a command-menu command,** so everything a shortcut does is also discoverable through `Cmd+K`.
 7. **Not user-rebindable in v1.** The registry design allows it later.
 
@@ -57,6 +57,7 @@ The **M** column is the milestone in which a shortcut ships. Shortcuts arrive wi
 | `Mod+,` | Settings | M0 |
 | `Alt+Shift+T` | Toggle light/dark theme | M0 |
 | `Esc` | Close the overlay, clear the selection, or go back from peek | M0 |
+| `F8` | Focus notifications (the toast region; handled by the component, listed in help). Added 2026-11-07, PLAN-005 S3/S5 | M0 |
 
 ### 3.2 Navigation (`G` then …)
 | Keys | Go to | M |
