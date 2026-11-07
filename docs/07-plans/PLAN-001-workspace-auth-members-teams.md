@@ -259,7 +259,7 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 > - **Decisions:**
 >   - SPEC-001 **D4** (the user's decision): the emailed link opens the page `/login/magic?token=`, which asks first and then sends `POST /auth/magic`. Not `GET /auth/magic`, which mail scanners would use up and which allows login CSRF.
 >   - The page was first planned at `/auth/magic` (C's router had it), but `/auth/*` is the server's API: the server's static fallback answers it with JSON 404, and so does the dev proxy. Found in the hand check; moved to `/login/magic` by the user's decision.
->   - SPEC-001 **D5** (proposed, awaiting approval): link requests answer before the lookup, a 60 s cooldown per user and kind, and a newest-only rule for reset links too.
+>   - SPEC-001 **D5** (approved by the user, 2026-11-07): link requests answer before the lookup, a 60 s cooldown per user and kind, and a newest-only rule for reset links too.
 > - **Server:**
 >   - `mail/link-tokens.ts`: `issueLink` locks the user's row (`FOR NO KEY UPDATE`), applies the cooldown, deletes the earlier links and stores the SHA-256. `useLink` is one `UPDATE … WHERE used_at IS NULL AND expires_at > now`, for active users only. Also the email lookup, the workspace name and `setPasswordHash`, plus `handlerLinks`. `LINK_TTL_MS` is tested against `LINK_LIFETIME_TEXT`.
 >   - `handlers/account/routes.ts`: `registerAccountRoutes` with `POST /auth/magic-link`, `/auth/forgot`, `/auth/magic` and `/auth/reset` (SPEC-001 §6.1).
@@ -288,7 +288,6 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - S5: add `invite` to `ctx.links`.
 >   - S7: the Members ⋯ "Generate reset link" calls `user.createResetLink` (give it `ui` then).
 >   - Clearing the lockout on reset is not done: reset signs in by itself.
->   - D5 awaits the user's approval.
 
 ### S5: Invites · M
 - Ops `invite.create` (returns `{url, emailed}`; E3 conflict), `invite.list`, `invite.revoke`.
