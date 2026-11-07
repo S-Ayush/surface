@@ -146,7 +146,11 @@ pnpm check      # build, lint, typecheck and unit tests
 
 `pnpm test:int` runs the integration tests against a throwaway PostgreSQL. Each checkout gets its
 own dev database; `pnpm dev:db:down` stops it and keeps its data. `PORT`, `SURFACE_DEV_WEB_PORT`
-and `SURFACE_DEV_PG_PORT` move the server, Vite and PostgreSQL to other ports.
+and `SURFACE_DEV_PG_PORT` move the server, Vite and PostgreSQL to other ports. Two dev stacks on
+one machine share cookies, because browsers keep cookies per host, not per port: signing in on one
+signs you out of the other. Give each stack its own loopback name, such as
+`SURFACE_URL=http://a.localhost:5173 pnpm dev`, and open that address (every `*.localhost` name is
+this machine).
 
 Start with [CLAUDE.md](CLAUDE.md) for the rules of the codebase, then [docs/](docs/): the product
 in `02-product`, the domain model in `03-domain`, the architecture in `04-architecture`, feature
