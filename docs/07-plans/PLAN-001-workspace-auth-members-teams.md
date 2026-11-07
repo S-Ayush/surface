@@ -106,13 +106,58 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 - Web: login page, auth guard, `?next=` handling, 401 → redirect (E14; keeps the queue).
 - **Tests:** AC-5 (identical body and status, timing ±50 ms), AC-6, AC-7 (cookie flags, hash-only storage), AC-8, AC-9.
 
-### S4: Mailer, magic link, password reset · M
+### S4: Mailer, magic link, password reset · M · mailer half built 2026-11-07; routes after S3
 - Mailer service (Nodemailer, from `SMTP_URL`). Sending happens **via the outbox and a job** (`email.send`), never inside request transactions. Plain HTML templates plus text alternatives (magic link, reset, invite).
 - `POST /auth/magic-link` (always 200; invalidates older unused links, E9) and `GET /auth/magic` (consume, then session).
 - `POST /auth/forgot`, `POST /auth/reset` (revokes other sessions, E10).
 - `user.createResetLink` op (🛡) and `surface reset-password <email>` CLI.
 - Web: forgot, reset, check-email pages. Magic-link and forgot options are hidden when `smtp=false`.
 - **Tests:** AC-3 (no-SMTP path), AC-4 (with a **Mailpit** container in CI: read the emails via its API and follow the links).
+
+> **As built, mailer half (2026-11-07).** Built ahead of S3 at the user's request. The routes (`/auth/magic-link`, `/auth/magic`, `/auth/forgot`, `/auth/reset`), `user.createResetLink`, the CLI and the web pages come once S3 is on `main`. The slice gets its ✅ only then.
+> - **Structure** (`apps/server/src/mail/`): `smtp.ts` (mailer), `templates.ts` (magic link, reset, invite: HTML and a text alternative), `links.ts` (`magicLinkUrl`, `passwordResetUrl`, `inviteUrl` on `SURFACE_URL`), `seal.ts`, `job.ts` (queue and worker).
+> - **Dependency:** `nodemailer` ^10.3.1, which has no dependencies of its own and needs Node ≥ 20. ADR-0007 names it. The latest major was taken for the security fixes since 7.x, including STARTTLS hardening and a `requireTLS` fix; its changelog shows no break in the calls we make.
+>   - Not `@types/nodemailer`: it depends on the AWS SES SDK (about 25 packages) to type a transport Surface never uses. `mail/nodemailer.d.ts` declares the few calls we make instead.
+>   - The test SMTP server is ~150 lines on `node:net` (`test/fake-smtp.ts`), not a package.
+> - **"Via the outbox", as built:**
+>   - A request enqueues on **its own transaction's connection**: `enqueueEmail(boss, client, key, email)` hands pg-boss's `send` a `db` over that connection. The job commits or rolls back with the request, and the SMTP conversation happens only in the worker.
+>   - `client` is a `pg.PoolClient`, never the pool: on the pool the job would commit at once, whatever the request does.
+>   - `event_outbox` is not used. Its rows are a public event contract (webhooks), and an email job carries a credential.
+>   - The queue is named `email-send` (pg-boss style, like `synclog-prune`) for ADR-0010's `email.send`.
+> - **Sealed payloads:** the job data is `{ sealed }`, AES-256-GCM under a key derived from `SESSION_SECRET` (HKDF). Neither `pgboss.job` nor a backup of it holds a readable link, token or address. Changing `SESSION_SECRET` makes queued emails unreadable: they are logged and dropped.
+> - **TLS rule** (SPEC-004 §7 `SMTP_URL`, updated):
+>   - `smtps://` is TLS from the first byte.
+>   - `smtp://` with a user name *requires* STARTTLS (`requireTLS`), so a password never crosses plain SMTP.
+>   - `smtp://` without credentials still upgrades whenever the server offers STARTTLS, and the server's certificate is always verified. Plain SMTP happens only with a relay that offers no STARTTLS; a relay with a self-signed certificate fails every send (retried, then logged). No opt-out in v1.
+>   - Ports default to 587 and 465.
+> - **Nodemailer settings:** logging off, and file and URL access off (rule 5).
+> - **Retries and delivery:**
+>   - `EMAIL_QUEUE_OPTIONS`: 5 retries, jittered exponential backoff from 15 s capped at 5 min (roughly 4–12 minutes in all), 120 s per attempt; settled jobs are deleted after a day.
+>   - Only a 5xx refusal of a recipient (`RCPT TO`) or of the message (`DATA`) is final (`rejected`, logged as an error).
+>   - Everything else throws, so pg-boss retries: a refused sender (`MAIL FROM`, usually a wrong `SMTP_FROM`), a refused login or TLS upgrade, connection trouble, timeouts and 4xx. The thrown error names only the SMTP error code, because pg-boss stores it.
+>   - The last retry's failure is logged as an error ("gave up"), the others as warnings (SPEC-001 E7).
+>   - Delivery is at least once, not idempotent (ADR-0010): a lost `250` reply, or an attempt that outlives the 120 s expiry, can send a duplicate.
+>   - Logs carry the job id, the template, the attempt and the SMTP error fields. The link, its token and the SMTP credentials are masked even when the server quotes them back. The recipient's address can appear, since SMTP replies routinely quote it.
+>   - `startEmailWorker` returns `stop()`, which calls `boss.offWork` (`boss.stop()` covers it too).
+> - **For the rest of S4 and for S5:**
+>   - **Wiring is session A's** (`jobs/`, `server.ts`, `executor/`; handoff):
+>     - `createEmailQueue(boss)` must run at startup in every role that enqueues;
+>     - `startEmailWorker(boss, { smtp, sessionSecret, log })` runs in `all`/`worker` when `config.smtp` is set;
+>     - handlers and routes need a way to enqueue on the operation's connection. `HandlerContext` exposes no connection today (`ctx.query` is read helpers only), so the handoff asks for a capability such as `ctx.enqueueEmail(email)`. The `web` role then starts pg-boss for sending only.
+>   - Link lifetimes in the email copy are `LINK_LIFETIME_TEXT` (15 min, 1 h, 7 days). Keep them equal to the token lifetimes S4 and S5 set.
+>   - **Routes, AC-5:** `EmailJobSchema.to` is `z.email()`, which rejects some addresses a user row could hold (IDN domains, quoted local parts). `/auth/magic-link` and `/auth/forgot` must still answer generically when enqueueing fails validation, or user creation must share the same email schema. Otherwise an account with such an address answers 500, which reveals that it exists.
+>   - **S5, E7:** sending is asynchronous, so `invite.create`'s `emailed` can only mean "queued". "Email failed. Copy the link instead" needs the job's outcome later, for example via `boss.getJobById` or a status on the invite. S5 decides, and amends SPEC-001 E7 if needed.
+> - **Tests** (unit, fake SMTP on 127.0.0.1; 38 declared, 42 run):
+>   - `mail-content.test.ts` (9, 13 run): templates, escaping, subject line breaks, nothing remote, links;
+>   - `mail-seal.test.ts` (5, incl. a tamper property with a fixed seed);
+>   - `mail-smtp.test.ts` (14): transport options, a multipart message from `SMTP_FROM`, no AUTH without STARTTLS, final vs retried refusals (`RCPT`, `DATA`, `MAIL FROM`, 4xx, an unreachable server), credential masking;
+>   - `mail-job.test.ts` (10): enqueue on the given connection, sealed-only payload, invalid emails refused before queueing, sent, rejected, retried, error on the last retry, link masked in logged replies, unreadable, worker end to end and `stop()`.
+> - **Checked by hand against real pg-boss 12.38.1 on Postgres** (scratch integration test, deleted; new integration tests are held). All four with Nodemailer 7.0.9; the first three again with 10.3.1 after the review fixes:
+>   - a rolled-back enqueue leaves no job and sends nothing;
+>   - a committed one is invisible to other connections until the commit, then is sent;
+>   - the stored job holds neither the token nor the address;
+>   - with SMTP down the job goes to `retry`, and its stored error is `SMTP send failed (ESOCKET)`.
+> - AC-3 and AC-4 stay ⏸ held (e2e).
 
 ### S5: Invites · M
 - Ops `invite.create` (returns `{url, emailed}`; E3 conflict), `invite.list`, `invite.revoke`.

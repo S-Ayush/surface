@@ -141,7 +141,7 @@ All configuration is through environment variables, validated at startup with a 
 | `SESSION_SECRET` | ✓ | — | ≥ 32 bytes hex. Signs CSRF tokens and similar. |
 | `POSTGRES_PASSWORD` | ✓ (bundled DB) | — | |
 | `DATABASE_URL` | | composed | Supports `?sslmode=require` for managed DBs |
-| `SMTP_URL` | | — | `smtp(s)://user:pass@host:port`. Unset means no-SMTP mode. |
+| `SMTP_URL` | | — | `smtp(s)://user:pass@host:port`. Unset means no-SMTP mode. `smtps://` is TLS from the first byte (port 465 by default). `smtp://` (587 by default) upgrades with STARTTLS whenever the server offers it, and **requires** it when the URL has a user name, so the password never travels unencrypted. The server's certificate is always verified. |
 | `SMTP_FROM` | with SMTP | — | `Surface <surface@example.com>` |
 | `UPLOAD_MAX_MB` | | 25 | |
 | `MCP_ENABLED` | | true | Effective in M6 |
