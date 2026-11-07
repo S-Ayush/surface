@@ -5,3 +5,4 @@ export * from './outbox.js';
 export * from './idempotency.js';
 export * from './sync.js';
 export * from './workspace.js';
+export * from './auth.js';

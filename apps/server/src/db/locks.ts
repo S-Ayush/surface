@@ -17,3 +17,13 @@ export const LOCKS = {
   /** Serialises CREATE DATABASE in the integration-test harness. */
   testDatabases: key(100),
 } as const;
+
+/**
+ * Classes for two-key locks, `pg_advisory_xact_lock(class, hashtext(name))`, for one lock per
+ * name within a feature. Postgres keeps the two-key space apart from the 64-bit keys above, so
+ * they never collide; each feature takes its own class.
+ */
+export const LOCK_CLASSES = {
+  /** One sign-in key (`account:…`, `ip:…`) at a time (PLAN-001 S3, `auth/attempts.ts`). */
+  authAttempts: 0x5355_0001,
+} as const;

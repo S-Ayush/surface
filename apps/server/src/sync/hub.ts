@@ -153,7 +153,7 @@ export class SyncHub {
    * up from its own `since`. Rejects if the database can't be reached.
    */
   async start(): Promise<void> {
-    const listener = await this.#options.source.listen(() => this.#requestDrain(true));
+    const listener = await this.#listen();
     try {
       this.#broadcastedUpTo = await this.#options.source.head();
     } catch (error) {
@@ -181,7 +181,15 @@ export class SyncHub {
     await this.#draining;
   }
 
-  /** Closes the connections of these sessions with `4001` (SPEC-002 E10). */
+  #listen(): Promise<Listener> {
+    return this.#options.source.listen(
+      () => this.#requestDrain(true),
+      // Ended on some replica (`notifySessionsRevoked`): close them here too.
+      (sessionIds) => void this.closeSessions(sessionIds),
+    );
+  }
+
+  /** Closes the connections of these sessions with `4001` (SPEC-002 E10), on this replica. */
   closeSessions(sessionIds: Iterable<string>): number {
     const ids = new Set(sessionIds);
     let closed = 0;
@@ -372,7 +380,7 @@ export class SyncHub {
       await delay(this.#retryDelayMs, undefined, { ref: false });
       if (this.#stopped) return;
       try {
-        const listener = await this.#options.source.listen(() => this.#requestDrain(true));
+        const listener = await this.#listen();
         if (this.#stopped) {
           await listener.close();
           return;

@@ -1,7 +1,7 @@
 /**
  * Server-side sessions (ADR-0007, SPEC-001 AC-7): the cookie `surface_session` carries a random
  * 256-bit token; the database keeps only its SHA-256. PLAN-001 S2 creates the first session at
- * setup; S3 adds login, reading the cookie back, sliding expiry and CSRF.
+ * setup; S3 signs in, reads the cookie back (`auth/sessions.ts`) and adds CSRF (`auth/csrf.ts`).
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { uuidv7 } from '../db/uuidv7.js';
@@ -69,4 +69,22 @@ export function sessionCookie(token: string, { secure }: { secure: boolean }): s
   ];
   if (secure) attributes.push('Secure');
   return attributes.join('; ');
+}
+
+/** A `Set-Cookie` value that deletes the cookie `name` (sign-out, an expired session). */
+export function clearedCookie(name: string, { secure }: { secure: boolean }): string {
+  return `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure ? '; Secure' : ''}`;
+}
+
+/** The value of cookie `name` in a `Cookie` header, if present and non-empty. */
+export function readCookie(header: string | undefined, name: string): string | undefined {
+  if (header === undefined) return undefined;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq !== -1 && part.slice(0, eq).trim() === name) {
+      const value = part.slice(eq + 1).trim();
+      return value.length > 0 ? value : undefined;
+    }
+  }
+  return undefined;
 }

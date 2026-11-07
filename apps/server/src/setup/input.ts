@@ -7,6 +7,7 @@ import {
   emailProblem,
   NAME_MAX_LENGTH,
   nameProblem,
+  normaliseEmail,
   passwordProblem,
   teamKeyProblem,
   timeZoneProblem,
@@ -35,9 +36,7 @@ export const setupInputSchema = z.object({
   workspace: z.object({ name: name('Workspace name', NAME_MAX_LENGTH.workspace) }),
   admin: z.object({
     name: name('Your name', NAME_MAX_LENGTH.person),
-    email: checked('Email is required', emailProblem).transform((email) =>
-      email.trim().toLowerCase(),
-    ),
+    email: checked('Email is required', emailProblem).transform(normaliseEmail),
     password: checked('Password is required', passwordProblem),
     timezone: timezone.optional(),
   }),

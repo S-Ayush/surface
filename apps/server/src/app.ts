@@ -8,6 +8,10 @@ import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } 
 import type { Logger } from 'pino';
 import type { Registry } from 'prom-client';
 import { buildInfo, defaultWebDir, type BuildInfo } from './build-info.js';
+import type { AttemptStore } from './auth/attempts.js';
+import { registerAuthRoutes } from './auth/routes.js';
+import type { SessionAuth } from './auth/sessions.js';
+import type { AuthStore } from './auth/store.js';
 import type { Config } from './config.js';
 import type { Executor } from './executor/execute.js';
 import { trustReverseProxy } from './http/client-address.js';
@@ -41,6 +45,19 @@ export interface AppDeps {
   sync?: SyncDeps;
   /** First-run setup and its guard (PLAN-001 S2). Left out by tests that don't need it. */
   setup?: { store: SetupStore; gate: SetupGate };
+  /** Sign-in, sessions and CSRF (PLAN-001 S3). Left out by tests that don't need them. */
+  auth?: AuthDeps;
+}
+
+export interface AuthDeps {
+  auth: SessionAuth;
+  store: AuthStore;
+  attempts: AttemptStore;
+  /** Closes sessions' sockets on sign-out (the sync hub, where it runs). */
+  closeSessions?: (sessionIds: readonly string[]) => void;
+  now?: () => Date;
+  /** Password checking, for tests that count the work (AC-5). */
+  verify?: (hash: string, password: string) => Promise<boolean>;
 }
 
 export type SyncDeps = Omit<SyncRoutesDeps, 'lifecycle'>;
@@ -56,6 +73,7 @@ export async function buildApp({
   ops,
   sync,
   setup,
+  auth,
 }: AppDeps): Promise<FastifyInstance> {
   // Widened to Fastify's base logger type so the instance keeps its default generics.
   const loggerInstance: FastifyBaseLogger = logger;
@@ -88,7 +106,26 @@ export async function buildApp({
   const metrics = config.metricsEnabled ? registerMetrics(app) : undefined;
   registerHealthRoutes(app, lifecycle, info);
   // Its guard is an `onRequest` hook: registered before the routes it closes until setup is done.
-  if (setup) registerSetupRoutes(app, { ...setup, lifecycle, secureCookies: config.secureCookies });
+  if (setup) {
+    registerSetupRoutes(app, {
+      ...setup,
+      lifecycle,
+      secureCookies: config.secureCookies,
+      sessionSecret: config.sessionSecret,
+    });
+  }
+  // After the setup guard, before the routes: the CSRF check is an `onRequest` hook too.
+  if (auth) {
+    registerAuthRoutes(app, {
+      ...auth,
+      lifecycle,
+      secureCookies: config.secureCookies,
+      sessionSecret: config.sessionSecret,
+      allowedOrigin: new URL(config.publicUrl).origin,
+      smtpEnabled: config.smtp !== null,
+      setupComplete: setup ? () => setup.gate.isComplete() : () => Promise.resolve(true),
+    });
+  }
   if (ops) {
     registerOpsRoutes(app, {
       executor: ops.createExecutor(metrics),

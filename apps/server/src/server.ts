@@ -15,7 +15,10 @@ import { prepareDatabase } from './db/prepare.js';
 import { createExecutor, missingHandlers } from './executor/execute.js';
 import { tokenBucket } from './executor/rate-limit.js';
 import { HANDLERS } from './handlers/index.js';
-import { noSignedInActor, type ActorResolver } from './http/ops.js';
+import { pgAttemptStore } from './auth/attempts.js';
+import { SessionAuth } from './auth/sessions.js';
+import { pgAuthStore } from './auth/store.js';
+import type { ActorResolver } from './http/ops.js';
 import { startJobs, type Jobs } from './jobs/index.js';
 import { Lifecycle } from './lifecycle.js';
 import { createLogger } from './logger.js';
@@ -23,7 +26,7 @@ import { installProcessHandlers } from './shutdown.js';
 import { StartupError } from './startup-error.js';
 import pg from 'pg';
 import { SyncHub } from './sync/hub.js';
-import { pgSyncLogSource } from './sync/hub-source.js';
+import { pgSyncLogSource, sessionCloser } from './sync/hub-source.js';
 import { announceSetup } from './setup/announce.js';
 import { SetupGate } from './setup/routes.js';
 import { pgSetupStore } from './setup/store.js';
@@ -35,7 +38,7 @@ export interface StartOptions {
   migrations?: Migration[];
   /** How long to wait for the database before giving up (E1). */
   databaseWaitMs?: number;
-  /** Who sent a request. Sessions arrive in PLAN-001 S3; until then nobody is signed in. */
+  /** Who sent a request, instead of the session cookie (tests that sign in without it). */
   resolveActor?: ActorResolver;
 }
 
@@ -73,7 +76,9 @@ export async function startServer(
   if (unhandled.length > 0) {
     throw new StartupError(`No handler is registered for: ${unhandled.join(', ')}.`);
   }
-  const resolveActor = options.resolveActor ?? noSignedInActor;
+  const authStore = pgAuthStore(pool);
+  const sessions = new SessionAuth(authStore, { log: logger });
+  const resolveActor = options.resolveActor ?? sessions.resolveActor;
   // Engine fixtures (DebugItem) only outside production, like internal operations.
   const sync = syncRegistry({ includeFixtures: config.nodeEnv !== 'production' });
   // The hub serves WebSockets, so it runs where HTTP traffic is served (SPEC-004 §7 roles).
@@ -106,8 +111,21 @@ export async function startServer(
     lifecycle,
     logger,
     info,
-    sync: { pool, registry: sync, resolveActor, ...(hub ? { hub } : {}) },
+    sync: {
+      pool,
+      registry: sync,
+      resolveActor,
+      sessionIdOf: sessions.sessionIdOf,
+      ...(hub ? { hub } : {}),
+    },
     setup: { store: setupStore, gate: setupGate },
+    auth: {
+      auth: sessions,
+      store: authStore,
+      attempts: pgAttemptStore(pool),
+      // Here at once (if this replica has a hub), and on every replica through `NOTIFY`.
+      closeSessions: sessionCloser({ hub, pool, log: logger }),
+    },
     ops: {
       registry,
       resolveActor,

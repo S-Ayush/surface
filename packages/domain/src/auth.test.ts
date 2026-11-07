@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EMAIL_MAX_LENGTH,
   emailProblem,
+  normaliseEmail,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   passwordProblem,
@@ -46,5 +47,11 @@ describe('emailProblem', () => {
   it('refuses an address longer than the maximum', () => {
     const long = `${'a'.repeat(EMAIL_MAX_LENGTH - '@example.com'.length + 1)}@example.com`;
     expect(emailProblem(long)).toBe('Email must be at most 254 characters long');
+  });
+});
+
+describe('normaliseEmail', () => {
+  it('drops surrounding spaces and lowercases, so any spelling finds the account (E2)', () => {
+    expect(normaliseEmail('  Ada@Example.COM ')).toBe('ada@example.com');
   });
 });

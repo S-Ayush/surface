@@ -5,6 +5,9 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
+import { CSRF_COOKIE } from '@surface/sync-protocol';
+import { csrfToken } from '../src/auth/csrf.js';
+import { SessionAuth } from '../src/auth/sessions.js';
 import { SESSION_COOKIE, type CreatedSession } from '../src/auth/session.js';
 import type { Config } from '../src/config.js';
 import { Lifecycle } from '../src/lifecycle.js';
@@ -12,6 +15,7 @@ import { createLogger } from '../src/logger.js';
 import type { SetupInput } from '../src/setup/input.js';
 import { SetupGate } from '../src/setup/routes.js';
 import type { SetupOutcome, SetupStore } from '../src/setup/store.js';
+import { FakeAttempts, FakeAuthStore } from './auth-fakes.js';
 import { captureLogs, fakeWebDir, testConfig } from './helpers.js';
 
 const TOKEN = 'ABCD-EFGH-JKMN-PQRS-TVWX-YZ01-2345-6789';
@@ -50,7 +54,8 @@ afterEach(async () => {
 async function setupApp({
   ready = true,
   config: overrides = {},
-}: { ready?: boolean; config?: Partial<Config> } = {}) {
+  withAuth = false,
+}: { ready?: boolean; config?: Partial<Config>; withAuth?: boolean } = {}) {
   const config = testConfig({ logLevel: 'info', webDir: fakeWebDir(), ...overrides });
   const logs = captureLogs();
   const lifecycle = new Lifecycle();
@@ -60,10 +65,20 @@ async function setupApp({
     lifecycle,
     logger: createLogger(config, logs.stream),
     setup: { store, gate: new SetupGate(store) },
+    // The sign-in routes too, for what the login page asks before setup (PLAN-001 S3).
+    ...(withAuth
+      ? {
+          auth: {
+            auth: new SessionAuth(new FakeAuthStore()),
+            store: new FakeAuthStore(),
+            attempts: new FakeAttempts(),
+          },
+        }
+      : {}),
   });
   apps.push(app);
   if (ready) lifecycle.markReady();
-  return { app, store, logs };
+  return { app, store, logs, lifecycle };
 }
 
 /** The SPEC-003 error of a response (`{ ok: false, error }`). */
@@ -131,6 +146,41 @@ describe('while setup is incomplete', () => {
     }
   });
 
+  it('tells the login page that setup isn’t done, so it can send the user to /setup', async () => {
+    const { app, store } = await setupApp({ withAuth: true, config: { smtp: null } });
+    const capabilities = async () =>
+      (await app.inject({ url: '/auth/capabilities' })).json<unknown>();
+    expect(await capabilities()).toEqual({
+      ok: true,
+      result: { smtp: false, setupComplete: false },
+    });
+    // Every other sign-in route stays closed until then.
+    const session = await app.inject({ url: '/auth/session' });
+    expect([session.statusCode, session.json<{ error: { code: string } }>().error.code]).toEqual([
+      503,
+      'SETUP_REQUIRED',
+    ]);
+    store.completed = true;
+    expect(await capabilities()).toMatchObject({ result: { setupComplete: true } });
+  });
+
+  it('stays closed while the server shuts down', async () => {
+    const { app, lifecycle } = await setupApp();
+    lifecycle.beginDraining();
+    const res = await app.inject({ method: 'POST', url: '/api/ops/workspace.get' });
+    expect([res.statusCode, errorOf(res).code]).toEqual([503, 'SETUP_REQUIRED']);
+  });
+
+  it('answers 503, not an error, when shutdown began before the server was ever ready', async () => {
+    const { app, store, lifecycle } = await setupApp({ ready: false });
+    lifecycle.beginDraining();
+    const res = await app.inject({ method: 'POST', url: '/setup', payload: form() });
+    expect([res.statusCode, errorOf(res).code]).toEqual([503, 'UNAVAILABLE']);
+    const api = await app.inject({ method: 'POST', url: '/api/ops/workspace.get' });
+    expect(api.statusCode).not.toBe(500);
+    expect(store.stateReads).toBe(0);
+  });
+
   it('leaves startup alone: before the server is ready the routes answer 503 UNAVAILABLE', async () => {
     const { app, store } = await setupApp({ ready: false });
     const res = await app.inject({ method: 'POST', url: '/setup', payload: form() });
@@ -187,10 +237,12 @@ describe('POST /setup', () => {
     const res = await app.inject({ method: 'POST', url: '/setup', payload: form({ admin }) });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toEqual({ ok: true, result: { next: '/team/ENG' } });
-    // SPEC-001 AC-7: HttpOnly, SameSite=Lax and Secure on an https SURFACE_URL.
-    expect(res.headers['set-cookie']).toBe(
+    // SPEC-001 AC-7: HttpOnly, SameSite=Lax and Secure on an https SURFACE_URL. The CSRF cookie
+    // comes with the session, readable by the page (PLAN-001 S3).
+    expect(res.headers['set-cookie']).toEqual([
       `${SESSION_COOKIE}=session-token-value; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure`,
-    );
+      `${CSRF_COOKIE}=${csrfToken(testConfig().sessionSecret, 'session-1')}; Path=/; Max-Age=2592000; SameSite=Lax; Secure`,
+    ]);
     // Normalised before the store sees them: email lowercase (INV-02), key uppercase, the zone
     // spelled canonically.
     expect(store.completeCalls[0]).toMatchObject({
@@ -233,7 +285,8 @@ describe('POST /setup', () => {
   it('omits Secure on an http SURFACE_URL, so a local install can sign in', async () => {
     const { app } = await setupApp({ config: { secureCookies: false } });
     const res = await app.inject({ method: 'POST', url: '/setup', payload: form() });
-    expect(res.headers['set-cookie']).not.toContain('Secure');
+    expect(res.headers['set-cookie']).toHaveLength(2);
+    expect(String(res.headers['set-cookie'])).not.toContain('Secure');
   });
 
   it.each([

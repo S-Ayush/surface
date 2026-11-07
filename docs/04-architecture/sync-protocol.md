@@ -98,6 +98,8 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 
 **No valid session:** the hub accepts the upgrade and then closes at once with `4001`. It does not answer `401`. A browser cannot read the HTTP status of a refused upgrade, which looks like any network failure (`1006`), so the client would keep retrying. This is how a client that was offline when its session was revoked learns about it. Nothing is sent before the close.
 
+**Revoked on any replica:** a session that ends (sign-out, and later revoke and password reset) closes its sockets with `4001` on every replica. The server sends `NOTIFY session_revoked` with the session ids, and every hub's listen connection hears it next to `sync`. A replica whose listen connection is down at that moment misses it, and those sockets stay open until they disconnect; their next connect is closed with `4001` as above.
+
 **Catch-up:** on connect, the server streams `sync_log` rows with `sync_id > since` filtered by the user's groups, then switches to live mode. If `since` is older than the retention window (30 days) or ahead of the server's head (a database restored from a backup, SPEC-002 Q10), it sends `resync(too_old)`; if `schemaHash` differs, `resync(schema)`. After a `resync` the server sends nothing more on that connection but pings, and the client closes it.
 
 ### 4.4 Mutations: `POST /sync/mutate`
@@ -235,6 +237,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-07 | v0.4 | PLAN-001 S3, server only, no wire change. A session ended on one replica closes its sockets on every replica (`NOTIFY session_revoked`, §4.3). | Session A (Log) |
 | 2026-11-07 | v0.4 | PLAN-002 S8 follow-up (CSRF), no codec change. `POST /sync/mutate` carries `X-CSRF-Token` from the `surface_csrf` cookie; `403 CSRF_INVALID` makes the client renew it through `GET /auth/session` and resend once (§4.4, SPEC-001 §6.1, Q7). `@surface/sync-protocol` exports `CSRF_HEADER`, `CSRF_COOKIE`, `CSRF_INVALID` and `SESSION_PATH` for both sides | Session A (session-d2 Handoffs; A defined the server side in PLAN-001 S3) |
 | 2026-11-07 | v0.4 | PLAN-002 S9, client only, no wire change. The client abandons a bootstrap whose response has not started within 30 s (§4.1); found by the sync simulation, where a hung bootstrap left a tab loading for good | — (no server change) |
 | 2026-11-07 | v0.4 | PLAN-002 S4, server only, no codec change. The hub refuses before the upgrade with `503`, `403` (a foreign `Origin`, or an API key, SPEC-002 Q9) or `400`, and may close with `1003`, `1008`, `1009`, `1011` or `1013`, all of which the client already treats as "reconnect with backoff" (§4.3). A `since` ahead of the server's head gets `resync(too_old)` (Q10). After a `resync` the server sends nothing more but pings (§4.3) | — |

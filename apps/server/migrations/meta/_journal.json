@@ -57,6 +57,13 @@
       "when": 1793993263277,
       "tag": "0007_team_default_status_and_setup",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794034572666,
+      "tag": "0008_auth_attempts",
+      "breakpoints": true
     }
   ]
 }

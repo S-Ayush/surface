@@ -2,9 +2,11 @@
 // pool, so a slow client holds no connection (SPEC-002 §4.3). The SQL itself runs against Postgres
 // in `sync-groups.int.test.ts` (AC-11); here a fake answers the two statements catch-up sends.
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { QueryClient } from '../src/sync/hub-source.js';
-import { pgSyncLogSource } from '../src/sync/hub-source.js';
+import { notifySessionsRevoked, pgSyncLogSource, sessionCloser } from '../src/sync/hub-source.js';
 
 /** A `sync_log` behind `query` only: there is no `connect`, so nothing can be held. */
 class FakePool implements QueryClient {
@@ -109,5 +111,72 @@ describe('catch-up from Postgres, page by page', () => {
     expect(await drain(pool, 3, 10)).toEqual(['too_old']);
     expect(await drain(pool, 4, 6)).toEqual([[5, 6]]);
     expect(await drain(pool, 11, 10)).toEqual(['too_old']);
+  });
+});
+
+describe('sessions ended on any replica (PLAN-001 S3 review M2)', () => {
+  /** A listen connection that records its statements and can be sent notifications. */
+  class FakeListenClient extends EventEmitter {
+    readonly statements: string[] = [];
+    connect = () => Promise.resolve();
+    query = (text: string) => {
+      this.statements.push(text);
+      return Promise.resolve({ rows: [] });
+    };
+    end = () => Promise.resolve();
+  }
+
+  it('listens for session_revoked and hands the ids to the hub', async () => {
+    const client = new FakeListenClient();
+    const source = pgSyncLogSource({
+      pool: new FakePool(0),
+      listenClient: () => client as unknown as pg.Client,
+    });
+    const revoked: (readonly string[])[] = [];
+    let synced = 0;
+    await source.listen(
+      () => (synced += 1),
+      (ids) => revoked.push(ids),
+    );
+    expect(client.statements).toEqual(['LISTEN sync', 'LISTEN session_revoked']);
+    client.emit('notification', { channel: 'session_revoked', payload: 's1,s2' });
+    client.emit('notification', { channel: 'sync', payload: '' });
+    expect([revoked, synced]).toEqual([[['s1', 's2']], 1]);
+  });
+
+  it('closes here and notifies every replica, a worker without a hub included', async () => {
+    const sent: unknown[][] = [];
+    const pool: QueryClient = {
+      query: <R extends Record<string, unknown>>(_text: string, values: unknown[] = []) => {
+        sent.push(values);
+        return Promise.resolve({ rows: [] as R[] });
+      },
+    };
+    const closedHere: string[] = [];
+    const hub = { closeSessions: (ids: Iterable<string>) => closedHere.push(...ids) };
+    const log = { warn: () => undefined };
+    sessionCloser({ hub, pool, log })(['s1']);
+    sessionCloser({ hub: undefined, pool, log })(['s2']);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(closedHere).toEqual(['s1']);
+    expect(sent).toEqual([
+      ['session_revoked', 's1'],
+      ['session_revoked', 's2'],
+    ]);
+  });
+
+  it('notifies in batches of 100 ids, under the payload limit', async () => {
+    const sent: unknown[][] = [];
+    const pool: QueryClient = {
+      query: <R extends Record<string, unknown>>(_text: string, values: unknown[] = []) => {
+        sent.push(values);
+        return Promise.resolve({ rows: [] as R[] });
+      },
+    };
+    const ids = Array.from({ length: 150 }, () => randomUUID());
+    await notifySessionsRevoked(pool, ids);
+    expect(sent.map(([channel]) => channel)).toEqual(['session_revoked', 'session_revoked']);
+    expect(sent.map(([, payload]) => String(payload).split(',').length)).toEqual([100, 50]);
+    expect(String(sent[0]?.[1]).length).toBeLessThan(8000);
   });
 });

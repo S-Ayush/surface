@@ -2,6 +2,10 @@
  * The hub's view of Postgres (SPEC-002 §4.3): the head, ranges of `sync_log`, catch-up a page at a
  * time, and `LISTEN sync`. Behind an interface so the hub's rules are unit-tested
  * against a fake; this file is covered by the integration tests.
+ *
+ * The listen connection also hears `session_revoked`: a session ended on any replica (sign-out,
+ * later revoke and password reset) closes its sockets on every replica (SPEC-002 E10, PLAN-001
+ * S3 review M2).
  */
 import type pg from 'pg';
 import { syncGroupSchema } from '@surface/sync-protocol';
@@ -39,7 +43,56 @@ export interface SyncLogSource {
    * Holds no database connection while the caller waits between pages.
    */
   catchUp(request: CatchUpRequest): AsyncGenerator<CatchUpEvent>;
-  listen(onNotify: () => void): Promise<Listener>;
+  /** `onNotify` on `NOTIFY sync`; `onSessionsRevoked` on `NOTIFY session_revoked`. */
+  listen(
+    onNotify: () => void,
+    onSessionsRevoked?: (sessionIds: readonly string[]) => void,
+  ): Promise<Listener>;
+}
+
+/** Sessions ended on some replica, as comma-separated ids (`notifySessionsRevoked`). */
+export const SESSIONS_REVOKED_CHANNEL = 'session_revoked';
+/** Ids per notification: 100 UUIDs stay far below Postgres's 8000-byte payload limit. */
+const REVOKED_PER_NOTIFY = 100;
+
+/**
+ * What ends a session's sockets everywhere: this replica's hub at once, if it has one, and every
+ * replica's through `NOTIFY`. A `worker` replica has no hub but still serves sign-out, so it
+ * notifies too (S3 re-review m2).
+ */
+export function sessionCloser({
+  hub,
+  pool,
+  log,
+}: {
+  hub: { closeSessions(sessionIds: Iterable<string>): number } | undefined;
+  pool: QueryClient;
+  log: { warn(details: object, message: string): void };
+}): (sessionIds: readonly string[]) => void {
+  return (sessionIds) => {
+    hub?.closeSessions(sessionIds);
+    notifySessionsRevoked(pool, sessionIds).catch((error: unknown) => {
+      log.warn({ err: error }, 'could not tell other replicas a session ended');
+    });
+  };
+}
+
+/**
+ * Tells every replica's hub, this one's included, to close these sessions' sockets. Sent after the
+ * sessions are deleted, so a socket that reconnects meanwhile is refused anyway. A replica whose
+ * listen connection is down at that moment misses it, and those sockets stay open until they
+ * disconnect: notifications aren't queued for a connection that isn't listening.
+ */
+export async function notifySessionsRevoked(
+  pool: QueryClient,
+  sessionIds: readonly string[],
+): Promise<void> {
+  for (let i = 0; i < sessionIds.length; i += REVOKED_PER_NOTIFY) {
+    await pool.query('SELECT pg_notify($1, $2)', [
+      SESSIONS_REVOKED_CHANNEL,
+      sessionIds.slice(i, i + REVOKED_PER_NOTIFY).join(','),
+    ]);
+  }
 }
 
 /** One statement at a time on any pool connection: a `pg.Pool`, never a checked-out client. */
@@ -115,7 +168,7 @@ export function pgSyncLogSource({ pool, listenClient }: PgSourceOptions): SyncLo
       }
     },
 
-    async listen(onNotify) {
+    async listen(onNotify, onSessionsRevoked) {
       const client = listenClient();
       const ended = new Promise<unknown>((resolve) => {
         client.on('error', resolve);
@@ -123,10 +176,14 @@ export function pgSyncLogSource({ pool, listenClient }: PgSourceOptions): SyncLo
       });
       client.on('notification', (message) => {
         if (message.channel === SYNC_CHANNEL) onNotify();
+        if (message.channel === SESSIONS_REVOKED_CHANNEL && message.payload) {
+          onSessionsRevoked?.(message.payload.split(',').filter((id) => id.length > 0));
+        }
       });
       try {
         await client.connect();
         await client.query(`LISTEN ${SYNC_CHANNEL}`);
+        if (onSessionsRevoked) await client.query(`LISTEN ${SESSIONS_REVOKED_CHANNEL}`);
       } catch (error) {
         await client.end().catch(() => undefined);
         throw error;

@@ -18,9 +18,6 @@ import { errorBody } from './errors.js';
  */
 export type ActorResolver = (request: FastifyRequest) => Promise<Actor | undefined>;
 
-/** Until sessions exist, nobody is signed in: the routes answer 401. */
-export const noSignedInActor: ActorResolver = () => Promise.resolve(undefined);
-
 export interface OpsRoutesDeps {
   readonly executor: Executor;
   readonly registry: OperationRegistry;
@@ -92,7 +89,8 @@ export async function signedIn(
   reply: FastifyReply,
   deps: Pick<OpsRoutesDeps, 'lifecycle' | 'resolveActor'>,
 ): Promise<Actor | undefined> {
-  if (deps.lifecycle.state === 'starting') {
+  // Until startup has finished, even if draining began meanwhile (a session lookup reads tables).
+  if (!deps.lifecycle.everReady) {
     // Migrations may still be running; tables an operation needs may not exist yet.
     await reply
       .code(503)

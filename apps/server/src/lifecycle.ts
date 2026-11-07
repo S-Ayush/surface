@@ -41,8 +41,22 @@ export class Lifecycle {
     return this.#state;
   }
 
+  /**
+   * Whether startup finished (the database is migrated), even if draining has begun since.
+   * Routes that touch the database check this rather than `state`: they keep working while
+   * draining, but not when a shutdown began before startup finished.
+   */
+  get everReady(): boolean {
+    return this.#everReady;
+  }
+
+  #everReady = false;
+
   markReady(): void {
-    if (this.#state === 'starting') this.#state = 'ready';
+    if (this.#state === 'starting') {
+      this.#state = 'ready';
+      this.#everReady = true;
+    }
   }
 
   beginDraining(): void {

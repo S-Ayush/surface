@@ -89,11 +89,13 @@ Assigned by the user on 2026-11-07, before the phase 1 sync point, so that the s
 
 | Session | Track | Scope, in order | Starts | File |
 |---|---|---|---|---|
-| **A** | Sync server, setup, auth | PLAN-002 S3–S5 → PLAN-001 S2, S3, S7, S9 | now (S3 in progress) | [session-a2-server-auth.md](session-a2-server-auth.md) |
+| **A** | Sync server, setup, auth | PLAN-002 S3–S5 → PLAN-001 S2, S3, S9 (S7 moved to E) | now (S3 in progress) | [session-a2-server-auth.md](session-a2-server-auth.md) |
 | **C** | Web app shell | PLAN-005 S5 → S6 → S4 → S7 → S8 | now (S5); S4 after PLAN-001 S1 + S3 | [session-c2-web-shell.md](session-c2-web-shell.md) |
-| **D** | Sync property suite, inspector | PLAN-002 S9 → S10 | now; S9 uses the real server after PLAN-002 S5 | [session-d2-sync-tests.md](session-d2-sync-tests.md) |
-| **E** | Workspace data, accounts, teams | PLAN-001 S1 → S8 → S4 → S5 → S6 | now (S1) | [session-e2-accounts-teams.md](session-e2-accounts-teams.md) |
+| **D** | Sync property suite, inspector | PLAN-002 S9 → S10, including the real-server test entry `@surface/server/testing` (moved from A) | now; S9 uses the real server after PLAN-002 S5 | [session-d2-sync-tests.md](session-d2-sync-tests.md) |
+| **E** | Workspace data, accounts, teams | PLAN-001 S1 → S8 → S4 → S7 (moved from A; after S3 is on `main`) → S5 → S6 → S8 web half | now (S1) | [session-e2-accounts-teams.md](session-e2-accounts-teams.md) |
 | **B** | Retired | none: packaging work resumes when the testing hold lifts (PLAN-004 S8, [end-of-phase handoff](session-b-packaging.md)) | — | — |
+
+**Reassigned 2026-11-07** (the user's decision, to shorten A's critical path): PLAN-001 S7 (Members and Workspace, Admin) goes to E, both halves, with its `ui` metadata and command-menu entries, on S3's actor and permission wiring. The shared error list in `packages/operations` (`catalog.ts`) is A's. The real-server test entry goes to D, which may edit `apps/server` for that entry only (plus what it strictly needs) and sends A a handoff for any change to a server internal.
 
 **Dependencies between sessions:**
 - E's PLAN-001 S1 (tables) unblocks A's PLAN-001 S2 and C's PLAN-005 S4.

@@ -10,6 +10,7 @@
  * SPA-excluded `SERVER_PREFIXES`: that would also exclude the page.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { csrfCookie, csrfToken } from '../auth/csrf.js';
 import { sessionCookie } from '../auth/session.js';
 import { errorBody } from '../http/errors.js';
 import type { Lifecycle } from '../lifecycle.js';
@@ -21,8 +22,17 @@ export const SETUP_STATUS_PATH = '/setup/status';
 
 /** Paths closed with `503 SETUP_REQUIRED` until setup is done. */
 const CLOSED_PREFIXES = ['/api/', '/sync/', '/auth/', '/files/', '/mcp'];
-/** Paths open whatever the setup state. */
-const OPEN_PATHS = new Set(['/healthz', '/readyz', '/metrics', SETUP_STATUS_PATH]);
+/**
+ * Paths open whatever the setup state. `/auth/capabilities` says whether setup is done, so the
+ * login page can tell (SPEC-001 §6.1).
+ */
+const OPEN_PATHS = new Set([
+  '/healthz',
+  '/readyz',
+  '/metrics',
+  SETUP_STATUS_PATH,
+  '/auth/capabilities',
+]);
 
 /**
  * Whether setup is done, remembered once it is: after that the guard costs nothing. Until then it
@@ -52,13 +62,15 @@ export interface SetupRouteDeps {
   readonly lifecycle: Lifecycle;
   /** `Secure` on the session cookie (https `SURFACE_URL`). */
   readonly secureCookies: boolean;
+  /** Signs the CSRF token set with the session (`auth/csrf.ts`). */
+  readonly sessionSecret: string;
 }
 
 export function registerSetupRoutes(app: FastifyInstance, deps: SetupRouteDeps): void {
   app.addHook('onRequest', (request, reply) => guard(request, reply, deps));
 
   app.get(SETUP_STATUS_PATH, async (request, reply) => {
-    if (deps.lifecycle.state !== 'ready') return unavailable(request, reply);
+    if (!deps.lifecycle.everReady) return unavailable(request, reply);
     const complete = await deps.gate.isComplete();
     const token = tokenParam(request);
     const tokenValid = !complete && token !== undefined && (await deps.store.tokenValid(token));
@@ -68,7 +80,7 @@ export function registerSetupRoutes(app: FastifyInstance, deps: SetupRouteDeps):
   });
 
   app.post(SETUP_PATH, async (request, reply) => {
-    if (deps.lifecycle.state !== 'ready') return unavailable(request, reply);
+    if (!deps.lifecycle.everReady) return unavailable(request, reply);
     const parsed = setupInputSchema.safeParse(request.body);
     if (!parsed.success) {
       const message = parsed.error.issues[0]?.message ?? 'Check the setup form and try again';
@@ -94,7 +106,12 @@ export function registerSetupRoutes(app: FastifyInstance, deps: SetupRouteDeps):
     request.log.info({ teamKey: outcome.teamKey }, 'setup complete');
     return reply
       .code(201)
-      .header('set-cookie', sessionCookie(outcome.session.token, { secure: deps.secureCookies }))
+      .header('set-cookie', [
+        sessionCookie(outcome.session.token, { secure: deps.secureCookies }),
+        csrfCookie(csrfToken(deps.sessionSecret, outcome.session.id), {
+          secure: deps.secureCookies,
+        }),
+      ])
       .header('cache-control', 'no-store')
       .send({ ok: true, result: { next: `/team/${outcome.teamKey}` } });
   });
@@ -105,8 +122,10 @@ async function guard(
   reply: FastifyReply,
   deps: SetupRouteDeps,
 ): Promise<FastifyReply | undefined> {
-  // Before migrations have run the state can't be read; the routes answer 503 meanwhile.
-  if (deps.lifecycle.state !== 'ready') return undefined;
+  // Before migrations have run the state can't be read; the routes answer 503 meanwhile. While
+  // draining, requests are still served, so the guard still applies (S3 review B2), unless
+  // startup never finished.
+  if (!deps.lifecycle.everReady) return undefined;
   const pathname = routedPath(request);
   if (OPEN_PATHS.has(pathname) || pathname.startsWith('/assets/')) return undefined;
   const isPage = wantsPage(request, pathname);

@@ -216,6 +216,17 @@ describe('GET /sync/ws', () => {
     expect(await closed).toBe(CloseCode.SessionRevoked);
   });
 
+  it('closes a socket whose session another replica ended (NOTIFY session_revoked)', async () => {
+    const { url, hub, source } = await app();
+    const { closed } = open(url, params(), {
+      'x-test-actor': 'member',
+      'x-test-session': 'session-1',
+    });
+    await eventually(() => hub.connectionCount === 1);
+    source.revokeSessions(['session-2', 'session-1']);
+    expect(await closed).toBe(CloseCode.SessionRevoked);
+  });
+
   it('closes a socket that sends binary data', async () => {
     const { url } = await app();
     const { socket, closed } = open(url, params(), { 'x-test-actor': 'member' });

@@ -39,3 +39,11 @@ export function emailProblem(email: string): string | undefined {
     ? undefined
     : 'Email must look like name@example.com';
 }
+
+/**
+ * An email as stored and looked up: without surrounding spaces, in lowercase (SPEC-001 E2). Setup,
+ * sign-in and invites all use this, so an address typed differently still finds its account.
+ */
+export function normaliseEmail(email: string): string {
+  return email.trim().toLowerCase();
+}

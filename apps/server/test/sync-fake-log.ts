@@ -31,6 +31,7 @@ export class FakeLog implements SyncLogSource {
   catchUpStarted = deferred<void>();
   snapshotsOpen = 0;
   #notify: (() => void) | undefined;
+  #revoked: ((ids: readonly string[]) => void) | undefined;
   #end = deferred<unknown>();
   listens = 0;
   listenersClosed = 0;
@@ -72,6 +73,11 @@ export class FakeLog implements SyncLogSource {
     const added = this.commit(...rows);
     this.#notify?.();
     return added;
+  }
+
+  /** Another replica ended these sessions (`NOTIFY session_revoked`). */
+  revokeSessions(ids: readonly string[]): void {
+    this.#revoked?.(ids);
   }
 
   /** The listen connection drops. */
@@ -121,10 +127,14 @@ export class FakeLog implements SyncLogSource {
     }
   }
 
-  listen = (onNotify: () => void): Promise<Listener> => {
+  listen = (
+    onNotify: () => void,
+    onSessionsRevoked?: (ids: readonly string[]) => void,
+  ): Promise<Listener> => {
     this.listens += 1;
     if (this.failListen) return Promise.reject(new Error('database unavailable'));
     this.#notify = onNotify;
+    this.#revoked = onSessionsRevoked;
     this.#end = deferred<unknown>();
     let closed = false;
     const close = () => {
