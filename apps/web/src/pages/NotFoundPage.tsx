@@ -1,6 +1,6 @@
 // Not found (SPEC-005 §3 `*`), also shown for admin routes a Member opens, so they never learn
 // those routes exist (permissions.md §5).
-import { Button, EmptyState } from '@surface/ui';
+import { Button, EmptyState, VisuallyHidden } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
 import { MapPinOff } from 'lucide-react';
 import { PageHeader } from '../shell/PageHeader.js';
@@ -47,6 +47,10 @@ export function StandaloneNotFoundPage() {
   usePageTitle(TITLE);
   return (
     <main className={styles.public} tabIndex={-1}>
+      {/* Inside the shell the header's breadcrumb is this heading (axe page-has-heading-one). */}
+      <VisuallyHidden>
+        <h1>{TITLE}</h1>
+      </VisuallyHidden>
       <NotFoundBody />
     </main>
   );

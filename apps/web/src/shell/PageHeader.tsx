@@ -38,7 +38,8 @@ export function PageHeader({ crumbs, title, actions }: PageHeaderProps) {
         <ol>
           {crumbs.map((crumb, i) => (
             <li key={i} aria-current={i === crumbs.length - 1 ? 'page' : undefined}>
-              {crumb}
+              {/* The current page is the page's one level-one heading (axe page-has-heading-one). */}
+              {i === crumbs.length - 1 ? <h1 className={styles.pageTitle}>{crumb}</h1> : crumb}
             </li>
           ))}
         </ol>

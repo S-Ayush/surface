@@ -288,6 +288,13 @@
   font-weight: var(--weight-medium);
 }
 
+/* The current crumb is the page's <h1>: it looks like the rest of the breadcrumb. */
+.pageTitle {
+  display: inline;
+  margin: 0;
+  font: inherit;
+}
+
 .actions {
   display: flex;
   gap: var(--space-8);
@@ -326,7 +333,7 @@
   overflow: auto;
   border: var(--border-width) solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   box-shadow: var(--shadow-e2);
   font-size: var(--text-sm-size);
 }

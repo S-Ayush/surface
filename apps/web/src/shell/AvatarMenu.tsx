@@ -31,8 +31,10 @@ export function AvatarMenu() {
         if (open) setCached(themePreference(browserThemeEnvironment()));
       }}
       trigger={
-        <button type="button" className={styles.avatar} aria-label={`Account menu for ${name}`}>
-          <Avatar name={name} />
+        // Named by the avatar it shows, not an aria-label on the button: a button label that
+        // leaves out the visible initials fails WCAG 2.5.3 (axe label-content-name-mismatch).
+        <button type="button" className={styles.avatar}>
+          <Avatar name={name} aria-label={`Account menu for ${name}`} />
         </button>
       }
       align="end"
