@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@fastify/static": "^10.1.10",
+    "@fastify/websocket": "^11.3.7",
     "@surface/domain": "workspace:*",
     "@surface/operations": "workspace:*",
     "@surface/sync-protocol": "workspace:*",
@@ -42,6 +43,7 @@
     "@testcontainers/postgresql": "^12.2.1",
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
     "drizzle-kit": "^0.31.11",
     "fast-check": "^4.10.2",
     "tsx": "^4.23.15"

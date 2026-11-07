@@ -3,9 +3,10 @@
  * Handlers get it as `ctx.repo`, bound to the operation's transaction. Every write is buffered
  * as a change; at the end of the transaction the executor calls `flush`, which appends the
  * changes to `sync_log` under `pg_advisory_xact_lock(LOCKS.sync)`. The lock is held until
- * commit, so sync ids are gap-free and in commit order (sync-protocol §3).
+ * commit, so sync ids are gap-free and in commit order (sync-protocol §3). `flush` also
+ * notifies the hub (`NOTIFY sync`), which Postgres delivers when the transaction commits.
  */
-import { eq, sql } from 'drizzle-orm';
+import { eq, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { LOCKS } from '../db/locks.js';
 import { syncLog, syncState } from '../db/schema/index.js';
@@ -18,6 +19,12 @@ import {
   type ModelPatch,
   type ModelRow,
 } from './models.js';
+
+/** The channel the hub listens on (SPEC-002 §4.3). */
+export const SYNC_CHANNEL = 'sync';
+
+/** How long `sync_log` rows are kept for catch-up (sync-protocol §9). */
+export const SYNC_LOG_RETENTION_DAYS = 30;
 
 /** I insert, U update, A archive, V unarchive, D delete or no longer visible (SPEC-002 §4.1). */
 export type SyncAction = 'I' | 'U' | 'A' | 'V' | 'D';
@@ -159,7 +166,13 @@ export const syncRepo: RepoFactory = (db, now) => {
         .update(syncState)
         .set({ lastSyncId: sql`${syncState.lastSyncId} + ${buffered.length}` })
         .where(eq(syncState.id, 1))
-        .returning({ lastSyncId: syncState.lastSyncId });
+        // The hub's notification rides on this statement (no extra round trip under the lock).
+        // Postgres sends it at commit, and not at all on rollback, so the hub never reads ahead
+        // of the log.
+        .returning({
+          lastSyncId: syncState.lastSyncId,
+          notified: sql`pg_notify(${SYNC_CHANNEL}, ${syncState.lastSyncId}::text)`,
+        });
       if (!state) throw new Error('sync_state has no row. Migration 0005 seeds it');
       const first = state.lastSyncId - buffered.length + 1;
       await db.insert(syncLog).values(
@@ -178,6 +191,29 @@ export const syncRepo: RepoFactory = (db, now) => {
     },
   };
 };
+
+/**
+ * Deletes `sync_log` rows older than `before`, except the newest, which the hub's retention check
+ * needs: the oldest row left says how far back catch-up reaches (SPEC-002 §4.3). Run daily by the
+ * `synclog-prune` job. Not a synced-table write in the AC-12 sense: no row is changed, only
+ * history no client may ask for any more.
+ */
+export async function pruneSyncLog(db: NodePgDatabase, before: Date): Promise<number> {
+  // A prefix of the log, never rows in between: `created_at` is taken before the sync lock, so it
+  // is not quite in id order, and a hole would let catch-up skip rows that `min(sync_id)` says it
+  // still has. Up to the first row young enough to keep (LEAST ignores a NULL), and never the
+  // newest row, whose id tells the hub how far catch-up reaches.
+  const result = await db.delete(syncLog).where(
+    lt(
+      syncLog.syncId,
+      sql`LEAST(
+        (SELECT min(sync_id) FROM sync_log WHERE created_at >= ${before.toISOString()}::timestamptz),
+        (SELECT last_sync_id FROM sync_state WHERE id = 1)
+      )`,
+    ),
+  );
+  return result.rowCount ?? 0;
+}
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
   const set = new Set(a);

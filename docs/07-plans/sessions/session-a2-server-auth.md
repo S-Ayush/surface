@@ -1,6 +1,6 @@
 # Session A, phase 2: Sync server, setup and auth
 
-Worktree: `/Users/admin/Desktop/Learning/surface` (main checkout) · Current branch: `p002-s3-bootstrap` · Guide: [README](README.md) §7 · Phase 1 log: [session-a-platform.md](session-a-platform.md)
+Worktree: `/Users/admin/Desktop/Learning/surface-a` (since PLAN-002 S4, at the user's request) · Current branch: `p002-s4-hub` · Guide: [README](README.md) §7 · Phase 1 log: [session-a-platform.md](session-a-platform.md)
 
 Assigned 2026-11-07. Session A stays on the critical path: finish the sync server, then setup and login, which unblock the app shell (session C) and the account features (session E).
 
@@ -59,6 +59,9 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 | Date | Slice | Branch | State | Notes / handoffs |
 |---|---|---|---|---|
 | 2026-11-07 | PLAN-002 S3 + review fixes | main | merged | Built, reviewed and fixed during phase 1 (rows in [session-a-platform.md](session-a-platform.md)). Rebased onto `95c55a8`, clean; `pnpm install`, `pnpm check`, `pnpm registry:lint`, `pnpm test:int` (179 + 3 perf) green; main fast-forwarded to `a76c982`. Also carries session D's docs commit `34e7ed8` (SPEC-002 AC-6 qualifier). Next: PLAN-002 S4. |
+| 2026-11-07 | PLAN-002 S4 | p002-s4-hub | built | Sync hub and `GET /sync/ws` (`delta-writer.ts`, `hub.ts`, `hub-source.ts`, `socket-route.ts`), `NOTIFY` in `flush`, `synclog-prune` job; `@fastify/websocket` (ADR-0005). New spec decisions SPEC-002 Q9 (API keys `403` on the socket) and Q10 (`since` ahead of head → `too_old`), awaiting the user's approval. A text-ordering bug in the log reads was found by the manual AC-9 check and is covered by the AC-11 test. `pnpm check` green (server 276 tests), `registry:lint` clean, `test:int` 181 green; **`sync-lock.perf.int.test.ts` failing** (87–90 % under 2 ms), not attributable on an overloaded machine (PLAN-002 S4 As built). Worktree moved to `../surface-a`. |
+| 2026-11-07 | PLAN-002 S4 review fixes | p002-s4-hub | built | Fast-forwarded to `99aacd3` first. Fixed every `/review` finding: the AC-11 live test waits for both sockets' catch-up (8/8 runs green); the hub drains on each ping round (half-open `LISTEN`, failed reads) and the listen client has TCP keepalive; catch-up waits for slow readers instead of dropping them; `/sync/ws` refuses a foreign `Origin` (`403`); prefix prune (checked by hand: the old one left a hole); metrics tests; catch-up reads invisible ack rows without data; `start()` and re-listening close their listeners. Perf test now passes (3/3 at load ~2.3). SPEC-002 Q9, Q10, the metric rename and the new §4.3 rules (Origin `403`, 1 MiB catch-up pause, prefix prune) approved by the user. |
+| 2026-11-07 | PLAN-002 S4 second review | p002-s4-hub | built | No blockers. Fixed: catch-up held a pool connection and a `REPEATABLE READ` snapshot while waiting for a slow reader (10 slow clients could hold the pool of 10); it now reads each page as its own statement and re-checks retention after each (`sync-hub-source.test.ts`). Docs: "nothing more but pings" after a `resync`, close code `1009`, two As built corrections. To rebase onto `acf0fa1` (PLAN-001 S1): `sync-groups.int.test.ts` conflicts, keep both sides. |
 
 ## Prompt
 

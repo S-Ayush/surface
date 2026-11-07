@@ -17,6 +17,7 @@ import { registerMetrics } from './http/metrics.js';
 import { registerOpsRoutes, type ActorResolver } from './http/ops.js';
 import { registerSecurityHeaders } from './http/security-headers.js';
 import { readIndexHtml, registerWebApp } from './http/static.js';
+import { hubMetrics } from './sync/hub.js';
 import { registerSyncRoutes, type SyncRoutesDeps } from './sync/routes.js';
 import type { Lifecycle } from './lifecycle.js';
 
@@ -90,7 +91,14 @@ export async function buildApp({
       version: info.version,
     });
   }
-  if (sync) registerSyncRoutes(app, { ...sync, lifecycle });
+  if (sync) {
+    if (sync.hub && metrics) sync.hub.useMetrics(hubMetrics(metrics));
+    registerSyncRoutes(app, {
+      ...sync,
+      lifecycle,
+      allowedOrigin: new URL(config.publicUrl).origin,
+    });
+  }
   await registerWebApp(app, webDir, indexHtml !== undefined);
 
   return app;

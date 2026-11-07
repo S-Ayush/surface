@@ -91,11 +91,13 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 - `G` packets are decoded in v0 because they take part in the ordering. Until M7, the client handles one with a full re-bootstrap.
 - **Archived state changes only through `A` and `V`.** `I` inserts a live row, and `U` replaces the row's fields but keeps whether it is archived. An edit that also unarchives a row ("any edit" in state-machines.md §2) emits both `U` and `V` in the same transaction. This keeps a client that applied the stream identical to one that cold-started from a bootstrap (whose `row.archived` reflects the same state).
 
-**Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10).
+**Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10). The server may also close with `1003` (a binary frame), `1008` (a message other than `pong`), `1009` (a client message over 4 KiB), `1011` (catch-up failed) or `1013` (try again later: the hub is not running yet, or the client fell too far behind). The client treats these like any other close: it reconnects with backoff and catches up from its `lastSyncId`.
+
+**Refused before the upgrade** (SPEC-003 error body): `503` with `Retry-After` while the server starts or stops, `403` for an `Origin` other than `SURFACE_URL`'s or for an API key (SPEC-002 §4.3, Q9), `400` for invalid connect parameters. A browser sees each of these as an abnormal close (`1006`) and retries with backoff.
 
 **No valid session:** the hub accepts the upgrade and then closes at once with `4001`. It does not answer `401`. A browser cannot read the HTTP status of a refused upgrade, which looks like any network failure (`1006`), so the client would keep retrying. This is how a client that was offline when its session was revoked learns about it. Nothing is sent before the close.
 
-**Catch-up:** on connect, the server streams `sync_log` rows with `sync_id > since` filtered by the user's groups, then switches to live mode. If `since` is older than the retention window (30 days), or `schemaHash` differs, the server sends `resync`.
+**Catch-up:** on connect, the server streams `sync_log` rows with `sync_id > since` filtered by the user's groups, then switches to live mode. If `since` is older than the retention window (30 days) or ahead of the server's head (a database restored from a backup, SPEC-002 Q10), it sends `resync(too_old)`; if `schemaHash` differs, `resync(schema)`. After a `resync` the server sends nothing more on that connection but pings, and the client closes it.
 
 ### 4.4 Mutations: `POST /sync/mutate`
 ```jsonc
@@ -230,6 +232,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-07 | v0.4 | PLAN-002 S4, server only, no codec change. The hub refuses before the upgrade with `503`, `403` (a foreign `Origin`, or an API key, SPEC-002 Q9) or `400`, and may close with `1003`, `1008`, `1009`, `1011` or `1013`, all of which the client already treats as "reconnect with backoff" (§4.3). A `since` ahead of the server's head gets `resync(too_old)` (Q10). After a `resync` the server sends nothing more but pings (§4.3) | — |
 | 2026-11-07 | v0.4 | PLAN-002 S3, server only, no codec change. Bootstrap answers `400` to `?groups=` until M7; errors before the first frame use the SPEC-003 body with `401`, `403` (an API key, SPEC-002 Q7) or `503`; the body is gzipped when `Accept-Encoding` allows it (§4.1). A row's groups travel in the model's `groups` field, if declared (§4.1, §6, SPEC-002 Q8) | — |
 | 2026-11-06 | v0.4 | PLAN-002 S8, no wire change. Client: the queue flushes once the socket is open rather than after catch-up (§5.3); a result whose `lastSyncId` the replica has already passed confirms at once; queues are adopted across tabs (§5.1, SPEC-002 E5); `413` and other refused requests split the batch and reject the mutation at fault, and requests time out after 30 s (§4.4). Stated, for the server: catch-up carries the client's acks for `(since, head]` (§4.3) | Session A (Handoffs row 4) |
 | 2026-11-06 | v0.4 | PLAN-002 S7. Server: an upgrade without a valid session is accepted and closed with `4001`, not refused with `401` (§4.3). Clarified, no wire change: `prev > lastSyncId` is a gap; `prev ≤ lastSyncId` skips packets with `id ≤ lastSyncId` and applies the rest (§4.3, SPEC-002 E1) | Session A (Handoffs) |

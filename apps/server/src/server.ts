@@ -21,6 +21,9 @@ import { Lifecycle } from './lifecycle.js';
 import { createLogger } from './logger.js';
 import { installProcessHandlers } from './shutdown.js';
 import { StartupError } from './startup-error.js';
+import pg from 'pg';
+import { SyncHub } from './sync/hub.js';
+import { pgSyncLogSource } from './sync/hub-source.js';
 import { syncRegistry } from './sync/registry.js';
 
 export interface StartOptions {
@@ -68,17 +71,37 @@ export async function startServer(
     throw new StartupError(`No handler is registered for: ${unhandled.join(', ')}.`);
   }
   const resolveActor = options.resolveActor ?? noSignedInActor;
+  // Engine fixtures (DebugItem) only outside production, like internal operations.
+  const sync = syncRegistry({ includeFixtures: config.nodeEnv !== 'production' });
+  // The hub serves WebSockets, so it runs where HTTP traffic is served (SPEC-004 §7 roles).
+  const hub =
+    config.role === 'worker'
+      ? undefined
+      : new SyncHub({
+          source: pgSyncLogSource({
+            pool,
+            listenClient: () =>
+              new pg.Client({
+                connectionString: config.databaseUrl,
+                application_name: 'surface-sync-hub',
+                // An idle LISTEN connection only notices a dead peer through TCP keepalive; the
+                // hub's ping-round poll covers the time until it does.
+                keepAlive: true,
+                keepAliveInitialDelayMillis: 10_000,
+                connectionTimeoutMillis: 10_000,
+              }),
+          }),
+          registry: sync,
+          log: logger.child({ component: 'sync-hub' }),
+        });
+  // Before HTTP stops: clients reconnect elsewhere, or here once we are back (1012).
+  if (hub) lifecycle.onShutdown('connections', 'sync hub', () => hub.stop());
   const app = await buildApp({
     config,
     lifecycle,
     logger,
     info,
-    sync: {
-      pool,
-      // Engine fixtures (DebugItem) only outside production, like internal operations.
-      registry: syncRegistry({ includeFixtures: config.nodeEnv !== 'production' }),
-      resolveActor,
-    },
+    sync: { pool, registry: sync, resolveActor, ...(hub ? { hub } : {}) },
     ops: {
       registry,
       resolveActor,
@@ -112,7 +135,7 @@ export async function startServer(
     });
 
     // PLAN-001 S2: log the setup token while setup is incomplete.
-    // The sync hub starts here in PLAN-002 (by SURFACE_ROLE).
+    await hub?.start();
     if (config.role !== 'web') {
       jobs = await startJobs({ databaseUrl: config.databaseUrl, pool, log: logger });
     }

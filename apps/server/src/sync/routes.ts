@@ -1,6 +1,6 @@
 /**
- * Sync HTTP routes (SPEC-002 §4, sync-protocol §4). PLAN-002 S3: `GET /sync/bootstrap`. The
- * WebSocket (S4) and `POST /sync/mutate` (S5) join here.
+ * Sync HTTP routes (SPEC-002 §4, sync-protocol §4). PLAN-002 S3: `GET /sync/bootstrap`; S4: the
+ * WebSocket (`socket-route.ts`). `POST /sync/mutate` (S5) joins here.
  */
 import { pipeline, Readable } from 'node:stream';
 import { createGzip } from 'node:zlib';
@@ -10,7 +10,9 @@ import { errorBody } from '../http/errors.js';
 import { signedIn, type ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { bootstrapFrames, type BootstrapPool } from './bootstrap.js';
+import type { SyncHub } from './hub.js';
 import type { SyncRegistry } from './registry.js';
+import { registerSocketRoute, type SocketRouteDeps } from './socket-route.js';
 
 export interface SyncRoutesDeps {
   readonly pool: BootstrapPool;
@@ -18,9 +20,16 @@ export interface SyncRoutesDeps {
   readonly resolveActor: ActorResolver;
   readonly lifecycle: Lifecycle;
   readonly now?: () => Date;
+  /** The live-delta hub; without it there is no `/sync/ws` (e.g. the `worker` role). */
+  readonly hub?: SyncHub;
+  readonly sessionIdOf?: SocketRouteDeps['sessionIdOf'];
 }
 
-export function registerSyncRoutes(app: FastifyInstance, deps: SyncRoutesDeps): void {
+export function registerSyncRoutes(
+  app: FastifyInstance,
+  deps: SyncRoutesDeps & Pick<SocketRouteDeps, 'allowedOrigin'>,
+): void {
+  if (deps.hub) registerSocketRoute(app, { ...deps, hub: deps.hub });
   app.get(BOOTSTRAP_PATH, async (request, reply) => {
     const actor = await signedIn(request, reply, deps);
     if (!actor) return reply;

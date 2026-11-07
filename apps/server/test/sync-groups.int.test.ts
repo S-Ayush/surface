@@ -1,28 +1,40 @@
-// SPEC-002 AC-11 (bootstrap part; catch-up and live come with S4), permissions.md §5 item 1:
-// a client without a private team's group receives none of its rows, and a row shared with that
-// team reaches it without the team's id (Q6). Decoded with the client's own codecs, so this is
-// also the wire contract with `@surface/sync-client`. Not held: a private-team leak test.
+// SPEC-002 AC-11, permissions.md §5 item 1: a client without a private team's group receives none
+// of its rows (bootstrap, catch-up and live deltas), and a row shared with that team reaches it
+// without the team's id (Q6). Decoded with the client's own codecs, so this is also the wire
+// contract with `@surface/sync-client`. Live deltas go through the real path: the repo's
+// `NOTIFY`, the hub's `LISTEN`, and a WebSocket. Not held: a private-team leak test.
 import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import {
   decodeBootstrapFrame,
+  decodeServerMessage,
+  encodeSocketConnectParams,
   NdjsonDecoder,
   NDJSON_CONTENT_TYPE,
+  SOCKET_PATH,
   type BootstrapFrame,
+  type DeltasMessage,
 } from '@surface/sync-protocol';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { FastifyInstance } from 'fastify';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { Lifecycle } from '../src/lifecycle.js';
 import { createLogger } from '../src/logger.js';
+import { pgSyncLogSource } from '../src/sync/hub-source.js';
+import { SyncHub } from '../src/sync/hub.js';
 import { syncRegistry } from '../src/sync/registry.js';
-import { syncRepo } from '../src/sync/repo.js';
+import { syncRepo, type ChangeOrigin, type Repo } from '../src/sync/repo.js';
 import { executorHarness, type ExecutorHarness } from './executor.js';
 import { actorFor, captureLogs, headerActor, testConfig } from './helpers.js';
 
 let h: ExecutorHarness;
 let app: FastifyInstance;
+let hub: SyncHub;
+let socketUrl: string;
+/** Each actor's sync groups, as the hub sees them. */
+let groupsOf: Record<'engMember' | 'secMember', string[]>;
 const registry = syncRegistry({ includeFixtures: true });
 
 const eng = { id: randomUUID() };
@@ -35,18 +47,33 @@ const ids = {
   mine: randomUUID(),
   someoneElses: randomUUID(),
   archived: randomUUID(),
+  fillers: Array.from({ length: 6 }, () => randomUUID()),
 };
+/** The engineering member's client: its mutation on a private-team row is acked, never shown. */
+const engClient = randomUUID();
+
+/** One committed transaction through the repo, as the executor runs it (flush, then COMMIT). */
+async function transaction(write: (repo: Repo) => Promise<unknown>, origin: ChangeOrigin = {}) {
+  const client = await h.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const repo = syncRepo(drizzle({ client, casing: 'snake_case' }), new Date());
+    await write(repo);
+    await repo.flush(origin);
+    await client.query('COMMIT');
+  } finally {
+    client.release();
+  }
+}
 
 beforeAll(async () => {
   h = await executorHarness();
   const team = `team:${h.teams.sec}`;
   const engMember = actorFor({ ...eng, memberships: [{ teamId: h.teams.eng, private: false }] });
   const secMember = actorFor({ ...sec, memberships: [{ teamId: h.teams.sec, private: true }] });
+  groupsOf = { engMember: [...engMember.groups], secMember: [...secMember.groups] };
 
-  const client = await h.pool.connect();
-  try {
-    await client.query('BEGIN');
-    const repo = syncRepo(drizzle({ client, casing: 'snake_case' }), new Date());
+  await transaction(async (repo) => {
     const seed = (id: string, title: string, syncGroups: string[]) =>
       repo.insert('DebugItem', { id, title, syncGroups });
     await seed(ids.open, 'Open', ['workspace']);
@@ -55,24 +82,39 @@ beforeAll(async () => {
     await seed(ids.mine, 'Mine', [`user:${eng.id}`]);
     await seed(ids.someoneElses, 'Not mine', [`user:${other}`]);
     await seed(ids.archived, 'Archived', ['workspace']);
+    // More than ten log rows, so catch-up must order sync ids as numbers ("10" < "9" as text).
+    for (const filler of ids.fillers) await seed(filler, 'Filler', ['workspace']);
     await repo.archive('DebugItem', ids.archived);
-    await repo.flush({});
-    await client.query('COMMIT');
-  } finally {
-    client.release();
-  }
+  });
+  // The engineering member's own mutation, which touched only a private-team row.
+  await transaction((repo) => repo.update('DebugItem', ids.secret, { title: 'Secret 2' }), {
+    clientId: engClient,
+    seq: 1,
+  });
 
   const config = testConfig();
   const lifecycle = new Lifecycle();
+  const logger = createLogger(config, captureLogs().stream);
+  hub = new SyncHub({
+    source: pgSyncLogSource({
+      pool: h.pool,
+      listenClient: () => new pg.Client({ connectionString: h.db.url }),
+    }),
+    registry,
+    log: logger,
+  });
   app = await buildApp({
     config,
     lifecycle,
-    logger: createLogger(config, captureLogs().stream),
-    sync: { pool: h.pool, registry, resolveActor: headerActor({ engMember, secMember }) },
+    logger,
+    sync: { pool: h.pool, registry, resolveActor: headerActor({ engMember, secMember }), hub },
   });
+  await hub.start();
   lifecycle.markReady();
+  socketUrl = (await app.listen({ port: 0, host: '127.0.0.1' })).replace(/^http/, 'ws');
 });
 afterAll(async () => {
+  await hub.stop();
   await app.close();
   await h.close();
 });
@@ -112,7 +154,9 @@ const byId = (b: Bootstrap) =>
 describe('bootstrap for a user outside private team X', () => {
   it('contains none of X’s rows, nor another user’s', async () => {
     const got = byId(await bootstrap('engMember'));
-    expect([...got.keys()].sort()).toEqual([ids.open, ids.shared, ids.mine, ids.archived].sort());
+    expect([...got.keys()].sort()).toEqual(
+      [ids.open, ids.shared, ids.mine, ids.archived, ...ids.fillers].sort(),
+    );
   });
 
   it("sends a row shared with X without X's group", async () => {
@@ -130,7 +174,9 @@ describe('bootstrap for a member of private team X', () => {
   it('contains X’s rows, with X’s group on them', async () => {
     const got = byId(await bootstrap('secMember'));
     const team = `team:${h.teams.sec}`;
-    expect([...got.keys()].sort()).toEqual([ids.open, ids.secret, ids.shared, ids.archived].sort());
+    expect([...got.keys()].sort()).toEqual(
+      [ids.open, ids.secret, ids.shared, ids.archived, ...ids.fillers].sort(),
+    );
     expect(got.get(ids.shared)?.d['groups']).toEqual(['workspace', team]);
   });
 });
@@ -169,5 +215,116 @@ describe('a bootstrap stream', () => {
         WHERE datname = current_database() AND state LIKE 'idle in transaction%'`,
     );
     expect(rows[0]?.n).toBe(0);
+  });
+});
+
+/** A live WebSocket for `actor`, recording the raw text and the decoded `deltas`. */
+function connect(actor: string, clientId: string = randomUUID()) {
+  const raw: string[] = [];
+  const deltas: DeltasMessage[] = [];
+  const query = encodeSocketConnectParams({ since: 0, clientId, schemaHash: registry.schemaHash });
+  const socket = new WebSocket(`${socketUrl}${SOCKET_PATH}?${query}`, {
+    headers: { 'x-test-actor': actor },
+  });
+  socket.addEventListener('message', (event) => {
+    if (typeof event.data !== 'string') throw new Error('binary frame');
+    raw.push(event.data);
+    const message = decodeServerMessage(event.data);
+    if (message.t === 'deltas') deltas.push(message);
+  });
+  return {
+    raw,
+    deltas,
+    packets: () => deltas.flatMap((m) => m.packets),
+    close: () => socket.close(),
+  };
+}
+
+async function eventually(check: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('condition not met in 5 s');
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+/** Sync ids of the log rows a connection with `groups` may see. */
+async function visibleIds(groups: string[]): Promise<number[]> {
+  const { rows } = await h.pool.query<{ id: string }>(
+    'SELECT sync_id::text AS id FROM sync_log WHERE groups && $1::text[] ORDER BY sync_id',
+    [groups],
+  );
+  return rows.map((r) => Number(r.id));
+}
+
+describe('catch-up for a user outside private team X', () => {
+  it("contains none of X's rows nor another user's, and acks its own mutation on one", async () => {
+    const expected = await visibleIds(groupsOf.engMember);
+    const socket = connect('engMember', engClient);
+    try {
+      await eventually(() => socket.deltas.some((m) => m.ack.length > 0));
+      expect(socket.packets().map((p) => p.id)).toEqual(expected);
+      const rowIds = socket
+        .packets()
+        .map((p) => (p.a === 'I' || p.a === 'U' ? p.d.id : 'mid' in p ? p.mid : ''));
+      expect(rowIds).not.toContain(ids.secret);
+      expect(rowIds).not.toContain(ids.someoneElses);
+      expect(socket.raw.join('\n')).not.toContain(h.teams.sec);
+      expect(socket.deltas.flatMap((m) => m.ack)).toEqual([{ clientId: engClient, seq: 1 }]);
+    } finally {
+      socket.close();
+    }
+  });
+});
+
+describe('live deltas', () => {
+  it("reach a member of X with X's rows, and a user outside X without them or X's id", async () => {
+    const outsider = connect('engMember');
+    const member = connect('secMember');
+    try {
+      // Both must have caught up before the writes, or a socket still catching up would count
+      // the new rows as catch-up, and the slices below would compare the wrong packets.
+      const outsiderHead = (await visibleIds(groupsOf.engMember)).at(-1);
+      const memberHead = (await visibleIds(groupsOf.secMember)).at(-1);
+      await eventually(() => outsider.packets().at(-1)?.id === outsiderHead);
+      await eventually(() => member.packets().at(-1)?.id === memberHead);
+      const fromOutsider = outsider.packets().length;
+      const fromMember = member.packets().length;
+
+      const team = `team:${h.teams.sec}`;
+      const secretId = randomUUID();
+      const sharedId = randomUUID();
+      const markerId = randomUUID();
+      await transaction((repo) =>
+        repo.insert('DebugItem', { id: secretId, title: 'Live secret', syncGroups: [team] }),
+      );
+      await transaction((repo) =>
+        repo.insert('DebugItem', {
+          id: sharedId,
+          title: 'Live shared',
+          syncGroups: ['workspace', team],
+        }),
+      );
+      // Written last: once it arrives, anything earlier would have arrived too.
+      await transaction((repo) =>
+        repo.insert('DebugItem', { id: markerId, title: 'Marker', syncGroups: ['workspace'] }),
+      );
+
+      const rowId = (p: { a: string; d?: { id: string } }) => p.d?.id;
+      await eventually(() => outsider.packets().some((p) => rowId(p) === markerId));
+      await eventually(() => member.packets().some((p) => rowId(p) === markerId));
+
+      const outsiderLive = outsider.packets().slice(fromOutsider);
+      expect(outsiderLive.map(rowId)).toEqual([sharedId, markerId]);
+      expect(outsiderLive[0]).toMatchObject({ a: 'I', d: { groups: ['workspace'] } });
+      expect(outsider.raw.join('\n')).not.toContain(h.teams.sec);
+
+      const memberLive = member.packets().slice(fromMember);
+      expect(memberLive.map(rowId)).toEqual([secretId, sharedId, markerId]);
+      expect(memberLive[1]).toMatchObject({ d: { groups: ['workspace', team] } });
+    } finally {
+      outsider.close();
+      member.close();
+    }
   });
 });
