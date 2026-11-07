@@ -15,9 +15,15 @@
  *  12   COMMIT (retrying serialization failures and deadlocks, E5)
  *  13   result, projected to `fields` (§7.2)
  *  14   log + metrics
+ *
+ * Sync clients (`executeSynced`, SPEC-002 §4.4) run the same steps in one read-write transaction
+ * that first locks their `client_mutations` row: a seq already processed replays its stored
+ * result, and a rejected mutation rolls back to a savepoint and is recorded as rejected, so the
+ * client's queue moves on.
  */
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
+import type { MutationResult } from '@surface/sync-protocol';
 import {
   evaluatePermission,
   fieldsProblem,
@@ -26,6 +32,7 @@ import {
   type OperationRegistry,
 } from '@surface/operations';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { PoolClient } from 'pg';
 import type { Logger } from 'pino';
 import type { Registry } from 'prom-client';
 import type { z } from 'zod';
@@ -48,9 +55,11 @@ import {
 } from './metrics.js';
 import { unlimited, type RateLimiter } from './rate-limit.js';
 import { refNotFound, refPlan, resolveRefs, single, valueAt } from './refs/resolve.js';
+import { claimSeq, recordResult, visibleHead } from '../sync/client-mutations.js';
+import { serverSyncRegistry } from '../sync/registry.js';
 import { syncRepo, type RepoFactory, type RowChange, type TransactionRepo } from '../sync/repo.js';
 import { nearestNames } from './suggest.js';
-import { inTransaction, jitterBackoff, postgresCode } from './transaction.js';
+import { inTransaction, isRetryable, jitterBackoff, postgresCode } from './transaction.js';
 import { NO_EMAIL, type EmailOutbox } from '../jobs/email.js';
 
 /** Step 10: automations and invariant checks, run after the handler inside the transaction. */
@@ -85,6 +94,11 @@ export interface ExecutorDeps {
    * Called only after the commit that deleted them.
    */
   readonly closeSessions?: (sessionIds: readonly string[]) => void;
+  /**
+   * The models this server's sync connections receive (`SyncRegistry.models`), for confirming a
+   * synced mutation that changed nothing (`visibleHead`). Default: the production models.
+   */
+  readonly syncedModels?: readonly string[];
 }
 
 interface TransactionOutcome {
@@ -97,12 +111,23 @@ interface TransactionOutcome {
   readonly endedSessions?: readonly string[];
 }
 
+/** Where a sync client's mutation comes from (SPEC-002 §4.4); `seq` is per `clientId`. */
+export interface SyncOrigin {
+  readonly clientId: string;
+  readonly seq: number;
+}
+
+export type SyncedOutcome =
+  /** The mutation's result, also when it was rejected; `replayed` when it was stored before. */
+  | { readonly kind: 'result'; readonly result: MutationResult; readonly replayed?: true }
+  /** The seq is past the last one processed plus one: the client resends from `lastSeq + 1`. */
+  | { readonly kind: 'gap'; readonly lastSeq: number }
+  /** Nothing was recorded, and the request fails as a whole (rate limit, a foreign client, a fault). */
+  | { readonly kind: 'refused'; readonly error: OperationError };
+
 export interface ExecuteOptions {
   /** Ties the result, the log line and any error together; the HTTP request id when there is one. */
   readonly correlationId?: string;
-  /** Sync clients only (SPEC-002 §4.4); passed to the repo flush. */
-  readonly clientId?: string;
-  readonly seq?: number;
   /** Dot-paths that project the result (SPEC-003 §7.2); checked before any work is done. */
   readonly fields?: readonly string[];
   /**
@@ -136,6 +161,32 @@ export interface Executor {
     actor: Actor,
     options?: ExecuteOptions,
   ): Promise<ExecuteResult>;
+  /**
+   * One mutation from a sync client, exactly once per `(clientId, seq)` (SPEC-002 §4.4). Rejected
+   * mutations are recorded as such and returned as results, not as `refused`.
+   */
+  executeSynced(
+    opName: string,
+    rawInput: unknown,
+    actor: Actor,
+    origin: SyncOrigin,
+    options?: Pick<ExecuteOptions, 'correlationId'>,
+  ): Promise<SyncedOutcome>;
+}
+
+/** Steps 3–5 passed: what the transaction runs. */
+interface Prepared {
+  readonly input: unknown;
+  readonly handler: Handler;
+  readonly viewer: Actor;
+}
+
+/** Steps 7–11 done, inside the transaction. */
+interface Applied {
+  readonly output: unknown;
+  readonly lastSyncId: number | undefined;
+  readonly lockedAt?: number;
+  readonly endedSessions?: readonly string[];
 }
 
 export function createExecutor(deps: ExecutorDeps): Executor {
@@ -148,36 +199,32 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   const clock = deps.clock ?? (() => new Date());
   const email = deps.email ?? NO_EMAIL;
   const transactionOptions = { retries: deps.retries ?? 3, backoff: deps.backoff ?? jitterBackoff };
+  let defaultModels: readonly string[] | undefined;
+  const syncedModels = (): readonly string[] =>
+    deps.syncedModels ??
+    (defaultModels ??= serverSyncRegistry({}).models.map((model) => model.name));
 
   const callable = (def: AnyOperation, actor: Actor) =>
     !def.internal || (deps.allowInternal && actor.kind === 'user');
 
-  async function run(
+  /** Steps 3–5: nothing here touches the database. `beforeInput` is step 4, the rate limit. */
+  function prepare(
     def: AnyOperation,
     rawInput: unknown,
     actor: Actor,
-    options: ExecuteOptions,
-    log: Logger,
-  ): Promise<ExecuteResult> {
+    fields: readonly string[] | undefined,
+    beforeInput: () => void,
+  ): Prepared {
     // 3. Key scope
     const scopeProblem = keyScopeProblem(def, actor);
     if (scopeProblem) throw new SurfaceError('FORBIDDEN', scopeProblem);
 
     // 4. Rate limit
-    const rate = rateLimiter.take(actor, def.kind);
-    if (!rate.allowed) {
-      throw new SurfaceError(
-        'RATE_LIMITED',
-        `Too many requests. Try again in ${rate.retryAfterSeconds} s.`,
-        { retryAfter: rate.retryAfterSeconds },
-      );
-    }
+    beforeInput();
 
     // 5. Input
     const parsed = def.input.safeParse(rawInput);
     if (!parsed.success) throw invalidInput(parsed.error);
-    const input = parsed.data;
-    const fields = options.fields;
     if (fields !== undefined) {
       const problem = fieldsProblem(def, fields);
       if (problem) {
@@ -187,133 +234,186 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       }
     }
 
+    const handler = handlers.get(def.name);
+    if (!handler) throw new Error(`No handler is registered for ${def.name}`);
+    return { input: parsed.data, handler, viewer: narrowToKeyTeams(actor) };
+  }
+
+  /** Step 4. */
+  function takeRate(def: AnyOperation, actor: Actor): void {
+    const rate = rateLimiter.take(actor, def.kind);
+    if (!rate.allowed) {
+      throw new SurfaceError(
+        'RATE_LIMITED',
+        `Too many requests. Try again in ${rate.retryAfterSeconds} s.`,
+        { retryAfter: rate.retryAfterSeconds },
+      );
+    }
+  }
+
+  /** Steps 7–11, in the caller's transaction. */
+  async function apply(
+    client: PoolClient,
+    def: AnyOperation,
+    { input, handler, viewer }: Prepared,
+    actor: Actor,
+    origin: { readonly clientId?: string; readonly seq?: number },
+    log: Logger,
+  ): Promise<Applied> {
+    const now = clock();
+    const tx = drizzle({ client, casing: 'snake_case' });
+    const repo = repoFactory(tx, now);
+    const events: DomainEvent[] = [];
+    // Per attempt: a retried transaction starts again from nothing.
+    const ended: string[] = [];
+
+    // 7. References (visibility applied in SQL; key narrowing re-checked as a backstop)
+    const refs = await resolveRefs(def, input, viewer, client);
+    const outside = refOutsideKeyTeams(viewer, refPlan(def), refs);
+    if (outside) {
+      const { location, index } = outside;
+      const value = valueAt(input, location.path);
+      const list: readonly unknown[] | undefined = Array.isArray(value) ? value : undefined;
+      const item = index !== undefined && list ? list[index] : value;
+      const scope = location.scope === undefined ? undefined : single(refs[location.scope]);
+      throw refNotFound(
+        location.type,
+        typeof item === 'string' ? item : String(item),
+        index === undefined ? location.path : [...location.path, index],
+        scope,
+      );
+    }
+
+    // 8. Permission
+    const permission = evaluatePermission(def, viewer, refs, input);
+    if (!permission.allowed) throw new SurfaceError('FORBIDDEN', permission.reason);
+
+    // 9. Handler
+    const ctx: HandlerContext = {
+      actor: viewer,
+      refs,
+      tx,
+      repo,
+      query: queryHelpers(tx, client, viewer, now),
+      emit: (event) => void events.push(event),
+      now: () => new Date(now),
+      log,
+      enqueueEmail: (job) => email.enqueue(client, job),
+      closeSessions: async (userId, which) => {
+        const ids = await deleteUserSessions(client, userId, which);
+        ended.push(...ids);
+        return ids.length;
+      },
+    };
+    const raw = await handler.run(ctx, input);
+
+    // 10. Automations and invariants, then the output contract
+    for (const check of checks) {
+      await check({ op: def, actor: viewer, tx, repo, changes: repo.changes(), events });
+    }
+    const output = def.output.safeParse(raw);
+    if (!output.success) {
+      throw new Error(`${def.name} returned output that does not match its schema`, {
+        cause: output.error,
+      });
+    }
+
+    // 11. Sync log and outbox
+    if (def.kind === 'query') {
+      if (events.length > 0) throw new Error(`${def.name} is a query and cannot emit events`);
+      return { output: output.data, lastSyncId: undefined };
+    }
+    const flushed = await repo.flush({
+      ...(origin.clientId !== undefined ? { clientId: origin.clientId } : {}),
+      ...(origin.seq !== undefined ? { seq: origin.seq } : {}),
+    });
+    if (events.length > 0) {
+      await tx.insert(eventOutbox).values(
+        events.map((event) => ({
+          id: uuidv7(),
+          type: event.type,
+          occurredAt: now,
+          actor: {
+            kind: actor.kind,
+            ...(actor.userId ? { userId: actor.userId } : {}),
+            ...(actor.apiKey ? { apiKeyId: actor.apiKey.id } : {}),
+          },
+          subject: event.subject,
+          changes: event.changes ?? null,
+          data: event.data ?? null,
+          lastSyncId: flushed.lastSyncId ?? null,
+        })),
+      );
+    }
+    return {
+      output: output.data,
+      lastSyncId: flushed.lastSyncId,
+      ...(flushed.lockedAt === undefined ? {} : { lockedAt: flushed.lockedAt }),
+      ...(ended.length > 0 ? { endedSessions: ended } : {}),
+    };
+  }
+
+  /** After the commit: the lock metric, and the sockets of sessions the operation ended. */
+  function afterCommit(
+    committed: { readonly lockedAt?: number; readonly endedSessions?: readonly string[] },
+    opName: string,
+    log: Logger,
+  ): void {
+    if (committed.lockedAt !== undefined) {
+      syncLock.observeLockHold((performance.now() - committed.lockedAt) / 1000);
+    }
+    // A socket closed earlier could reconnect while the session still existed. The operation is
+    // committed by now, so a failure here is logged, never returned.
+    if (committed.endedSessions !== undefined && deps.closeSessions) {
+      try {
+        deps.closeSessions(committed.endedSessions);
+      } catch (error) {
+        log.error({ err: loggableError(error), op: opName }, 'could not close ended sessions');
+      }
+    }
+  }
+
+  async function run(
+    def: AnyOperation,
+    rawInput: unknown,
+    actor: Actor,
+    options: ExecuteOptions,
+    log: Logger,
+  ): Promise<ExecuteResult> {
+    const fields = options.fields;
+    const prepared = prepare(def, rawInput, actor, fields, () => takeRate(def, actor));
+
     const owner = def.kind === 'mutation' ? idempotencyOwner(actor) : undefined;
     const clientMutationId = owner === undefined ? undefined : options.clientMutationId;
     if (clientMutationId !== undefined) checkClientMutationId(clientMutationId);
 
-    const handler = handlers.get(def.name);
-    if (!handler) throw new Error(`No handler is registered for ${def.name}`);
-    const viewer = narrowToKeyTeams(actor);
-
     // 6–12
-    const { result, lastSyncId, replayed, lockedAt, endedSessions } = await inTransaction(
+    const outcome = await inTransaction(
       deps.pool,
       { ...transactionOptions, readOnly: def.kind === 'query' },
       async (client): Promise<TransactionOutcome> => {
-        const now = clock();
-        const tx = drizzle({ client, casing: 'snake_case' });
-        const repo = repoFactory(tx, now);
-        const events: DomainEvent[] = [];
-        // Per attempt: a retried transaction starts again from nothing.
-        const ended: string[] = [];
-
         // 6. Idempotency, before anything is read: a replay doesn't look at the present.
+        const tx = drizzle({ client, casing: 'snake_case' });
         if (owner !== undefined && clientMutationId !== undefined) {
           const claimed = await claim(tx, owner, clientMutationId, def.name);
           if ('replay' in claimed) return { ...claimed.replay, replayed: true };
         }
-
-        // 7. References (visibility applied in SQL; key narrowing re-checked as a backstop)
-        const refs = await resolveRefs(def, input, viewer, client);
-        const outside = refOutsideKeyTeams(viewer, refPlan(def), refs);
-        if (outside) {
-          const { location, index } = outside;
-          const value = valueAt(input, location.path);
-          const list: readonly unknown[] | undefined = Array.isArray(value) ? value : undefined;
-          const item = index !== undefined && list ? list[index] : value;
-          const scope = location.scope === undefined ? undefined : single(refs[location.scope]);
-          throw refNotFound(
-            location.type,
-            typeof item === 'string' ? item : String(item),
-            index === undefined ? location.path : [...location.path, index],
-            scope,
-          );
-        }
-
-        // 8. Permission
-        const permission = evaluatePermission(def, viewer, refs, input);
-        if (!permission.allowed) throw new SurfaceError('FORBIDDEN', permission.reason);
-
-        // 9. Handler
-        const ctx: HandlerContext = {
-          actor: viewer,
-          refs,
-          tx,
-          repo,
-          query: queryHelpers(tx, client, viewer, now),
-          emit: (event) => void events.push(event),
-          now: () => new Date(now),
-          log,
-          enqueueEmail: (job) => email.enqueue(client, job),
-          closeSessions: async (userId, which) => {
-            const ids = await deleteUserSessions(client, userId, which);
-            ended.push(...ids);
-            return ids.length;
-          },
-        };
-        const raw = await handler.run(ctx, input);
-
-        // 10. Automations and invariants, then the output contract
-        for (const check of checks) {
-          await check({ op: def, actor: viewer, tx, repo, changes: repo.changes(), events });
-        }
-        const output = def.output.safeParse(raw);
-        if (!output.success) {
-          throw new Error(`${def.name} returned output that does not match its schema`, {
-            cause: output.error,
-          });
-        }
-
-        // 11. Sync log and outbox
-        if (def.kind === 'query') {
-          if (events.length > 0) throw new Error(`${def.name} is a query and cannot emit events`);
-          return { result: output.data, lastSyncId: undefined };
-        }
-        const flushed = await repo.flush({
-          ...(options.clientId !== undefined ? { clientId: options.clientId } : {}),
-          ...(options.seq !== undefined ? { seq: options.seq } : {}),
-        });
-        if (events.length > 0) {
-          await tx.insert(eventOutbox).values(
-            events.map((event) => ({
-              id: uuidv7(),
-              type: event.type,
-              occurredAt: now,
-              actor: {
-                kind: actor.kind,
-                ...(actor.userId ? { userId: actor.userId } : {}),
-                ...(actor.apiKey ? { apiKeyId: actor.apiKey.id } : {}),
-              },
-              subject: event.subject,
-              changes: event.changes ?? null,
-              data: event.data ?? null,
-              lastSyncId: flushed.lastSyncId ?? null,
-            })),
-          );
-        }
+        const applied = await apply(client, def, prepared, actor, {}, log);
         if (owner !== undefined && clientMutationId !== undefined) {
-          await record(tx, owner, clientMutationId, output.data, flushed.lastSyncId);
+          await record(tx, owner, clientMutationId, applied.output, applied.lastSyncId);
         }
         return {
-          result: output.data,
-          lastSyncId: flushed.lastSyncId,
-          ...(flushed.lockedAt === undefined ? {} : { lockedAt: flushed.lockedAt }),
-          ...(ended.length > 0 ? { endedSessions: ended } : {}),
+          result: applied.output,
+          lastSyncId: applied.lastSyncId,
+          ...(applied.lockedAt === undefined ? {} : { lockedAt: applied.lockedAt }),
+          ...(applied.endedSessions === undefined ? {} : { endedSessions: applied.endedSessions }),
         };
       },
     );
-    if (lockedAt !== undefined) syncLock.observeLockHold((performance.now() - lockedAt) / 1000);
-    // After the commit: a socket closed earlier could reconnect while the session still existed.
-    // The operation is committed by now, so a failure here is logged, never returned.
-    if (endedSessions !== undefined && deps.closeSessions) {
-      try {
-        deps.closeSessions(endedSessions);
-      } catch (error) {
-        log.error({ err: loggableError(error), op: def.name }, 'could not close ended sessions');
-      }
-    }
+    afterCommit(outcome, def.name, log);
 
     // 13. Result
+    const { result, lastSyncId, replayed } = outcome;
     return {
       ok: true,
       result: fields === undefined ? result : shapeOutput(def, result, fields),
@@ -321,6 +421,90 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       ...(def.deprecated ? { deprecation: { replacedBy: def.deprecated.replacedBy } } : {}),
       ...(replayed ? { replayed } : {}),
     };
+  }
+
+  /**
+   * SPEC-002 §4.4. The whole mutation, lookup and validation included, runs after the client's
+   * row is locked: a replay must win over anything that could fail now, and a mutation that can
+   * never succeed (an unknown operation, invalid input) is recorded as rejected like any other.
+   */
+  async function runSynced(
+    def: AnyOperation | undefined,
+    opName: string,
+    rawInput: unknown,
+    actor: Actor,
+    origin: SyncOrigin,
+    correlationId: string,
+    log: Logger,
+  ): Promise<SyncedOutcome> {
+    const userId = actor.userId;
+    if (actor.kind !== 'user' || userId === undefined) {
+      throw new SurfaceError('FORBIDDEN', 'Sync is for signed-in users. Use the operations API.');
+    }
+    const { clientId, seq } = origin;
+    // A retried transaction doesn't take a second token.
+    let rated = false;
+    const done = await inTransaction(
+      deps.pool,
+      { ...transactionOptions, readOnly: false },
+      async (client): Promise<SyncedTransaction> => {
+        const claimed = await claimSeq(client, { clientId, userId, seq }, log);
+        switch (claimed.kind) {
+          case 'foreign':
+            throw new SurfaceError(
+              'FORBIDDEN',
+              'This clientId belongs to another user. Start a new queue with a new clientId.',
+            );
+          case 'gap':
+            return { outcome: claimed };
+          case 'replay':
+            return { outcome: { kind: 'result', result: claimed.result, replayed: true } };
+          case 'next':
+            break;
+        }
+
+        await client.query('SAVEPOINT mutation');
+        let applied: Applied;
+        try {
+          if (!def) throw unknownOperation(opName, deps.registry, (op) => callable(op, actor));
+          if (def.kind !== 'mutation') {
+            throw new SurfaceError(
+              'INVALID_INPUT',
+              `${def.name} is a query. Sync sends mutations only; run queries through the operations API.`,
+            );
+          }
+          const prepared = prepare(def, rawInput, actor, undefined, () => {
+            if (rated) return;
+            takeRate(def, actor);
+            rated = true;
+          });
+          applied = await apply(client, def, prepared, actor, origin, log);
+        } catch (error) {
+          if (!recordable(error)) throw error;
+          // The client row stays locked: only the mutation's own work is undone.
+          await client.query('ROLLBACK TO SAVEPOINT mutation');
+          const { code, message } = toOperationError(error, def?.name, correlationId);
+          if (code === 'INTERNAL') {
+            log.error({ err: loggableError(error), op: def?.name }, 'operation failed');
+          }
+          const rejected: MutationResult = { seq, status: 'error', error: { code, message } };
+          await recordResult(client, clientId, rejected);
+          return { outcome: { kind: 'result', result: rejected } };
+        }
+        const lastSyncId =
+          applied.lastSyncId ??
+          (await visibleHead(client, { groups: actor.groups, models: syncedModels() }));
+        const ok: MutationResult = { seq, status: 'ok', lastSyncId };
+        await recordResult(client, clientId, ok);
+        return {
+          outcome: { kind: 'result', result: ok },
+          ...(applied.lockedAt === undefined ? {} : { lockedAt: applied.lockedAt }),
+          ...(applied.endedSessions === undefined ? {} : { endedSessions: applied.endedSessions }),
+        };
+      },
+    );
+    afterCommit(done, opName, log);
+    return done.outcome;
   }
 
   return {
@@ -349,23 +533,84 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         }
       }
 
-      // 14. Log and metrics. Unknown names stay out of labels to bound cardinality.
-      const durationMs = performance.now() - started;
-      const opLabel = def?.name ?? 'unknown';
-      const result = outcome.ok ? 'ok' : outcome.error.code;
-      log.info(
-        {
-          op: opLabel,
-          actorKind: actor.kind,
-          durationMs: Math.round(durationMs * 100) / 100,
-          outcome: result,
-        },
-        'operation',
-      );
-      metrics.observe(opLabel, def?.kind ?? 'unknown', result, durationMs / 1000);
+      observe(def, actor, outcome.ok ? 'ok' : outcome.error.code, started, log);
+      return outcome;
+    },
+
+    async executeSynced(opName, rawInput, actor, origin, options = {}) {
+      const started = performance.now();
+      const correlationId = options.correlationId ?? randomUUID();
+      const log = deps.log.child({ correlationId, clientId: origin.clientId, seq: origin.seq });
+      const found = deps.registry.get(opName);
+      const def = found && callable(found, actor) ? found : undefined;
+
+      let outcome: SyncedOutcome;
+      try {
+        outcome = await runSynced(def, opName, rawInput, actor, origin, correlationId, log);
+      } catch (error) {
+        // Nothing was recorded: the client sends the batch again.
+        const refused = toOperationError(error, def?.name, correlationId);
+        if (refused.code === 'INTERNAL') {
+          log.error({ err: loggableError(error), op: def?.name }, 'operation failed');
+        }
+        outcome = { kind: 'refused', error: refused };
+      }
+      observe(def, actor, syncedLabel(outcome), started, log);
       return outcome;
     },
   };
+
+  /** 14. Log and metrics. Unknown names stay out of labels to bound cardinality. */
+  function observe(
+    def: AnyOperation | undefined,
+    actor: Actor,
+    result: string,
+    started: number,
+    log: Logger,
+  ): void {
+    const durationMs = performance.now() - started;
+    const opLabel = def?.name ?? 'unknown';
+    log.info(
+      {
+        op: opLabel,
+        actorKind: actor.kind,
+        durationMs: Math.round(durationMs * 100) / 100,
+        outcome: result,
+      },
+      'operation',
+    );
+    metrics.observe(opLabel, def?.kind ?? 'unknown', result, durationMs / 1000);
+  }
+}
+
+interface SyncedTransaction {
+  readonly outcome: SyncedOutcome;
+  readonly lockedAt?: number;
+  readonly endedSessions?: readonly string[];
+}
+
+function syncedLabel(outcome: SyncedOutcome): string {
+  switch (outcome.kind) {
+    case 'result':
+      return outcome.result.status === 'ok' ? 'ok' : outcome.result.error.code;
+    case 'gap':
+      return 'SEQ_GAP';
+    case 'refused':
+      return outcome.error.code;
+  }
+}
+
+/**
+ * Whether a sync mutation's failure is its result, recorded so the client's queue moves on. Not
+ * recorded, so the batch is sent again: a rate limit (the request is refused as a whole), a
+ * serialization failure or deadlock (the transaction reruns), and faults of the connection or the
+ * server (SQLSTATE classes 08, 53, 57, and 55P03 lock timeouts), which a later attempt can pass.
+ */
+function recordable(error: unknown): boolean {
+  if (error instanceof SurfaceError) return error.code !== 'RATE_LIMITED';
+  if (isRetryable(error)) return false;
+  const code = postgresCode(error);
+  return code === undefined || !(/^(08|53|57)/.test(code) || code === '55P03');
 }
 
 /** One handler per operation, each for an operation in the registry. */

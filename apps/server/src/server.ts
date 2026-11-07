@@ -32,6 +32,7 @@ import { pgSyncLogSource, sessionCloser } from './sync/hub-source.js';
 import { announceSetup } from './setup/announce.js';
 import { SetupGate } from './setup/routes.js';
 import { pgSetupStore } from './setup/store.js';
+import { clientOwner } from './sync/client-mutations.js';
 import { serverSyncRegistry } from './sync/registry.js';
 
 export interface StartOptions {
@@ -131,6 +132,7 @@ export async function startServer(
       registry: sync,
       resolveActor,
       sessionIdOf: sessions.sessionIdOf,
+      clientOwner: (clientId) => clientOwner(pool, clientId),
       ...(hub ? { hub } : {}),
     },
     setup: { store: setupStore, gate: setupGate },
@@ -156,6 +158,7 @@ export async function startServer(
           rateLimiter: tokenBucket(),
           email,
           closeSessions,
+          syncedModels: sync.models.map((model) => model.name),
           ...(metrics ? { metrics } : {}),
         }),
     },

@@ -34,6 +34,11 @@ export interface SocketRouteDeps {
   readonly allowedOrigin: string;
   /** The session a request belongs to, for `hub.closeSessions` (sessions arrive in PLAN-001 S3). */
   readonly sessionIdOf?: (request: FastifyRequest) => string | undefined;
+  /**
+   * Who registered a `clientId` (`client_mutations`, PLAN-002 S5), if anyone. A socket for another
+   * user's client is refused: it would see that client's acks.
+   */
+  readonly clientOwner?: (clientId: string) => Promise<string | undefined>;
 }
 
 /** A client sends only `pong` (and small `presence` messages from M4). */
@@ -95,13 +100,26 @@ export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps)
                 ),
               );
           }
+          let params: SocketConnectParams;
           try {
-            const params = decodeSocketConnectParams(request.query);
-            admitted.set(request, { actor: { ...actor, userId: actor.userId }, params });
+            params = decodeSocketConnectParams(request.query);
           } catch (error) {
             if (!(error instanceof ProtocolError)) throw error;
             return reply.code(400).send(errorBody(request, 'INVALID_INPUT', error.message));
           }
+          const owner = await deps.clientOwner?.(params.clientId);
+          if (owner !== undefined && owner !== actor.userId) {
+            return reply
+              .code(403)
+              .send(
+                errorBody(
+                  request,
+                  'FORBIDDEN',
+                  'This clientId belongs to another user. Start a new queue with a new clientId.',
+                ),
+              );
+          }
+          admitted.set(request, { actor: { ...actor, userId: actor.userId }, params });
         },
       },
       (socket, request) => {

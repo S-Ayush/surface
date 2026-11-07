@@ -55,7 +55,10 @@ export const clientMutations = pgTable('client_mutations', {
   clientId: uuid().primaryKey(),
   userId: uuid().notNull(),
   lastSeq: bigint({ mode: 'number' }).notNull(),
-  /** Results of the last batch, returned again when it is resent. */
+  /**
+   * `[{ seq, status, … }]`: the results of the last 100 seqs (`KEPT_RESULTS`, at least the last
+   * batch), returned again when they are resent.
+   */
   lastResults: jsonb().notNull(),
   updatedAt: timestamp({ withTimezone: true, precision: 3 }).notNull(),
 });

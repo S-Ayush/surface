@@ -35,6 +35,9 @@ afterEach(async () => {
   cleanup = [];
 });
 
+/** Who registered each `clientId` (`client_mutations`), for the ownership check. */
+const owners = new Map<string, string>();
+
 async function app({ ready = true } = {}) {
   const config = testConfig();
   const lifecycle = new Lifecycle();
@@ -51,6 +54,7 @@ async function app({ ready = true } = {}) {
       registry,
       resolveActor: headerActor({ member, apiKey }),
       hub,
+      clientOwner: (clientId) => Promise.resolve(owners.get(clientId)),
       sessionIdOf: (request) => {
         const id = request.headers['x-test-session'];
         return typeof id === 'string' ? id : undefined;
@@ -70,10 +74,10 @@ async function app({ ready = true } = {}) {
   return { app: built, hub, source, url: url.replace(/^http/, 'ws') };
 }
 
-const params = (over: { since?: number; schemaHash?: string } = {}) =>
+const params = (over: { since?: number; schemaHash?: string; clientId?: string } = {}) =>
   encodeSocketConnectParams({
     since: over.since ?? 0,
-    clientId: randomUUID(),
+    clientId: over.clientId ?? randomUUID(),
     schemaHash: over.schemaHash ?? registry.schemaHash,
   });
 
@@ -140,6 +144,25 @@ describe('GET /sync/ws refuses before the upgrade', () => {
     });
     expect(await closed).toBe(1006);
     expect(messages).toEqual([]);
+  });
+
+  it('a clientId another user registered through /sync/mutate, with 403 (it would see its acks)', async () => {
+    const { app: server, url, source } = await app();
+    const theirs = randomUUID();
+    owners.set(theirs, randomUUID());
+    const res = await server.inject({
+      url: `${SOCKET_PATH}?${params({ clientId: theirs })}`,
+      headers: { 'x-test-actor': 'member' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    // The member's own registered client is accepted.
+    const mine = randomUUID();
+    owners.set(mine, member.userId ?? '');
+    source.write({});
+    const { messages } = open(url, params({ clientId: mine }), { 'x-test-actor': 'member' });
+    await eventually(() => messages.length === 1);
+    expect(messages[0]?.t).toBe('deltas');
   });
 
   it('invalid connect parameters, with 400 naming the problem', async () => {

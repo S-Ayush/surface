@@ -1,6 +1,6 @@
 /**
  * Sync HTTP routes (SPEC-002 §4, sync-protocol §4). PLAN-002 S3: `GET /sync/bootstrap`; S4: the
- * WebSocket (`socket-route.ts`). `POST /sync/mutate` (S5) joins here.
+ * WebSocket (`socket-route.ts`); S5: `POST /sync/mutate` (`mutate.ts`).
  */
 import { pipeline, Readable } from 'node:stream';
 import { createGzip } from 'node:zlib';
@@ -10,7 +10,9 @@ import { errorBody } from '../http/errors.js';
 import { signedIn, type ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { bootstrapFrames, type BootstrapPool } from './bootstrap.js';
+import type { Executor } from '../executor/execute.js';
 import type { SyncHub } from './hub.js';
+import { registerMutateRoute } from './mutate.js';
 import type { SyncRegistry } from './registry.js';
 import { registerSocketRoute, type SocketRouteDeps } from './socket-route.js';
 
@@ -23,6 +25,9 @@ export interface SyncRoutesDeps {
   /** The live-delta hub; without it there is no `/sync/ws` (e.g. the `worker` role). */
   readonly hub?: SyncHub;
   readonly sessionIdOf?: SocketRouteDeps['sessionIdOf'];
+  readonly clientOwner?: SocketRouteDeps['clientOwner'];
+  /** Runs `POST /sync/mutate`; without it there is no such route (tests without operations). */
+  readonly executor?: Executor;
 }
 
 export function registerSyncRoutes(
@@ -30,6 +35,13 @@ export function registerSyncRoutes(
   deps: SyncRoutesDeps & Pick<SocketRouteDeps, 'allowedOrigin'>,
 ): void {
   if (deps.hub) registerSocketRoute(app, { ...deps, hub: deps.hub });
+  if (deps.executor) {
+    registerMutateRoute(app, {
+      ...deps,
+      executor: deps.executor,
+      schemaHash: deps.registry.schemaHash,
+    });
+  }
   app.get(BOOTSTRAP_PATH, async (request, reply) => {
     const actor = await signedIn(request, reply, deps);
     if (!actor) return reply;

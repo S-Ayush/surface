@@ -66,7 +66,8 @@ export interface AuthDeps {
   verify?: (hash: string, password: string) => Promise<boolean>;
 }
 
-export type SyncDeps = Omit<SyncRoutesDeps, 'lifecycle'>;
+/** The executor comes from `ops`, shared with the operations API. */
+export type SyncDeps = Omit<SyncRoutesDeps, 'lifecycle' | 'executor'>;
 
 /** Accept a caller's X-Request-Id only if it is short and safe to log. */
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._-]{1,64}$/;
@@ -132,9 +133,11 @@ export async function buildApp({
       setupComplete: setup ? () => setup.gate.isComplete() : () => Promise.resolve(true),
     });
   }
-  if (ops) {
+  // One executor for the operations API and `POST /sync/mutate`: one rate limiter, one set of metrics.
+  const executor = ops?.createExecutor(metrics);
+  if (ops && executor) {
     registerOpsRoutes(app, {
-      executor: ops.createExecutor(metrics),
+      executor,
       registry: ops.registry,
       resolveActor: ops.resolveActor,
       lifecycle,
@@ -145,6 +148,7 @@ export async function buildApp({
     if (sync.hub && metrics) sync.hub.useMetrics(hubMetrics(metrics));
     registerSyncRoutes(app, {
       ...sync,
+      ...(executor ? { executor } : {}),
       lifecycle,
       allowedOrigin: new URL(config.publicUrl).origin,
     });
