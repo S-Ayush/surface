@@ -10,6 +10,12 @@
  * (Faking `setImmediate` too does not work: each fake advance runs only one
  * more level of nested immediates, so storage would crawl through virtual
  * time and a crash would land mid-write far more often than it can.)
+ *
+ * The real server (`real-server.ts`) does real I/O the counter cannot see.
+ * Its adapter reports it: work it awaits (`trackRealWork`), which holds the
+ * clock until done, and events that arrived on real sockets (`RealEvents`),
+ * which it hands to the tabs in a fixed order when the loop is otherwise
+ * quiet. Virtual time stands still while the server works.
  */
 import { vi } from 'vitest';
 
@@ -20,6 +26,32 @@ import { vi } from 'vitest';
 let outstanding = new Set<NodeJS.Immediate>();
 let realSetImmediate: typeof setImmediate | undefined;
 let realClearImmediate: typeof clearImmediate | undefined;
+/** Real work the clock waits for (`trackRealWork`). */
+const realWork = new Set<Promise<unknown>>();
+/** Sources of real events (`addRealEvents`). */
+const realSources = new Set<RealEvents>();
+
+/** Events that arrive on real sockets, held until the clock hands them over. */
+export interface RealEvents {
+  /** Deliver what has arrived, in a fixed order; true if anything was. */
+  flush(): boolean;
+  /** Quiet turns of the real event loop before nothing more is on its way. */
+  readonly quietTurns: number;
+}
+
+/** Hold the clock until `work` settles. Returns `work`. */
+export function trackRealWork<T>(work: Promise<T>): Promise<T> {
+  realWork.add(work);
+  const done = () => realWork.delete(work);
+  work.then(done, done);
+  return work;
+}
+
+/** Let the clock hand `source`'s events over; returns a function that stops it. */
+export function addRealEvents(source: RealEvents): () => void {
+  realSources.add(source);
+  return () => realSources.delete(source);
+}
 
 export const EPOCH = Date.UTC(2026, 10, 7);
 
@@ -68,10 +100,19 @@ function turn(): Promise<void> {
  * quiet turns in a row, so microtasks queued behind the check also run.
  */
 export async function settle(): Promise<void> {
-  for (let quiet = 0, turns = 0; quiet < 2; turns += 1) {
+  const needed = Math.max(2, ...[...realSources].map((source) => source.quietTurns));
+  for (let quiet = 0, turns = 0; quiet < needed; turns += 1) {
     if (turns > 100_000) throw new Error('Storage never went quiet (an IndexedDB loop?)');
+    if (realWork.size > 0) {
+      // The real server is working: wait for it, however many turns it takes.
+      await Promise.allSettled([...realWork]);
+      quiet = 0;
+      continue;
+    }
     await turn();
-    quiet = outstanding.size === 0 ? quiet + 1 : 0;
+    let delivered = false;
+    for (const source of realSources) delivered = source.flush() || delivered;
+    quiet = outstanding.size === 0 && realWork.size === 0 && !delivered ? quiet + 1 : 0;
   }
 }
 

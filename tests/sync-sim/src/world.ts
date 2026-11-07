@@ -21,19 +21,19 @@ import { Network } from './network.js';
 import type { Random } from './random.js';
 import { seededRandom, uuidFrom } from './random.js';
 import type { ItemState, SimServer } from './server.js';
-import { FakeHubServer } from './server.js';
 import { TabTimers } from './timers.js';
 
 export interface WorldOptions {
   readonly seed: number;
-  /** Users, each starting with one tab. */
-  readonly users: number;
   /** Web Locks (secure origin) or none (plain HTTP: queues move by lease, E5). */
   readonly webLocks: boolean;
 }
 
 export interface User {
+  /** The server's id for the user. */
   readonly id: string;
+  /** `user-1`, `user-2`, … in failure messages, whatever the server's ids. */
+  readonly name: string;
   readonly locks: BrowserLocks;
 }
 
@@ -95,7 +95,8 @@ export class World {
   /** Faults have stopped: from here, a failed start is a bug. */
   #healed = false;
 
-  constructor(options: WorldOptions, server: SimServer = new FakeHubServer()) {
+  /** One user per user of `server`. */
+  constructor(options: WorldOptions, server: SimServer) {
     this.random = seededRandom(options.seed);
     this.server = server;
     this.network = new Network(server, this.random);
@@ -103,8 +104,9 @@ export class World {
     // Each world gets empty browsers: a fresh IndexedDB, so replica names
     // never collide and do not depend on which case ran before.
     globalThis.indexedDB = new IDBFactory();
-    this.users = Array.from({ length: options.users }, (_, i) => ({
-      id: `user-${i + 1}`,
+    this.users = server.users.map((id, i) => ({
+      id,
+      name: `user-${i + 1}`,
       locks: new BrowserLocks(),
     }));
   }
@@ -115,20 +117,21 @@ export class World {
 
   /**
    * What went wrong that should not have: callbacks the app treats as errors,
-   * a start that failed once the network was healthy, and a store error on a
-   * live tab.
+   * a start that failed once the network was healthy, a store error on a
+   * live tab, and anything the server reports.
    */
   get problems(): string[] {
     const errors = this.live
       .filter(({ store }) => store.error !== undefined)
       .map(({ name, store }) => `${name}: store error "${String(store.error)}"`);
-    return [...this.#problems, ...errors];
+    const server = this.server.problems.map((problem) => `server: ${problem}`);
+    return [...this.#problems, ...errors, ...server];
   }
 
   /** Open a new tab for `user` and start its store. */
   open(user: User): Tab {
-    const name = `${user.id}/tab-${this.tabs.length + 1}`;
-    const link = this.network.link();
+    const name = `${user.name}/tab-${this.tabs.length + 1}`;
+    const link = this.network.link(user.id);
     const timers = new TabTimers();
     const locks = this.#webLocks ? user.locks.forTab(name) : null;
     const state: TabState = { alive: true, storages: [], calls: 0 };
@@ -153,7 +156,7 @@ export class World {
       return instrumented(storage, hooks);
     };
     const store = new SyncStore({
-      models: [DebugItem],
+      models: this.server.models,
       workspaceId: 'sim',
       userId: user.id,
       fetch: link.fetch,
@@ -267,7 +270,7 @@ export class World {
     for (let waited = 0; ; waited += SETTLE_STEP_MS) {
       if (this.live.every(({ store }) => store.status === 'ready')) return;
       if (waited >= limitMs) {
-        throw new Error(`Tabs not loaded after ${limitMs} ms: ${this.describe()}`);
+        throw new Error(`Tabs not loaded after ${limitMs} ms: ${await this.describe()}`);
       }
       await this.run(SETTLE_STEP_MS);
     }
@@ -284,7 +287,7 @@ export class World {
     this.#healed = true;
     for (const state of this.#states.values()) state.crashAtCall = undefined;
     for (let waited = 0; ; waited += SETTLE_STEP_MS) {
-      if (this.#settled()) {
+      if (await this.#settled()) {
         const stranded = await this.#strandedWork();
         if (stranded.length === 0) return;
         // With Web Locks, a queue left by a crashed tab waits for the next tab
@@ -293,7 +296,7 @@ export class World {
         if (this.#webLocks) for (const user of stranded) this.open(user);
       }
       if (waited >= limitMs) {
-        throw new Error(`Not quiescent after ${limitMs} ms: ${this.describe()}`);
+        throw new Error(`Not quiescent after ${limitMs} ms: ${await this.describe()}`);
       }
       await this.run(SETTLE_STEP_MS);
     }
@@ -309,11 +312,11 @@ export class World {
     await this.quiesce();
   }
 
-  #settled(): boolean {
+  async #settled(): Promise<boolean> {
     // A request still on its way (one a crashed tab gave up on, say) could
     // run on the server after the check: wait for it.
     if (this.network.requestsInFlight > 0) return false;
-    const head = this.server.head();
+    const head = await this.server.head();
     return this.live.every(
       ({ store }) =>
         store.status === 'ready' &&
@@ -356,8 +359,8 @@ export class World {
   }
 
   /** One line per live tab, for failure messages. */
-  describe(): string {
-    const head = this.server.head();
+  async describe(): Promise<string> {
+    const head = await this.server.head();
     const requests = `${this.network.requestsInFlight} requests in flight`;
     const tabs = this.live.map(
       ({ name, store }) =>
@@ -366,10 +369,10 @@ export class World {
     return [requests, ...tabs].join('; ');
   }
 
-  /** Stop everything; the caller resets the clock. */
-  dispose(): void {
+  /** Stop everything, the server too; the caller resets the clock. */
+  async dispose(): Promise<void> {
     for (const tab of this.live) this.crash(tab);
-    this.server.dispose();
+    await this.server.dispose();
   }
 }
 

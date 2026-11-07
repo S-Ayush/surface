@@ -4,5 +4,7 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "test"]
+  // `@surface/server/testing` pulls the server's source into this program, so its ambient
+  // module declarations must come too. If the server adds another `.d.ts`, list it here.
+  "include": ["src", "test", "../../apps/server/src/mail/nodemailer.d.ts"]
 }

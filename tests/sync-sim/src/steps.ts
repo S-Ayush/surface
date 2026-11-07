@@ -13,6 +13,8 @@ export type Step =
   | { readonly t: 'create'; readonly tab: number; readonly item: number; readonly title: string }
   | { readonly t: 'rename'; readonly tab: number; readonly item: number; readonly title: string }
   | { readonly t: 'touch'; readonly tab: number; readonly item: number }
+  /** Many touches from one tab at once: past the rate limit, mid-batch (sync-protocol §4.4). */
+  | { readonly t: 'burst'; readonly tab: number; readonly item: number; readonly count: number }
   | { readonly t: 'delete'; readonly tab: number; readonly item: number }
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
@@ -78,8 +80,26 @@ const faultSteps: fc.Arbitrary<Step>[] = [
   fc.record({ t: fc.constant('open'), user: index }),
 ];
 
+/**
+ * A burst runs one tab past the server's 120 mutations a minute, so a batch
+ * is cut short by a 429 and the rest is resent after the client's own
+ * backoff (it does not read `Retry-After`). Only the real server limits; the
+ * fake hub's cases leave it out.
+ */
+const burst: fc.Arbitrary<Step> = fc.record({
+  t: fc.constant('burst'),
+  tab,
+  item,
+  count: fc.integer({ min: 121, max: 160 }),
+});
+
+export interface CaseOptions {
+  /** Include `burst` steps (the real server's rate limit). */
+  readonly bursts?: boolean;
+}
+
 /** Property 1 (AC-2): every kind of change, on colliding rows, with every fault. */
-export function convergenceCase(): fc.Arbitrary<Case> {
+export function convergenceCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
   const change = (arbitrary: fc.Arbitrary<Step>) => ({ weight: 4, arbitrary });
   const step = fc.oneof(
     change(fc.record({ t: fc.constant('create'), tab, item, title })),
@@ -87,15 +107,17 @@ export function convergenceCase(): fc.Arbitrary<Case> {
     change(fc.record({ t: fc.constant('touch'), tab, item })),
     change(fc.record({ t: fc.constant('delete'), tab, item })),
     ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
+    ...(options.bursts ? [{ weight: 1, arbitrary: burst }] : []),
   );
   return caseOf(step);
 }
 
 /** Property 2 (AC-3): only `debug.touch` on the user's own item, with every fault. */
-export function exactlyOnceCase(): fc.Arbitrary<Case> {
+export function exactlyOnceCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
   const step = fc.oneof(
     { weight: 8, arbitrary: fc.record({ t: fc.constant('touch'), tab, item }) },
     ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
+    ...(options.bursts ? [{ weight: 1, arbitrary: burst }] : []),
   );
   return caseOf(step);
 }
@@ -144,6 +166,15 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       else if (step.t === 'rename') world.dispatch(target, debugRename, { id, title: step.title });
       else if (step.t === 'touch') world.dispatch(target, debugTouch, { id });
       else world.dispatch(target, debugDelete, { id });
+      return;
+    }
+    case 'burst': {
+      const target = pick(live, step.tab);
+      if (target === undefined) return;
+      const n = options.itemFor ? options.itemFor(step.item, userIndex(target)) : step.item;
+      for (let i = 0; i < step.count; i += 1) {
+        world.dispatch(target, debugTouch, { id: itemId(n) });
+      }
       return;
     }
     case 'wait':

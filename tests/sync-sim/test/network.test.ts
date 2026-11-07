@@ -19,11 +19,14 @@ function fakeServer() {
     sockets: [] as SocketHandlers[],
   };
   const server: SimServer = {
+    users: ['user-1'],
+    problems: [],
+    models: [],
     fetch: () => {
       state.requests += 1;
       return Promise.resolve(new Response('ok'));
     },
-    socket: (_url, handlers) => {
+    socket: (_user, _url, handlers) => {
       state.sockets.push(handlers);
       queueMicrotask(() => handlers.onOpen());
       const connection: SocketConnection = {
@@ -35,11 +38,11 @@ function fakeServer() {
     restart: () => {
       for (const handlers of state.sockets.splice(0)) handlers.onClose(1012);
     },
-    head: () => 0,
-    items: () => ({}),
-    seed: () => undefined,
+    head: () => Promise.resolve(0),
+    items: () => Promise.resolve({}),
+    seed: () => Promise.resolve(),
     compactLog: () => undefined,
-    dispose: () => undefined,
+    dispose: () => Promise.resolve(),
   };
   return { server, state };
 }
@@ -68,7 +71,7 @@ afterEach(() => uninstallClock());
 
 describe('HTTP', () => {
   it('delivers a request and its response after a delay', async () => {
-    const link = network.link();
+    const link = network.link('user-1');
     const response = link.fetch('http://surface.test/x', {});
     await advance(100);
     await expect(response.then((r) => r.text())).resolves.toBe('ok');
@@ -78,7 +81,7 @@ describe('HTTP', () => {
   it('loses a request before the server sees it', async () => {
     network.faults = { dropRequest: 1, dropResponse: 0, hangResponse: 0, maxDelayMs: 5 };
     const failed = network
-      .link()
+      .link('user-1')
       .fetch('http://surface.test/x', {})
       .catch((e: unknown) => e);
     await advance(100);
@@ -89,7 +92,7 @@ describe('HTTP', () => {
   it('loses a response after the server ran the request', async () => {
     network.faults = { dropRequest: 0, dropResponse: 1, hangResponse: 0, maxDelayMs: 5 };
     const failed = network
-      .link()
+      .link('user-1')
       .fetch('http://surface.test/x', {})
       .catch((e: unknown) => e);
     await advance(100);
@@ -100,7 +103,7 @@ describe('HTTP', () => {
   it('rejects at once when aborted, but the request still reaches the server (E3)', async () => {
     const controller = new AbortController();
     const failed = network
-      .link()
+      .link('user-1')
       .fetch('http://surface.test/x', { signal: controller.signal })
       .catch((e: unknown) => e);
     controller.abort();
@@ -112,7 +115,7 @@ describe('HTTP', () => {
   });
 
   it('delivers a crashed tab’s last request, and its answer to no one (E4)', async () => {
-    const link = network.link();
+    const link = network.link('user-1');
     let answered = false;
     void link.fetch('http://surface.test/x', {}).then(
       () => (answered = true),
@@ -125,7 +128,7 @@ describe('HTTP', () => {
   });
 
   it('counts a request as in flight until the server has handled it, even from a crashed tab', async () => {
-    const link = network.link();
+    const link = network.link('user-1');
     void link.fetch('http://surface.test/x', {}).catch(() => undefined);
     link.kill();
     expect(network.requestsInFlight).toBe(1);
@@ -136,13 +139,13 @@ describe('HTTP', () => {
   it('stops counting a lost request, and never counts a hanging response', async () => {
     network.faults = { dropRequest: 1, dropResponse: 0, hangResponse: 0, maxDelayMs: 5 };
     void network
-      .link()
+      .link('user-1')
       .fetch('http://surface.test/x', {})
       .catch(() => undefined);
     await advance(100);
     expect(network.requestsInFlight).toBe(0);
     network.faults = { dropRequest: 0, dropResponse: 0, hangResponse: 1, maxDelayMs: 5 };
-    void network.link().fetch('http://surface.test/x', {});
+    void network.link('user-1').fetch('http://surface.test/x', {});
     await advance(100);
     expect([state.requests, network.requestsInFlight]).toEqual([1, 0]);
   });
@@ -152,7 +155,7 @@ describe('HTTP', () => {
     const controller = new AbortController();
     let outcome = 'pending';
     void network
-      .link()
+      .link('user-1')
       .fetch('http://surface.test/x', { signal: controller.signal })
       .then(
         () => (outcome = 'answered'),
@@ -168,7 +171,7 @@ describe('HTTP', () => {
   it('loses the answer to a request the server ran before it restarted', async () => {
     network.faults = { dropRequest: 0, dropResponse: 0, hangResponse: 0, maxDelayMs: 50 };
     const failed = network
-      .link()
+      .link('user-1')
       .fetch('http://surface.test/x', {})
       .catch((e: unknown) => e);
     for (let i = 0; state.requests === 0 && i < 100; i += 1) await advance(1);
@@ -179,7 +182,7 @@ describe('HTTP', () => {
   });
 
   it('fails while offline, and fires `online` when back', async () => {
-    const link = network.link();
+    const link = network.link('user-1');
     let online = 0;
     link.onlineSource.subscribe(() => (online += 1));
     link.setOnline(false);
@@ -196,7 +199,7 @@ describe('WebSocket', () => {
   it('keeps the order of messages in each direction, whatever their delays', async () => {
     network.faults = { dropRequest: 0, dropResponse: 0, hangResponse: 0, maxDelayMs: 3_000 };
     const { events, handlers } = client();
-    const socket = network.link().socket('ws://surface.test/sync/ws', handlers);
+    const socket = network.link('user-1').socket('ws://surface.test/sync/ws', handlers);
     await advance(10_000);
     for (let i = 0; i < 20; i += 1) socket.send(`up ${i}`);
     for (let i = 0; i < 20; i += 1) state.sockets[0]?.onMessage(`down ${i}`);
@@ -207,7 +210,7 @@ describe('WebSocket', () => {
 
   it('closes both sides with 1006 when the connection drops, losing what was in flight', async () => {
     const { events, handlers } = client();
-    const link = network.link();
+    const link = network.link('user-1');
     const socket = link.socket('ws://surface.test/sync/ws', handlers);
     await advance(100);
     socket.send('lost');
@@ -220,7 +223,7 @@ describe('WebSocket', () => {
 
   it('tells the client 1012 when the server restarts', async () => {
     const { events, handlers } = client();
-    network.link().socket('ws://surface.test/sync/ws', handlers);
+    network.link('user-1').socket('ws://surface.test/sync/ws', handlers);
     await advance(100);
     network.serverDown();
     await advance(100);
@@ -230,7 +233,7 @@ describe('WebSocket', () => {
   it('cannot open while the server is down', async () => {
     network.serverDown();
     const { events, handlers } = client();
-    network.link().socket('ws://surface.test/sync/ws', handlers);
+    network.link('user-1').socket('ws://surface.test/sync/ws', handlers);
     await advance(100);
     expect(events).toEqual(['close 1006']);
     expect(state.sockets).toEqual([]);
@@ -238,8 +241,8 @@ describe('WebSocket', () => {
 
   it('delivers nothing to a crashed tab, and the server sees its socket close', async () => {
     const { events, handlers } = client();
-    const link = network.link();
-    network.link().socket('ws://surface.test/sync/ws', client().handlers);
+    const link = network.link('user-1');
+    network.link('user-1').socket('ws://surface.test/sync/ws', client().handlers);
     link.socket('ws://surface.test/sync/ws', handlers);
     await advance(100);
     link.kill();

@@ -9,22 +9,16 @@
  * store reports an error.
  */
 import fc from 'fast-check';
-import { expect, it } from 'vitest';
+import { it } from 'vitest';
 import { simParameters } from '../src/context.js';
+import { convergence } from '../src/properties.js';
 import { simulate } from '../src/simulate.js';
 import { convergenceCase } from '../src/steps.js';
 
 it('every tab converges on the server state after any faults (AC-2)', async () => {
   await fc.assert(
     fc.asyncProperty(convergenceCase(), (simCase) =>
-      simulate(simCase, { seedItems: () => [0, 1, 2] }, ({ world }) => {
-        expect(world.problems).toEqual([]);
-        const server = world.server.items();
-        for (const tab of world.live) {
-          expect(tab.store.pending, tab.name).toEqual([]);
-          expect(world.view(tab), tab.name).toEqual(server);
-        }
-      }),
+      simulate(simCase, convergence.options, convergence.check),
     ),
     simParameters(),
   );

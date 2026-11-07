@@ -44,10 +44,9 @@ it.each(cases.map((c, i) => [i, c] as const))(
   'replays case %i exactly from its seed',
   async (_, simCase) => {
     const run = () =>
-      simulate(simCase, { seedItems: () => [0, 1, 2] }, ({ world, elapsedMs }) => ({
+      simulate(simCase, { seedItems: () => [0, 1, 2] }, ({ world, elapsedMs, server }) => ({
         elapsedMs,
-        head: world.server.head(),
-        items: world.server.items(),
+        server,
         dispatched: world.dispatched.map((d) => [d.tab, d.op, d.key, d.outcome?.status]),
         saved: [...world.saved.keys()],
         tabs: world.tabs.map((t) => [t.name, t.alive, t.store.clientId]),

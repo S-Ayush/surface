@@ -62,9 +62,9 @@ export class Network {
     readonly random: Random,
   ) {}
 
-  /** The network as seen by one tab. */
-  link(): Link {
-    const link = new Link(this);
+  /** The network as seen by one tab, signed in as `user`. */
+  link(user: string): Link {
+    const link = new Link(this, user);
     this.#links.add(link);
     return link;
   }
@@ -138,7 +138,10 @@ export class Link {
   readonly #sockets = new Set<LinkSocket>();
   readonly #listeners = new Set<() => void>();
 
-  constructor(readonly network: Network) {}
+  constructor(
+    readonly network: Network,
+    readonly user: string,
+  ) {}
 
   get dead(): boolean {
     return this.#dead;
@@ -227,7 +230,7 @@ export class Link {
         };
         // A server that throws is a failed request, as over HTTP.
         Promise.resolve()
-          .then(() => network.server.fetch(url, init))
+          .then(() => network.server.fetch(this.user, url, init))
           .finally(() => network.requestDone())
           .then(
             (response) => back(() => resolve(response)),
@@ -308,7 +311,7 @@ class LinkSocket {
         this.drop();
         return;
       }
-      this.#server = this.link.network.server.socket(this.url, {
+      this.#server = this.link.network.server.socket(this.link.user, this.url, {
         onOpen: () => this.#toClient.send(() => this.#deliver(() => this.handlers.onOpen())),
         onMessage: (data) =>
           this.#toClient.send(() => this.#deliver(() => this.handlers.onMessage(data))),

@@ -18,8 +18,8 @@ describe('the simulation', () => {
         ],
       },
       { seedItems: () => [0, 1, 2] },
-      ({ world, elapsedMs }) => ({
-        server: world.server.items(),
+      ({ world, elapsedMs, server }) => ({
+        server: server.items,
         views: world.live.map((tab) => world.view(tab)),
         problems: world.problems,
         outcomes: world.dispatched.map((d) => d.outcome?.status),
