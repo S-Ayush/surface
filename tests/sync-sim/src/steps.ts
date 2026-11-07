@@ -19,6 +19,7 @@ export type Step =
   | { readonly t: 'disconnect'; readonly tab: number }
   | { readonly t: 'offline'; readonly tab: number; readonly ms: number }
   | { readonly t: 'restart'; readonly downMs: number }
+  | { readonly t: 'compact' }
   | { readonly t: 'crash'; readonly tab: number }
   | { readonly t: 'crashMidway'; readonly tab: number; readonly calls: number }
   | { readonly t: 'reload'; readonly tab: number }
@@ -27,6 +28,11 @@ export type Step =
 export interface Case {
   readonly seed: number;
   readonly users: number;
+  /**
+   * Users with no tab at the start: the first `open` for one of them starts
+   * cold, bootstrapping under whatever faults are on by then.
+   */
+  readonly lateUsers: number;
   readonly webLocks: boolean;
   readonly steps: readonly Step[];
 }
@@ -62,6 +68,8 @@ const faultSteps: fc.Arbitrary<Step>[] = [
   fc.record({ t: fc.constant('disconnect'), tab }),
   fc.record({ t: fc.constant('offline'), tab, ms: fc.integer({ min: 100, max: 60_000 }) }),
   fc.record({ t: fc.constant('restart'), downMs: fc.integer({ min: 0, max: 20_000 }) }),
+  // Tabs behind the head re-bootstrap when they next connect (E8).
+  fc.record({ t: fc.constant('compact') }),
   fc.record({ t: fc.constant('crash'), tab }),
   // A crash inside one event: between its IndexedDB transactions, or before
   // a mutation is saved.
@@ -94,8 +102,11 @@ export function exactlyOnceCase(): fc.Arbitrary<Case> {
 
 function caseOf(step: fc.Arbitrary<Step>): fc.Arbitrary<Case> {
   return fc.record({
-    seed: fc.integer(),
+    // Not shrunk: a new seed reshuffles every fault, so a shrunk case would
+    // no longer show the failure it came from.
+    seed: fc.noShrink(fc.integer()),
     users: fc.integer({ min: 3, max: 4 }),
+    lateUsers: fc.integer({ min: 0, max: 2 }),
     webLocks: fc.boolean(),
     // `size: 'medium'`: long enough for faults to pile up (fast-check's
     // default size makes most sequences a handful of steps).
@@ -154,6 +165,9 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
     case 'restart':
       world.network.serverDown();
       setTimeout(() => world.network.serverUpAgain(), step.downMs);
+      return;
+    case 'compact':
+      world.server.compactLog();
       return;
     case 'crash':
     case 'reload': {

@@ -27,8 +27,17 @@ export interface SimServer {
   head(): number;
   /** The database's debug items, by id. */
   items(): Record<string, ItemState>;
-  /** Create items directly in the database (fixtures for a case). */
+  /**
+   * Fixtures for a case, written the way the server writes any row: the real
+   * server's adapter runs `debug.create` through the executor, so `sync_log`
+   * and groups come from the repo layer (CLAUDE.md rule 2).
+   */
   seed(items: readonly { id: string; title: string }[]): void;
+  /**
+   * Retention drops the log up to the head: a client behind it gets
+   * `resync(too_old)` when it next connects (SPEC-002 E8).
+   */
+  compactLog(): void;
   dispose(): void;
 }
 
@@ -74,6 +83,10 @@ export class FakeHubServer implements SimServer {
       this.#hub.head += 1;
       this.#hub.log.push({ id: this.#hub.head, a: 'I', m: 'DebugItem', d: { ...row } });
     }
+  }
+
+  compactLog(): void {
+    this.#hub.retainedFrom = this.#hub.head;
   }
 
   dispose(): void {

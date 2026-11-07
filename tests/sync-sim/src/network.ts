@@ -55,6 +55,7 @@ export class Network {
   #serverUp = true;
   /** Bumped by every restart: responses from an older process are lost. */
   #epoch = 0;
+  #requests = 0;
 
   constructor(
     readonly server: SimServer,
@@ -105,11 +106,24 @@ export class Network {
     return p > 0 && this.random() < p;
   }
 
-  /** Requests and socket deliveries still on their way. */
-  get inFlight(): number {
-    let count = 0;
-    for (const link of this.#links) count += link.inFlight;
-    return count;
+  /**
+   * Requests sent and not yet handled by the server, whoever sent them: a
+   * request a crashed or impatient tab gave up on still counts until it
+   * arrives (or is lost on the way). Responses are not counted: one that
+   * hangs never arrives, and the server already ran its request.
+   */
+  get requestsInFlight(): number {
+    return this.#requests;
+  }
+
+  /** A request left a tab. */
+  requestSent(): void {
+    this.#requests += 1;
+  }
+
+  /** The request was lost, or the server finished handling it. */
+  requestDone(): void {
+    this.#requests -= 1;
   }
 
   forget(link: Link): void {
@@ -121,24 +135,13 @@ export class Network {
 export class Link {
   #online = true;
   #dead = false;
-  #inFlight = 0;
   readonly #sockets = new Set<LinkSocket>();
   readonly #listeners = new Set<() => void>();
 
   constructor(readonly network: Network) {}
 
-  get online(): boolean {
-    return this.#online;
-  }
-
   get dead(): boolean {
     return this.#dead;
-  }
-
-  get inFlight(): number {
-    let count = this.#inFlight;
-    for (const socket of this.#sockets) count += socket.inFlight;
-    return count;
   }
 
   /** What the store gets as `onlineSource`: the browser's `online` event. */
@@ -188,7 +191,6 @@ export class Link {
       const settle = (outcome: () => void) => {
         if (settled || this.#dead) return;
         settled = true;
-        this.#inFlight -= 1;
         outcome();
       };
       const failed = () => settle(() => reject(new TypeError('Failed to fetch')));
@@ -197,16 +199,17 @@ export class Link {
         reject(new DOMException('The operation was aborted.', 'AbortError'));
         return;
       }
-      this.#inFlight += 1;
       signal?.addEventListener('abort', () =>
         settle(() => reject(new DOMException('The operation was aborted.', 'AbortError'))),
       );
       // Nothing leaves an offline or dead tab.
       const sent = !this.#dead && this.#online;
+      if (sent) network.requestSent();
       setTimeout(() => {
         // From here the request is on the wire: giving up on it (abort, crash)
         // does not stop it reaching the server.
         if (!sent || !network.serverUp || network.lost(network.faults.dropRequest)) {
+          if (sent) network.requestDone();
           failed();
           return;
         }
@@ -225,6 +228,7 @@ export class Link {
         // A server that throws is a failed request, as over HTTP.
         Promise.resolve()
           .then(() => network.server.fetch(url, init))
+          .finally(() => network.requestDone())
           .then(
             (response) => back(() => resolve(response)),
             (error: unknown) =>
@@ -247,10 +251,6 @@ class Channel {
   readonly #pending = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(readonly network: Network) {}
-
-  get size(): number {
-    return this.#pending.size;
-  }
 
   send(deliver: () => void): void {
     const at = Math.max(Date.now() + this.network.delay(), this.#last);
@@ -298,10 +298,6 @@ class LinkSocket {
   ) {
     this.#toServer = new Channel(link.network);
     this.#toClient = new Channel(link.network);
-  }
-
-  get inFlight(): number {
-    return this.#toServer.size + this.#toClient.size;
   }
 
   connect(onEnd: () => void): void {

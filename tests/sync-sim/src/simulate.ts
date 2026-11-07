@@ -32,7 +32,8 @@ export async function simulate<T>(
     world.server.seed(
       options.seedItems(simCase.users).map((n) => ({ id: itemId(n), title: `Item ${n}` })),
     );
-    for (const user of world.users) world.open(user);
+    // Late users get their first tab from an `open` step, or at the end.
+    for (const user of world.users.slice(0, simCase.users - simCase.lateUsers)) world.open(user);
     // Changes need a loaded tab; from here on, steps decide what happens.
     await world.loaded();
     for (const step of simCase.steps) await apply(world, step, options);

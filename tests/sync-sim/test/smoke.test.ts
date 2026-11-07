@@ -7,6 +7,7 @@ describe('the simulation', () => {
       {
         seed: 1,
         users: 3,
+        lateUsers: 0,
         webLocks: true,
         steps: [
           { t: 'wait', ms: 1000 },

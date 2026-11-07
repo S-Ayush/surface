@@ -274,9 +274,10 @@ export class World {
   }
 
   /**
-   * Stop every fault and run until each live tab is loaded, online, has
-   * nothing pending and has caught up with the server, and no replica holds
-   * work for a tab that is gone; fail after `limitMs` of virtual time.
+   * Stop every fault and run until no request is on its way to the server,
+   * each live tab is loaded, online, has nothing pending and has caught up,
+   * and no replica holds work for a tab that is gone; fail after `limitMs` of
+   * virtual time.
    */
   async quiesce(limitMs = 10 * 60_000): Promise<void> {
     this.network.heal();
@@ -309,6 +310,9 @@ export class World {
   }
 
   #settled(): boolean {
+    // A request still on its way (one a crashed tab gave up on, say) could
+    // run on the server after the check: wait for it.
+    if (this.network.requestsInFlight > 0) return false;
     const head = this.server.head();
     return this.live.every(
       ({ store }) =>
@@ -354,11 +358,12 @@ export class World {
   /** One line per live tab, for failure messages. */
   describe(): string {
     const head = this.server.head();
+    const requests = `${this.network.requestsInFlight} requests in flight`;
     const tabs = this.live.map(
       ({ name, store }) =>
         `${name}: ${store.status}/${store.connection}, at ${String(store.position?.lastSyncId)} of ${head}, ${store.pending.length} pending${store.error === undefined ? '' : `, error "${store.error}"`}`,
     );
-    return tabs.join('; ');
+    return [requests, ...tabs].join('; ');
   }
 
   /** Stop everything; the caller resets the clock. */

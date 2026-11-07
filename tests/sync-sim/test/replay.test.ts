@@ -13,6 +13,7 @@ import { convergenceCase, exactlyOnceCase } from '../src/steps.js';
 const reclaiming: Case = {
   seed: 99,
   users: 3,
+  lateUsers: 1,
   webLocks: false,
   steps: [
     { t: 'touch', tab: 0, item: 0 },
@@ -26,7 +27,9 @@ const reclaiming: Case = {
     { t: 'touch', tab: 1, item: 1 },
     { t: 'wait', ms: 20_000 },
     { t: 'reload', tab: 2 },
+    { t: 'compact' },
     { t: 'open', user: 1 },
+    { t: 'open', user: 2 },
     { t: 'touch', tab: 3, item: 2 },
   ],
 };

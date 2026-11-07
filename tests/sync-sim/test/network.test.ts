@@ -38,6 +38,7 @@ function fakeServer() {
     head: () => 0,
     items: () => ({}),
     seed: () => undefined,
+    compactLog: () => undefined,
     dispose: () => undefined,
   };
   return { server, state };
@@ -121,6 +122,29 @@ describe('HTTP', () => {
     await advance(100);
     expect(state.requests).toBe(1);
     expect(answered).toBe(false);
+  });
+
+  it('counts a request as in flight until the server has handled it, even from a crashed tab', async () => {
+    const link = network.link();
+    void link.fetch('http://surface.test/x', {}).catch(() => undefined);
+    link.kill();
+    expect(network.requestsInFlight).toBe(1);
+    await advance(100);
+    expect([state.requests, network.requestsInFlight]).toEqual([1, 0]);
+  });
+
+  it('stops counting a lost request, and never counts a hanging response', async () => {
+    network.faults = { dropRequest: 1, dropResponse: 0, hangResponse: 0, maxDelayMs: 5 };
+    void network
+      .link()
+      .fetch('http://surface.test/x', {})
+      .catch(() => undefined);
+    await advance(100);
+    expect(network.requestsInFlight).toBe(0);
+    network.faults = { dropRequest: 0, dropResponse: 0, hangResponse: 1, maxDelayMs: 5 };
+    void network.link().fetch('http://surface.test/x', {});
+    await advance(100);
+    expect([state.requests, network.requestsInFlight]).toEqual([1, 0]);
   });
 
   it('can leave a response hanging until the client gives up', async () => {

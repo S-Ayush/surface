@@ -13,7 +13,11 @@
  */
 import { vi } from 'vitest';
 
-let outstanding = 0;
+/**
+ * Immediates scheduled since the current install and not yet run. Each install
+ * gets its own set: one left over from the last case only touches its own.
+ */
+let outstanding = new Set<NodeJS.Immediate>();
 let realSetImmediate: typeof setImmediate | undefined;
 let realClearImmediate: typeof clearImmediate | undefined;
 
@@ -27,14 +31,11 @@ export function installClock(): void {
   });
   const set = (realSetImmediate = globalThis.setImmediate);
   const clear = (realClearImmediate = globalThis.clearImmediate);
-  const live = new Set<NodeJS.Immediate>();
-  outstanding = 0;
+  const live = (outstanding = new Set<NodeJS.Immediate>());
   globalThis.setImmediate = Object.assign(
     <A extends unknown[]>(callback: (...args: A) => void, ...args: A): NodeJS.Immediate => {
-      outstanding += 1;
       const handle = set(() => {
         live.delete(handle);
-        outstanding -= 1;
         callback(...args);
       });
       live.add(handle);
@@ -43,7 +44,7 @@ export function installClock(): void {
     { __promisify__: set.__promisify__ },
   );
   globalThis.clearImmediate = (handle) => {
-    if (handle !== undefined && live.delete(handle)) outstanding -= 1;
+    if (handle !== undefined) live.delete(handle);
     clear(handle);
   };
 }
@@ -70,7 +71,7 @@ export async function settle(): Promise<void> {
   for (let quiet = 0, turns = 0; quiet < 2; turns += 1) {
     if (turns > 100_000) throw new Error('Storage never went quiet (an IndexedDB loop?)');
     await turn();
-    quiet = outstanding === 0 ? quiet + 1 : 0;
+    quiet = outstanding.size === 0 ? quiet + 1 : 0;
   }
 }
 
