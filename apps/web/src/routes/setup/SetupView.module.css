@@ -1,0 +1,55 @@
+.page {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-16);
+  background: var(--bg-app);
+}
+
+.card {
+  display: flex;
+  width: 100%;
+  max-width: var(--dialog-sm);
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-24);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+
+.title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-lg-size);
+  font-weight: var(--text-lg-weight);
+  line-height: var(--text-lg-line);
+}
+
+.text,
+.progressLabel {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.formError {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}

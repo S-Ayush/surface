@@ -128,6 +128,7 @@ describe('loadConfig', () => {
     ['LOG_LEVEL', 'verbose', /LOG_LEVEL must be one of fatal, error, warn, info/],
     ['SURFACE_ROLE', 'api', /SURFACE_ROLE must be one of all, web, worker/],
     ['SURFACE_SETUP_TOKEN', 'short', /at least 16 characters/],
+    ['SURFACE_SETUP_TOKEN', 'x'.repeat(129), /at most 128 characters/],
   ])('rejects %s=%s', (name, value, message) => {
     expect(problemsFor({ ...VALID_ENV, [name]: value })).toEqual([expect.stringMatching(message)]);
   });

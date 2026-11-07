@@ -8,9 +8,9 @@ Surface makes no outbound network calls except to your own SMTP server. That rul
 update checks, CDNs and external fonts.
 
 > **Status: early development.** The install path below works: the image, configuration checks,
-> migrations, health checks and the `surface` CLI. Workspace setup and sign-in arrive with the next
-> milestone ([PLAN-001](docs/07-plans/PLAN-001-workspace-auth-members-teams.md)). Until then the app
-> shows an empty shell. There is no published image yet, so step 2 builds it from source.
+> migrations, health checks, the `surface` CLI and first-run setup. Sign-in arrives next
+> ([PLAN-001](docs/07-plans/PLAN-001-workspace-auth-members-teams.md)); until then the app
+> shows an empty shell after setup. There is no published image yet, so step 2 builds it from source.
 
 ## Install (about 15 minutes)
 
@@ -101,8 +101,19 @@ on the public URL is expected when the server can't reach its own public address
 
 ### 6. Open Surface
 
-Open `SURFACE_URL` in a browser. Once workspace setup ships (PLAN-001), `docker compose logs app`
-prints a one-time setup link. It opens a short wizard that creates the workspace, the first admin and the first team.
+On first start, Surface logs a one-time setup link. Find it with:
+
+```bash
+docker compose logs app | grep setupUrl
+```
+
+The line reads `Surface is not set up yet. Open https://surface.example.com/setup?token=XXXX-XXXX-… to create the workspace and the first Admin.` Open that link. A short wizard creates the workspace, your Admin account and the first team, then signs you in. Until setup is done, every other page leads to the wizard.
+
+The link changes each time the server restarts. If you run more than one app container, set `SURFACE_SETUP_TOKEN` so that every logged link works. The link is logged as a warning, so it doesn't appear with `LOG_LEVEL=error`. If you lost it, print a new one:
+
+```bash
+docker compose exec app surface setup-token
+```
 
 ## Running Surface
 

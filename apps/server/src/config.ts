@@ -189,6 +189,8 @@ const schema = z.object({
   SURFACE_SETUP_TOKEN: z
     .string()
     .min(16, { message: 'SURFACE_SETUP_TOKEN must be at least 16 characters long.' })
+    // The setup routes read at most 128 characters of token (SPEC-001 §6.1).
+    .max(128, { message: 'SURFACE_SETUP_TOKEN must be at most 128 characters long.' })
     .optional(),
   SURFACE_ROLE: oneOf('SURFACE_ROLE', ROLES, 'all'),
   LOG_LEVEL: oneOf('LOG_LEVEL', LOG_LEVELS, 'info'),

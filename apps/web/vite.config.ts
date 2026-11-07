@@ -23,6 +23,13 @@ export default defineConfig({
       '^/sync/': { ...toServer, ws: true },
       '^/mcp([/?]|$)': toServer,
       '^/(healthz|readyz|metrics)([?]|$)': toServer,
+      // `/setup` is both the wizard page (served here) and its endpoint (POST, the server's), so
+      // only the status endpoint and the POST go through (PLAN-001 S2).
+      '^/setup(/status)?([?]|$)': {
+        ...toServer,
+        bypass: (req) =>
+          req.method === 'GET' && !req.url?.startsWith('/setup/status') ? req.url : undefined,
+      },
     },
   },
   build: {

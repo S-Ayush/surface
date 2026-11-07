@@ -24,6 +24,9 @@ import { StartupError } from './startup-error.js';
 import pg from 'pg';
 import { SyncHub } from './sync/hub.js';
 import { pgSyncLogSource } from './sync/hub-source.js';
+import { announceSetup } from './setup/announce.js';
+import { SetupGate } from './setup/routes.js';
+import { pgSetupStore } from './setup/store.js';
 import { syncRegistry } from './sync/registry.js';
 
 export interface StartOptions {
@@ -94,6 +97,8 @@ export async function startServer(
           registry: sync,
           log: logger.child({ component: 'sync-hub' }),
         });
+  const setupStore = pgSetupStore(pool);
+  const setupGate = new SetupGate(setupStore);
   // Before HTTP stops: clients reconnect elsewhere, or here once we are back (1012).
   if (hub) lifecycle.onShutdown('connections', 'sync hub', () => hub.stop());
   const app = await buildApp({
@@ -102,6 +107,7 @@ export async function startServer(
     logger,
     info,
     sync: { pool, registry: sync, resolveActor, ...(hub ? { hub } : {}) },
+    setup: { store: setupStore, gate: setupGate },
     ops: {
       registry,
       resolveActor,
@@ -134,7 +140,14 @@ export async function startServer(
       migrations,
     });
 
-    // PLAN-001 S2: log the setup token while setup is incomplete.
+    // Step 5: where people open the app, log the setup link while setup is incomplete.
+    if (config.role !== 'worker') {
+      await announceSetup(setupStore, {
+        publicUrl: config.publicUrl,
+        configuredToken: config.setupToken,
+        log: logger,
+      });
+    }
     await hub?.start();
     if (config.role !== 'web') {
       jobs = await startJobs({ databaseUrl: config.databaseUrl, pool, log: logger });

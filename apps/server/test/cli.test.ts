@@ -73,7 +73,7 @@ describe('surface CLI', () => {
     expect(versionReport({ version: '1', commit: 'c' }, []).schema).toBeNull();
   });
 
-  it.each([['setup-token'], ['reset-password', 'ada@example.com']])(
+  it.each([['reset-password', 'ada@example.com']])(
     'explains that %s is not available yet and exits 1',
     async (...argv) => {
       const { code, out, err } = await cli(argv);
@@ -83,7 +83,7 @@ describe('surface CLI', () => {
     },
   );
 
-  it.each([[[]], [['serve']], [['migrate']]])(
+  it.each([[[]], [['serve']], [['migrate']], [['setup-token']]])(
     'refuses to %j with an invalid configuration, naming each variable',
     async (argv) => {
       const { code, out, err } = await cli(argv, { SESSION_SECRET: 'too-short' });

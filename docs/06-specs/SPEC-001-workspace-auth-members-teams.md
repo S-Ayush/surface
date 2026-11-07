@@ -34,8 +34,8 @@ A team that has just run `docker compose up` must be able to claim the install, 
 
 ### 3.1 First-run setup (no workspace exists)
 1. On first boot, the server generates a **setup token** and logs it prominently:
-   `Open https://surface.example.com/setup?token=XXXX-XXXX to finish setup`. Alternatively, the operator sets `SURFACE_SETUP_TOKEN`.
-2. Every route redirects to `/setup` until setup is complete. `/setup` without a valid token shows *"Find the setup link in the server logs"*.
+   `Open https://surface.example.com/setup?token=XXXX-XXXX-… to …`, at `warn` and with the link in a `setupUrl` field (Q4). Alternatively, the operator sets `SURFACE_SETUP_TOKEN`. `surface setup-token` prints a fresh link.
+2. Every route redirects to `/setup` until setup is complete (Q5). `/setup` without a valid token shows *"Find the setup link in the server logs"*.
 3. **Step 1, Workspace:** workspace name.
 4. **Step 2, Admin account:** name, email, password (twice).
 5. **Step 3, First team:** team name. The key is auto-suggested (e.g. "Engineering" → `ENG`) and editable.
@@ -109,7 +109,7 @@ Permissions follow [permissions §3.1–3.2](../03-domain/permissions.md): invit
 ### 6.1 Unauthenticated HTTP routes (outside the registry)
 | Route | Purpose |
 |---|---|
-| `GET /setup/status` · `POST /setup` | Setup state and completion (needs the token) |
+| `GET /setup/status` · `POST /setup` | Setup state and completion (needs the token). `GET /setup/status?token=` → `{ complete, tokenValid }`. `POST /setup` takes `{ token, workspace: { name }, admin: { name, email, password, timezone? }, team: { name, key } }` and answers `201` with the session cookie and `{ next: "/team/<key>" }`; `400 INVALID_INPUT`, `403 FORBIDDEN` (wrong or old token), `409 CONFLICT` (already set up, E1), `503 UNAVAILABLE` while starting |
 | `POST /auth/login` | `{email, password}` → sets the session cookie |
 | `POST /auth/logout` | Ends the current session |
 | `POST /auth/magic-link` · `GET /auth/magic?token=` | Request and consume a magic link |
@@ -180,7 +180,7 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 | AC-4 | With SMTP set (a MailHog-style test container): magic-link login, password reset, and emailed invites work end to end. | e2e |
 | AC-5 | Wrong-password and unknown-email login responses are identical in body and status, and their timing is within ±50 ms. | integration |
 | AC-6 | After 5 failed logins in 15 minutes for an account, a 6th correct login is refused until the lockout ends. | integration |
-| AC-7 | Session cookies are `HttpOnly; Secure; SameSite=Lax`, and only the hash of the token is stored in the DB. | integration |
+| AC-7 | Session cookies are `HttpOnly; SameSite=Lax`, plus `Secure` when `SURFACE_URL` is https, and only the hash of the token is stored in the DB. (Changed 2026-11-07, PLAN-001 S2: was always `Secure`, which a plain-http install allowed by SPEC-004 §7 could never sign in with.) | integration |
 | AC-8 | Revoking a session closes that session's WebSocket within 1 s, and its next HTTP call returns 401. | e2e |
 | AC-9 | Passwords are stored with argon2id (m = 19 MiB, t = 2, p = 1) and a minimum length of 10. | unit |
 | AC-10 | `user.setRole` cannot leave zero active Admins. | unit + integration |
@@ -207,3 +207,6 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 | D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |
 | D2 | (2026-11-07) May a non-member learn that a private team's key exists? | Yes, by decision of the user (PLAN-001 S8 review): keys are unique across the workspace (INV-03), so `team.create` with a private team's key is `CONFLICT` and `team.suggestKey` skips it. The answer names the key only, never the team's name, id or anything else. An exception to "private teams never leak", recorded in permissions.md §5. |
 | D3 | (2026-11-07) Can the last member of a private team leave or be removed? | No, by decision of the user (PLAN-001 S8 review): nobody else can see a private team (Admins included, until M7), so nobody could rejoin it. `team.leave` and `team.removeMember` answer `CONFLICT` and ask to add someone first. A public team's last member may leave (E12). |
+| Q4 | (2026-11-07, PLAN-001 S2; approved by the user) How is the setup token issued and shown? | 160 random bits as eight groups of four Crockford base32 characters; only its SHA-256 is stored, and it is compared in constant time. While setup is incomplete, each start issues a new one (the old link stops working), unless `SURFACE_SETUP_TOKEN` is set; `surface setup-token` issues a fresh one at any time. Completing setup clears it. The server logs the link at `warn` as one JSON line, in the message and in a `setupUrl` field: the one secret the logs carry, because the operator has no other way to get it. With more than one container serving HTTP, set `SURFACE_SETUP_TOKEN`: otherwise each start replaces the token and only the last logged link works. `surface setup-token` replaces even a configured token, until the next start. If the token changes while the wizard is open, Finish asks for the newest link and keeps what was typed. |
+| Q5 | (2026-11-07, PLAN-001 S2; approved by the user) What does setup close until it is done? | `/api/`, `/sync/` (the WebSocket too), `/auth/`, `/files/` and `/mcp` answer `503 SETUP_REQUIRED`; a browser asking for any page is redirected to `/setup`. Health, readiness, metrics, static files and the setup routes stay open. Once setup is done, `/setup` redirects to `/`. |
+| Q6 | (2026-11-07, PLAN-001 S2; approved by the user) What are the Admin's display name and time zone at setup? | The wizard asks only what §3.1 lists. The display name comes from the first word of the name (else the email's local part), as lowercase letters and digits (`Ada Lovelace` → `ada`); the Admin can change it in their profile. The browser's time zone is used for the Admin and the first team (UTC if it sends none). |

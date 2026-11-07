@@ -21,7 +21,7 @@ Commands:
   migrate                 Apply pending database migrations, then exit
   doctor [--json]         Check the configuration, database, data volume, email and public URL
   version [--json]        Print the version, commit and schema level
-  setup-token             Print a fresh setup URL (not available yet)
+  setup-token             Print a fresh setup link while setup is incomplete
   reset-password <email>  Print a one-time password reset link (not available yet)
 
 Options:
@@ -156,9 +156,15 @@ export async function runCli(argv: string[], io: CliIo, options: CliOptions = {}
       return doctorCommand(io, { json: invocation.json, env: options.env });
     }
 
-    case 'setup-token':
+    case 'setup-token': {
+      const config = configOrExit(io, options.env);
+      if (!config) return EXIT.failure;
+      const { setupTokenCommand } = await import('./setup-token.js');
+      return setupTokenCommand(io, config);
+    }
+
     case 'reset-password':
-      // SPEC-004 §9 lists both for M0; they need workspace setup (PLAN-001 S2).
+      // SPEC-004 §9 lists it for M0; it needs sign-in (PLAN-001 S3).
       io.err(
         `surface ${invocation.command} is not available in this version yet. It arrives with workspace setup and sign-in (PLAN-001).\n`,
       );

@@ -1,6 +1,6 @@
 # Session A, phase 2: Sync server, setup and auth
 
-Worktree: `/Users/admin/Desktop/Learning/surface-a` (since PLAN-002 S4, at the user's request) · Current branch: `p002-s4-hub` · Guide: [README](README.md) §7 · Phase 1 log: [session-a-platform.md](session-a-platform.md)
+Worktree: `/Users/admin/Desktop/Learning/surface-a` (since PLAN-002 S4, at the user's request) · Current branch: `p001-s2-setup` · Guide: [README](README.md) §7 · Phase 1 log: [session-a-platform.md](session-a-platform.md)
 
 Assigned 2026-11-07. Session A stays on the critical path: finish the sync server, then setup and login, which unblock the app shell (session C) and the account features (session E).
 
@@ -45,14 +45,17 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 
 | Item | From | When |
 |---|---|---|
-| Root `README.md` step 6: real setup log line and URL | session B handoff | PLAN-001 S2 |
+| Root `README.md` step 6: real setup log line and URL | session B handoff | ✅ Done in PLAN-001 S2 (`grep setupUrl`, `surface setup-token`) |
 | `.claude/rules/sync.md:15` still says `prev ≠ lastSyncId`; the protocol is now `prev ≤ lastSyncId` (sync-protocol.md §4.3) | session D log | Ask the user, then reword (A owns `.claude/**`) |
 | Zod `eval` probe under the CSP | your PLAN-004 S9 handoff | Moved to session C (it owns `apps/web`); mark your row "reassigned to C" |
+| Real-server test entry for the sync property suite (`@surface/server/testing`: start/restart/stop, signed-in users, fixtures through `debug.create`, hub timers, no job worker; list the other server timers) | session D handoff ([session-d2](session-d2-sync-tests.md#handoff-to-a-real-server-test-entry)) | After PLAN-002 S5 is on `main`. Notes: `startServer` already takes `resolveActor`; since PLAN-001 S2 the setup guard answers `503 SETUP_REQUIRED` on `/api/` and `/sync/` until setup is done, so the entry must complete setup on its database (e.g. through `pgSetupStore`) |
 
 ## Handoffs (requests from A to other sessions)
 
 | To | Request | Why / blocking? | Status |
 |---|---|---|---|
+| C | PLAN-001 S2 added two hooks in your files: `apps/web/src/main.tsx` renders `SetupPage` on `/setup`, and `vite.config.ts` proxies `/setup/status` and `POST /setup` in dev. When your router lands (PLAN-005 S4), make `/setup` a route that renders `routes/setup/SetupPage` and drop the `main.tsx` switch; keep the proxy. | The user chose that A builds the setup wizard in `apps/web/src/routes/setup/`. Not blocking. | open |
+| E | The setup wizard has a local `suggestTeamKey` (`apps/web/src/routes/setup/wizard.ts`). When PLAN-001 S8 adds `team.suggestKey`, say whether it should replace it (at setup no keys are taken, so the local one is enough there). | Avoid two key-suggestion rules drifting apart. Not blocking. | ✅ closed 2026-11-07: E answered, use the domain's `suggestTeamKey`; done after the rebase onto S8 |
 
 ## Log (append-only)
 
@@ -63,6 +66,9 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 | 2026-11-07 | PLAN-002 S4 review fixes | p002-s4-hub | built | Fast-forwarded to `99aacd3` first. Fixed every `/review` finding: the AC-11 live test waits for both sockets' catch-up (8/8 runs green); the hub drains on each ping round (half-open `LISTEN`, failed reads) and the listen client has TCP keepalive; catch-up waits for slow readers instead of dropping them; `/sync/ws` refuses a foreign `Origin` (`403`); prefix prune (checked by hand: the old one left a hole); metrics tests; catch-up reads invisible ack rows without data; `start()` and re-listening close their listeners. Perf test now passes (3/3 at load ~2.3). SPEC-002 Q9, Q10, the metric rename and the new §4.3 rules (Origin `403`, 1 MiB catch-up pause, prefix prune) approved by the user. |
 | 2026-11-07 | PLAN-002 S4 second review | p002-s4-hub | built | No blockers. Fixed: catch-up held a pool connection and a `REPEATABLE READ` snapshot while waiting for a slow reader (10 slow clients could hold the pool of 10); it now reads each page as its own statement and re-checks retention after each (`sync-hub-source.test.ts`). Docs: "nothing more but pings" after a `resync`, close code `1009`, two As built corrections. To rebase onto `acf0fa1` (PLAN-001 S1): `sync-groups.int.test.ts` conflicts, keep both sides. |
 | 2026-11-07 | PLAN-002 S4 | main | merged | Committed as `c7f478b`, rebased onto `acf0fa1` (PLAN-001 S1) as `b2f6963`: `sync-groups.int.test.ts` merged cleanly with both sides (S1's `DebugItem` filter and the harness's real ENG/SEC teams; S4's hub tests). `pnpm install`, `pnpm check` (server 322), `registry:lint`, `pnpm test:int` (188 + 3 perf) green; the AC-11 leak test 3/3 with S1's Team and WorkflowStatus rows in catch-up. Session E's fixture handoff (`test/executor.ts` and the adjusted sync tests): they pass with S4; not yet read line by line (still open). `main` is checked out in the main checkout, so the user fast-forwards it there. **A holds the migration lock** (from E). |
+| 2026-11-07 | PLAN-001 S2 | p001-s2-setup | built | Branched from `main` `08f2ccd`. First-run setup: `setup/` (token, store, routes and guard, input, announce), `auth/password.ts` (argon2id) and `auth/session.ts` (session row and cookie), `surface setup-token`, `passwordProblem` in `@surface/domain`; `@node-rs/argon2` ^2.2.2 (ADR-0007). **The wizard UI in `apps/web/src/routes/setup/` was built by A, by the user's decision** (C owns `apps/web`), plus hooks in `main.tsx` and `vite.config.ts` (handoff to C). A holds the migration lock; no migration was needed. New spec decisions SPEC-001 Q4–Q6 and SPEC-003 `SETUP_REQUIRED`, awaiting the user's approval. The hand check against Postgres found that a connection killed mid-setup crashed the process (no `error` listener on a checked-out pg client); fixed in the store. The same hazard likely exists in `sync/bootstrap.ts` and the executor: not fixed here, proposed as a follow-up. Root README step 6 done. Gate results in the PLAN-001 S2 As built and the report. |
+| 2026-11-07 | PLAN-001 S2 review fixes | p001-s2-setup | built | Rebased onto `45944a1` (PLAN-005 S6) first: no conflicts, the lockfile merged on its own. Fixed every `/review` finding (PLAN-001 S2 As built, "Review fixes"): no argon2 before the token and state checks; the guard on the decoded path; `setup-store.test.ts` covers the store's checks and the killed-connection crash; time zones canonical, offsets refused; `SURFACE_SETUP_TOKEN` ≤ 128; shared email and name rules (`packages/domain/src/names.ts`, new); the wizard's starting and expired-link cases, and its state in `state.ts`; AC-7 and Q4 wording. Each new test was mutation-checked (8 of 8 caught). SPEC-001 Q4–Q6 marked **proposed**, then approved by the user (2026-11-07). Open: `catalog.ts` error list (no owner in phase 2). |
+| 2026-11-07 | PLAN-001 S2 rebase onto S8 | p001-s2-setup | built | Rebased onto `aea1377` (PLAN-001 S8 server half): conflicts in `packages/domain/src/index.ts` and SPEC-001 §11 (E's D2, D3 and my Q4–Q6), both sides kept. Then took S8's domain rules: `suggestTeamKey` in the wizard (E's answer to my handoff, closed), `timeZoneProblem`/`canonicalTimeZone` for the Admin's zone, `NEW_TEAM_SETTINGS` for the setup team, and team names up to 80 like `TEAM_NAME_MAX`. |
 
 ## Prompt
 

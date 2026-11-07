@@ -17,6 +17,8 @@ import { registerMetrics } from './http/metrics.js';
 import { registerOpsRoutes, type ActorResolver } from './http/ops.js';
 import { registerSecurityHeaders } from './http/security-headers.js';
 import { readIndexHtml, registerWebApp } from './http/static.js';
+import { registerSetupRoutes, type SetupGate } from './setup/routes.js';
+import type { SetupStore } from './setup/store.js';
 import { hubMetrics } from './sync/hub.js';
 import { registerSyncRoutes, type SyncRoutesDeps } from './sync/routes.js';
 import type { Lifecycle } from './lifecycle.js';
@@ -37,6 +39,8 @@ export interface AppDeps {
   ops?: OpsDeps;
   /** The sync routes (PLAN-002 S3+). Left out by tests that don't need a database. */
   sync?: SyncDeps;
+  /** First-run setup and its guard (PLAN-001 S2). Left out by tests that don't need it. */
+  setup?: { store: SetupStore; gate: SetupGate };
 }
 
 export type SyncDeps = Omit<SyncRoutesDeps, 'lifecycle'>;
@@ -51,6 +55,7 @@ export async function buildApp({
   info = buildInfo(),
   ops,
   sync,
+  setup,
 }: AppDeps): Promise<FastifyInstance> {
   // Widened to Fastify's base logger type so the instance keeps its default generics.
   const loggerInstance: FastifyBaseLogger = logger;
@@ -82,6 +87,8 @@ export async function buildApp({
   registerErrorHandler(app);
   const metrics = config.metricsEnabled ? registerMetrics(app) : undefined;
   registerHealthRoutes(app, lifecycle, info);
+  // Its guard is an `onRequest` hook: registered before the routes it closes until setup is done.
+  if (setup) registerSetupRoutes(app, { ...setup, lifecycle, secureCookies: config.secureCookies });
   if (ops) {
     registerOpsRoutes(app, {
       executor: ops.createExecutor(metrics),

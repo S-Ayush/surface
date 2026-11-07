@@ -209,7 +209,7 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
 | `GET /api/ops` | Same | Catalog: name, kind, domain, summary, description, keywords, compact input/output schema, examples, destructive. Filtered by the actor's scope. |
 | `GET /api/openapi.json` | Public within the deployment (no data) | Generated OpenAPI 3.1, one path per non-internal operation |
 
-**Error → HTTP status:** `INVALID_INPUT` 400 · `UNAUTHENTICATED` 401 (nobody signed in; SPEC-001 E14) · `UNKNOWN_OPERATION` 404 · `NOT_FOUND` 404 · `FORBIDDEN` 403 · `CONFLICT` 409 · `RATE_LIMITED` 429 (+ `Retry-After`) · `CLIENT_OUTDATED` 426 · `INTERNAL` 500 (with a correlation ID; no stack traces).
+**Error → HTTP status:** `INVALID_INPUT` 400 · `UNAUTHENTICATED` 401 (nobody signed in; SPEC-001 E14) · `UNKNOWN_OPERATION` 404 · `NOT_FOUND` 404 · `FORBIDDEN` 403 · `CONFLICT` 409 · `RATE_LIMITED` 429 (+ `Retry-After`) · `CLIENT_OUTDATED` 426 · `SETUP_REQUIRED` 503 (the workspace isn't set up yet; SPEC-001 Q5) · `INTERNAL` 500 (with a correlation ID; no stack traces).
 
 **Error body:**
 ```json

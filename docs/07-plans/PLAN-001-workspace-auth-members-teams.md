@@ -45,7 +45,7 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - **M7 (private teams):** making a team private changes its children's groups; the repo recomputes groups only for the row it writes, so that operation must update its memberships, statuses and labels too.
 >   - **C (PLAN-005):** register `PRODUCTION_MODELS` in the web client's store. `COLOR_HUES` (domain) must stay equal to the UI's `LABEL_HUES` tokens.
 
-### S2: First-run setup · M
+### S2: First-run setup · M · ✅ Done 2026-11-07
 - On startup, if `setup_state.completed_at` is null: generate a token (or use `SURFACE_SETUP_TOKEN`), store its hash, and log the setup URL as a prominent block.
 - `surface setup-token` CLI (regenerate and print).
 - `GET /setup/status`, `POST /setup` (token check, row lock on `setup_state`, one transaction: workspace + admin + team + membership + statuses + labels, then a session cookie).
@@ -53,6 +53,47 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 - **Setup wizard UI** (3 steps, keyboard-advance) in `apps/web/src/routes/setup`.
 - **Tests:** AC-1 (token required), AC-2 (atomic, with a kill-mid-setup integration test using fault injection), E1 (concurrent setup).
 - Unblocks PLAN-004 S8 (install smoke; deferred, SPEC-004 D4).
+
+> **As built (2026-11-07).**
+> - **Versions:** `@node-rs/argon2` ^2.2.2 (ADR-0007 names it; prebuilt binaries, no install script). No migration: `setup_state`, `sessions` and `user_credentials` came with S1.
+> - **Structure (server):**
+>   - `setup/token.ts`: 160-bit tokens as eight groups of four Crockford base32 characters, SHA-256 hash, constant-time match, `setupUrl`.
+>   - `setup/store.ts` (`pgSetupStore`, behind `SetupStore`): `isComplete`, `tokenValid`, `issueToken`, and `complete`, the one transaction. The password is hashed before `BEGIN`; then `setup_state` is locked `FOR UPDATE` (E1: a second setup waits, then sees `completed_at` → `complete`), the token checked, and Workspace, User (admin), UserPreferences, the 3 workspace labels, Team (`teamWorkflow` → Team → `seedTeamWorkflow`) and the TeamMembership go through the repo, then `user_credentials`, `setup_state` (completed, token cleared) and the session by plain SQL (server-only tables). It listens for `error` on its checked-out client: pg-pool removes its own listener while a client is out, so a connection killed between statements was an uncaught exception that ended the process (found by the hand check below).
+>   - `setup/routes.ts`: `GET /setup/status`, `POST /setup`, and `SetupGate`, which remembers once setup is done (so the guard then costs nothing) and asks the database each time until then (so another replica's setup is noticed). The guard is an `onRequest` hook, registered before every other route (SPEC-001 Q5). `/setup/` is not in `SERVER_PREFIXES`, because that would also keep the wizard page from the SPA fallback.
+>   - `setup/input.ts`: the body's Zod schema (email lowercased, key uppercased, `passwordProblem`, `teamKeyProblem`, an IANA time zone) and `displayNameFor` (Q6).
+>   - `setup/announce.ts`: startup step 5 (SPEC-004 §8) on every role but `worker`: issue a token and log the link at `warn`, in the message and a `setupUrl` field (Q4). JSON logs can't show a banner, so the README says `grep setupUrl`.
+>   - `auth/password.ts` (argon2id m = 19 MiB, t = 2, p = 1; `Algorithm` is a const enum the package can't export under `verbatimModuleSyntax`, so the value is written out and the test checks the PHC string) and `auth/session.ts` (`createSession`: random 256-bit token, SHA-256 stored, 30-day expiry; `sessionCookie`: `HttpOnly; SameSite=Lax`, `Secure` on an https `SURFACE_URL`).
+>   - `cli/setup-token.ts`: `surface setup-token` prints a fresh link (stdout) and exits 1 once setup is complete; errors are sentences without the connection string.
+> - **Structure (shared):** `@surface/domain` `auth.ts`: `PASSWORD_MIN_LENGTH` (10, AC-9), `PASSWORD_MAX_LENGTH` (256, bounds argon2's work) and `passwordProblem`, counted in code points.
+> - **Structure (web, by the user's decision: session A builds the wizard although C owns `apps/web`):** `apps/web/src/routes/setup/`: `wizard.ts` (step checks, `suggestTeamKey`, the two requests, safe `next`), `SetupView.tsx` (the three steps, progress, inline and form errors; each step is a `<form>`, so Enter advances; Esc does nothing), `SetupPage.tsx` (state and effects). Outside that folder, two small hooks: `main.tsx` renders `SetupPage` on `/setup` until the router exists, and `vite.config.ts` proxies `/setup/status` and `POST /setup` to the server in dev.
+> - **Spec decisions (SPEC-001 §11):** Q4 (token format, a new one per start, the logged link), Q5 (what the guard closes: `503 SETUP_REQUIRED`, added to SPEC-003's error table), Q6 (display name and time zone at setup). §3.1 and §6.1 describe the routes; SPEC-004 §9 the CLI.
+> - **Deviations:** the "prominent block" is one JSON line with a `setupUrl` field (logs are JSON). The redirect after setup goes to `/team/<key>`, the team home SPEC-005 defines; the issues page comes in M1.
+> - **Tests:**
+>   - `server/test/setup-routes.test.ts` (17): the guard (API, sync, auth, files and MCP `503 SETUP_REQUIRED`, also percent-encoded; pages → `/setup`; the wizard served; health, readiness, static files and status open; nothing read before ready), status, **AC-1** (no token → `403`, no cookie, the password never hashed), a complete setup (`201`, the cookie's attributes per AC-7, normalised input incl. the time zone, the app opens without another database read, `/setup` → `/`, no password or token in the logs), a second setup → `409` without hashing, the store's own `complete` answer → `409`, `Secure` only on https, and seven invalid inputs → `400` with the fix in the message. **E1** here is the route's answer only; the queueing under the row lock is `setup-store.test.ts` (the check) and the hand check (the concurrency).
+>   - `server/test/setup-store.test.ts` (3), `pgSetupStore.complete` against a fake pool: a wrong token and a completed setup each roll back with no write (**AC-1**, **E1**); a connection that dies mid-transaction fails the request without ending the process, and the connection is discarded (the regression test for the crash below).
+>   - `server/test/setup-token.test.ts` (10): token format and alphabet, hash and match, the link; **AC-1, unit part**: the link logged at `warn` with its stored token, `SURFACE_SETUP_TOKEN`, nothing once complete; `surface setup-token` (fresh link replaces the old; says when it overrides `SURFACE_SETUP_TOKEN`; refuses once complete). `cli.test.ts`: `setup-token` with a bad config; `config.test.ts`: `SURFACE_SETUP_TOKEN` over 128 characters.
+>   - `server/test/password-hash.test.ts` (3, **AC-9**), `domain/src/auth.test.ts` (7: password length, email) and `domain/src/names.test.ts` (3).
+>   - `web/test/setup-wizard.test.tsx` (34): key suggestions, the key following the name until edited, each step's checks with the server's limits, the request body, the link check (incl. a server that is starting), every answer of `POST /setup` (incl. a `//host` `next` refused), offline; the page's state (`state.ts`): steps, back, one send at a time, each answer's screen, a refused link keeping what was typed and finishing with a pasted newer one; and the screens.
+>   - **Mutation-checked**, each caught: no API closure, no page redirect, the gate not marked complete, a cookie without `HttpOnly`, any token matching, the link logged at `info`, weaker argon2, no password rule.
+> - **Held criteria, checked by hand** (README §6), with a temporary test against Postgres 17, not committed:
+>   - **AC-2:** a fault injected before `COMMIT`, and the connection killed (`pg_terminate_backend`) before `COMMIT`, each left every table and `sync_log` as before, and the token still valid.
+>   - **E1:** three concurrent setups with the right token: one `ok`, two `complete`; then exactly 1 workspace, 1 user, 1 preferences row, 1 credential, 1 team, 8 statuses, 3 labels, 1 membership, 1 session, and 16 `sync_log` rows.
+>   - **AC-1 and the flow, through `startServer()`:** the link was logged; `/api` answered `503` and `/` redirected to `/setup`; a wrong token got `403`; the right one `201` with the cookie, whose SHA-256 is the session's `token_hash`. The Admin is `ada@example.com`, display name `ada`, `admin`, `Europe/Berlin`; team `ENG` defaults to Backlog; labels Bug (red), Feature (violet), Improvement (blue); preferences synced to `user:<id>`; the password is argon2id and in neither `sync_log` nor the logs; `setup_state` completed with the token cleared. Then `/api` opened and `/setup` redirected to `/`; a restart logged no link.
+> - **Review fixes (2026-11-07):**
+>   - `POST /setup` answers `409` and `403` before hashing: argon2 (19 MiB) ran for any request, setup done or not, wrong token or not.
+>   - The guard matches the percent-decoded path, as the router does: `/%61pi/ops` reached the API before setup.
+>   - Time zones: offsets (`+05:00`) are refused, and names are stored canonically (`europe/berlin` → `Europe/Berlin`), with S8's `timeZoneProblem` and `canonicalTimeZone` (`@surface/domain`) after the rebase onto it.
+>   - `SURFACE_SETUP_TOKEN` is capped at 128 characters, the most the routes read (SPEC-004 §7, `docker/.env.example`).
+>   - Shared rules in `@surface/domain`: `emailProblem`, and `NAME_MAX_LENGTH` with `nameProblem` (`names.ts`; workspace 64 from domain-model §4.1, team 80 as S8's `TEAM_NAME_MAX`, person 80 set here). The wizard and the server use the same ones, so errors show on the step that has the field.
+>   - After the rebase onto S8 (`aea1377`): the wizard uses S8's `suggestTeamKey` from `@surface/domain` (session E's advice; the `team.suggestKey` op needs a signed-in actor), and the setup team is inserted with `NEW_TEAM_SETTINGS` like `team.create`.
+>   - The wizard: a server that is starting or unreachable gets its own screen, checked again every 5 s, instead of "find the link"; a link refused on Finish keeps everything typed and asks for the newest link. The page's state moved to `state.ts` (pure, tested).
+>   - Messages: `surface setup-token` and the startup line say that a CLI token overrides `SURFACE_SETUP_TOKEN` until the next start. README: `SURFACE_SETUP_TOKEN` for several containers, and no link at `LOG_LEVEL=error`. SPEC-001 AC-7 now says `Secure` on https only (as SPEC-004 §7 allows), and Q4 the multi-container case.
+>   - Kept as is: the store's statements use pg's `$n` placeholders like the executor (`executor/transaction.ts`) and the migration runner, rather than Drizzle's `sql` template; `beforeCommit` stays for the held AC-2 integration test.
+>   - Open: `packages/operations/src/catalog.ts`'s OpenAPI error list lacks `SETUP_REQUIRED` and `UNAVAILABLE` (no phase 2 session owns that file).
+> - **Notes for later slices:**
+>   - **S3:** read the session cookie back (`hashSessionToken`, `sessions.token_hash`), slide `expires_at`, add CSRF, and replace `noSignedInActor`. `/auth/capabilities` (`setupComplete`) is S3's. The session made at setup has no CSRF token yet.
+>   - **C (PLAN-005 S4):** take over `/setup` as a route of the router and drop the `main.tsx` switch; the server-side guard already redirects pages.
+>   - **Open, outside this slice:** other code that holds a checked-out client across awaits (`sync/bootstrap.ts` while it streams to a slow client, and the executor's transactions) has the same missing `error` listener (see store above).
 
 ### S3: Password auth, sessions, CSRF · L
 - `@node-rs/argon2` with m = 19 MiB, t = 2, p = 1 (AC-9). Minimum password length 10.
@@ -182,15 +223,15 @@ Additive tables only. A rollback before any release is a code revert. After a re
 
 | AC | Test |
 |---|---|
-| AC-1 | ⏸ held (e2e) `e2e/setup-token.spec.ts` |
-| AC-2 | ⏸ held (integration) `server/test/setup-atomic.int.test.ts` |
+| AC-1 | `server/test/setup-token.test.ts` (the link is logged, matches the stored hash) + `server/test/setup-routes.test.ts` "without the setup token cannot complete" + `server/test/setup-store.test.ts` "refuses a token that is not the current one" (unit parts, S2) + ⏸ held (e2e) `e2e/setup-token.spec.ts` (checked by hand in S2) |
+| AC-2 | ⏸ held (integration) `server/test/setup-atomic.int.test.ts` (checked by hand in S2, with a fault and a killed connection before `COMMIT`) |
 | AC-3 | ⏸ held (e2e) `e2e/no-smtp.spec.ts` (full J1 with invite and reset links) |
 | AC-4 | ⏸ held (e2e) `e2e/smtp-flows.spec.ts` (Mailpit) |
 | AC-5 | ⏸ held (integration) `server/test/login-enumeration.int.test.ts` |
 | AC-6 | ⏸ held (integration) `server/test/login-lockout.int.test.ts` |
 | AC-7 | ⏸ held (integration) `server/test/session-cookie.int.test.ts` |
 | AC-8 | ⏸ held (e2e) `e2e/session-revoke.spec.ts` |
-| AC-9 | `server/test/password-hash.test.ts` |
+| AC-9 | `server/test/password-hash.test.ts` + `domain/src/auth.test.ts` (minimum length) (S2) |
 | AC-10 | `server/test/last-admin-guard.test.ts` (the guard's decision, unit) (+ `server/test/set-role.int.test.ts`, ⏸ held) |
 | AC-11 | `domain/src/team-key.test.ts` (suggestions), `server/test/team-handlers.test.ts` (malformed, reserved and taken keys, with the next suggestion) (+ `server/test/team-create.int.test.ts`, ⏸ held) |
 | AC-12, AC-13 | ⏸ held (e2e) `e2e/teams-realtime.spec.ts` |

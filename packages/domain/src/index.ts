@@ -6,3 +6,5 @@ export * from './filter/index.js';
 export * from './workspace.js';
 export * from './team.js';
 export * from './team-key.js';
+export * from './auth.js';
+export * from './names.js';
