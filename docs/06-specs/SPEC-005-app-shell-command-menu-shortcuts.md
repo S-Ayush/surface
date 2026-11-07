@@ -39,10 +39,12 @@ Search sources and recent items in the command menu (M2) · Peek panel (M2) · l
 | `/team/:key` | Team home (placeholder) |
 | `/team/:key/issues`, `/team/:key/active`, `/team/:key/backlog` | Reserved for M1/M2 |
 | `/issue/:identifier` | Reserved for M1. Old identifiers redirect. |
-| `/settings/...` | Settings (account, members, workspace, teams) |
+| `/settings/...` | Settings (account, members, workspace, teams), with the sub-routes of SPEC-001 §7. `/settings` and `/settings/account` open `/settings/account/profile`. |
 | `*` | Not found page with a "Go home" action |
 
 **Guards:** setup incomplete → `/setup`. Unauthenticated → `/login?next=…`. Store not ready → shell with a bootstrap progress bar (SPEC-002 §7). Admin-only routes for Members → not-found (don't reveal they exist).
+
+*As built (PLAN-005 S4, 2026-11-07):* the guards run before a route loads and again when the session changes (logout, a revoked session). `next` is the whole address, query included; only a same-origin path is followed (not `//host`, `/\host`, control characters or the login page itself), otherwise home. `/setup` is sent away once setup is done: to `/` when signed in, else `/login`. Admin-only routes are Members and Workspace (🛡 in SPEC-001 §7); a Member doesn't see them in the settings nav, and their URLs show not-found, decided in the page because the role comes from the store (with a spinner until the user's row is there). If the server can't be reached, an error page says so instead of redirecting. An unknown address inside the shell shows not-found in the shell; one that matches no route at all shows it without the shell (also before setup, when the server already sends every page to `/setup`). After the user's own logout the next login starts at home (`/login` without `next`); a revoked or expired session keeps `next`. Paths match in any case, the login page included.
 URL state: filters and display (M2) are encoded in query params. Overlay state (modals) is **not** in the URL, except peek (`?peek=ENG-1`, M2).
 
 ## 4. Command menu engine
@@ -99,6 +101,8 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 
 **Focus rules:** after route changes, focus moves to the main region (`<main tabindex=-1>`) and the page title is announced. Overlays trap focus and restore it to the trigger on close. Every page provides a "skip to content" link. Focus rings use `:focus-visible` only.
 
+*As built (PLAN-005 S4, 2026-11-07):* the title is announced by a polite live region when the page sets it (every title after the first), since the page renders after the router's location changes. Below 1024 px the sidebar is a drawer: a non-modal overlay opened from the header's sidebar button (or `[`). Opening it moves focus to its first control; Esc, the backdrop or a navigation closes it. After Esc or the backdrop, focus returns to the header button; after a navigation it goes to `<main>`. Clicking any link in the drawer closes it, even to the page already open. The drawer closes when the window widens to full layout. With the sidebar collapsed at full width, the header shows a "Show sidebar" button; whenever the sidebar appears or goes and focus went with the control that was removed, focus moves into the sidebar or onto that header button. The sidebar is resizable from 200 to 360 px by dragging its edge or with the arrow keys on it (Shift for larger steps, Home and End); width, collapse and expanded team sections are stored in `localStorage['surface.shell']`.
+
 ## 7. Sidebar (M0 content)
 
 ```
@@ -115,6 +119,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 - Teams the user belongs to are listed in **live** sidebar order (reorderable by drag in M2). "Browse teams" is at the end of the section.
 - Each team expands to its pages. M0 shows only "Home"; more items appear as their milestones land.
 - **The avatar menu** offers Profile, Theme ▸, Keyboard shortcuts, and Log out.
+- *As built (PLAN-005 S4, 2026-11-07):* the M0 sidebar has no logo, no `✎ New` button (issues arrive in M1) and no `[+]` (it appears once the create-team dialog registers its command, PLAN-001 S9). Teams are sorted by name until drag reordering (M2). Search opens the command menu.
 
 ## 8. System banners
 
@@ -126,6 +131,8 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 | 3 failed WebSocket upgrades | "Live updates unavailable: check your proxy's WebSocket settings. [Learn more]" (danger) |
 | IndexedDB unavailable | "Offline mode unavailable in this browser session" (warning, dismissible) |
 
+*As built (PLAN-005 S4, 2026-11-07):* banners show at the top of `<main>`. The outdated-client banner is raised once the replica has been ready (`blocking` priority); before that, the bootstrap screen itself says "Surface was updated" with a Reload button. The other banners are PLAN-005 S7.
+
 ## 9. Edge cases
 
 | # | Case | Behaviour |
@@ -134,7 +141,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 | E2 | A single-letter shortcut while an IME composition is active | Ignored (`event.isComposing`) |
 | E3 | Non-US keyboard layouts (e.g. `?` needs Shift, AZERTY) | Bindings match on `event.key` (the produced character) for printable keys, and on `event.code` for `Mod+` letter combinations. Tested with AZERTY and QWERTZ. **Refined 2026-11-07 (PLAN-005 S5):** letters combined with `Ctrl` or `Alt` also match on `event.code` (Option changes `event.key` on macOS: `Alt+Shift+T` types "ˇ"); a plain letter falls back to `event.code` when the layout types a letter outside A–Z (Russian, or `é` from a dead key); for other characters Shift, Option and AltGr are part of typing them and are not compared, so a symbol binding is written as the character (`?`, never `Shift+/` or `Alt+[`), and `Mod+<symbol>` must be pressed without Option or AltGr. Also tested with a Russian layout. |
 | E4 | A command's permission changes while the menu is open (role change via delta) | `when` re-evaluates reactively, and the item disappears |
-| E5 | A team is deleted or the user leaves it while viewing it | Redirect to home with a toast "You no longer have access to ENG" |
+| E5 | A team is deleted or the user leaves it while viewing it | Redirect to home with a toast "You no longer have access to ENG". *As built (S4):* this happens when the team disappears from the replica while its page is open: it was archived or deleted, or it is private and the user left. A public team the user leaves stays readable, so its page stays. A team key never visible to the user shows not-found. |
 | E6 | Very narrow viewport (< 768 px) | The sidebar becomes a drawer. The command menu is full-width. Shortcuts still work with a hardware keyboard. |
 | E7 | The OS-level theme changes with "system" selected | Applies live, without a reload |
 
@@ -165,7 +172,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 
 | # | Question | Decision |
 |---|---|---|
-| Q1 | Should the default home be My issues, or the first team's issues? | My issues (from M2). Until M2, the first team's home. |
+| Q1 | Should the default home be My issues, or the first team's issues? | My issues (from M2). Until M2, the first team's home. *Changed 2026-11-07 (PLAN-005 S4): My issues from M0, as the shell opens before a team's issues exist (M1) and My issues is always there; PLAN-005 S7's home preference can choose otherwise.* |
 | Q2 | Should frecency data sync across devices? | No: `localStorage` only (a convenience) |
 | Q3 | Should the sidebar width sync across devices? | No (per device) |
 | D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |

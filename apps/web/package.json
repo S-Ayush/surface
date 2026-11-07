@@ -18,6 +18,8 @@
     "@surface/operations": "workspace:*",
     "@surface/sync-client": "workspace:*",
     "@surface/ui": "workspace:*",
+    "@tanstack/react-router": "^1.170.46",
+    "lucide-react": "^1.70.0",
     "mobx": "^7.1.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

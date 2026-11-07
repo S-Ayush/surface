@@ -69,6 +69,66 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 - The web client's store registers `PRODUCTION_MODELS` (`@surface/domain/model`), so its schema hash matches the server's (session E handoff, PLAN-001 S1).
 - **Tests:** AC-15 (guards), AC-16 (375 px drawer), E5 (lost team access → redirect and toast).
 
+> **As built (in progress, 2026-11-07; not Done until PLAN-001 S3):** everything except real sign-in. The server has no sessions yet, so the app runs signed out: `preAuthClient` reads the setup state from `GET /setup/status` (PLAN-001 S2), reports no session, and every shell route leads to `/login`. The HTTP auth client, the login page, `?next=` after a real login and the 401 redirect are the web half of PLAN-001 S3, which session A's split of S3 (relayed 2026-11-07) gives to this session; they are added when A's server half lands.
+> - **Dependencies (justified):** `@tanstack/react-router` (^1.170.46, ADR-0004) and `lucide-react` (^1.70.0, the version `packages/ui` already uses; one copy in the lockfile) in `apps/web`.
+> - **Structure:**
+>   - `app/router.tsx`: the code-based route tree (SPEC-005 §3, SPEC-001 §7). Public routes under the root, without the shell; the rest under the pathless `shell` route. Paths are literal in each `createRoute` so the tree keeps its types. The guards run in `beforeLoad` after `auth.ready()`, redirecting with a relative `href` (`throw: true`, so no thrown non-Error). `createAppRouter(app, environment?)` takes a memory history, an origin, `isServer` and `scrollRestoration` for tests.
+>   - `app/guards.ts`: the pure guard (`guard`, `adminAccess`, `safeNext`, `loginFor`). `path` is the whole address, so `next` keeps the query.
+>   - `app/auth.ts`: `AuthClient` (capabilities, session, logout), `AuthState` (an observable snapshot: loading, ready or failed; `ready()` resolves to the current snapshot, so the guards see a logout), `preAuthClient`.
+>   - `app/AppModel.ts`: auth, the open store, and live reads for the command menu and the shell (`actor`, `isAdmin`, `teams`, `team(key)`, `workspaceName`, `userName`). `app/workspace.ts` holds the pure parts (`myTeams`, `actorOf`, `teamByKey`, `teamPageState`).
+>   - `app/ShellRoute.tsx`: one `SyncStore` per session (`PRODUCTION_MODELS`, so the schema hash matches the server's), keyed by workspace and user. `onSessionRevoked` signs out (the guards then send the user to `/login`), and `onRejected` shows a toast. `StoreGate` shows the bootstrap progress bar, or a reload prompt when the store failed or is outdated.
+>   - `shell/`: `Shell` (skip link, sidebar, resize handle, `<main tabindex=-1>`, live region), `Sidebar`, `AvatarMenu`, `PageHeader` (breadcrumb, actions slot, sidebar button), `ShellStore` (width, collapse, drawer, expanded teams, announcement; persisted in `localStorage['surface.shell']`, Zod-validated), `layout.ts` (breakpoints and widths), `usePageTitle`.
+>   - `pages/`: My issues (empty state), team home (sets the `team` command target; E5), not-found (in and outside the shell), `SettingsPage` (section nav, admin sections), `PublicPage`.
+>   - `App.tsx` wires `<CommandMenuProvider actor store navigate teams route>` above `<RouterProvider>` (so pages can set the target) and re-runs the guards when the auth snapshot changes. `useObserved` compares structurally with `app/equal.ts`, because MobX 7 no longer exports `comparer`.
+> - **PLAN-001 screens:** the router owns their URLs; the screens plug in through `features/screens.ts` (`SCREENS`, keyed by `ScreenId` in `app/screens.ts`, a new shared append-only file, sessions README §7). A route without a screen shows "… isn't available yet". `/setup` renders PLAN-001 S2's `routes/setup/SetupPage` directly (A's handoff), and `main.tsx` no longer switches on the path; the Vite proxy for `/setup/status` and `POST /setup` stays.
+> - **Deviations and decisions, recorded in SPEC-005 §3, §6, §7 and E5:** admin-only routes are Members and Workspace, decided in the page because the role comes from the store. E5 fires when the team leaves the replica while its page is open (a public team the user leaves stays). The drawer is a non-modal overlay. Titles are announced when the page sets them. The sidebar has no logo, `New` or `[+]` in M0, and teams are sorted by name. `/` always opens My issues until S7 adds the home preference.
+> - **Tests (unit; web 233 before the review, 248 after):**
+>   - `shell-guards.test.ts`: AC-15 rules, `safeNext`, `next` with a query.
+>   - `app-router.test.tsx`: AC-15 through the real route tree with a memory history: `next` with the query, setup redirects, a signed-in login page following a safe `next`, defaults for `/` and `/settings`, guards re-run after logout, the error page when auth fails, the setup wizard and a public page without the shell.
+>   - `app-auth.test.ts`: `preAuthClient`.
+>   - `shell-layout.test.ts`: AC-16 layout modes, clamping, `[` per mode, persistence and bad storage, announcements.
+>   - `shell-workspace.test.ts`: `myTeams`, `actorOf`, `teamByKey`, E5 `teamPageState`.
+>   - `app-equal.test.ts` and `theme-toggle.test.ts` (theme preference).
+>
+>   AC-15 and AC-16 e2e are ⏸ held. The App skeleton test is gone with the skeleton page.
+> - **Checked by hand in Chromium** (dev server with a temporary fake session and an in-memory store, reverted):
+>   - `/` → My issues; the sidebar lists only the user's teams.
+>   - Disclosure and active links; focus on `<main>` after navigation, with the new title announced.
+>   - E5: removing ENG while on `/team/ENG` goes home with the toast, and the sidebar updates.
+>   - Settings nav: as a Member, Workspace and Members disappear and `/settings/members` shows not-found, applied live on a role change.
+>   - Not-found in and outside the shell.
+>   - `[` collapses, and "Show sidebar" brings the sidebar back.
+>   - Avatar menu: the Theme submenu applies, and Log out goes to `/login?next=%2Fmy-issues`.
+>   - `Mod+K` on a team page shows the ENG chip.
+>   - At 375 px (an iframe; the window could not be resized): no horizontal scroll, the drawer opens with focus inside, Esc closes it and focus returns to the button, navigating from it focuses `<main>`, and the settings nav becomes a row.
+>   - No console errors.
+> - **Not checked:** a real bootstrap against the server (no session before S3), the store's progress and failure states, and the setup wizard in the browser through the router (covered by the router test and A's tests).
+> - **Review (slice-reviewer, 0 blockers, 3 majors, 9 minors, 7 nits), all fixed except one nit (follow-up below):**
+>   - **M1:** the Member → not-found clause of AC-15 was only tested on the pure guard. The settings sections are now one table (`app/settings.ts`, `SETTINGS`: screen, title, admin flag, nav link) read by the router and the nav (`settingsNav`). `settings-page.test.tsx` server-renders `SettingsPage` in a one-route memory router: a Member gets not-found on Members and Workspace, an Admin gets the section, an unknown role a spinner, and a Member's nav lists no admin section.
+>   - **M2:** E5's "seen" tracking is the pure `observeTeam(previous, key, present)` with `lostTeamMessage(key)`, tested as sequences (lost after shown, never visible, moving between teams, key case).
+>   - **M3:** the auth reaction is `followAuth(app, router)` (`app/router.tsx`). The router test changes only the auth state: a revoked session lands on `/login?next=…`, an explicit logout on `/login`. The first load does not re-run the guards. The avatar menu no longer invalidates the router itself.
+>   - **Minors:**
+>     - m1: the login page is matched in any case, in the guard and in `safeNext`.
+>     - m2: when the sidebar appears or goes and focus went with the removed control ("Show sidebar", the resize handle), focus moves into the sidebar or onto the header's sidebar button.
+>     - m3: dragging previews the width and saves it once, on pointer-up, cancel or lost capture (`previewWidth`/`commitWidth`).
+>     - m4: after an explicit logout the guards send the user to `/login` without `next` (`loggedOut` in the auth snapshot); a revoked session keeps `next`.
+>     - m5: the command menu gets `navigate` only while signed in.
+>     - m6: `gateView` (`app/gate.ts`) shows the progress, failure and outdated screens only before the first `ready`, so a resync keeps the page. An outdated store after that raises the persistent "Surface was updated. [Reload]" banner (`blocking` priority). `<BannerRegion>` is mounted at the top of `<main>`. The other §8 banners are S7.
+>     - m7: a test reads `DRAWER_QUERY` as a browser would and checks it switches where `layoutMode` does.
+>     - m8: these docs, and SPEC-005 Q1.
+>     - m9: `'admin'` left `Access`; `adminAccess` is the admin check.
+>   - **Nits:** the first auth load does not invalidate; the drawer closes when the layout becomes full, and when any link in it is clicked (focus to `<main>`); teams sort with the `en` locale; the standalone not-found and error pages' `<main>` take focus.
+>   - **Follow-up, not changed:** the avatar menu's Theme items are checkbox items for a one-of-three choice; `packages/ui` `Menu` needs a radio item type (S7 or S8). Before setup, an address that matches no route shows not-found rather than `/setup`; the server already sends every page to `/setup` until setup is done (PLAN-001 S2).
+>   - Mutation-checked: 17 mutants, all caught.
+>   - Rechecked by hand in Chromium (iframes at 1100 and 375 px, temporary fake session, reverted):
+>     - "Show sidebar" focuses the sidebar; `[` on the resize handle focuses "Show sidebar";
+>     - the drawer stays closed after a resize to full width and back;
+>     - a drawer link to the current page closes the drawer with focus on `<main>`, and one to Settings navigates;
+>     - logout lands on `/login`;
+>     - on `/login` the command menu offers no navigation.
+>   - Web tests 248.
+> - **Open until S3:** the HTTP `AuthClient` (`/auth/capabilities`, a current-session endpoint, `/auth/logout`), the login page and its `next`, the 401 redirect, a real bootstrap, then ✅ Done.
+
 ### S5: Shortcut engine & help overlay · M · ✅ Done 2026-11-07
 - `apps/web/src/shortcuts/`: the registry (`shortcut({...})`), a single document `keydown` listener, scope stack (overlay, then component, then page, then global), input suppression (`isComposing`, editable targets, `[data-shortcuts=off]`), and sequences with a 1 s timeout and hint toast.
 - Key matching: `event.key` for printable keys, and `event.code` for `Mod+letter` (E3; tested with AZERTY and QWERTZ via synthetic events).
@@ -212,8 +272,8 @@ None. Preferences are the `UserPreferences` model added by PLAN-001 S1 (its own 
 | AC-12 | `pnpm test:storybook` (addon-vitest + addon-a11y, both themes) (+ `e2e/a11y.spec.ts`, ⏸ held) |
 | AC-13 | `packages/ui/visual/stories.visual.ts` (`pnpm test:visual`, pinned Playwright image) |
 | AC-14 | ⏸ held (e2e) `e2e/system-banners.spec.ts` (simulated conditions) |
-| AC-15 | ⏸ held (e2e) `e2e/route-guards.spec.ts` |
-| AC-16 | ⏸ held (e2e) `e2e/responsive.spec.ts` (375 × 812) |
+| AC-15 | `web/test/shell-guards.test.ts`, `web/test/app-router.test.tsx`, `web/test/settings-page.test.tsx` (unit parts) + ⏸ held (e2e) `e2e/route-guards.spec.ts` |
+| AC-16 | `web/test/shell-layout.test.ts` (unit part) + ⏸ held (e2e) `e2e/responsive.spec.ts` (375 × 812) |
 
 ## 5. Risks & mitigations
 

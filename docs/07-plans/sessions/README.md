@@ -113,6 +113,7 @@ The session that merges an unblocking slice tells the user.
   - `apps/server/src/db/schema/index.ts`
   - `packages/domain/src/index.ts`
   - `apps/web/src/features/commands.ts` (added 2026-11-07, PLAN-005 S6 review): how the command menu runs each operation with `ui` metadata. A session keeps its entries in its own `apps/web/src/features/<feature>/commands.ts` (session E may create these before PLAN-005 S4) and adds one spread line here.
+  - `apps/web/src/features/screens.ts` (added 2026-11-07, PLAN-005 S4): the PLAN-001 screens the router renders, keyed by `ScreenId` (`apps/web/src/app/screens.ts`). A session keeps its screens in its own `apps/web/src/features/<feature>/` and adds one line here per screen.
 
   Add your own lines only. On a rebase conflict, keep both sides.
 - **Merge order** (replaces §5): A, then E, D, C.

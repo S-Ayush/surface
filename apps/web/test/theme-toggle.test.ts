@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { THEME_STORAGE_KEY } from '@surface/ui';
-import { toggleTheme, type ThemeEnvironment } from '../src/theme/toggleTheme.js';
+import {
+  setThemePreference,
+  themePreference,
+  toggleTheme,
+  type ThemeEnvironment,
+} from '../src/theme/toggleTheme.js';
 
 function environment(shown: string | null, stored: string | null, systemDark = false) {
   const attrs = new Map<string, string>(shown === null ? [] : [['data-theme', shown]]);
@@ -50,5 +55,17 @@ describe('Alt+Shift+T theme toggle (local until S7)', () => {
     };
     expect(toggleTheme(throwing)).toBe('dark');
     expect(attrs.get('data-theme')).toBe('dark');
+  });
+});
+
+describe('Theme ▸ in the avatar menu (local until S7)', () => {
+  it('applies light, dark or system and caches the preference', () => {
+    const { env, attrs, storage } = environment('light', null, true);
+    expect(themePreference(env)).toBe('system');
+    expect(setThemePreference(env, 'light')).toBe('light');
+    expect(storage.get(THEME_STORAGE_KEY)).toBe('light');
+    expect(setThemePreference(env, 'system')).toBe('dark'); // the OS prefers dark
+    expect(attrs.get('data-theme')).toBe('dark');
+    expect(themePreference(env)).toBe('system');
   });
 });
