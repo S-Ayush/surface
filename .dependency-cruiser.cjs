@@ -107,6 +107,14 @@ module.exports = {
       to: { path: '^tests/' },
     },
     {
+      name: 'server-testing-only-in-tests',
+      comment:
+        "The real server for the sync simulation (`@surface/server/testing`) is for tests/ and the server's own tests only (PLAN-002 S9).",
+      severity: 'error',
+      from: { path: '^(apps|packages)/', pathNot: '^apps/server/test/' },
+      to: { path: '^apps/server/test/' },
+    },
+    {
       name: 'test-doubles-only-in-tests',
       comment:
         "sync-client's test doubles (`@surface/sync-client/testing`) are for its own tests and tests/ only (ADR-0016).",

@@ -5,6 +5,10 @@
   "type": "module",
   "description": "Surface server: HTTP API, sync hub, MCP, auth, jobs.",
   "main": "./dist/main.js",
+  "exports": {
+    ".": "./dist/main.js",
+    "./testing": "./test/support/testing.ts"
+  },
   "bin": {
     "surface": "./bin/surface.js"
   },
