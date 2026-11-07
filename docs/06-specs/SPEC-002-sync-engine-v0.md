@@ -225,7 +225,7 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Commit → broadcast lag | p95 < 20 ms | Server metric `surface_sync_broadcast_lag_seconds` (notification received → rows handed to every connection) |
 | `/sync/mutate` server time | p95 < 30 ms per mutation | Server metric |
 | Delta apply (100 packets) on the client | < 5 ms | Client perf mark |
-| Sync-log lock hold time | p95 < 2 ms | Server metric |
+| Sync-log lock hold time | p95 < 2 ms | Server metric `surface_sync_lock_hold_seconds`; no automated test (D2) |
 | Bootstrap throughput | ≥ 20k rows/s on the client | Perf suite |
 
 ## 11. Decisions (open questions resolved with the proposed defaults, 2026-11-06)
@@ -243,6 +243,7 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Q9 | (2026-11-07, PLAN-002 S4) Who may open the WebSocket? | The same actors as bootstrap (Q7): signed-in users. An API key gets `403` before the upgrade, because its team limits are not sync groups. Only a missing session is answered after the upgrade, with `4001` (E10), because a browser can't read a refused upgrade's status. |
 | Q10 | (2026-11-07, PLAN-002 S4) What if a client's `since` is ahead of the server's head? | `resync(too_old)`. It happens after the database is restored from a backup, when the client holds rows the server no longer has; a full bootstrap makes it match the server again. A `since` ahead of `broadcastedUpTo` but not of the head is normal (the bootstrap read a newer head than the hub has delivered) and is not a resync. The check is best effort: once the restored database has written past the client's `since`, the ids overlap and it can't tell. A database epoch id in `sync_state`, checked on connect, would close that gap (Later). |
 | D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |
+| D2 | (2026-11-07, by decision of the user) Keep the test that asserts the sync-lock budget (`sync-lock.perf.int.test.ts`)? | No, it was removed. It failed in a full `pnpm test:int` while several sessions shared the machine (0–55 % of holds under 2 ms) and passed when run alone. The budget in §10 stands and is read from the server metric. |
 
 ### Changes after acceptance
 

@@ -104,8 +104,8 @@ describe('surface CLI', () => {
   });
 
   // AC-6 through the real entry point: `surface` with no command means `serve`.
-  it('exits 1 within a second when started without a valid configuration', () => {
-    const started = performance.now();
+  // The 1 s budget is checked by hand, not here (SPEC-004 D7).
+  it('exits 1 when started without a valid configuration', () => {
     const result = spawnSync(
       process.execPath,
       ['--conditions=@surface/source', '--import', 'tsx', 'src/cli/main.ts'],
@@ -119,6 +119,5 @@ describe('surface CLI', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('SURFACE_URL is missing');
     expect(result.stdout).toBe('');
-    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });

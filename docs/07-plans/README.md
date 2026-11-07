@@ -90,4 +90,5 @@ flowchart LR
 - **Known risk while held:** catch-up and resync (SPEC-002 AC-9/AC-10) and the auth flows (SPEC-001) are only covered by unit tests. Review these areas with extra care, and write their integration tests first when the hold lifts.
 - **Slices affected:** PLAN-004 S8 (deferred); PLAN-002 S10 (inspector and UI hooks only); PLAN-005 S8 (accessibility and polish; the M0 demo is run by hand).
 - **In "As built",** a slice says which held criteria it checked by hand.
+- **Timing assertions removed (2026-11-07, by decision of the user):** the "< 1 s" checks in the SPEC-004 AC-6 tests and the whole `sync-lock.perf.int.test.ts` (SPEC-002 §10) failed on a shared, loaded machine. AC-6's 1 s budget is checked by hand (SPEC-004 D7); the lock budget is read from its server metric (SPEC-002 D2). This is the one exception to "existing integration tests are kept".
 - **Lifting the hold:** write the tests named in the plans' ⏸ rows, then remove the markers and this section.
