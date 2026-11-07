@@ -47,11 +47,12 @@ packages/domain         entity types, enums, invariants, refs, filter engine (no
 packages/operations     operation definitions shared by client and server (→ domain)
 packages/sync-protocol  wire types + codecs (→ domain)
 packages/sync-client    client store, IndexedDB, mutation queue (→ domain, operations, sync-protocol)
+packages/sync-react     React hooks and the sync inspector (→ sync-client, ui, domain; ADR-0017)
 packages/ui, editor     design system / rich text (→ domain)
 packages/config         shared tsconfig, ESLint, Prettier, Vitest presets
 ```
 
-- Boundaries are enforced by `.dependency-cruiser.cjs`. The server never imports `ui`, `sync-client` or `apps/web`, and packages never import apps. Don't weaken a rule to make an import pass. Move the code instead.
+- Boundaries are enforced by `.dependency-cruiser.cjs`. The server never imports `ui`, `sync-client`, `sync-react` or `apps/web`, and packages never import apps. Don't weaken a rule to make an import pass. Move the code instead.
 - Packages export TypeScript source under the `@surface/source` condition. Only server-runtime packages build to `dist/`. Adding a workspace dependency means adding it to that package's `package.json` (`"workspace:*"`).
 
 ## Architecture rules that must never be broken

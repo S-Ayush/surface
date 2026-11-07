@@ -84,6 +84,7 @@ surface/
 │  ├─ operations/          Operation definitions (name, schemas, permission, keywords, examples,
 │  │                       optimistic() for the client), shared by client and server
 │  ├─ sync-client/         IndexedDB store, MobX object pool, mutation queue, rebase, WS client
+│  ├─ sync-react/          React hooks over the sync store, and the sync inspector (ADR-0017)
 │  ├─ sync-protocol/       Wire types (bootstrap frames, delta packets, mutation batches) + codecs
 │  ├─ ui/                  Design system components and tokens
 │  ├─ editor/              TipTap config, extensions (mentions, issue chips), JSON ↔ text
@@ -92,7 +93,7 @@ surface/
 └─ docs/
 ```
 
-**Dependency rule:** `domain` ← `operations` ← (`sync-client`, `apps/server`). `apps/web` depends on `sync-client`, `ui`, and `editor`. The server never imports UI packages, and the client never imports server code.
+**Dependency rule:** `domain` ← `operations` ← (`sync-client`, `apps/server`). `sync-react` depends on `sync-client`, `ui` and `domain` (ADR-0017). `apps/web` depends on `sync-client`, `sync-react`, `ui`, and `editor`. The server never imports UI packages, and the client never imports server code.
 
 ---
 
