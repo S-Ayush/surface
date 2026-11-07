@@ -7,25 +7,33 @@ import { testApp } from './helpers.js';
 async function listening() {
   const t = await testApp();
   const events: string[] = [];
+  // Resolves when a request reaches its handler. Shutdown must start only after that: a request
+  // that arrives once it has begun gets 503 by design, which a fixed wait raced under load.
+  let arrived!: () => void;
+  const inHandler = new Promise<void>((resolve) => (arrived = resolve));
   t.app.get('/api/slow', async () => {
-    await sleep(300);
+    arrived();
+    await sleep(300); // keeps the request in flight across the shutdown, on purpose
     events.push('slow request finished');
     return { done: true };
   });
-  t.app.get('/api/hang', () => new Promise(() => {}));
+  t.app.get('/api/hang', () => {
+    arrived();
+    return new Promise(() => {});
+  });
   t.lifecycle.onShutdown('connections', 'websockets', () => void events.push('connections hook'));
   t.lifecycle.onShutdown('resources', 'db pool', () => void events.push('resources hook'));
   await t.app.listen({ port: 0, host: '127.0.0.1' });
   const { port } = t.app.server.address() as { port: number };
   t.lifecycle.markReady();
-  return { ...t, events, base: `http://127.0.0.1:${port}` };
+  return { ...t, events, inHandler, base: `http://127.0.0.1:${port}` };
 }
 
 describe('gracefulShutdown', () => {
   it('lets in-flight requests finish, then releases resources', async () => {
     const t = await listening();
     const inFlight = fetch(`${t.base}/api/slow`);
-    await sleep(50);
+    await t.inHandler;
 
     await gracefulShutdown({ app: t.app, lifecycle: t.lifecycle, log: t.app.log as never });
 
@@ -40,7 +48,7 @@ describe('gracefulShutdown', () => {
   it('cuts requests that outlive the drain timeout', async () => {
     const t = await listening();
     const hanging = fetch(`${t.base}/api/hang`).catch((error: unknown) => error);
-    await sleep(50);
+    await t.inHandler;
 
     const started = performance.now();
     await gracefulShutdown({
