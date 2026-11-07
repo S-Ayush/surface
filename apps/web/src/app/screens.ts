@@ -12,6 +12,7 @@ export type ScreenId =
   | 'auth/magic'
   | 'settings/account/profile'
   | 'settings/account/security'
+  | 'settings/account/preferences'
   | 'settings/members'
   | 'settings/workspace'
   | 'settings/teams'

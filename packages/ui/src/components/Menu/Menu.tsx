@@ -34,6 +34,15 @@ export type MenuEntry =
       onCheckedChange: (checked: boolean) => void;
     }
   | {
+      /** One choice from a few, like Theme ▸ Light / Dark / System (a radio group). */
+      type: 'radio';
+      /** Names the group for screen readers. */
+      label: string;
+      value: string;
+      options: readonly { value: string; label: string; disabled?: boolean }[];
+      onValueChange: (value: string) => void;
+    }
+  | {
       type: 'submenu';
       label: string;
       icon?: ReactNode;
@@ -60,6 +69,19 @@ type Parts = {
     checked?: boolean;
     onCheckedChange?: (checked: boolean) => void;
     'aria-keyshortcuts'?: string;
+    children?: ReactNode;
+  }>;
+  RadioGroup: ComponentType<{
+    value?: string;
+    onValueChange?: (value: string) => void;
+    'aria-label'?: string;
+    children?: ReactNode;
+  }>;
+  RadioItem: ComponentType<{
+    className?: string;
+    value: string;
+    disabled?: boolean;
+    textValue?: string;
     children?: ReactNode;
   }>;
   ItemIndicator: ComponentType<{ className?: string; children?: ReactNode }>;
@@ -131,6 +153,33 @@ function Entries({ parts, items }: { parts: Parts; items: readonly MenuEntry[] }
             <span className={styles.label}>{entry.label}</span>
             {kbd(entry.shortcut)}
           </parts.CheckboxItem>
+        );
+      case 'radio':
+        return (
+          <parts.RadioGroup
+            key={`${index}-${entry.label}`}
+            value={entry.value}
+            onValueChange={entry.onValueChange}
+            aria-label={entry.label}
+          >
+            {entry.options.map((option) => (
+              <parts.RadioItem
+                key={option.value}
+                className={styles.item}
+                value={option.value}
+                disabled={option.disabled}
+                textValue={option.label}
+              >
+                {/* The same check as a checkbox item: menus mark the chosen option this way. */}
+                <span className={styles.check} aria-hidden="true">
+                  <parts.ItemIndicator>
+                    <Check />
+                  </parts.ItemIndicator>
+                </span>
+                <span className={styles.label}>{option.label}</span>
+              </parts.RadioItem>
+            ))}
+          </parts.RadioGroup>
         );
       case 'submenu':
         return (

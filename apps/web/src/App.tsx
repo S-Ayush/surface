@@ -10,13 +10,24 @@ import { createAppRouter, followAuth } from './app/router.js';
 import { CommandMenuProvider } from './command-menu/CommandMenuProvider.js';
 import { ShortcutHelp } from './shortcuts/ShortcutHelp.js';
 import { ShortcutProvider, useCommand } from './shortcuts/ShortcutProvider.js';
-import { browserThemeEnvironment, toggleTheme } from './theme/toggleTheme.js';
+import { followSystemTheme } from './preferences/apply.js';
+import { toggleThemePreference } from './preferences/save.js';
+import { browserThemeEnvironment } from './theme/toggleTheme.js';
 
 /** App-wide commands that need no page (the shell adds its own). */
-function AppCommands() {
+function AppCommands({ app }: { app: AppModel }) {
   useCommand('toggle:theme', () => {
-    toggleTheme(browserThemeEnvironment());
+    toggleThemePreference(app.readyStore, browserThemeEnvironment());
   });
+  // E7: "System" follows the OS live, on every page.
+  useEffect(
+    () =>
+      followSystemTheme(
+        browserThemeEnvironment(),
+        window.matchMedia('(prefers-color-scheme: dark)'),
+      ),
+    [],
+  );
   return null;
 }
 
@@ -50,7 +61,7 @@ export function App({ app }: { app: AppModel }) {
             teams={app.teams}
             route={route}
           >
-            <AppCommands />
+            <AppCommands app={app} />
             <RouterProvider router={router} />
             <ShortcutHelp />
           </CommandMenuProvider>

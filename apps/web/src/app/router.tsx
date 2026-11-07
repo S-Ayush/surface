@@ -9,11 +9,13 @@ import {
   createRouter,
   redirect,
   useLocation,
+  useNavigate,
   useParams,
   type ParsedLocation,
   type RouterHistory,
 } from '@tanstack/react-router';
 import { reaction } from 'mobx';
+import { useCallback, useEffect } from 'react';
 import { MyIssuesPage } from '../pages/MyIssuesPage.js';
 import { NotFoundPage, StandaloneNotFoundPage } from '../pages/NotFoundPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
@@ -24,6 +26,7 @@ import { SetupPage } from '../routes/setup/SetupPage.js';
 import { usePageTitle } from '../shell/usePageTitle.js';
 import type { AppModel } from './AppModel.js';
 import { AppErrorPage } from './AppErrorPage.js';
+import { useApp, useObserved } from './context.js';
 import { guard, type Access } from './guards.js';
 import type { ScreenId } from './screens.js';
 import { SETTINGS, type SettingsSection } from './settings.js';
@@ -155,12 +158,28 @@ const shellRoute = createRoute({
   notFoundComponent: NotFoundPage,
 });
 
-// `/` → the user's home preference; My issues until PLAN-005 S7 adds the preference.
+// `/` → the user's home view (SPEC-005 §3): a team, or My issues. It is known once the replica
+// is ready; until then the shell shows its progress and `HomeRedirect` waits. Waiting in
+// `beforeLoad` instead would hold back the shell that opens the store.
 const homeRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: '/',
-  beforeLoad: redirectTo('/my-issues'),
+  beforeLoad: ({ context }) => {
+    const home = context.app.home();
+    if (home !== undefined) redirect({ href: home, replace: true, throw: true });
+  },
+  component: HomeRedirect,
 });
+
+function HomeRedirect() {
+  const app = useApp();
+  const navigate = useNavigate();
+  const home = useObserved(useCallback(() => app.home(), [app]));
+  useEffect(() => {
+    if (home !== undefined) void navigate({ href: home, replace: true });
+  }, [home, navigate]);
+  return null;
+}
 
 const myIssuesRoute = createRoute({
   getParentRoute: () => shellRoute,
@@ -213,6 +232,11 @@ const routeTree = rootRoute.addChildren([
           getParentRoute: () => accountRoute,
           path: 'profile',
           component: settingsScreen(SETTINGS.profile),
+        }),
+        createRoute({
+          getParentRoute: () => accountRoute,
+          path: 'preferences',
+          component: settingsScreen(SETTINGS.preferences),
         }),
         createRoute({
           getParentRoute: () => accountRoute,

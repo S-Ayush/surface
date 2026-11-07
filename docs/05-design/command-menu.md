@@ -37,7 +37,7 @@ The command menu is Surface's **universal entry point**. Every action, navigatio
 |---|---|---|
 | **Operations** | Every registry operation with `ui` metadata whose `contexts` match the current context ([SPEC-003 §3](../06-specs/SPEC-003-operation-registry-executor.md)). Filtered by permission: no Admin commands for Members. | M0 |
 | **Navigation** | Pages: Inbox, My issues, each team's pages, Settings sections, Views, Projects | M0 |
-| **Toggles** | Theme, sidebar, density, display options | M0 |
+| **Toggles** | Theme, sidebar, display options (density: Later, SPEC-005 §2) | M0 |
 | **Local search** | Issues by identifier and title, projects, documents, people, teams, views (FlexSearch worker) | M2 |
 | **Server full-text** | Description, comment, and document text matches, arriving asynchronously in their own section | M2 |
 | **Recent** | The last 10 opened items and the last 5 commands, shown when the query is empty | M2 |

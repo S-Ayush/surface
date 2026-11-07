@@ -5,6 +5,7 @@ import debugEcho from './debug/echo.js';
 import debugListItems from './debug/list-items.js';
 import debugRename from './debug/rename.js';
 import debugTouch from './debug/touch.js';
+import userUpdatePreferences from './users/update-preferences.js';
 import teamAddMember from './teams/add-member.js';
 import teamCreate from './teams/create.js';
 import teamJoin from './teams/join.js';
@@ -28,4 +29,5 @@ export const HANDLERS: readonly Handler[] = [
   teamLeave,
   teamAddMember,
   teamRemoveMember,
+  userUpdatePreferences,
 ];

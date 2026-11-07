@@ -28,7 +28,11 @@ function localStorageOrNull(): Storage | null {
   }
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+/**
+ * `docked`: fixed-position tools that aren't page content (the sync inspector), kept outside
+ * `<main>` so they are not part of its landmark or of the focus moved there after navigation.
+ */
+export function Shell({ children, docked }: { children: ReactNode; docked?: ReactNode }) {
   const [shell] = useState(() => new ShellStore(localStorageOrNull()));
   const mode = useLayoutMode();
   const navigate = useNavigate();
@@ -122,6 +126,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <BannerRegion />
           {children}
         </main>
+        {docked}
         <VisuallyHidden>
           <p role="status">{announcement}</p>
         </VisuallyHidden>

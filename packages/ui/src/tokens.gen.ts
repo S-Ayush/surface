@@ -50,6 +50,8 @@ export const token = {
   fontFeatures: 'var(--font-features)',
   fontFeaturesNumeric: 'var(--font-features-numeric)',
   fontSizeRoot: 'var(--font-size-root)',
+  fontSizeRootSmall: 'var(--font-size-root-small)',
+  fontSizeRootLarge: 'var(--font-size-root-large)',
   weightRegular: 'var(--weight-regular)',
   weightMedium: 'var(--weight-medium)',
   weightSemibold: 'var(--weight-semibold)',

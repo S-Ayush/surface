@@ -150,6 +150,9 @@ importers:
       '@surface/sync-protocol':
         specifier: workspace:*
         version: link:../../packages/sync-protocol
+      '@surface/sync-react':
+        specifier: workspace:*
+        version: link:../../packages/sync-react
       '@surface/ui':
         specifier: workspace:*
         version: link:../../packages/ui

@@ -17,6 +17,7 @@
     "@surface/editor": "workspace:*",
     "@surface/operations": "workspace:*",
     "@surface/sync-client": "workspace:*",
+    "@surface/sync-react": "workspace:*",
     "@surface/sync-protocol": "workspace:*",
     "@surface/ui": "workspace:*",
     "@tanstack/react-router": "^1.170.46",

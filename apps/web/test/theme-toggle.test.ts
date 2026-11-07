@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { THEME_STORAGE_KEY } from '@surface/ui';
+import { toggleThemePreference } from '../src/preferences/save.js';
 import {
   setThemePreference,
   themePreference,
-  toggleTheme,
   type ThemeEnvironment,
 } from '../src/theme/toggleTheme.js';
+
+/** Alt+Shift+T with no ready store (the sign-in page, a workspace loading): this device only. */
+function toggleTheme(env: ThemeEnvironment): string | null {
+  toggleThemePreference(null, env);
+  return env.root.getAttribute('data-theme');
+}
 
 function environment(shown: string | null, stored: string | null, systemDark = false) {
   const attrs = new Map<string, string>(shown === null ? [] : [['data-theme', shown]]);
@@ -24,7 +30,7 @@ function environment(shown: string | null, stored: string | null, systemDark = f
   return { env, attrs, storage };
 }
 
-describe('Alt+Shift+T theme toggle (local until S7)', () => {
+describe('Alt+Shift+T theme toggle without a store', () => {
   it('flips the theme on screen and caches it for the first-paint bootstrap', () => {
     const { env, attrs, storage } = environment('light', 'system');
     expect(toggleTheme(env)).toBe('dark');
@@ -58,7 +64,7 @@ describe('Alt+Shift+T theme toggle (local until S7)', () => {
   });
 });
 
-describe('Theme ▸ in the avatar menu (local until S7)', () => {
+describe('Theme ▸ applied on this device', () => {
   it('applies light, dark or system and caches the preference', () => {
     const { env, attrs, storage } = environment('light', null, true);
     expect(themePreference(env)).toBe('system');

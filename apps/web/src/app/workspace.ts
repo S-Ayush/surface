@@ -65,6 +65,23 @@ export function teamByKey<T extends TeamRow>(teams: readonly T[], key: string): 
   return live(teams).find((team) => team.key === wanted);
 }
 
+/**
+ * The home team (SPEC-005 §3) while it is in the replica: not archived and still visible. A
+ * public team the user hasn't joined counts; its page is open to them.
+ */
+export function homeTeamOf<T extends TeamRow>(
+  homeTeamId: string | null,
+  teams: readonly T[],
+): T | undefined {
+  return homeTeamId === null ? undefined : live(teams).find((row) => row.id === homeTeamId);
+}
+
+/** The home view's path: the home team's page, otherwise My issues. */
+export function homePath(homeTeamId: string | null, teams: readonly TeamRow[]): string {
+  const team = homeTeamOf(homeTeamId, teams);
+  return team === undefined ? '/my-issues' : `/team/${team.key}`;
+}
+
 /** What a team page has seen: the team (by key, upper case) and whether it was ever shown. */
 export type TeamView = { readonly key: string; readonly seen: boolean };
 

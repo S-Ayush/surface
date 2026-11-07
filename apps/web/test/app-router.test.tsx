@@ -36,9 +36,9 @@ const environment = (path: string) => ({
   scrollRestoration: false,
 });
 
-async function open(path: string, auth: AuthClient) {
+async function open(path: string, auth: AuthClient, Model: typeof AppModel = AppModel) {
   // The second look after a 4001 (AuthState.recheck) without a real wait.
-  const app = new AppModel(new AuthState(auth, { wait: () => Promise.resolve() }));
+  const app = new Model(new AuthState(auth, { wait: () => Promise.resolve() }));
   const router = createAppRouter(app, environment(path));
   await router.load();
   return { app, router, href: () => router.state.location.href };
@@ -72,14 +72,26 @@ describe('AC-15: route guards in the router', () => {
   it('after login, the login page sends the user on to a safe `next`', async () => {
     const signedIn = client({ signedInAs: SESSION });
     expect((await open('/login?next=%2Fteam%2FENG', signedIn)).href()).toBe('/team/ENG');
-    expect((await open('/login?next=%2F%2Fevil.example', signedIn)).href()).toBe('/my-issues');
+    // Home is `/`, which then waits for the replica to know the user's home view.
+    expect((await open('/login?next=%2F%2Fevil.example', signedIn)).href()).toBe('/');
   });
 
-  it('opens `/` and `/settings` on their default pages', async () => {
+  it('opens `/settings` on its default page, and holds `/` until the home view is known', async () => {
     const signedIn = client({ signedInAs: SESSION });
-    expect((await open('/', signedIn)).href()).toBe('/my-issues');
+    // No replica here: the home view (a team, or My issues) is read from it (SPEC-005 §3).
+    expect((await open('/', signedIn)).href()).toBe('/');
     expect((await open('/settings', signedIn)).href()).toBe('/settings/account/profile');
     expect((await open('/settings/account', signedIn)).href()).toBe('/settings/account/profile');
+  });
+
+  it('sends `/` to the home view once the replica knows it, replacing the entry', async () => {
+    // Stands in for a replica whose preferences name team ENG (homePath has its own tests).
+    class KnowsHome extends AppModel {
+      override home = (): string => '/team/ENG';
+    }
+    const { router, href } = await open('/', client({ signedInAs: SESSION }), KnowsHome);
+    expect(href()).toBe('/team/ENG');
+    expect(router.history.length).toBe(1);
   });
 
   it('sends a user whose session ends to /login, back to the page they were on', async () => {

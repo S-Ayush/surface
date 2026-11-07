@@ -11,6 +11,16 @@ html {
   text-size-adjust: 100%;
 }
 
+/* The font size preference (SPEC-005 §6): text sizes are in rem, so changing the root scales the
+   text; spacing and control heights are in px and stay put. */
+html[data-font-size='small'] {
+  font-size: var(--font-size-root-small);
+}
+
+html[data-font-size='large'] {
+  font-size: var(--font-size-root-large);
+}
+
 body {
   margin: 0;
   background: var(--bg-app);

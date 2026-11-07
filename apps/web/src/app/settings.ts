@@ -19,6 +19,12 @@ export const SETTINGS = {
     admin: false,
     nav: '/settings/account/profile',
   },
+  preferences: {
+    screen: 'settings/account/preferences',
+    title: 'Preferences',
+    admin: false,
+    nav: '/settings/account/preferences',
+  },
   security: {
     screen: 'settings/account/security',
     title: 'Security',
@@ -39,6 +45,7 @@ export const SETTINGS = {
 
 const NAV = [
   SETTINGS.profile,
+  SETTINGS.preferences,
   SETTINGS.security,
   SETTINGS.workspace,
   SETTINGS.members,

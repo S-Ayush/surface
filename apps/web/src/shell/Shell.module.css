@@ -312,3 +312,32 @@
     transition: none;
   }
 }
+
+/* The sync inspector's dock (dev builds, `?debug=sync`): folded into a corner until opened.
+   Bottom right, clear of the sidebar (toasts may cover it briefly); under dialogs, which are
+   portalled after it. */
+.inspector {
+  position: fixed;
+  right: var(--space-12);
+  bottom: var(--space-12);
+  z-index: var(--z-overlay);
+  max-width: calc(100vw - 2 * var(--space-12));
+  max-height: calc(100dvh - 2 * var(--space-12));
+  overflow: auto;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-e2);
+  font-size: var(--text-sm-size);
+}
+
+.inspector > summary {
+  padding: var(--space-4) var(--space-8);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.inspector > summary:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}

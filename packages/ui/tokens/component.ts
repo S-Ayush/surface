@@ -4,6 +4,9 @@ import type { Theme } from './primitives.js';
 
 /** Root font size in px. The "font size" preference (FR-AUTH-10, S7) switches it to 12, 13 or 14. */
 export const ROOT_FONT_SIZE_PX = 13;
+/** The other two roots: `html[data-font-size='small' | 'large']` (styles/base.css). */
+const ROOT_FONT_SIZE_SMALL_PX = 12;
+const ROOT_FONT_SIZE_LARGE_PX = 14;
 
 const px = (n: number): string => `${n}px`;
 /** Type sizes scale with the root font size, so they are expressed in rem of the 13 px default. */
@@ -43,6 +46,8 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'font-features': '"cv11", "ss01"',
   'font-features-numeric': '"cv11", "ss01", "tnum"',
   'font-size-root': px(ROOT_FONT_SIZE_PX),
+  'font-size-root-small': px(ROOT_FONT_SIZE_SMALL_PX),
+  'font-size-root-large': px(ROOT_FONT_SIZE_LARGE_PX),
   'weight-regular': '400',
   'weight-medium': '500',
   'weight-semibold': '600',

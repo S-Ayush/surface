@@ -3,12 +3,17 @@
 // §3 "Store not ready → shell with a bootstrap progress bar", SPEC-002 §7; app/gate.ts).
 import { PRODUCTION_MODELS } from '@surface/domain/model';
 import { SyncStore } from '@surface/sync-client';
+import { SyncInspector, SyncStoreProvider, inspectorAllowed } from '@surface/sync-react';
 import { BANNER_PRIORITY, Button, EmptyState, ProgressBar, banner, toast } from '@surface/ui';
 import { Outlet } from '@tanstack/react-router';
 import { CloudAlert, RefreshCw } from 'lucide-react';
 import { reaction } from 'mobx';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { followPreferences } from '../preferences/apply.js';
+import { savePreferences } from '../preferences/save.js';
 import { Shell } from '../shell/Shell.js';
+import { SystemBanners } from '../shell/SystemBanners.js';
+import { browserThemeEnvironment } from '../theme/toggleTheme.js';
 import styles from '../shell/Shell.module.css';
 import type { AppModel } from './AppModel.js';
 import type { Session } from './auth.js';
@@ -43,12 +48,69 @@ export function ShellRoute() {
 function SessionShell({ session, epoch }: { session: Session; epoch: number }) {
   const app = useApp();
   useSyncStore(app, session, epoch);
+  // The user's theme and font size, from the replica and live from their other tabs (AC-10).
+  useEffect(
+    () =>
+      followPreferences(
+        {
+          read: () => {
+            const preferences = app.preferences();
+            const theme = app.savedTheme();
+            return preferences && theme !== undefined
+              ? { theme, fontSize: preferences.fontSize }
+              : undefined;
+          },
+          adopt: (theme) => {
+            const store = app.readyStore;
+            if (store !== null) savePreferences(store, { theme });
+          },
+        },
+        browserThemeEnvironment(),
+        document.documentElement,
+      ),
+    [app],
+  );
+  const store = useObserved(
+    useCallback(() => app.store, [app]),
+    Object.is,
+  );
   return (
-    <Shell>
+    <Shell
+      docked={
+        store !== null && (
+          <SyncStoreProvider store={store}>
+            <InspectorDock />
+          </SyncStoreProvider>
+        )
+      }
+    >
+      {store !== null && (
+        <SyncStoreProvider store={store}>
+          <SystemBanners />
+        </SyncStoreProvider>
+      )}
       <StoreGate>
         <Outlet />
       </StoreGate>
     </Shell>
+  );
+}
+
+/**
+ * The sync inspector (SPEC-002 §5.4): dev builds, or `?debug=sync` for an Admin. Folded in a
+ * corner until opened. `role` stays undefined until roles reach the client (PLAN-001 S7), which
+ * keeps `?debug=sync` closed in production builds (session D's handoff).
+ */
+function InspectorDock() {
+  const [allowed] = useState(() =>
+    inspectorAllowed({ dev: import.meta.env.DEV, search: window.location.search, role: undefined }),
+  );
+  if (!allowed) return null;
+  return (
+    <details className={styles.inspector}>
+      <summary>Sync</summary>
+      <SyncInspector />
+    </details>
   );
 }
 

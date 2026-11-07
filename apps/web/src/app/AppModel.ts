@@ -2,13 +2,19 @@
 // has opened it, and live read models over it. Everything reads MobX observables, so a reaction
 // (the command menu, E4) or an observing component updates when a delta lands.
 import type { Actor } from '@surface/domain';
-import { Team, TeamMembership, User, Workspace } from '@surface/domain/model';
+import { Team, TeamMembership, User, UserPreferences, Workspace } from '@surface/domain/model';
+import {
+  readPreferences,
+  readSavedTheme,
+  type Preferences,
+  type ThemePreferenceValue,
+} from '@surface/operations';
 import type { SyncStore } from '@surface/sync-client';
 import { observable, runInAction } from 'mobx';
 import type { TeamSummary } from '../command-menu/model.js';
 import type { AuthState, Session } from './auth.js';
 import { StoreSequence } from './stores.js';
-import { actorOf, myTeams, teamByKey } from './workspace.js';
+import { actorOf, homePath, homeTeamOf, myTeams, teamByKey } from './workspace.js';
 
 export class AppModel {
   readonly auth: AuthState;
@@ -54,6 +60,11 @@ export class AppModel {
     return snapshot.status === 'ready' ? snapshot.session : null;
   }
 
+  /** The store, once its replica is ready: what saving a preference needs. */
+  get readyStore(): SyncStore | null {
+    return this.#ready();
+  }
+
   /** The store, once its replica is ready to read. */
   #ready(): SyncStore | null {
     const store = this.store;
@@ -93,6 +104,39 @@ export class AppModel {
   workspaceName = (): string => {
     const store = this.#ready();
     return (store === null ? undefined : store.pool.all(Workspace)[0]?.name) ?? 'Surface';
+  };
+
+  /** The user's preferences (SPEC-005 §6), once the replica is ready; defaults until they set any. */
+  preferences = (): Preferences | undefined => {
+    const store = this.#ready();
+    const session = this.session;
+    if (store === null || session === null) return undefined;
+    return readPreferences(store.pool.get(UserPreferences, session.userId)?.values);
+  };
+
+  /** The theme the user saved; null if they never chose one; undefined until the replica is ready. */
+  savedTheme = (): ThemePreferenceValue | null | undefined => {
+    const store = this.#ready();
+    const session = this.session;
+    if (store === null || session === null) return undefined;
+    return readSavedTheme(store.pool.get(UserPreferences, session.userId)?.values);
+  };
+
+  /** Where `/` goes (SPEC-005 §3): the home team if the user can still see it, else My issues. */
+  home = (): string | undefined => {
+    const store = this.#ready();
+    const preferences = this.preferences();
+    if (store === null || preferences === undefined) return undefined;
+    return homePath(preferences.homeTeamId, store.pool.all(Team));
+  };
+
+  /** The home team while the user can see it (the Preferences screen shows it); else undefined. */
+  homeTeam = (): TeamSummary | undefined => {
+    const store = this.#ready();
+    const preferences = this.preferences();
+    if (store === null || preferences === undefined) return undefined;
+    const team = homeTeamOf(preferences.homeTeamId, store.pool.all(Team));
+    return team && { id: team.id, key: team.key, name: team.name };
   };
 
   userName = (): string | undefined => {

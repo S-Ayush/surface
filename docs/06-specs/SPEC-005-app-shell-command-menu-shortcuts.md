@@ -22,7 +22,7 @@ Every later feature plugs into the same frame: the sidebar, header, routing, ove
 - Overlay manager (one modal stack, popovers, toasts, banners)
 - **Shortcut engine**: registry, scopes, sequences, input-suppression, conflict test, `?` help overlay
 - **Command menu**: operations, navigation, and toggles sources; context chip; nested pages; ranking (fuzzy + context); permission filtering
-- Theme preference (light / dark / system, synced as a user preference), density and font size preferences
+- Theme preference (light / dark / system, synced as a user preference), density and font size preferences. *Changed 2026-11-07 (PLAN-005 S7, the user's decision): density moves to Later. FR-AUTH-10 doesn't list it, and every component has one density until list views (M1) need a compact one. M0 ships theme, font size and home view.*
 - System banners: offline, reconnecting, outdated client, live updates unavailable
 - Placeholder pages: team home ("Issues arrive in M1"), My Issues (empty state), Settings (hosts the SPEC-001 screens)
 
@@ -45,6 +45,7 @@ Search sources and recent items in the command menu (M2) · Peek panel (M2) · l
 **Guards:** setup incomplete → `/setup`. Unauthenticated → `/login?next=…`. Store not ready → shell with a bootstrap progress bar (SPEC-002 §7). Admin-only routes for Members → not-found (don't reveal they exist).
 
 *As built (PLAN-005 S4, 2026-11-07):* the guards run before a route loads and again when the session changes (logout, a revoked session). `next` is the whole address, query included; only a same-origin path is followed (not `//host`, `/\host`, control characters or the login page itself), otherwise home. `/setup` is sent away once setup is done: to `/` when signed in, else `/login`. Admin-only routes are Members and Workspace (🛡 in SPEC-001 §7); a Member doesn't see them in the settings nav, and their URLs show not-found, decided in the page because the role comes from the store (with a spinner until the user's row is there). If the server can't be reached, an error page says so instead of redirecting. An unknown address inside the shell shows not-found in the shell; one that matches no route at all shows it without the shell (also before setup, when the server already sends every page to `/setup`). After the user's own logout the next login starts at home (`/login` without `next`); a revoked or expired session keeps `next`. Paths match in any case, the login page included.
+*As built (PLAN-005 S7, 2026-11-07):* `/` opens the home view: the team chosen in the preferences while the user can see it (a public team they aren't a member of counts), else My issues (also when that team is archived or no longer visible). The home view is read from the replica, so on a first load `/` shows the shell's progress until the replica is ready, then goes on; later visits redirect at once. Settings has a third Account page, **Preferences** (`/settings/account/preferences`: theme, font size, home view). It is this spec's screen, as SPEC-001 §7 has none for preferences.
 URL state: filters and display (M2) are encoded in query params. Overlay state (modals) is **not** in the URL, except peek (`?peek=ENG-1`, M2).
 
 ## 4. Command menu engine
@@ -93,13 +94,15 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 | State | Owner | Persistence |
 |---|---|---|
 | Sidebar width / collapsed | Shell store | `localStorage` (per device) |
-| Theme, density, font size, home view | User preferences (`user.updatePreferences`) | Synced (`user:<id>` group) |
+| Theme, font size, home view (density: Later, §2) | User preferences (`user.updatePreferences`) | Synced (`user:<id>` group) |
 | Theme first-paint cache | Written whenever the theme preference changes (including from another device, via sync) | `localStorage['surface.theme']` (per device), read by the inline bootstrap in `index.html` so the first paint has no theme flash. Added 2026-11-06 (PLAN-005 S1). |
 | Expanded sidebar team sections | Shell store | `localStorage` |
 | Focus / selection context | Shell store, set by pages | Memory |
 | Toasts, banners, modal stack | Overlay manager | Memory |
 
 **Focus rules:** after route changes, focus moves to the main region (`<main tabindex=-1>`) and the page title is announced. Overlays trap focus and restore it to the trigger on close. Every page provides a "skip to content" link. Focus rings use `:focus-visible` only.
+
+*As built (PLAN-005 S7, 2026-11-07):* preferences are the `values` of the user's `UserPreferences` row: `theme` (`light`, `dark`, `system`; default `system`), `fontSize` (`small`, `default`, `large`: a 12, 13 or 14 px root; default `default`) and `homeTeamId` (a team id, or null for My issues). Each field is read on its own, so a missing or unknown value falls back to its default, and a change keeps keys this version doesn't know. `user.updatePreferences` takes any subset (`homeTeam` as a key or id, or null) and is optimistic; the handler creates the row if the user has none. While the shell is open the page follows the row live: `data-theme`, the first-paint cache, and `html[data-font-size]` (removed again on sign-out). Theme ▸ in the avatar menu (now a radio group) and `Alt+Shift+T` save the preference; with no ready store (the sign-in page, a workspace still loading) they apply to this device only. "System" follows the OS live on every page, signed in or not, through the cached preference (E7). A user with no saved theme (everyone before S7) keeps the theme this device cached, and it is saved as theirs when the replica loads.
 
 *As built (PLAN-005 S4, 2026-11-07):* the title is announced by a polite live region when the page sets it (every title after the first), since the page renders after the router's location changes. Below 1024 px the sidebar is a drawer: a non-modal overlay opened from the header's sidebar button (or `[`). Opening it moves focus to its first control; Esc, the backdrop or a navigation closes it. After Esc or the backdrop, focus returns to the header button; after a navigation it goes to `<main>`. Clicking any link in the drawer closes it, even to the page already open. The drawer closes when the window widens to full layout. With the sidebar collapsed at full width, the header shows a "Show sidebar" button; whenever the sidebar appears or goes and focus went with the control that was removed, focus moves into the sidebar or onto that header button. The sidebar is resizable from 200 to 360 px by dragging its edge or with the arrow keys on it (Shift for larger steps, Home and End); width, collapse and expanded team sections are stored in `localStorage['surface.shell']`.
 
@@ -130,6 +133,8 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 | `CLIENT_OUTDATED` / `resync(schema)` | "Surface was updated. [Reload]" (info, persistent) |
 | 3 failed WebSocket upgrades | "Live updates unavailable: check your proxy's WebSocket settings. [Learn more]" (danger) |
 | IndexedDB unavailable | "Offline mode unavailable in this browser session" (warning, dismissible) |
+
+*As built (PLAN-005 S7, 2026-11-07):* the connection banners come from the sync store (`@surface/sync-react` hooks; rules in `apps/web/src/shell/system-banners.ts`), at most one at a time, in this order: live updates unavailable; offline (the socket is reconnecting and `navigator.onLine` is false); reconnecting (for more than 5 s with the browser online). "· N pending" shows only when changes are waiting. "Live updates unavailable" has no "Learn more" link yet: nothing in the app explains proxy settings, and the app links to nothing outside the server (CLAUDE.md rule 5). The IndexedDB banner is dismissible and comes back only if its reason changes. The sync inspector (SPEC-002 §5.4) is a folded "Sync" panel in the bottom-right corner, in dev builds (and with `?debug=sync` for Admins once roles reach the client, PLAN-001 S7).
 
 *As built (PLAN-005 S4, 2026-11-07):* banners show at the top of `<main>`. The outdated-client banner is raised once the replica has been ready (`blocking` priority); before that, the bootstrap screen itself says "Surface was updated" with a Reload button. The other banners are PLAN-005 S7.
 

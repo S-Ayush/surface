@@ -8,6 +8,7 @@ import {
   debugRename,
   debugTouch,
 } from './debug.js';
+import { userUpdatePreferences } from './preferences.js';
 import {
   teamAddMember,
   teamCreate,
@@ -19,6 +20,7 @@ import {
 } from './team.js';
 
 export * from './debug.js';
+export * from './preferences.js';
 export * from './team.js';
 
 /**
@@ -42,6 +44,7 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   teamJoin,
   teamAddMember,
   teamRemoveMember,
+  userUpdatePreferences,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

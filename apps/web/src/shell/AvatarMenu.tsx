@@ -3,12 +3,9 @@ import { Avatar, Menu, THEME_PREFERENCES, toast, type ThemePreference } from '@s
 import { useNavigate } from '@tanstack/react-router';
 import { useCallback, useState } from 'react';
 import { useApp, useObserved } from '../app/context.js';
+import { chooseTheme } from '../preferences/save.js';
 import { useCommandRegistry } from '../shortcuts/ShortcutProvider.js';
-import {
-  browserThemeEnvironment,
-  setThemePreference,
-  themePreference,
-} from '../theme/toggleTheme.js';
+import { browserThemeEnvironment, themePreference } from '../theme/toggleTheme.js';
 import styles from './Shell.module.css';
 
 const THEME_LABELS: Readonly<Record<ThemePreference, string>> = {
@@ -22,13 +19,16 @@ export function AvatarMenu() {
   const commands = useCommandRegistry();
   const navigate = useNavigate();
   const name = useObserved(useCallback(() => app.userName() ?? 'You', [app]));
-  // Read when the menu opens, so it shows a change made with Alt+Shift+T.
-  const [theme, setTheme] = useState<ThemePreference>('system');
+  // The synced preference once the replica is ready; before that, this device's (read when the
+  // menu opens, so it shows a change made with Alt+Shift+T).
+  const synced = useObserved(useCallback(() => app.preferences()?.theme, [app]));
+  const [cached, setCached] = useState<ThemePreference>('system');
+  const theme = synced ?? cached;
 
   return (
     <Menu
       onOpenChange={(open) => {
-        if (open) setTheme(themePreference(browserThemeEnvironment()));
+        if (open) setCached(themePreference(browserThemeEnvironment()));
       }}
       trigger={
         <button type="button" className={styles.avatar} aria-label={`Account menu for ${name}`}>
@@ -47,14 +47,23 @@ export function AvatarMenu() {
         {
           type: 'submenu',
           label: 'Theme',
-          items: THEME_PREFERENCES.map((preference) => ({
-            type: 'checkbox' as const,
-            label: THEME_LABELS[preference],
-            checked: theme === preference,
-            onCheckedChange: () => {
-              setThemePreference(browserThemeEnvironment(), preference);
+          items: [
+            {
+              type: 'radio',
+              label: 'Theme',
+              value: theme,
+              options: THEME_PREFERENCES.map((preference) => ({
+                value: preference,
+                label: THEME_LABELS[preference],
+              })),
+              onValueChange: (value) => {
+                const preference = THEME_PREFERENCES.find((option) => option === value);
+                if (preference === undefined) return;
+                setCached(preference);
+                chooseTheme(app.readyStore, browserThemeEnvironment(), preference);
+              },
             },
-          })),
+          ],
         },
         {
           type: 'item',

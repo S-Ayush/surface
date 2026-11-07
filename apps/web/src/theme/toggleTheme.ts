@@ -1,5 +1,6 @@
-// Alt+Shift+T (shortcuts.md §3.1). Until the synced preference lands (PLAN-005 S7, AC-10), the toggle
-// is local: it flips the rendered theme and caches the choice where the index.html bootstrap reads it.
+// The theme on this page: the rendered `data-theme` and this device's cache, which the index.html
+// bootstrap reads for the first paint. Choosing a theme saves the synced preference when it can
+// (preferences/save.ts); these functions apply it here.
 import {
   THEME_STORAGE_KEY,
   isThemePreference,
@@ -47,31 +48,24 @@ export function currentTheme(env: ThemeEnvironment): Theme {
   return resolveTheme(stored, env.systemPrefersDark());
 }
 
-/** Switches between light and dark and returns the new theme. */
-export function toggleTheme(env: ThemeEnvironment): Theme {
-  const next: Theme = currentTheme(env) === 'dark' ? 'light' : 'dark';
-  env.root.setAttribute('data-theme', next);
+/** The preference this device cached, or null if it never chose one. */
+export function cachedThemePreference(env: ThemeEnvironment): ThemePreference | null {
   try {
-    env.storage?.setItem(THEME_STORAGE_KEY, next);
+    const stored = env.storage?.getItem(THEME_STORAGE_KEY) ?? null;
+    return isThemePreference(stored) ? stored : null;
   } catch {
-    // Quota or privacy errors only lose the first-paint cache.
+    return null;
   }
-  return next;
 }
 
 /** The preference this device has cached: what the avatar menu's Theme ▸ shows as checked. */
 export function themePreference(env: ThemeEnvironment): ThemePreference {
-  try {
-    const stored = env.storage?.getItem(THEME_STORAGE_KEY) ?? null;
-    return isThemePreference(stored) ? stored : 'system';
-  } catch {
-    return 'system';
-  }
+  return cachedThemePreference(env) ?? 'system';
 }
 
 /**
- * Applies a preference from the avatar menu (SPEC-005 §7). Local until the synced preference
- * lands (PLAN-005 S7). "System" follows the OS as of now; S7 adds the live listener (E7).
+ * Applies a theme preference to this page and caches it. "System" resolves with the OS as of
+ * now; `followSystemTheme` (preferences/apply.ts) re-applies it when the OS changes (E7).
  */
 export function setThemePreference(env: ThemeEnvironment, preference: ThemePreference): Theme {
   const theme = resolveTheme(preference, env.systemPrefersDark());
