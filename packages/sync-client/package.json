@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Client store: IndexedDB, MobX object pool, mutation queue, WebSocket client.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./test/support/testing.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

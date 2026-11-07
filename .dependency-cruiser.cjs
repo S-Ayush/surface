@@ -80,6 +80,21 @@ module.exports = {
       from: { path: '^apps/web/' },
       to: { path: '^apps/server/' },
     },
+    {
+      name: 'nothing-imports-tests',
+      comment: 'tests/ holds cross-boundary test harnesses (ADR-0016); nothing may depend on them.',
+      severity: 'error',
+      from: { pathNot: '^tests/' },
+      to: { path: '^tests/' },
+    },
+    {
+      name: 'test-doubles-only-in-tests',
+      comment:
+        "sync-client's test doubles (`@surface/sync-client/testing`) are for its own tests and tests/ only (ADR-0016).",
+      severity: 'error',
+      from: { path: '^(apps|packages)/', pathNot: '^packages/sync-client/' },
+      to: { path: '^packages/sync-client/test/' },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

@@ -1,0 +1,25 @@
+{
+  "name": "@surface/sync-sim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sync simulation: real sync-client stores against a server over a controllable network (PLAN-002 S9, ADR-0016).",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "sim": "node scripts/sim.mjs"
+  },
+  "dependencies": {
+    "@surface/domain": "workspace:*",
+    "@surface/operations": "workspace:*",
+    "@surface/sync-client": "workspace:*",
+    "@surface/sync-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@surface/config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "fake-indexeddb": "^6.2.7",
+    "fast-check": "^4.10.2"
+  }
+}
