@@ -1,0 +1,22 @@
+/* The account pages (PLAN-001 S4), inside the login card (pages/Pages.module.css). Tokens only. */
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.links {
+  display: flex;
+  margin: 0;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-8);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.link {
+  color: var(--accent);
+}

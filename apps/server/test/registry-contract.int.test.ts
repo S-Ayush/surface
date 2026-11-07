@@ -24,6 +24,8 @@ function executor(allowInternal: boolean): Executor {
     handlers: HANDLERS,
     log: silentLog,
     allowInternal,
+    // For the links handlers issue (`ctx.links`, e.g. `user.createResetLink`).
+    publicUrl: 'https://surface.example.com',
   });
 }
 

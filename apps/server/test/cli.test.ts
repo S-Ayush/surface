@@ -1,5 +1,5 @@
-// SPEC-004 §9: the `surface` CLI. Argument handling, `version`, the PLAN-001
-// stubs, and config failures. Database commands: cli-migrate.int.test.ts, doctor.int.test.ts.
+// SPEC-004 §9: the `surface` CLI. Argument handling, `version`, and config
+// failures. Database commands: cli-migrate.int.test.ts, doctor.int.test.ts.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -73,27 +73,20 @@ describe('surface CLI', () => {
     expect(versionReport({ version: '1', commit: 'c' }, []).schema).toBeNull();
   });
 
-  it.each([['reset-password', 'ada@example.com']])(
-    'explains that %s is not available yet and exits 1',
-    async (...argv) => {
-      const { code, out, err } = await cli(argv);
-      expect(code).toBe(1);
-      expect(out).toBe('');
-      expect(err).toContain(`surface ${argv[0]} is not available in this version yet`);
-    },
-  );
-
-  it.each([[[]], [['serve']], [['migrate']], [['setup-token']]])(
-    'refuses to %j with an invalid configuration, naming each variable',
-    async (argv) => {
-      const { code, out, err } = await cli(argv, { SESSION_SECRET: 'too-short' });
-      expect(code).toBe(1);
-      expect(out).toBe('');
-      expect(err).toContain('SURFACE_URL is missing');
-      expect(err).toContain('SESSION_SECRET must be at least 32 bytes');
-      expect(err).not.toContain('too-short');
-    },
-  );
+  it.each([
+    [[]],
+    [['serve']],
+    [['migrate']],
+    [['setup-token']],
+    [['reset-password', 'ada@example.com']],
+  ])('refuses to %j with an invalid configuration, naming each variable', async (argv) => {
+    const { code, out, err } = await cli(argv, { SESSION_SECRET: 'too-short' });
+    expect(code).toBe(1);
+    expect(out).toBe('');
+    expect(err).toContain('SURFACE_URL is missing');
+    expect(err).toContain('SESSION_SECRET must be at least 32 bytes');
+    expect(err).not.toContain('too-short');
+  });
 
   it('reports an invalid configuration as a doctor problem and skips the rest', async () => {
     const { code, out } = await cli(['doctor'], {});

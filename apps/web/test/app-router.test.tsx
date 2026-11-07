@@ -145,14 +145,14 @@ describe('AC-15: route guards in the router', () => {
   });
 
   it('renders a public page without the shell', async () => {
-    const { app, router } = await open('/forgot', client({}));
+    const { app, router } = await open('/invite/abc', client({}));
     const html = renderToString(
       <AppContext value={app}>
         <RouterProvider router={router} />
       </AppContext>,
     );
     // A screen session E hasn't registered yet shows the placeholder (features/screens.ts).
-    expect(html).toContain('Reset your password isn&#x27;t available yet');
+    expect(html).toContain('Join the workspace isn&#x27;t available yet');
     expect(html).not.toContain('id="sidebar"');
   });
 });

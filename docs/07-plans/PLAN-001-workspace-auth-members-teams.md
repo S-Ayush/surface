@@ -202,7 +202,7 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >     - run the server with `NODE_ENV=production` to try the web app.
 >   - The shell reopening after a 4001 was not seen by hand for these reasons; unit tests cover it. Check it by hand once the follow-up merges.
 
-### S4: Mailer, magic link, password reset · M · mailer half built 2026-11-07; routes after S3
+### S4: Mailer, magic link, password reset · M · ✅ Done 2026-11-07
 - Mailer service (Nodemailer, from `SMTP_URL`). Sending happens **via the outbox and a job** (`email.send`), never inside request transactions. Plain HTML templates plus text alternatives (magic link, reset, invite).
 - `POST /auth/magic-link` (always 200; invalidates older unused links, E9) and `GET /auth/magic` (consume, then session).
 - `POST /auth/forgot`, `POST /auth/reset` (revokes other sessions, E10).
@@ -254,6 +254,41 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - the stored job holds neither the token nor the address;
 >   - with SMTP down the job goes to `retry`, and its stored error is `SMTP send failed (ESOCKET)`.
 > - AC-3 and AC-4 stay ⏸ held (e2e).
+
+> **As built, routes, op, CLI and pages (2026-11-07, branch `p001-s4-routes`).** On S3 and A's follow-up (`ctx.enqueueEmail`, `ctx.closeSessions`, `deps.withTransaction`).
+> - **Decisions:**
+>   - SPEC-001 **D4** (the user's decision): the emailed link opens the page `/login/magic?token=`, which asks first and then sends `POST /auth/magic`. Not `GET /auth/magic`, which mail scanners would use up and which allows login CSRF.
+>   - The page was first planned at `/auth/magic` (C's router had it), but `/auth/*` is the server's API: the server's static fallback answers it with JSON 404, and so does the dev proxy. Found in the hand check; moved to `/login/magic` by the user's decision.
+>   - SPEC-001 **D5** (proposed, awaiting approval): link requests answer before the lookup, a 60 s cooldown per user and kind, and a newest-only rule for reset links too.
+> - **Server:**
+>   - `mail/link-tokens.ts`: `issueLink` locks the user's row (`FOR NO KEY UPDATE`), applies the cooldown, deletes the earlier links and stores the SHA-256. `useLink` is one `UPDATE … WHERE used_at IS NULL AND expires_at > now`, for active users only. Also the email lookup, the workspace name and `setPasswordHash`, plus `handlerLinks`. `LINK_TTL_MS` is tested against `LINK_LIFETIME_TEXT`.
+>   - `handlers/account/routes.ts`: `registerAccountRoutes` with `POST /auth/magic-link`, `/auth/forgot`, `/auth/magic` and `/auth/reset` (SPEC-001 §6.1).
+>     - Link requests run their work in the background (`deps.background` for tests). An address the email schema refuses fails `emailProblem` for everyone, which settles the mailer half's AC-5 note.
+>     - `/auth/magic` and `/auth/reset` check `Origin` like sign-in. They end the browser's previous session (Q11) and close sockets after the response, as sign-in does.
+>     - Reset hashes before its transaction. In it: use the link, set the password, end all the user's sessions (E10), create the new session.
+>   - `user.createResetLink` (`ops/account.ts`, `p.admin()`, output `{ url, expiresAt }`; no `ui` yet, it arrives with the Members screen in S7) and `handlers/account/create-reset-link.ts`.
+>   - **`ctx.links.passwordReset(userId)`**, a new `HandlerContext` capability (A's executor, the user's decision): issues on the operation's transaction and builds the URL from `ExecutorDeps.publicUrl` (`server.ts` passes `config.publicUrl`). Without a `publicUrl` it throws. S5 adds `invite` there.
+>   - `app.ts` registers the routes when `AuthDeps` has `email` and `withTransaction` (the user's decision; A's file, one call).
+>   - `surface reset-password <email>` (`cli/reset-password.ts`) replaces B's stub, as B's note asked. `Invocation` now carries the positional `args`. `cli.test.ts` checks it refuses a bad configuration like the other commands.
+> - **Web** (`features/account/`):
+>   - `api.ts`: `httpAccountApi` over `csrfFetch`, because a signed-in browser sends a session cookie. A `5xx` message is never shown. `AccountApiContext` serves tests.
+>   - `submit.ts`: `AccountSubmit`, one request at a time, and `newPasswordProblem`.
+>   - `AccountScreens.tsx`: check-email, forgot (no SMTP: ask an Admin), reset, and the login-link page with a focused **Log in** button. Registered in `features/screens.ts`.
+>   - `LoginOptions.tsx` in C's `LoginPage.tsx` (the user's decision): "Email me a login link" with SMTP, "Forgot password?" always. The spec's §3.3 keeps `/forgot` useful without SMTP, so the plan's "hidden when `smtp=false`" applies to the login link only.
+>   - After a link sign-in or reset the page loads `/` again, so C's `AuthState` needed no change.
+>   - C's `app-router.test.tsx` placeholder case now uses `/invite/…`, because `/forgot` has a screen. C's `app/router.tsx` and `app/screens.ts` changed `auth/magic` to `login/magic`. SPEC-005's public-route row was updated.
+> - **Tests** (unit): `server/test/account-routes.test.ts` (21), `server/test/link-tokens.test.ts` (12), `web/test/account-pages.test.tsx` (18), `cli.test.ts` adjusted. `registry-contract.int.test.ts` (A's) gives its executor a `publicUrl`, so `user.createResetLink`'s example runs against Postgres there. Mutation-checked: 19 mutants, all caught (answer before lookup, E10, both `Origin` checks, the SMTP gate, cooldown, previous sessions, short password, single use, newest only, hash only, active users, CLI normalising, double submit, the SMTP-dependent UI, `5xx` text).
+> - **Checked by hand** against `pnpm dev` (Postgres 17, real pg-boss) with SMTP pointed at the test fake SMTP server on 127.0.0.1 (scratch script, deleted):
+>   - Magic link: one email for the account, none for a repeat within 60 s or an unknown address, all answered `200 {}`. Used once, then `401`; another `Origin` `403`.
+>   - Reset: only the hash stored. The Admin's `user.createResetLink` turned off the emailed link (`401`). An expired link was `401`, then usable once its expiry was moved back. A short password `400` kept the link. Reset ended Ada's 3 sessions (old cookie `401`, new `200`) and the new password signed in.
+>   - The CLI against the database: a mixed-case address found the user, an unknown one exited 1.
+>   - In Chrome: the login page's two options; "Enter your email." with none typed; check-email; the emailed `/login/magic` link (Log in, then the app); an expired link's message; the reset page's mismatch message, then setting the password, which signed in.
+>   - Not checked: a Member refused by `user.createResetLink` (no Member exists before S5's invites; unit-tested with `evaluatePermission`).
+> - **Notes for later:**
+>   - S5: add `invite` to `ctx.links`.
+>   - S7: the Members ⋯ "Generate reset link" calls `user.createResetLink` (give it `ui` then).
+>   - Clearing the lockout on reset is not done: reset signs in by itself.
+>   - D5 awaits the user's approval.
 
 ### S5: Invites · M
 - Ops `invite.create` (returns `{url, emailed}`; E3 conflict), `invite.list`, `invite.revoke`.
@@ -399,9 +434,10 @@ Additive tables only. A rollback before any release is a code revert. After a re
 |---|---|
 | AC-1 | `server/test/setup-token.test.ts` (the link is logged, matches the stored hash) + `server/test/setup-routes.test.ts` "without the setup token cannot complete" + `server/test/setup-store.test.ts` "refuses a token that is not the current one" (unit parts, S2) + ⏸ held (e2e) `e2e/setup-token.spec.ts` (checked by hand in S2) |
 | AC-2 | ⏸ held (integration) `server/test/setup-atomic.int.test.ts` (checked by hand in S2, with a fault and a killed connection before `COMMIT`) |
-| AC-3 | ⏸ held (e2e) `e2e/no-smtp.spec.ts` (full J1 with invite and reset links). The login page's SMTP branch arrives with S4's magic link, tested both ways there (`smtp: true` shows the button, `false` hides it); S3's login page has no magic-link option at all (`web/test/login-page.test.tsx`) |
-| AC-4 | ⏸ held (e2e) `e2e/smtp-flows.spec.ts` (Mailpit) |
-| AC-5 | `server/test/auth-routes.test.ts` "answers a wrong password and an unknown email alike, after the same work" (unit part, S3) + ⏸ held (integration) `server/test/login-enumeration.int.test.ts` (timing checked by hand in S3) |
+| AC-3 | ⏸ held (e2e) `e2e/no-smtp.spec.ts` (full J1 with invite and reset links). Unit parts (S4): `web/test/account-pages.test.tsx` (the login link shown with SMTP and hidden without; `/forgot` says to ask an Admin), `web/test/login-page.test.tsx`, `server/test/account-routes.test.ts` (without SMTP the link routes say what to do, looking nothing up), `server/test/link-tokens.test.ts` (`user.createResetLink` is Admin-only and returns a 1-hour link on `SURFACE_URL`; `surface reset-password`) |
+| AC-4 | ⏸ held (e2e) `e2e/smtp-flows.spec.ts` (Mailpit). Unit parts (S4): `server/test/account-routes.test.ts` (each link emailed on `SURFACE_URL`, used once; reset sets the password and signs in), `web/test/account-pages.test.tsx`; magic link and reset checked by hand end to end (S4 As built) |
+| AC-5 | `server/test/auth-routes.test.ts` "answers a wrong password and an unknown email alike, after the same work" (unit part, S3) + `server/test/account-routes.test.ts` "answers an account and an unknown email alike, before looking either up" (link requests, S4) + ⏸ held (integration) `server/test/login-enumeration.int.test.ts` (timing checked by hand in S3) |
+| E9, E10 (S4: links, reset) | `server/test/link-tokens.test.ts` (newest link only, hash stored, single use, active users, cooldown) + `server/test/account-routes.test.ts` (an older link refused; reset ends every session and closes their sockets) + ⏸ held (integration): the SQL, checked by hand (S4) |
 | AC-6 | `server/test/auth-routes.test.ts` "after 5 failures in 15 minutes refuses even the right password…" + `server/test/auth-attempts.test.ts` (unit parts, S3) + ⏸ held (integration) `server/test/login-lockout.int.test.ts` (checked by hand in S3, across a restart) |
 | AC-7 | `server/test/auth-routes.test.ts` "signs in with the right password…" and "sets HttpOnly on the session cookie only…" + `server/test/setup-routes.test.ts` (unit parts) + ⏸ held (integration) `server/test/session-cookie.int.test.ts` (checked by hand in S3) |
 | AC-8 | `server/test/auth-routes.test.ts` "ends the session, closes its sockets, and the next request is 401" (unit part, sign-out) + ⏸ held (e2e) `e2e/session-revoke.spec.ts` (sign-out checked by hand in S3; `session.revoke` comes with the account slice) |

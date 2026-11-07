@@ -143,9 +143,9 @@ const publicRoutes = [
   }),
   createRoute({
     getParentRoute: () => rootRoute,
-    path: '/auth/magic',
+    path: '/login/magic',
     beforeLoad: guarded('public'),
-    component: publicScreen('auth/magic', 'Logging in'),
+    component: publicScreen('login/magic', 'Logging in'),
   }),
 ];
 

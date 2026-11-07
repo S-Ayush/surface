@@ -14,6 +14,7 @@ import type { z } from 'zod';
 import type { SessionSelection } from '../auth/store.js';
 import type { Queryable } from '../db/pool.js';
 import type { EmailJob } from '../mail/job.js';
+import type { HandlerLinks } from '../mail/link-tokens.js';
 import { SYNCED_MODELS, type ModelName, type ModelRow } from '../sync/models.js';
 import {
   countQuery,
@@ -87,6 +88,11 @@ export interface HandlerContext {
    * Resolves to how many ended; 0 for a session that isn't the user's.
    */
   closeSessions(userId: string, which: SessionSelection): Promise<number>;
+  /**
+   * Single-use links stored on this operation's transaction, as URLs on `SURFACE_URL`: an
+   * Admin's reset link (`user.createResetLink`, PLAN-001 S4), later invites (S5).
+   */
+  readonly links: HandlerLinks;
 }
 
 export interface Handler<Op extends AnyOperation = AnyOperation> {

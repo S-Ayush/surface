@@ -61,6 +61,7 @@ import { syncRepo, type RepoFactory, type RowChange, type TransactionRepo } from
 import { nearestNames } from './suggest.js';
 import { inTransaction, isRetryable, jitterBackoff, postgresCode } from './transaction.js';
 import { NO_EMAIL, type EmailOutbox } from '../jobs/email.js';
+import { handlerLinks } from '../mail/link-tokens.js';
 
 /** Step 10: automations and invariant checks, run after the handler inside the transaction. */
 export type PostHandlerCheck = (state: {
@@ -99,6 +100,8 @@ export interface ExecutorDeps {
    * synced mutation that changed nothing (`visibleHead`). Default: the production models.
    */
   readonly syncedModels?: readonly string[];
+  /** `SURFACE_URL`, for the links handlers issue (`ctx.links`). Without it, issuing one fails. */
+  readonly publicUrl?: string;
 }
 
 interface TransactionOutcome {
@@ -304,6 +307,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         ended.push(...ids);
         return ids.length;
       },
+      links: handlerLinks(client, deps.publicUrl, now),
     };
     const raw = await handler.run(ctx, input);
 

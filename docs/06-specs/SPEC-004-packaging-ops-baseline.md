@@ -190,7 +190,7 @@ All configuration is through environment variables, validated at startup with a 
 | `serve` | ✓ | Default: run the server |
 | `migrate` | ✓ | Steps 2–4 of §8 (wait for the DB, version and collation checks, extensions and migrations under the lock), then exit. For CI and manual upgrades. |
 | `setup-token` | ✓ | Print a fresh setup URL if setup is incomplete; earlier links stop working (SPEC-001 Q4). Exits 1 once setup is complete. Implemented in PLAN-001 S2. |
-| `reset-password <email>` | ✓ | Print a one-time reset link (the recovery path when no Admin can log in). Registered in M0 as a stub; implemented by PLAN-001. |
+| `reset-password <email>` | ✓ | Print a one-time reset link (the recovery path when no Admin can log in). Valid 1 hour and single-use; the user's earlier reset links stop working, and using it logs them out everywhere (SPEC-001 §3.3). Exits 1 for an email without an active user. Implemented in PLAN-001 S4. |
 | `doctor` | ✓ | Check config, DB connectivity and version, ICU collations, extensions, disk space on `/data`, SMTP connectivity, and `SURFACE_URL` reachability (local only) |
 | `version` | ✓ | Print the version, commit, and schema level (`--json` for scripts). The schema level is the newest migration in the build; the sync `schemaHash` is added with PLAN-002. |
 | `backup`, `restore <file>` | M7 | FR-OPS-05/06 |

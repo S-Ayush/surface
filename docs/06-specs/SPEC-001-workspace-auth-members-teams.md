@@ -46,13 +46,15 @@ Keyboard: `Enter` advances each step. `Esc` does nothing (setup can't be skipped
 ### 3.2 Login
 - `/login` shows email and password, plus a **"Email me a login link"** button (only when SMTP is configured).
 - Password login: on success, create a session and redirect to `?next=` or home. On failure show the generic *"Email or password is incorrect"*.
-- Magic link: `POST /auth/magic-link {email}` **always** answers *"If an account exists, we sent a link"*, so it can't be used to discover accounts. The link `/auth/magic?token=…` creates a session.
+- Magic link: `POST /auth/magic-link {email}` **always** answers *"If an account exists, we sent a link"*, so it can't be used to discover accounts. The emailed link opens the page `/login/magic?token=…`, which asks first (a focused **Log in** button, so Enter works) and then sends `POST /auth/magic {token}`, which creates a session (D4).
+- *As built (PLAN-001 S4, 2026-11-07):* below the form, **"Email me a login link"** (only with SMTP; it uses the email typed above and goes to `/login/check-email`) and **"Forgot password?"** (always: without SMTP, `/forgot` says to ask an Admin). After signing in with a link the page loads the app again from `/`.
 
 - *As built (PLAN-001 S3 web half, 2026-11-07):* the page shows a refused sign-in's message as the server sends it, the lockout's "Try again in N minutes" included (E13). A server failure or no answer says to check the connection and try again. The magic-link button arrives with PLAN-001 S4's routes.
 
 ### 3.3 Password reset
 - **With SMTP:** `/forgot` takes an email and always answers the generic message. The email contains `/reset?token=…`, where the user sets a new password. Using it logs out all other sessions.
-- **Without SMTP:** `/forgot` explains *"Ask an Admin for a reset link"*. Admin: Settings → Members → ⋯ → **Generate reset link** → copy. The link is valid for 1 hour and single-use.
+- **Without SMTP:** `/forgot` explains *"Ask an Admin for a reset link"*. Admin: Settings → Members → ⋯ → **Generate reset link** → copy. The link is valid for 1 hour and single-use. When no Admin can sign in, the operator runs `surface reset-password <email>` (SPEC-004 §9), which prints the same kind of link.
+- *As built (PLAN-001 S4, 2026-11-07):* `/reset` asks for the new password twice. Setting it ends every session of the user (E10) and signs this browser in. A user's newest reset link is the only one that works, whoever made it (D5).
 
 ### 3.4 Invites
 1. Admin: Settings → Members → **Invite**. Fields: email (optional when there is no SMTP), role (Member by default), teams (optional, multi-select).
@@ -118,8 +120,9 @@ Answers use SPEC-003's HTTP shapes: `{ ok: true, result }` on success and `{ ok:
 | `POST /auth/login` | `{email, password}` → `200 { userId }` with the session and CSRF cookies. A session the browser already had ends, and its sockets close (Q11). `401 UNAUTHENTICATED` "Email or password is incorrect" for a wrong password and an unknown email alike (AC-5); `429 RATE_LIMITED` with `Retry-After` while locked (AC-6, E13, Q8); `403 FORBIDDEN` from another `Origin` (Q10); `400 INVALID_INPUT` |
 | `POST /auth/logout` | Ends the current session, closes its sockets with `4001` on every replica, and clears both cookies. Needs the CSRF header like any cookie-authenticated POST. `200` even when already signed out |
 | `GET /auth/session` | Who is signed in: `{ userId, workspaceId }`, and the CSRF cookie set again. `401 UNAUTHENTICATED` when signed out (Q9). The 401 leaves the cookies alone: it may answer a request sent with an old cookie after the browser stored a newer one (Q11; 2026-11-07, approved by the user: it used to clear a cookie that no longer works) |
-| `POST /auth/magic-link` · `GET /auth/magic?token=` | Request and consume a magic link |
-| `POST /auth/forgot` · `POST /auth/reset` | Request a reset; reset with `{token, password}` |
+| `POST /auth/magic-link` · `POST /auth/forgot` | `{email}` → `200 { }` for every well-formed address, answered before any lookup (D5); the link is emailed afterwards if an active account has that email. `400 INVALID_INPUT` for a malformed address (the same for everyone); `404 NOT_FOUND` without SMTP, saying what to do instead |
+| `POST /auth/magic` | `{token}` → `200 { userId }` with the session and CSRF cookies; the browser's previous session ends, as on sign-in (Q11). `401 UNAUTHENTICATED` for an unknown, used or expired link; `403 FORBIDDEN` from another `Origin` (Q10). The emailed link opens the page `/login/magic?token=`, not this route (D4) |
+| `POST /auth/reset` | `{token, password}` → `200 { userId }` with the cookies: sets the password, ends every session of the user (E10) and the browser's previous one, and signs in. `400 INVALID_INPUT` for a password that breaks AC-9 (the link stays usable); `401` and `403` as for `/auth/magic` |
 | `GET /invite/:token` · `POST /invite/:token/accept` | Show and accept an invite |
 | `GET /auth/capabilities` | `{ smtp: bool, setupComplete: bool }`, so the UI can show or hide options. Open before setup too |
 
@@ -149,8 +152,9 @@ Answers use SPEC-003's HTTP shapes: `{ ok: true, result }` on success and `{ ok:
 | Screen | Route | Notes |
 |---|---|---|
 | Setup wizard | `/setup` | 3 steps with a progress indicator |
-| Login | `/login` | Magic-link button hidden when `smtp=false` |
+| Login | `/login` | Magic-link button hidden when `smtp=false`; "Forgot password?" always |
 | Magic link sent / Forgot / Reset | `/login/check-email`, `/forgot`, `/reset` | |
+| Log in with a link | `/login/magic?token=` | Asks before using the link (D4) |
 | Accept invite | `/invite/:token` | Shows the workspace name and who invited |
 | Settings: Account | `/settings/account/profile`, `/settings/account/security` | |
 | Settings: Members 🛡 | `/settings/members` | Invite modal, role menu, reset-link modal |
@@ -171,7 +175,7 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 | E6 | The last Admin demotes themselves | `CONFLICT: "Surface needs at least one Admin"` |
 | E7 | SMTP configured but sending fails | The invite is still created. The UI shows "Email failed. Copy the link instead" and the copyable link. Magic-link requests fail silently to the user, but are logged and alerted on the System page later. |
 | E8 | Magic link opened on a different device | Works (token-based). That device gets a new session. |
-| E9 | Several magic links requested | Only the newest is valid. Older unused links are invalidated. |
+| E9 | Several magic links requested | Only the newest is valid. Older unused links are invalidated. A request within 60 s of an unused link sends nothing new, with the same answer (D5). |
 | E10 | Password changed or reset | All other sessions are revoked. Their open sockets close with code `4001 session_revoked`, and the clients go to `/login`. |
 | E11 | Team key collides, or is reserved or invalid | Inline error, plus the next suggestion for the name. Keys are unique across the workspace, so a private team's key reads as taken to non-members (D2) |
 | E12 | The last member leaves a team | Allowed for a public team: it stays and can be joined. The last member of a **private** team cannot leave or be removed (`CONFLICT`) (D3) |
@@ -225,3 +229,5 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 | Q9 | (2026-11-07, PLAN-001 S3, session C's request; approved by the user) How does the web app learn who is signed in? | `GET /auth/session` → `{ ok: true, result: { userId, workspaceId } }` (the ids it opens its replica with), or `401`. |
 | Q10 | (2026-11-07, PLAN-001 S3; approved by the user) What protects sign-in itself, which has no session to check CSRF against? | A browser `Origin` other than `SURFACE_URL`'s is refused with `403` and logged at `warn` (SPEC-004 E3), so another site can't sign the browser into an account of its choosing. Requests without `Origin` (scripts, older browsers on same-origin requests) are allowed. |
 | Q11 | (2026-11-07, PLAN-001 S3 review; approved by the user) What happens to the session a browser already had when it signs in again? | It ends: the row is deleted and its sockets close with `4001`, so it doesn't linger in the sessions list (§3.5) and no socket goes on as whoever signed in before. The browser's other tabs see that `4001`; the client then calls `GET /auth/session`, and if someone is signed in (the new cookie) it reconnects instead of going to `/login`. The sockets close once the sign-in response has gone out, and that `401` doesn't clear cookies, so a recheck sent with the old cookie can't sign the new session out (2026-11-07, after session C's check against the real server; the `401` part approved by the user). |
+| D4 | (2026-11-07, PLAN-001 S4; by decision of the user) How does an emailed login link sign in? | Through a page that asks first, not a `GET` that signs in: mail scanners open links before the user does and would use up a single-use link, and a link sent by someone else could sign the browser into their account (login CSRF). The page `/login/magic?token=` shows **Log in**; it sends `POST /auth/magic {token}`, which refuses another `Origin` like sign-in (Q10). The page is not under `/auth/`, which is the server's API (Q5). Was `GET /auth/magic?token=`. |
+| D5 | (2026-11-07, PLAN-001 S4; proposed, awaiting the user's approval) How do the link requests avoid revealing accounts or flooding a mailbox? | `POST /auth/magic-link` and `/auth/forgot` answer before looking anything up; the lookup, the link and the email follow, so the timing is the same with and without an account (AC-5). A request within 60 s of the user's last unused link of that kind sends nothing new. Issuing a link (by email, an Admin or the CLI) turns off the user's earlier ones of that kind, reset links included. A failure after the answer is logged, never shown. |

@@ -10,6 +10,7 @@ import type { Registry } from 'prom-client';
 import { buildInfo, defaultWebDir, type BuildInfo } from './build-info.js';
 import type { AttemptStore } from './auth/attempts.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import { registerAccountRoutes } from './handlers/account/routes.js';
 import type { SessionAuth } from './auth/sessions.js';
 import type { AuthStore } from './auth/store.js';
 import type { EmailOutbox } from './jobs/email.js';
@@ -132,6 +133,22 @@ export async function buildApp({
       smtpEnabled: config.smtp !== null,
       setupComplete: setup ? () => setup.gate.isComplete() : () => Promise.resolve(true),
     });
+    // Magic links and password reset (PLAN-001 S4, session E): they need the email outbox and a
+    // transaction, so tests that build the app without them get no such routes.
+    if (auth.email && auth.withTransaction) {
+      registerAccountRoutes(app, {
+        auth: auth.auth,
+        lifecycle,
+        secureCookies: config.secureCookies,
+        sessionSecret: config.sessionSecret,
+        allowedOrigin: new URL(config.publicUrl).origin,
+        publicUrl: config.publicUrl,
+        email: auth.email,
+        withTransaction: auth.withTransaction,
+        ...(auth.closeSessions ? { closeSessions: auth.closeSessions } : {}),
+        ...(auth.now ? { now: auth.now } : {}),
+      });
+    }
   }
   // One executor for the operations API and `POST /sync/mutate`: one rate limiter, one set of metrics.
   const executor = ops?.createExecutor(metrics);

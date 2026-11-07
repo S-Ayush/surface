@@ -9,7 +9,7 @@ export type ScreenId =
   | 'forgot'
   | 'reset'
   | 'invite'
-  | 'auth/magic'
+  | 'login/magic'
   | 'settings/account/profile'
   | 'settings/account/security'
   | 'settings/account/preferences'

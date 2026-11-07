@@ -22,7 +22,7 @@ Commands:
   doctor [--json]         Check the configuration, database, data volume, email and public URL
   version [--json]        Print the version, commit and schema level
   setup-token             Print a fresh setup link while setup is incomplete
-  reset-password <email>  Print a one-time password reset link (not available yet)
+  reset-password <email>  Print a one-time password reset link for a user
 
 Options:
   -h, --help              Show this help
@@ -59,6 +59,8 @@ class UsageError extends Error {}
 interface Invocation {
   command: CommandName | 'help';
   json: boolean;
+  /** The positional arguments after the command name, as many as `COMMANDS` declares. */
+  args: readonly string[];
 }
 
 function parseFlags(argv: string[]) {
@@ -81,7 +83,7 @@ function parseFlags(argv: string[]) {
 
 function parse(argv: string[]): Invocation {
   const { values, positionals } = parseFlags(argv);
-  if (values.help) return { command: 'help', json: false };
+  if (values.help) return { command: 'help', json: false, args: [] };
 
   if (values.version && positionals.length > 0) {
     throw new UsageError(`--version can't be combined with a command ("${positionals[0]}").`);
@@ -99,7 +101,7 @@ function parse(argv: string[]): Invocation {
     throw new UsageError(`surface ${name} does not take "${rest[spec.args.length]}".`);
   }
   if (values.json && !spec.json) throw new UsageError(`surface ${name} does not support --json.`);
-  return { command: name, json: values.json ?? false };
+  return { command: name, json: values.json ?? false, args: rest };
 }
 
 /** Load and validate config, printing the problems when it is invalid. */
@@ -163,11 +165,11 @@ export async function runCli(argv: string[], io: CliIo, options: CliOptions = {}
       return setupTokenCommand(io, config);
     }
 
-    case 'reset-password':
-      // SPEC-004 §9 lists it for M0; it needs sign-in (PLAN-001 S3).
-      io.err(
-        `surface ${invocation.command} is not available in this version yet. It arrives with workspace setup and sign-in (PLAN-001).\n`,
-      );
-      return EXIT.failure;
+    case 'reset-password': {
+      const config = configOrExit(io, options.env);
+      if (!config) return EXIT.failure;
+      const { resetPasswordCommand } = await import('./reset-password.js');
+      return resetPasswordCommand(io, config, invocation.args[0] ?? '');
+    }
   }
 }

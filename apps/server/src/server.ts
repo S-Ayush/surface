@@ -158,6 +158,7 @@ export async function startServer(
           rateLimiter: tokenBucket(),
           email,
           closeSessions,
+          publicUrl: config.publicUrl,
           syncedModels: sync.models.map((model) => model.name),
           ...(metrics ? { metrics } : {}),
         }),

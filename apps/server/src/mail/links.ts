@@ -4,9 +4,12 @@
  * (`redactUrl`), and email jobs carry it sealed.
  */
 
-/** `GET /auth/magic?token=…` logs in (SPEC-001 §3.2). */
+/**
+ * The page `/login/magic?token=…`, which logs in with `POST /auth/magic` (SPEC-001 §3.2). Not under
+ * `/auth/`: those paths are the server's API, never a page (`http/static.ts`, the dev proxy).
+ */
 export function magicLinkUrl(publicUrl: string, token: string): string {
-  const url = new URL('/auth/magic', publicUrl);
+  const url = new URL('/login/magic', publicUrl);
   url.searchParams.set('token', token);
   return url.toString();
 }

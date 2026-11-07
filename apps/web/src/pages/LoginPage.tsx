@@ -1,12 +1,13 @@
 // /login (SPEC-001 §3.2, §7). Email and password; on success the router's guards send the user
 // on to `?next=` or home (`followAuth` re-runs them when the session appears). A refusal shows the
 // server's message as it is: the generic wrong-password one (AC-5), or how long a lockout lasts
-// (E13). The "Email me a login link" button and "Forgot password?" come with their routes in
-// PLAN-001 S4; without SMTP the page offers neither (AC-3).
+// (E13). Below the form, session E's `LoginOptions` (PLAN-001 S4): "Email me a login link" when
+// the server sends email (AC-3), and "Forgot password?".
 import { Button, Input } from '@surface/ui';
 import { useState, type FormEvent } from 'react';
 import { LOGIN_FAILED, type LoginResult } from '../app/auth.js';
 import { useApp } from '../app/context.js';
+import { LoginOptions } from '../features/account/LoginOptions.js';
 import { usePageTitle } from '../shell/usePageTitle.js';
 import styles from './Pages.module.css';
 
@@ -105,6 +106,12 @@ export function LoginPage() {
             Log in
           </Button>
         </form>
+        <LoginOptions
+          email={email}
+          onError={(message) => {
+            setView({ error: message, pending: false });
+          }}
+        />
       </section>
     </main>
   );

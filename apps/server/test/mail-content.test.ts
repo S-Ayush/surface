@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { inviteUrl, magicLinkUrl, passwordResetUrl } from '../src/mail/links.js';
 import { escapeHtml, renderEmail, type EmailContent } from '../src/mail/templates.js';
 
-const LINK = 'https://surface.example.com/auth/magic?token=abc_DEF-123';
+const LINK = 'https://surface.example.com/login/magic?token=abc_DEF-123';
 
 const emails: EmailContent[] = [
   { template: 'magicLink', workspaceName: 'Acme', link: LINK },
@@ -75,13 +75,13 @@ describe('links (SPEC-001 §3.2–3.4)', () => {
   const origin = 'https://surface.example.com';
 
   it('builds the magic-link, reset and invite URLs on SURFACE_URL', () => {
-    expect(magicLinkUrl(origin, 'tok')).toBe(`${origin}/auth/magic?token=tok`);
+    expect(magicLinkUrl(origin, 'tok')).toBe(`${origin}/login/magic?token=tok`);
     expect(passwordResetUrl(origin, 'tok')).toBe(`${origin}/reset?token=tok`);
     expect(inviteUrl(origin, 'tok')).toBe(`${origin}/invite/tok`);
   });
 
   it('encodes the token', () => {
-    expect(magicLinkUrl(origin, 'a+b/c=')).toBe(`${origin}/auth/magic?token=a%2Bb%2Fc%3D`);
+    expect(magicLinkUrl(origin, 'a+b/c=')).toBe(`${origin}/login/magic?token=a%2Bb%2Fc%3D`);
     expect(inviteUrl(origin, 'a/b?c')).toBe(`${origin}/invite/a%2Fb%3Fc`);
   });
 

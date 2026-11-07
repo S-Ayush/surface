@@ -18,10 +18,12 @@ import {
   teamSuggestKey,
   teamUpdate,
 } from './team.js';
+import { userCreateResetLink } from './account.js';
 
 export * from './debug.js';
 export * from './preferences.js';
 export * from './team.js';
+export * from './account.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -45,6 +47,7 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   teamAddMember,
   teamRemoveMember,
   userUpdatePreferences,
+  userCreateResetLink,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

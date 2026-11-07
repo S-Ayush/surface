@@ -33,7 +33,7 @@ Search sources and recent items in the command menu (M2) · Peek panel (M2) · l
 
 | Route | Page |
 |---|---|
-| `/setup`, `/login`, `/forgot`, `/reset`, `/invite/:token`, `/auth/magic` | Public (SPEC-001). Rendered without the shell. |
+| `/setup`, `/login`, `/login/check-email`, `/login/magic`, `/forgot`, `/reset`, `/invite/:token` | Public (SPEC-001). Rendered without the shell. |
 | `/` | Redirects to the user's home preference (default: My issues) |
 | `/my-issues` | My issues (empty state in M0) |
 | `/team/:key` | Team home (placeholder) |

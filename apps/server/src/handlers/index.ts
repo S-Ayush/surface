@@ -13,6 +13,7 @@ import teamLeave from './teams/leave.js';
 import teamRemoveMember from './teams/remove-member.js';
 import teamSuggestKey from './teams/suggest-key.js';
 import teamUpdate from './teams/update.js';
+import userCreateResetLink from './account/create-reset-link.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -30,4 +31,5 @@ export const HANDLERS: readonly Handler[] = [
   teamAddMember,
   teamRemoveMember,
   userUpdatePreferences,
+  userCreateResetLink,
 ];
