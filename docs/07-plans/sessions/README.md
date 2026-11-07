@@ -106,7 +106,7 @@ Assigned by the user on 2026-11-07, before the phase 1 sync point, so that the s
 The session that merges an unblocking slice tells the user.
 
 **Changes to the phase 1 rules:**
-- **Migrations (replaces §2 rule 6):** one session holds the migration lock at a time. **E** holds it until PLAN-001 S1 is on `main`, then **A**. Anyone else who needs a table or column writes a handoff to the holder. A handover of the lock is logged by both sessions.
+- **Migrations (replaces §2 rule 6):** one session holds the migration lock at a time. **E** held it until PLAN-001 S1 was on `main`, then **A** until PLAN-001 S3 was on `main` (`31de37b`). Since then it is **free** (2026-11-07): the next session that needs a migration takes it, logs that in its session file and tells the coordinator. While someone holds it, anyone else who needs a table or column writes a handoff to the holder. A handover or release of the lock is logged by the sessions involved.
 - **Shared registry files**, append-only for everyone:
   - `apps/server/src/handlers/index.ts`
   - `packages/operations/src/ops/index.ts`
