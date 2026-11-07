@@ -22,6 +22,7 @@ import {
   type HubOptions,
   type HubSocket,
 } from '../src/sync/hub.js';
+import type { LogRow } from '../src/sync/delta-writer.js';
 import { syncRegistry } from '../src/sync/registry.js';
 import { deferred, FakeLog } from './sync-fake-log.js';
 
@@ -304,6 +305,204 @@ describe('group filtering (AC-11, unit; the Postgres leak test is sync-groups.in
     expect(outsider.packets.map((p) => p.id)).toEqual([2, 3, 5]);
     expect(JSON.stringify(outsider.messages)).not.toContain(team);
     expect(member.packets.map((p) => p.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+/** A `TeamMembership` log row of the private team `team` (or of a public team: `workspace`). */
+function membership(
+  action: 'I' | 'U' | 'D',
+  userId: string,
+  groups: readonly string[] = [team],
+): Partial<LogRow> {
+  const id = randomUUID();
+  const at = '2026-11-07T10:00:00.000Z';
+  return {
+    model: 'TeamMembership',
+    modelId: id,
+    action,
+    groups,
+    data:
+      action === 'D'
+        ? null
+        : {
+            id,
+            teamId: randomUUID(),
+            userId,
+            triageResponsible: false,
+            createdAt: at,
+            updatedAt: at,
+            syncGroups: groups,
+          },
+  };
+}
+
+const resyncGroups: ServerMessage = { t: 'resync', reason: 'groups' };
+
+// PLAN-001 S9, security review M1: a connection's groups are fixed when it opens, so a change of
+// membership of a private team must not leave it receiving the team's rows (permissions.md §5).
+describe('group changes (private-team leak)', () => {
+  it("resyncs a member removed from private team X, and sends none of X's later rows", async () => {
+    const source = new FakeLog();
+    const h = await startHub(source);
+    const member = new FakeSocket();
+    const outsider = new FakeSocket();
+    h.connect(member, info({ groups: ['workspace', team] }));
+    h.connect(outsider, info());
+    source.write({ groups: [team] });
+    await eventually(() => member.packets.length === 1);
+    // Removed, and X changes in the same delivery and after it.
+    source.write(membership('D', randomUUID()), { groups: [team] });
+    source.write({ groups: [team] }, { groups: ['workspace'] });
+    await eventually(() => outsider.packets.length === 1);
+    expect(member.messages.slice(1)).toEqual([resyncGroups]);
+    expect(member.packets.map((p) => p.id)).toEqual([1]);
+    // Others stay live.
+    expect(outsider.packets.map((p) => p.id)).toEqual([5]);
+    expect(outsider.messages).not.toContainEqual(resyncGroups);
+  });
+
+  it('resyncs a user added to private team X, so they bootstrap its rows', async () => {
+    const source = new FakeLog();
+    const h = await startHub(source);
+    const joiner = info();
+    const socket = new FakeSocket();
+    const member = new FakeSocket();
+    const outsider = new FakeSocket();
+    h.connect(socket, joiner);
+    h.connect(member, info({ groups: ['workspace', team] }));
+    h.connect(outsider, info());
+    source.write(membership('I', joiner.userId), {});
+    await eventually(() => socket.messages.length > 0 && outsider.packets.length === 1);
+    expect(socket.messages).toEqual([resyncGroups]);
+    // Someone else joining changes nothing for the others: a row for a member, nothing for an
+    // outsider.
+    expect(member.packets).toHaveLength(2);
+    expect(member.messages).not.toContainEqual(resyncGroups);
+    expect(outsider.messages).not.toContainEqual(resyncGroups);
+  });
+
+  it("resyncs a client that catches up across its own join: its replica lacks X's earlier rows", async () => {
+    const source = new FakeLog();
+    // Groups read after the join have X already; the rows before `since` never reached it.
+    const user = info({ groups: ['workspace', team], since: 1 });
+    source.commit({ groups: [team] }, membership('I', user.userId), { groups: [team] });
+    const h = await startHub(source);
+    const socket = new FakeSocket();
+    h.connect(socket, user);
+    await eventually(() => socket.messages.length > 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(socket.messages).toEqual([resyncGroups]);
+  });
+
+  it('ignores membership rows the client already has (at or below its since)', async () => {
+    const source = new FakeLog();
+    const h = await startHub(source);
+    const user = info({ groups: ['workspace', team] });
+    // Committed but not yet broadcast: the client bootstrapped past it, and the next delivery
+    // hands it over again with what follows.
+    source.commit(membership('I', user.userId));
+    const socket = new FakeSocket();
+    h.connect(socket, { ...user, since: source.headId });
+    source.write({ groups: [team] });
+    await eventually(() => socket.packets.length === 1);
+    expect(socket.messages).not.toContainEqual(resyncGroups);
+  });
+
+  it('does not resync for a change to the user’s own membership of a team they are in', async () => {
+    const source = new FakeLog();
+    const h = await startHub(source);
+    const user = info({ groups: ['workspace', team] });
+    const socket = new FakeSocket();
+    h.connect(socket, user);
+    source.write(membership('U', user.userId));
+    await eventually(() => socket.packets.length === 1);
+    expect(socket.messages).not.toContainEqual(resyncGroups);
+  });
+
+  it('resyncs a client removed from X while away, though it can no longer see the deletion', async () => {
+    const source = new FakeLog();
+    source.commit({ groups: [team] }, membership('D', randomUUID()), { groups: ['workspace'] });
+    const h = await startHub(source);
+    // Its groups, read now, no longer have X; its replica, up to `since`, still holds X's rows.
+    const away = new FakeSocket();
+    h.connect(away, info({ since: 1 }));
+    // Caught up past the deletion, a client has nothing of X to drop.
+    const later = new FakeSocket();
+    h.connect(later, info({ since: 2 }));
+    await eventually(() => away.messages.length > 0 && later.packets.length === 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(away.messages).toEqual([resyncGroups]);
+    expect(later.messages).not.toContainEqual(resyncGroups);
+  });
+
+  it('resyncs it too when the hub has not broadcast the deletion yet', async () => {
+    const source = new FakeLog();
+    source.commit({ groups: [team] });
+    const h = await startHub(source);
+    // Committed, and so behind the groups read at reconnect, but not yet notified: the hub's
+    // catch-up range stops before it, and it would arrive live to a connection without X.
+    source.commit(membership('D', randomUUID()));
+    const away = new FakeSocket();
+    h.connect(away, info({ since: 1 }));
+    await eventually(() => away.messages.length > 0);
+    expect(away.messages).toEqual([resyncGroups]);
+  });
+
+  it('does not resync a client away while a public team lost a member', async () => {
+    const source = new FakeLog();
+    source.commit(membership('D', randomUUID(), ['workspace']), { groups: ['workspace'] });
+    const h = await startHub(source);
+    const socket = new FakeSocket();
+    h.connect(socket, info());
+    await eventually(() => socket.packets.length === 2);
+    expect(socket.messages).not.toContainEqual(resyncGroups);
+  });
+
+  it('resyncs nobody for a public team’s memberships', async () => {
+    const source = new FakeLog();
+    const h = await startHub(source);
+    const user = info();
+    const socket = new FakeSocket();
+    h.connect(socket, user);
+    source.write(membership('I', user.userId, ['workspace']));
+    source.write(membership('D', user.userId, ['workspace']));
+    await eventually(() => socket.packets.length === 2);
+    expect(socket.messages).not.toContainEqual(resyncGroups);
+  });
+
+  it('resyncs in catch-up when the groups read before the upgrade include a team since left', async () => {
+    const source = new FakeLog();
+    source.commit({ groups: [team] }, membership('D', randomUUID()), { groups: [team] });
+    const h = await startHub(source);
+    const socket = new FakeSocket();
+    h.connect(socket, info({ groups: ['workspace', team] }));
+    await eventually(() => socket.messages.length > 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(socket.messages).toEqual([resyncGroups]);
+  });
+
+  it('stops a catch-up in progress once a live change resyncs it', async () => {
+    const source = new FakeLog();
+    source.commit(...Array.from({ length: 3 }, () => ({ groups: [team] })));
+    const gate = deferred<void>();
+    source.catchUpGate = gate.promise;
+    const h = await startHub(source, { catchUpPageSize: 1 });
+    const socket = new FakeSocket();
+    h.connect(socket, info({ groups: ['workspace', team] }));
+    // Paused after its first page.
+    await source.catchUpStarted.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    source.write(membership('D', randomUUID()), { groups: [team] });
+    await eventually(() => socket.messages.some((m) => m.t === 'resync'));
+    gate.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+    source.write({ groups: [team] });
+    await new Promise((resolve) => setImmediate(resolve));
+    const after = socket.messages.slice(socket.messages.indexOf(resyncGroups) + 1);
+    expect(socket.messages).toContainEqual(resyncGroups);
+    expect(after.filter((m) => m.t === 'deltas')).toEqual([]);
+    // At most the page read before the change: never pages 2 and 3, nor the live rows.
+    expect(socket.packets.every((p) => p.id === 1)).toBe(true);
   });
 });
 

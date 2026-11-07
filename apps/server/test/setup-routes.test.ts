@@ -20,6 +20,7 @@ import { captureLogs, fakeWebDir, testConfig } from './helpers.js';
 
 const TOKEN = 'ABCD-EFGH-JKMN-PQRS-TVWX-YZ01-2345-6789';
 const PASSWORD = 'correct horse battery';
+const ADMIN_ID = 'ada-0000-0000-0000-000000000001';
 
 class FakeStore implements SetupStore {
   completed = false;
@@ -41,7 +42,7 @@ class FakeStore implements SetupStore {
       token: 'session-token-value',
       expiresAt: new Date(0),
     };
-    return Promise.resolve({ ok: true, session, teamKey: input.team.key });
+    return Promise.resolve({ ok: true, session, userId: ADMIN_ID, teamKey: input.team.key });
   };
 }
 
@@ -258,6 +259,33 @@ describe('POST /setup', () => {
     // Neither the password nor the token reaches the logs.
     expect(logs.text()).not.toContain(PASSWORD);
     expect(logs.text()).not.toContain(TOKEN);
+  });
+
+  it('logs the first Admin joining by id, never the email or tokens (SPEC-001 §10 user.joined)', async () => {
+    const { app, logs } = await setupApp();
+    const admin = { name: 'Ada Lovelace', email: 'ada@example.com', password: PASSWORD };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/setup',
+      payload: form({ admin }),
+      remoteAddress: '10.1.2.3',
+    });
+    expect(res.statusCode).toBe(201);
+    const joined = logs.lines.filter((l) => l['event'] === 'user.joined');
+    expect(joined).toEqual([
+      expect.objectContaining({
+        level: 'info',
+        audit: true,
+        userId: ADMIN_ID,
+        sessionId: 'session-1',
+        ip: '10.1.2.3',
+        reason: 'setup',
+      }),
+    ]);
+    const text = logs.text();
+    for (const secret of ['ada@example.com', PASSWORD, TOKEN, 'session-token-value']) {
+      expect(text).not.toContain(secret);
+    }
   });
 
   it('answers a second setup with 409 "Setup is already complete" (E1)', async () => {

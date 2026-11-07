@@ -10,6 +10,7 @@
  * SPA-excluded `SERVER_PREFIXES`: that would also exclude the page.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { audit } from '../auth/audit.js';
 import { csrfCookie, csrfToken } from '../auth/csrf.js';
 import { sessionCookie } from '../auth/session.js';
 import { errorBody, ROUTE_ERROR_STATUS } from '../http/errors.js';
@@ -103,7 +104,18 @@ export function registerSetupRoutes(app: FastifyInstance, deps: SetupRouteDeps):
       return wrongLink(request, reply);
     }
     deps.gate.markComplete();
-    request.log.info({ teamKey: outcome.teamKey }, 'setup complete');
+    // SPEC-001 §10: the first Admin joins through setup, and is signed in by it.
+    audit(
+      request.log,
+      'user.joined',
+      {
+        userId: outcome.userId,
+        sessionId: outcome.session.id,
+        ip: request.ip,
+        reason: 'setup',
+      },
+      'setup complete',
+    );
     return reply
       .code(201)
       .header('set-cookie', [

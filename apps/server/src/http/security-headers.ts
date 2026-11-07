@@ -3,6 +3,11 @@
  * itself; the single inline script, the theme bootstrap in `index.html`, is allowed by its
  * sha256 hash, never with 'unsafe-inline'. The hash is read from the served file at startup, so
  * the policy always matches the build the server ships.
+ *
+ * HSTS (architecture.md, security row) when `SURFACE_URL` is https: browsers then refuse plain
+ * http to this host for a year, so a network attacker can't strip TLS from a later visit. Not
+ * `includeSubDomains` or `preload`: the install owns its host only. Browsers ignore the header
+ * over http, so sending it behind a TLS-terminating proxy is right (PLAN-001 S9, review L1).
  */
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -41,12 +46,23 @@ export function contentSecurityPolicy(scriptHashes: readonly string[]): string {
   ].join('; ');
 }
 
-/** Sends the policy on every response, the JSON API included (an error page is a page too). */
-export function registerSecurityHeaders(app: FastifyInstance, indexHtml: string | undefined): void {
+/** One year, in seconds. */
+export const HSTS = 'max-age=31536000';
+
+/**
+ * Sends the policy on every response, the JSON API included (an error page is a page too), and
+ * HSTS when `https` (the public URL is https).
+ */
+export function registerSecurityHeaders(
+  app: FastifyInstance,
+  indexHtml: string | undefined,
+  { https }: { readonly https: boolean },
+): void {
   const policy = contentSecurityPolicy(
     indexHtml === undefined ? [] : inlineScriptHashes(indexHtml),
   );
   app.addHook('onSend', async (_request, reply) => {
     reply.header('content-security-policy', policy);
+    if (https) reply.header('strict-transport-security', HSTS);
   });
 }

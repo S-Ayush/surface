@@ -318,6 +318,37 @@ describe('POST /auth/login', () => {
     expect(logs.text()).not.toContain('nobody@example.com');
   });
 
+  it('logs each sign-in as an audit line: who, from where, and which session (SPEC-001 §10)', async () => {
+    const { login, signIn, store, logs } = await authApp();
+    await login({ email: 'ada@example.com', password: 'a wrong guess' }, {}, '10.0.0.7');
+    await login({ email: 'nobody@example.com', password: 'a wrong guess' }, {}, '10.0.0.8');
+    await signIn();
+    const sessionId = [...store.sessions.values()][0]?.id;
+    expect(sessionId).toBeDefined();
+    const audits = logs.lines.filter((l) => l['audit'] === true);
+    // Failures at warn, the sign-in at info. An unknown email has no user to name.
+    expect(audits).toEqual([
+      expect.objectContaining({
+        level: 'warn',
+        event: 'auth.login_failed',
+        method: 'password',
+        reason: 'incorrect',
+        userId: ADA,
+        ip: '10.0.0.7',
+      }),
+      expect.objectContaining({ level: 'warn', event: 'auth.login_failed', ip: '10.0.0.8' }),
+      expect.objectContaining({
+        level: 'info',
+        event: 'auth.login',
+        method: 'password',
+        userId: ADA,
+        sessionId,
+        ip: '127.0.0.1',
+      }),
+    ]);
+    expect(audits[1]).not.toHaveProperty('userId');
+  });
+
   it('never logs the password or the session token', async () => {
     const { login, signIn, logs } = await authApp();
     await login({ email: 'ada@example.com', password: 'a wrong password' });

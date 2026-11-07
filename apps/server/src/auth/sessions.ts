@@ -59,6 +59,19 @@ export class SessionAuth {
     this.#resolved.get(request)?.id;
 
   /**
+   * Whether the session `resolveActor` found for this request is still live, read again now and
+   * not from the request's cache: for a socket, once the hub has registered it (PLAN-001 S9,
+   * security review L2). False when the request had none.
+   */
+  readonly sessionLive = async (request: FastifyRequest): Promise<boolean> => {
+    const id = this.#resolved.get(request)?.id;
+    const token = readCookie(request.headers.cookie, SESSION_COOKIE);
+    if (id === undefined || token === undefined) return false;
+    const record = await this.#store.session(hashSessionToken(token), this.#now());
+    return record?.id === id;
+  };
+
+  /**
    * The session this request extended, if it did, with the token it came with: the response sets
    * the cookies again so the browser keeps them as long as the database does (sliding expiry).
    */

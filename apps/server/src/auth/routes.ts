@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { errorBody, ROUTE_ERROR_STATUS } from '../http/errors.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { accountKey, ipKey, type AttemptStore } from './attempts.js';
+import { audit } from './audit.js';
 import type { WithTransaction } from '../executor/transaction.js';
 import type { EmailOutbox } from '../jobs/email.js';
 import { csrfCookie, csrfToken, csrfTokenMatches } from './csrf.js';
@@ -160,8 +161,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       const locked = reservation.lockedForSeconds;
       const minutes = Math.ceil(locked / 60);
       // SPEC-001 §10. Never the email: it may be a password typed into the wrong field.
-      request.log.warn(
-        { event: 'auth.login_failed', reason: 'locked', retryAfter: locked },
+      audit(
+        request.log,
+        'auth.login_failed',
+        { method: 'password', reason: 'locked', retryAfter: locked, ip: request.ip },
         'sign-in refused: too many attempts',
       );
       return reply
@@ -183,11 +186,14 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     );
     if (credentials === undefined || !matches) {
       // The reserved attempt stays, as the failure.
-      request.log.warn(
+      audit(
+        request.log,
+        'auth.login_failed',
         {
-          event: 'auth.login_failed',
+          method: 'password',
           reason: 'incorrect',
           ...(credentials ? { userId: credentials.userId } : {}),
+          ip: request.ip,
         },
         'sign-in failed',
       );
@@ -224,7 +230,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       ip: request.ip,
       now: at,
     });
-    request.log.info({ event: 'auth.login', userId: credentials.userId }, 'signed in');
+    audit(
+      request.log,
+      'auth.login',
+      { method: 'password', userId: credentials.userId, sessionId: session.id, ip: request.ip },
+      'signed in',
+    );
     return reply
       .header('set-cookie', cookies(session.id, session.token))
       .header('cache-control', 'no-store')

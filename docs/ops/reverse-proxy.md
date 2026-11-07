@@ -17,10 +17,15 @@ Caddy is the simplest choice: it gets certificates on its own and needs one line
 Then make the proxy the only way in. With `TRUST_PROXY=true` (the default), Surface treats a
 peer that connects from a loopback, private or link-local address (`127.0.0.0/8`, `10/8`,
 `172.16/12`, `192.168/16`, `169.254/16`, `100.64/10`, `::1`, `fc00::/7`, `fe80::/10`) as the
-proxy and believes the last entry of its `X-Forwarded-*` headers. A client that reaches port 3000
-from a public address is not believed, but one on your LAN or VPN would be. The proxy must reach
-Surface over one of those addresses: a proxy that connects from a public address is not trusted,
-and every user then shows up with the proxy's address.
+proxy and believes the last entry of its `X-Forwarded-*` headers. A client on your LAN or VPN
+that reaches port 3000 directly would be believed too. So would **anyone** whose connection Docker
+forwards from its own gateway address, which is private. That happens with rootless Docker, with
+Docker Desktop and Colima, and for clients connecting over IPv6. Such a client could then pick the
+address that sign-in limits count. The proxy must reach Surface over one of those addresses: a
+proxy that connects from a public address is not trusted, and every user then shows up with the
+proxy's address.
+
+Never publish port 3000 on a public address while `TRUST_PROXY=true`:
 
 - If the proxy runs on the same host, set `SURFACE_BIND=127.0.0.1` in `.env`.
 - If it runs on another machine, set `SURFACE_BIND` to this host's private address that the proxy

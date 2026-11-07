@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { contentSecurityPolicy, inlineScriptHashes } from '../src/http/security-headers.js';
+import { contentSecurityPolicy, HSTS, inlineScriptHashes } from '../src/http/security-headers.js';
 import { fakeWebDir, testApp, type TestApp } from './helpers.js';
 
 // Computed with `printf '…' | openssl dgst -sha256 -binary | base64`, independently of the code.
@@ -122,6 +122,33 @@ describe('content security policy on responses', () => {
       ].map(async (request) => (await t.app.inject(request)).headers['content-security-policy']),
     );
     expect(new Set(policies)).toEqual(new Set([contentSecurityPolicy([ALERT.hash])]));
+  });
+
+  it('sends HSTS for a year on every response when SURFACE_URL is https (PLAN-001 S9)', async () => {
+    t = await testApp({
+      webDir: fakeWebDir(page()),
+      publicUrl: 'https://surface.example.com',
+      secureCookies: true,
+    });
+    const values = await Promise.all(
+      [
+        { url: '/team/ENG', headers: { accept: 'text/html' } },
+        { url: '/api/nope' },
+        { url: '/healthz' },
+      ].map(async (request) => (await t.app.inject(request)).headers['strict-transport-security']),
+    );
+    expect(values).toEqual([HSTS, HSTS, HSTS]);
+    expect(HSTS).toBe('max-age=31536000');
+  });
+
+  it('sends no HSTS when SURFACE_URL is plain http', async () => {
+    t = await testApp({
+      webDir: fakeWebDir(page()),
+      publicUrl: 'http://10.0.0.5:3000',
+      secureCookies: false,
+    });
+    const res = await t.app.inject({ url: '/healthz' });
+    expect(res.headers['strict-transport-security']).toBeUndefined();
   });
 
   it('allows no inline script when the web app is not built', async () => {

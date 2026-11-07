@@ -26,6 +26,7 @@ export interface SyncRoutesDeps {
   readonly hub?: SyncHub;
   readonly sessionIdOf?: SocketRouteDeps['sessionIdOf'];
   readonly clientOwner?: SocketRouteDeps['clientOwner'];
+  readonly sessionLive?: SocketRouteDeps['sessionLive'];
   /** Runs `POST /sync/mutate`; without it there is no such route (tests without operations). */
   readonly executor?: Executor;
 }

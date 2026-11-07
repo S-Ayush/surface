@@ -8,12 +8,15 @@
  * S3 review M2).
  */
 import type pg from 'pg';
+import { teamGroup } from '@surface/domain';
 import { syncGroupSchema } from '@surface/sync-protocol';
 import type { LogRow } from './delta-writer.js';
 import { SYNC_CHANNEL, type SyncAction } from './repo.js';
 
 export type CatchUpEvent =
-  { readonly t: 'rows'; readonly rows: readonly LogRow[] } | { readonly t: 'too_old' };
+  | { readonly t: 'rows'; readonly rows: readonly LogRow[] }
+  | { readonly t: 'too_old' }
+  | { readonly t: 'groups' };
 
 export interface CatchUpRequest {
   /** The client has everything up to here. */
@@ -40,7 +43,10 @@ export interface SyncLogSource {
    * Rows in `(since, upTo]` the connection may see or that its own client wrote (for acks), in
    * pages. `too_old` (and nothing after it) when the log no longer holds every row after the last
    * page (pruned meanwhile), or `since` is ahead of the head (a database restored from a backup).
-   * Holds no database connection while the caller waits between pages.
+   * `groups` (and nothing else) first when a private team's membership was deleted in the range
+   * from a team the connection is not in: maybe the user's own, while they were away, and their
+   * replica still holds that team's rows (SPEC-002 Q13). Holds no database connection while the
+   * caller waits between pages.
    */
   catchUp(request: CatchUpRequest): AsyncGenerator<CatchUpEvent>;
   /** `onNotify` on `NOTIFY sync`; `onSessionsRevoked` on `NOTIFY session_revoked`. */
@@ -125,6 +131,32 @@ const SELECT_CATCH_UP_ROWS = `SELECT sync_id::text AS id_text, model, model_id, 
   CASE WHEN groups && $3::text[] THEN groups ELSE '{}'::text[] END AS groups,
   client_id, client_seq::text AS client_seq FROM sync_log`;
 
+/**
+ * Whether a private team's membership was deleted after `since` from a team outside `groups`.
+ * A deleted row has no data (Q4), so whose it was is unknown: it may be this user's, removed while
+ * their socket was closed, and catch-up (filtered by their new groups) would never show them the
+ * deletion. Others' removals from teams they aren't in cost them one bootstrap.
+ *
+ * Up to the head, not `upTo`: the groups were read before the upgrade, so a removal they reflect
+ * is committed by now, but the hub may not have broadcast it yet. It would then arrive live, to a
+ * connection without the team's group, which the hub's own check can't tell from anyone else's.
+ */
+async function leftWhileAway(
+  pool: QueryClient,
+  since: number,
+  groups: readonly string[],
+): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM sync_log
+      WHERE sync_id > $1 AND model = $2 AND action = 'D'
+        AND NOT (groups && $3::text[])
+        AND EXISTS (SELECT 1 FROM unnest(groups) AS g WHERE starts_with(g, $4))
+      LIMIT 1`,
+    [since, 'TeamMembership', groups, teamGroup('')],
+  );
+  return rows.length > 0;
+}
+
 export function pgSyncLogSource({ pool, listenClient }: PgSourceOptions): SyncLogSource {
   return {
     head: () => head(pool),
@@ -139,6 +171,10 @@ export function pgSyncLogSource({ pool, listenClient }: PgSourceOptions): SyncLo
 
     async *catchUp({ since, upTo, groups, clientId, pageSize }) {
       const visible = syncGroupSchema.array().parse(groups);
+      if (await leftWhileAway(pool, since, visible)) {
+        yield { t: 'groups' };
+        return;
+      }
       for (let after = since; ;) {
         // Every row up to `upTo` is committed (it is at most the head when the hub took it), so
         // each page can be its own short statement; no snapshot needs to span the pages.

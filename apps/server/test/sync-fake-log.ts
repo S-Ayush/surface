@@ -112,6 +112,20 @@ export class FakeLog implements SyncLogSource {
         return;
       }
       const visible = (r: LogRow) => r.groups.some((g) => groups.includes(g));
+      // As the Postgres source: a private team's membership deleted out of sight (Q13), up to
+      // the head rather than `upTo`.
+      const left = this.rows.some(
+        (r) =>
+          r.syncId > since &&
+          r.model === 'TeamMembership' &&
+          r.action === 'D' &&
+          !visible(r) &&
+          r.groups.some((g) => g.startsWith('team:')),
+      );
+      if (left) {
+        yield { t: 'groups' };
+        return;
+      }
       // As the Postgres source: the client's own rows it can't see come without data or groups.
       const rows = this.rows
         .filter(

@@ -74,6 +74,23 @@ describe('loadConfig', () => {
     expect(problem).toMatch(message);
   });
 
+  // PLAN-001 S9, security review L4: a URL with credentials is refused, and never echoed.
+  it.each([
+    ['https://admin:hunter2-secret@surface.example.com', 'hunter2-secret'],
+    ['https://:hunter2-secret@surface.example.com', 'hunter2-secret'],
+    ['ftp://admin:hunter2-secret@surface.example.com', 'hunter2-secret'],
+    ['admin:hunter2-secret@surface.example.com', 'hunter2-secret'],
+    // A `/` or `\\` in the password: `new URL` throws, or reads the user name as the scheme.
+    ['https://admin:hunter2/secret@surface.example.com', 'hunter2/secret'],
+    ['admin:hunter2/secret@surface.example.com', 'hunter2/secret'],
+    ['https://admin:hunter2\\secret@surface.example.com', 'hunter2\\secret'],
+  ])('rejects SURFACE_URL=%s without echoing the password', (value, secret) => {
+    const [problem] = problemsFor({ ...VALID_ENV, SURFACE_URL: value });
+    expect(problem).toMatch(/^SURFACE_URL must/);
+    expect(problem).not.toContain(secret);
+    expect(problem).not.toContain('admin:');
+  });
+
   it('rejects a short SESSION_SECRET without echoing it', () => {
     const [problem] = problemsFor({ ...VALID_ENV, SESSION_SECRET: 'not-a-real-secret-value' });
     expect(problem).toMatch(/at least 32 bytes .*openssl rand -hex 32/);

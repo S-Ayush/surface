@@ -22,7 +22,13 @@ export interface SetupRequestInfo {
 }
 
 export type SetupOutcome =
-  | { readonly ok: true; readonly session: CreatedSession; readonly teamKey: string }
+  | {
+      readonly ok: true;
+      readonly session: CreatedSession;
+      /** The first Admin. */
+      readonly userId: string;
+      readonly teamKey: string;
+    }
   | { readonly ok: false; readonly reason: 'complete' | 'token' };
 
 export interface SetupStore {
@@ -155,7 +161,7 @@ export function pgSetupStore(pool: pg.Pool, options: PgSetupStoreOptions = {}): 
         const session = await createSession(client, { userId, ...request, now: at });
         await options.beforeCommit?.();
         await client.query('COMMIT');
-        return { ok: true, session, teamKey: input.team.key };
+        return { ok: true, session, userId, teamKey: input.team.key };
       } catch (error) {
         healthy = await client.query('ROLLBACK').then(
           () => true,

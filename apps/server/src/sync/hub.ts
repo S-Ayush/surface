@@ -8,7 +8,9 @@
  *   tick, so it is a live recipient of everything after `upTo` (buffered meanwhile) and catches
  *   up on `(since, upTo]` a page at a time. Nothing is missed, and the writer drops overlaps.
  * - **Resync:** `schema` when the client's hash differs, `too_old` when its `since` is outside
- *   retention. The client then re-bootstraps and closes the socket itself.
+ *   retention, `groups` when a private team's membership changes and the connection's user may
+ *   be the one who joined or left (a connection's groups are fixed when it opens). The client
+ *   then re-bootstraps and closes the socket itself.
  * - **Liveness:** a `ping` every 25 s; no `pong` within 10 s ends the connection. Each ping round
  *   also reads the log, so a listen connection that silently stopped delivering costs at most one
  *   interval of lag, and a failed read is retried.
@@ -25,6 +27,7 @@ import {
   PING_TIMEOUT_MS,
   type ServerMessage,
 } from '@surface/sync-protocol';
+import { teamGroup } from '@surface/domain';
 import type { Logger } from 'pino';
 import { Gauge, Histogram, type Registry } from 'prom-client';
 import { loggableError } from '../executor/log-error.js';
@@ -89,9 +92,39 @@ const INTERNAL_ERROR = 1011;
 const TRY_AGAIN_LATER = 1013;
 const POLICY_VIOLATION = 1008;
 const MAX_RETRY_DELAY_MS = 30_000;
+const TEAM_GROUP_PREFIX = teamGroup('');
+
+/**
+ * Whether `rows` may change the sync groups of `info`'s user (permissions.md §2, sync-protocol
+ * §6, SPEC-002 Q13): a membership of a private team (a row in a `team:` group) inserted for the
+ * user, or deleted from a group they are in. A deleted row carries no data (Q4), so every
+ * connection in that team's group is resynced, not only the leaver's: rare, and safe. Public
+ * teams' memberships change no groups. A deletion the connection can't see (the user was
+ * removed while away) is the source's `groups` event instead. Until `G` packets (M7), the client
+ * learns its new groups by bootstrapping again, which also purges the team's rows from its
+ * replica (PLAN-001 S9, security review M1).
+ */
+function changesGroups(
+  rows: readonly LogRow[],
+  info: ConnectionInfo,
+  groups: ReadonlySet<string>,
+): boolean {
+  return rows.some((row) => {
+    // The client has it already: a delivery can repeat rows up to its `since` (the writer drops
+    // them), and a change it has applied asks for no resync.
+    if (row.syncId <= info.since || row.model !== 'TeamMembership') return false;
+    const teams = row.groups.filter((group) => group.startsWith(TEAM_GROUP_PREFIX));
+    if (row.action === 'D') return teams.some((group) => groups.has(group));
+    // Whatever the connection's groups: read after the join, they have the team already, but a
+    // replica that catches up across its own join lacks the team's earlier rows.
+    return row.action === 'I' && teams.length > 0 && row.data?.['userId'] === info.userId;
+  });
+}
 
 interface Connection {
   readonly info: ConnectionInfo;
+  /** `info.groups`, as a set. Fixed for the connection's life: a change resyncs it instead. */
+  readonly groups: ReadonlySet<string>;
   readonly socket: HubSocket;
   readonly writer: DeltaWriter;
   /** `catching-up` buffers live rows; `idle` (after a resync) gets nothing more. */
@@ -204,8 +237,10 @@ export class SyncHub {
   }
 
   connect(socket: HubSocket, info: ConnectionInfo): HubConnection {
+    const groups = new Set(info.groups);
     const connection: Connection = {
       info,
+      groups,
       socket,
       state: 'catching-up',
       buffer: [],
@@ -214,7 +249,7 @@ export class SyncHub {
       open: true,
       writer: new DeltaWriter({
         models: this.#models,
-        groups: new Set(info.groups),
+        groups,
         clientId: info.clientId,
         since: info.since,
         send: (message) => this.#send(connection, message),
@@ -250,23 +285,29 @@ export class SyncHub {
         pageSize: this.#options.catchUpPageSize,
       });
       for await (const event of events) {
-        // Leaving the loop stops the reads (the generator returns).
-        if (!connection.open) return;
-        if (event.t === 'too_old') {
-          this.#resync(connection, 'too_old');
+        // Leaving the loop stops the reads (the generator returns). A live delivery may have
+        // resynced the connection meanwhile.
+        if (!this.#catchingUp(connection)) return;
+        if (event.t === 'too_old' || event.t === 'groups') {
+          this.#resync(connection, event.t);
+          return;
+        }
+        // The groups were read before the upgrade: a membership may have ended since.
+        if (changesGroups(event.rows, connection.info, connection.groups)) {
+          this.#resync(connection, 'groups');
           return;
         }
         writer.add(event.rows);
         writer.flush(false);
         if (!(await this.#writable(connection))) return;
       }
-      if (!connection.open) return;
+      if (!this.#catchingUp(connection)) return;
       writer.flush(true);
       // Live rows that arrived meanwhile, one delivery at a time with the same backpressure.
       // Deliveries go on buffering until the loop finds the buffer empty; from that check to going
       // live is synchronous, so no delivery can slip in between.
       for (;;) {
-        if (!(await this.#writable(connection))) return;
+        if (!(await this.#writable(connection)) || !this.#catchingUp(connection)) return;
         const rows = connection.buffer.shift();
         if (rows === undefined) break;
         connection.bufferedRows -= rows.length;
@@ -295,7 +336,11 @@ export class SyncHub {
     return connection.open;
   }
 
-  #resync(connection: Connection, reason: 'schema' | 'too_old'): void {
+  #catchingUp(connection: Connection): boolean {
+    return connection.open && connection.state === 'catching-up';
+  }
+
+  #resync(connection: Connection, reason: 'schema' | 'too_old' | 'groups'): void {
     connection.state = 'idle';
     connection.buffer = [];
     connection.bufferedRows = 0;
@@ -345,6 +390,11 @@ export class SyncHub {
   /** Synchronous, so a connection registers either before or after a whole delivery. */
   #deliver(rows: readonly LogRow[], target: number): void {
     for (const connection of this.#connections) {
+      if (connection.state !== 'idle' && changesGroups(rows, connection.info, connection.groups)) {
+        // Nothing of this delivery: rows after the change may be in a team the user left.
+        this.#resync(connection, 'groups');
+        continue;
+      }
       if (connection.state === 'live') {
         connection.writer.add(rows);
         connection.writer.flush(true);

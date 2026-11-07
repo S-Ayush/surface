@@ -1,6 +1,6 @@
 // PLAN-002 S4 review: catch-up reads the log a page at a time, each page its own statement on the
 // pool, so a slow client holds no connection (SPEC-002 §4.3). The SQL itself runs against Postgres
-// in `sync-groups.int.test.ts` (AC-11); here a fake answers the two statements catch-up sends.
+// in `sync-groups.int.test.ts` (AC-11); here a fake answers the statements catch-up sends.
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type pg from 'pg';
@@ -12,6 +12,8 @@ import { notifySessionsRevoked, pgSyncLogSource, sessionCloser } from '../src/sy
 class FakePool implements QueryClient {
   ids: number[] = [];
   last = 0;
+  /** Whether a private team lost a member out of the connection's sight (SPEC-002 Q13). */
+  leftWhileAway = false;
 
   constructor(count: number) {
     for (let id = 1; id <= count; id += 1) this.ids.push(id);
@@ -25,6 +27,7 @@ class FakePool implements QueryClient {
 
   query<R extends Record<string, unknown>>(text: string, values: unknown[] = []) {
     const answer = (rows: Record<string, unknown>[]) => Promise.resolve({ rows: rows as R[] });
+    if (text.includes("action = 'D'")) return answer(this.leftWhileAway ? [{ '?column?': 1 }] : []);
     if (text.includes('min(sync_id)')) {
       return answer([
         { last: String(this.last), oldest: this.ids.length ? String(this.ids[0]) : null },
@@ -66,17 +69,17 @@ async function drain(
   since: number,
   upTo: number,
   between: (page: number) => void = () => undefined,
-): Promise<(number[] | 'too_old')[]> {
+): Promise<(number[] | 'too_old' | 'groups')[]> {
   const source = pgSyncLogSource({
     pool,
     listenClient: () => {
       throw new Error('not used');
     },
   });
-  const seen: (number[] | 'too_old')[] = [];
+  const seen: (number[] | 'too_old' | 'groups')[] = [];
   let page = 0;
   for await (const event of source.catchUp(request(since, upTo))) {
-    seen.push(event.t === 'too_old' ? 'too_old' : event.rows.map((r) => r.syncId));
+    seen.push(event.t === 'rows' ? event.rows.map((r) => r.syncId) : event.t);
     page += 1;
     between(page);
   }
@@ -103,6 +106,12 @@ describe('catch-up from Postgres, page by page', () => {
       if (page === 1) pool.pruneBelow(4);
     });
     expect(seen).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
+  });
+
+  it('asks for a groups resync, and reads no rows, when a private team lost a member out of sight', async () => {
+    const pool = new FakePool(10);
+    pool.leftWhileAway = true;
+    expect(await drain(pool, 2, 9)).toEqual(['groups']);
   });
 
   it('asks for a resync when since is outside retention or ahead of the head', async () => {

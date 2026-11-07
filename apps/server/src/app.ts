@@ -109,7 +109,7 @@ export async function buildApp({
 
   const webDir = config.webDir ?? defaultWebDir();
   const indexHtml = readIndexHtml(webDir);
-  registerSecurityHeaders(app, indexHtml);
+  registerSecurityHeaders(app, indexHtml, { https: config.secureCookies });
   registerErrorHandler(app);
   const metrics = config.metricsEnabled ? registerMetrics(app) : undefined;
   registerHealthRoutes(app, lifecycle, info);

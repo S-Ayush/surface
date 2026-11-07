@@ -39,11 +39,18 @@ export interface SocketRouteDeps {
    * user's client is refused: it would see that client's acks.
    */
   readonly clientOwner?: (clientId: string) => Promise<string | undefined>;
+  /**
+   * Whether the request's session is still live, read again (`SessionAuth.sessionLive`). Asked
+   * once the hub has registered the socket: a session revoked while the upgrade was admitted
+   * was closed (`hub.closeSessions`) before there was a connection to close.
+   */
+  readonly sessionLive?: (request: FastifyRequest) => Promise<boolean>;
 }
 
 /** A client sends only `pong` (and small `presence` messages from M4). */
 const MAX_CLIENT_MESSAGE_BYTES = 4096;
 const UNSUPPORTED_DATA = 1003;
+const INTERNAL_ERROR = 1011;
 
 interface Admitted {
   readonly actor: Actor & { readonly userId: string };
@@ -144,6 +151,20 @@ export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps)
         });
         socket.on('close', () => connection.closed());
         socket.on('error', (error) => request.log.warn({ err: error }, 'sync socket error'));
+        // PLAN-001 S9, security review L2. Every revocation commits, then calls `closeSessions`:
+        // either this read sees it, or `closeSessions` runs after `connect` and finds the socket.
+        const sessionLive = deps.sessionLive;
+        if (sessionId !== undefined && sessionLive) {
+          sessionLive(request).then(
+            (live) => {
+              if (!live) socket.close(CloseCode.SessionRevoked, 'Session revoked');
+            },
+            (error: unknown) => {
+              request.log.error({ err: error }, 'could not check the sync socket’s session');
+              socket.close(INTERNAL_ERROR, 'Try again');
+            },
+          );
+        }
       },
     );
     done();

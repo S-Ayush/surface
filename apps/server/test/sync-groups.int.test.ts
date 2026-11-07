@@ -219,10 +219,10 @@ describe('a bootstrap stream', () => {
 });
 
 /** A live WebSocket for `actor`, recording the raw text and the decoded `deltas`. */
-function connect(actor: string, clientId: string = randomUUID()) {
+function connect(actor: string, clientId: string = randomUUID(), since = 0) {
   const raw: string[] = [];
   const deltas: DeltasMessage[] = [];
-  const query = encodeSocketConnectParams({ since: 0, clientId, schemaHash: registry.schemaHash });
+  const query = encodeSocketConnectParams({ since, clientId, schemaHash: registry.schemaHash });
   const socket = new WebSocket(`${socketUrl}${SOCKET_PATH}?${query}`, {
     headers: { 'x-test-actor': actor },
   });
@@ -325,6 +325,185 @@ describe('live deltas', () => {
     } finally {
       outsider.close();
       member.close();
+    }
+  });
+});
+
+// PLAN-001 S9, security review M1 (permissions.md §5 item 6): the hub reads a connection's groups
+// once, when it opens. A member removed from X while connected must get `resync(groups)` and none
+// of X's later rows, through the real path (repo `NOTIFY`, hub `LISTEN`, WebSocket).
+describe('a member removed from private team X while connected', () => {
+  it("is told to resync, and receives none of X's later rows", async () => {
+    const team = `team:${h.teams.sec}`;
+    const membershipId = randomUUID();
+    await ensureUser(sec.id, 'sec');
+    await transaction(async (repo) => {
+      await repo.insert('TeamMembership', {
+        id: membershipId,
+        teamId: h.teams.sec,
+        userId: sec.id,
+        syncGroups: [],
+      });
+    });
+    // Connected after joining, as their client is once it has bootstrapped: catching up across
+    // the join would resync (the next describe).
+    const joinedAt = await head();
+    const outsider = connect('engMember');
+    const member = connect('secMember', randomUUID(), joinedAt);
+    try {
+      // Both live: a row everyone sees has reached them.
+      const readyId = randomUUID();
+      await transaction((repo) =>
+        repo.insert('DebugItem', { id: readyId, title: 'Ready', syncGroups: ['workspace'] }),
+      );
+      await eventually(
+        () => member.raw.join('\n').includes(readyId) && outsider.raw.join('\n').includes(readyId),
+      );
+      expect(member.raw.join('\n')).not.toContain('"resync"');
+
+      const secretId = randomUUID();
+      const markerId = randomUUID();
+      // As `team.removeMember` does it, then X changes, then a row everyone sees.
+      await transaction((repo) => repo.purge('TeamMembership', membershipId));
+      await transaction((repo) =>
+        repo.insert('DebugItem', { id: secretId, title: 'After removal', syncGroups: [team] }),
+      );
+      await transaction((repo) =>
+        repo.insert('DebugItem', { id: markerId, title: 'Marker', syncGroups: ['workspace'] }),
+      );
+      await eventually(() =>
+        outsider.packets().some((p) => (p.a === 'I' || p.a === 'U') && p.d.id === markerId),
+      );
+
+      const after = member.raw.slice(member.raw.findIndex((text) => text.includes('"resync"')));
+      expect(after.map((text) => decodeServerMessage(text))).toEqual([
+        { t: 'resync', reason: 'groups' },
+      ]);
+      expect(member.raw.join('\n')).not.toContain(secretId);
+      expect(member.raw.join('\n')).not.toContain(markerId);
+    } finally {
+      outsider.close();
+      member.close();
+    }
+  });
+});
+
+/** The log's head now. */
+async function head(): Promise<number> {
+  const { rows } = await h.pool.query<{ id: string }>(
+    'SELECT COALESCE(max(sync_id), 0)::text AS id FROM sync_log',
+  );
+  return Number(rows[0]?.id ?? 0);
+}
+
+/** A `User` row for `id`, once: several tests here need one for their memberships. */
+async function ensureUser(id: string, name: string): Promise<void> {
+  const { rows } = await h.pool.query('SELECT 1 FROM users WHERE id = $1', [id]);
+  if (rows.length > 0) return;
+  await transaction((repo) =>
+    repo.insert('User', {
+      id,
+      email: `${name}@example.com`,
+      name,
+      displayName: name,
+      syncGroups: [],
+    }),
+  );
+}
+
+/** Waits until `socket` received something, then one more turn for anything after it. */
+async function settled(socket: { raw: string[] }): Promise<void> {
+  await eventually(() => socket.raw.length > 0);
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+// PLAN-001 S9 review: membership changes while the socket was closed (a laptop asleep, a reconnect
+// backoff, a deploy). Catch-up is filtered by the groups read at reconnect, so a removal is
+// invisible to the removed user and a join comes after rows the replica never had.
+describe('a client reconnecting after a private team membership changed while it was away', () => {
+  it("is told to resync after being removed from X, though it can't see the deletion", async () => {
+    const leaver = randomUUID();
+    await ensureUser(leaver, 'leaver');
+    const membershipId = randomUUID();
+    await transaction((repo) =>
+      repo.insert('TeamMembership', {
+        id: membershipId,
+        teamId: h.teams.sec,
+        userId: leaver,
+        syncGroups: [],
+      }),
+    );
+    const before = await head();
+    await transaction((repo) => repo.purge('TeamMembership', membershipId));
+    const after = await head();
+    // `engMember`'s groups lack X, as a removed member's do once read again.
+    const away = connect('engMember', randomUUID(), before);
+    const caughtUp = connect('engMember', randomUUID(), after);
+    try {
+      await settled(away);
+      expect(away.raw.map((text) => decodeServerMessage(text))).toEqual([
+        { t: 'resync', reason: 'groups' },
+      ]);
+      // Past the deletion there is nothing of X to drop: an ordinary live row arrives.
+      const markerId = randomUUID();
+      await transaction((repo) =>
+        repo.insert('DebugItem', { id: markerId, title: 'Marker', syncGroups: ['workspace'] }),
+      );
+      await eventually(() => caughtUp.raw.join('\n').includes(markerId));
+      expect(caughtUp.raw.join('\n')).not.toContain('"resync"');
+    } finally {
+      away.close();
+      caughtUp.close();
+    }
+  });
+
+  it('is not told to resync when a public team lost a member meanwhile', async () => {
+    const leaver = randomUUID();
+    await ensureUser(leaver, 'public-leaver');
+    const membershipId = randomUUID();
+    await transaction((repo) =>
+      repo.insert('TeamMembership', {
+        id: membershipId,
+        teamId: h.teams.eng,
+        userId: leaver,
+        syncGroups: [],
+      }),
+    );
+    const before = await head();
+    await transaction((repo) => repo.purge('TeamMembership', membershipId));
+    const away = connect('engMember', randomUUID(), before);
+    try {
+      const markerId = randomUUID();
+      await transaction((repo) =>
+        repo.insert('DebugItem', { id: markerId, title: 'Marker', syncGroups: ['workspace'] }),
+      );
+      await eventually(() => away.raw.join('\n').includes(markerId));
+      expect(away.raw.join('\n')).not.toContain('"resync"');
+    } finally {
+      away.close();
+    }
+  });
+
+  it("is told to resync after joining X, since its replica lacks X's earlier rows", async () => {
+    await ensureUser(sec.id, 'sec');
+    const before = await head();
+    await transaction((repo) =>
+      repo.insert('TeamMembership', {
+        id: randomUUID(),
+        teamId: h.teams.sec,
+        userId: sec.id,
+        syncGroups: [],
+      }),
+    );
+    // `secMember`'s groups have X, as a new member's do once read again.
+    const joined = connect('secMember', randomUUID(), before);
+    try {
+      await settled(joined);
+      expect(joined.raw.map((text) => decodeServerMessage(text))).toEqual([
+        { t: 'resync', reason: 'groups' },
+      ]);
+    } finally {
+      joined.close();
     }
   });
 });

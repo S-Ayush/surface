@@ -132,6 +132,7 @@ export async function startServer(
       registry: sync,
       resolveActor,
       sessionIdOf: sessions.sessionIdOf,
+      sessionLive: sessions.sessionLive,
       clientOwner: (clientId) => clientOwner(pool, clientId),
       ...(hub ? { hub } : {}),
     },

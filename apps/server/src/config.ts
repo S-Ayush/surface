@@ -125,6 +125,16 @@ function protocolOf(value: string): string | undefined {
 // Schema
 // ---------------------------------------------------------------------------
 
+/**
+ * `value` with everything up to its last `@` (after the scheme) replaced by `***`, for error
+ * messages: `https://u:p@host` and a scheme-less `u:p@host` alike, whatever the password holds,
+ * `/` included (PLAN-001 S9, security review L4). An `@` in a path is hidden too: an origin has
+ * none, so the message loses nothing it needs.
+ */
+function withoutCredentials(value: string): string {
+  return value.replace(/^([a-z][a-z0-9+.-]*:\/\/)?.*@/is, '$1***@');
+}
+
 const schema = z.object({
   SURFACE_URL: z
     .string({
@@ -140,17 +150,26 @@ const schema = z.object({
       } catch {
         url = new URL('invalid:');
       }
+      // Echoed without anything before an `@` in the authority: it may be a password.
+      const shown = withoutCredentials(value);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
         ctx.addIssue({
           code: 'custom',
-          message: `SURFACE_URL must be an absolute http(s) URL such as https://surface.example.com (got "${value}").`,
+          message: `SURFACE_URL must be an absolute http(s) URL such as https://surface.example.com (got "${shown}").`,
         });
         return z.NEVER;
       }
-      if (url.pathname !== '/' || url.search || url.hash || url.username) {
+      if (url.username || url.password) {
         ctx.addIssue({
           code: 'custom',
-          message: `SURFACE_URL must be just the origin, without a path, query or credentials (got "${value}"). Serving Surface under a sub-path is not supported.`,
+          message: `SURFACE_URL must not contain a user name or password (got "${shown}"). Remove the part before the @.`,
+        });
+        return z.NEVER;
+      }
+      if (url.pathname !== '/' || url.search || url.hash) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `SURFACE_URL must be just the origin, without a path or query (got "${shown}"). Serving Surface under a sub-path is not supported.`,
         });
         return z.NEVER;
       }
