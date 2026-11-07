@@ -119,7 +119,7 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 - **Idempotency:** the server stores `(clientId → lastProcessedSeq)`. Re-sent mutations with `seq ≤ lastProcessedSeq` return their stored result without being re-executed.
 - **Ordering across reconnects:** the client never sends seq N+1 before N has been sent. Batches are sent one at a time per client.
 - A batch holds 1–100 mutations with **consecutive, ascending** seqs, starting at 1 for a new client. `input` is any JSON value. `at` is optional and informational (SPEC-002 E11). `results` has one entry per mutation, in the same seq order.
-- **CSRF** (SPEC-001 §6.1, Q7; pending until PLAN-001 S3 is on `main`, and a server without it ignores the header): a signed-in browser sends the `surface_csrf` cookie's value in the `X-CSRF-Token` header, read again for every request. API keys (M6) don't use cookies and send none.
+- **CSRF** (SPEC-001 §6.1, Q7; the server checks it since PLAN-001 S3): a signed-in browser sends the `surface_csrf` cookie's value in the `X-CSRF-Token` header, read again for every request. API keys (M6) don't use cookies and send none.
 - **Whole-request errors** use the SPEC-003 §9 body `{"ok":false,"error":{"code","message","correlationId"}}`:
   - `426 CLIENT_OUTDATED`: `schemaHash` differs from the server's. The client shows the reload banner.
   - `403 CSRF_INVALID`: the token is missing or does not match the session, typically because the CSRF cookie was cleared or lost while the session cookie stayed. The client fetches `GET /auth/session`, which sets the cookie again, and resends the same batch at once. Refused a second time, or if the session call fails (`401`: no session), it backs off and retries like any failure below, so a token that stays wrong never makes requests loop. Any other `403` backs off without a renewal.
@@ -237,6 +237,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-07 | v0.4 | Status only, no wire change: §4.4's CSRF note no longer says it is pending until PLAN-001 S3 (on `main`). Approved by the user | — |
 | 2026-11-07 | v0.4 | PLAN-002 S10, client only, no wire change. "Live updates unavailable" (§4.3, SPEC-005 §8): three connection attempts in a row that never open, then `GET /auth/session` answers below `500`, then one more attempt fails. A server that is down or restarting never trips it (S10 review; approach chosen by the user) | — (no server change) |
 | 2026-11-07 | v0.4 | PLAN-001 S3, server only, no wire change. A session ended on one replica closes its sockets on every replica (`NOTIFY session_revoked`, §4.3). | Session A (Log) |
 | 2026-11-07 | v0.4 | PLAN-002 S8 follow-up (CSRF), no codec change. `POST /sync/mutate` carries `X-CSRF-Token` from the `surface_csrf` cookie; `403 CSRF_INVALID` makes the client renew it through `GET /auth/session` and resend once (§4.4, SPEC-001 §6.1, Q7). `@surface/sync-protocol` exports `CSRF_HEADER`, `CSRF_COOKIE`, `CSRF_INVALID` and `SESSION_PATH` for both sides | Session A (session-d2 Handoffs; A defined the server side in PLAN-001 S3) |
