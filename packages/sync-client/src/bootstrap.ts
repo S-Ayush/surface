@@ -17,6 +17,8 @@ import {
 import type { Persistence } from './persistence.js';
 import type { BootstrapRecord } from './storage/types.js';
 import type { ObjectPool } from './pool.js';
+import type { Timers } from './socket.js';
+import { globalTimers } from './socket.js';
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -36,7 +38,16 @@ export interface BootstrapOptions {
   readonly chunkSize?: number;
   readonly onProgress?: (progress: BootstrapProgress) => void;
   readonly signal?: AbortSignal;
+  /** For the response deadline; defaults to the global timers. */
+  readonly timers?: Timers;
 }
+
+/**
+ * How long the bootstrap response may take to start, as for a mutate request
+ * (sync-protocol.md §4.4). Rows that follow may take longer: a large workspace
+ * streams for seconds (SPEC-002 AC-8), and the body read stops on `signal`.
+ */
+export const BOOTSTRAP_RESPONSE_TIMEOUT_MS = 30_000;
 
 export interface BootstrapResult {
   readonly lastSyncId: number;
@@ -67,14 +78,44 @@ export class BootstrapFailedError extends Error {
 
 export const DEFAULT_CHUNK_SIZE = 1000;
 
+/**
+ * The bootstrap request, abandoned when its response has not started within
+ * the deadline: a server that never answers would otherwise leave the store
+ * `bootstrapping` for good, and block every later start or resync.
+ */
+async function request(options: BootstrapOptions): Promise<Response> {
+  const timers = options.timers ?? globalTimers;
+  const controller = new AbortController();
+  const outer = options.signal;
+  const forward = () => controller.abort(outer?.reason);
+  if (outer?.aborted) forward();
+  else outer?.addEventListener('abort', forward, { once: true });
+  let timedOut = false;
+  const deadline = timers.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, BOOTSTRAP_RESPONSE_TIMEOUT_MS);
+  try {
+    return await options.fetch(`${options.baseUrl}${BOOTSTRAP_PATH}`, {
+      credentials: 'same-origin',
+      headers: { accept: 'application/x-ndjson' },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (!timedOut) throw error;
+    throw new BootstrapFailedError(
+      'The server did not answer within 30 seconds. Check your connection and try again.',
+    );
+  } finally {
+    timers.clearTimeout(deadline);
+    outer?.removeEventListener('abort', forward);
+  }
+}
+
 export async function bootstrap(options: BootstrapOptions): Promise<BootstrapResult> {
   const { pool, persistence } = options;
   const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
-  const response = await options.fetch(`${options.baseUrl}${BOOTSTRAP_PATH}`, {
-    credentials: 'same-origin',
-    headers: { accept: 'application/x-ndjson' },
-    ...(options.signal ? { signal: options.signal } : {}),
-  });
+  const response = await request(options);
   if (!response.ok || response.body === null) {
     throw new BootstrapFailedError(
       `Could not load workspace data (HTTP ${response.status})`,

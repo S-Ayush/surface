@@ -693,6 +693,7 @@ export class SyncStore {
       pool: this.#pool,
       persistence,
       signal,
+      timers: this.#timers,
       ...(this.#options.chunkSize === undefined ? {} : { chunkSize: this.#options.chunkSize }),
       onProgress: (progress) => {
         runInAction(() => this.#progress.set(progress));

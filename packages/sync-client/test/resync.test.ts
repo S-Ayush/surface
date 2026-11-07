@@ -15,6 +15,7 @@ import { gatedResponse } from './support/server.js';
 import { clientItems, eventually, idle, liveStore, serverItems, until } from './support/live.js';
 import { debugRename, debugTouch } from './support/ops.js';
 import type { ManualTimers } from './support/timers.js';
+import { REQUEST_TIMEOUT_MS } from '../src/queue.js';
 import { DebugItem, TEST_MODELS, id } from './support/models.js';
 import { closePorts, connectViaRpc, uniqueName } from './support/storage.js';
 
@@ -262,6 +263,78 @@ describe('a resync that fails (review S7 #4)', () => {
     timers.runNext(); // the connection comes back; the client re-runs the resync itself
     await until(() => store.status === 'ready' && store.connection === 'online');
     expect(hub.bootstraps).toBe(2);
+    expect(clientItems(store)).toEqual(serverItems(hub));
+    await store.close();
+  });
+});
+
+describe('a bootstrap the server never answers (PLAN-002 S9)', () => {
+  /**
+   * Found by the sync simulation: a cold start whose bootstrap response never
+   * came stayed `bootstrapping` for good, and a resync stuck the same way
+   * blocked every later start and resync behind it. sync-protocol.md §4.4
+   * gives up on a mutate request after 30 s; a bootstrap now gets the same
+   * deadline for its response (not for the rows that follow).
+   */
+  function hangingBootstraps(hub: FakeHub) {
+    const state = { hang: true, hung: 0 };
+    const fetch: FetchLike = (url, init) => {
+      if (!state.hang || !url.includes('/sync/bootstrap')) return hub.fetch(url, init);
+      state.hung += 1;
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted.', 'AbortError')),
+        ),
+      );
+    };
+    return { state, fetch };
+  }
+
+  it('fails a cold start whose bootstrap gets no answer within 30 s, and starts on a retry', async () => {
+    const hub = seededHub();
+    const hanging = hangingBootstraps(hub);
+    const { store, timers } = liveStore(hub, { fetch: hanging.fetch });
+    const started = store.start().then(
+      () => 'started',
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    await eventually(
+      () => hanging.state.hung === 1 && timers.pending.includes(REQUEST_TIMEOUT_MS),
+      2000,
+    );
+    timers.advance(REQUEST_TIMEOUT_MS);
+
+    expect(await started).toMatch(/did not answer/);
+    expect(store.status).toBe('failed');
+    hanging.state.hang = false;
+    await store.start();
+    expect(store.status).toBe('ready');
+    await store.close();
+  });
+
+  it('gives up on a resync whose bootstrap gets no answer, and resyncs again once reconnected', async () => {
+    const hub = seededHub();
+    const hanging = hangingBootstraps(hub);
+    hanging.state.hang = false;
+    const { store, timers } = liveStore(hub, { fetch: hanging.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+
+    hanging.state.hang = true;
+    hub.upsert(1, { title: 'Changed meanwhile' });
+    hub.last.send({ t: 'resync', reason: 'groups' });
+    await eventually(
+      () => hanging.state.hung === 1 && timers.pending.includes(REQUEST_TIMEOUT_MS),
+      2000,
+    );
+    hanging.state.hang = false;
+    timers.advance(REQUEST_TIMEOUT_MS);
+    await reconnect(store, timers);
+
+    await until(
+      () =>
+        store.status === 'ready' && store.pool.get(DebugItem, id(1))?.title === 'Changed meanwhile',
+    );
     expect(clientItems(store)).toEqual(serverItems(hub));
     await store.close();
   });
