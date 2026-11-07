@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
+  CSRF_INVALID,
   decodeMutateErrorBody,
   decodeMutateRequest,
   decodeMutateResponse,
@@ -135,6 +136,18 @@ describe('mutate error body', () => {
       message: 'Reload Surface',
       correlationId: 'req-2',
     });
+  });
+
+  it('decodes a CSRF refusal like any SPEC-003 error, so the client can read its code', () => {
+    const body = decodeMutateErrorBody({
+      ok: false,
+      error: {
+        code: CSRF_INVALID,
+        message: 'This request is missing its security token. Reload the page and try again.',
+        correlationId: 'req-3',
+      },
+    });
+    expect(body.error.code).toBe('CSRF_INVALID');
   });
 
   it('rejects a success-shaped body', () => {

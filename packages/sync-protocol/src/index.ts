@@ -6,5 +6,6 @@ export * from './errors.js';
 export * from './bootstrap.js';
 export * from './socket.js';
 export * from './mutate.js';
+export * from './csrf.js';
 export * from './ndjson.js';
 export * from './schema-hash.js';

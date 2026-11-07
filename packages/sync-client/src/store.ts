@@ -44,6 +44,7 @@ import { openStorage, replicaName } from './storage/open.js';
 import { QueueFencedError } from './storage/types.js';
 import type { ConnectionState, OnlineSource, SocketFactory, Timers, Verdict } from './socket.js';
 import { SyncSocket, globalTimers, socketUrl, webSocketFactory, windowOnline } from './socket.js';
+import { browserCsrfToken } from './csrf.js';
 import { randomUuid } from './uuid.js';
 
 /** `outdated`: the server runs another schema; the page must reload (E7). */
@@ -85,6 +86,11 @@ export interface SyncStoreOptions {
   readonly clientId?: string;
   /** Close code 4001: the session was revoked; send the user to login (E10). */
   readonly onSessionRevoked?: () => void;
+  /**
+   * The CSRF token sent with each mutate request (SPEC-001 §6.1); read again
+   * for every request. Defaults to the page's `surface_csrf` cookie.
+   */
+  readonly csrfToken?: () => string | undefined;
   /** Operations that pending mutations name; defaults to every operation. */
   readonly operations?: OperationRegistry;
   /** The server rejected a mutation; its effect is gone (SPEC-002 §3.5): show a toast. */
@@ -447,6 +453,7 @@ export class SyncStore {
       baseUrl: this.#options.baseUrl ?? '',
       schemaHash: this.schemaHash,
       registry: this.#options.operations ?? defaultRegistry,
+      csrfToken: this.#options.csrfToken ?? browserCsrfToken,
       timers: this.#timers,
       random: this.#options.connection?.random ?? Math.random,
       clock: this.#options.clock ?? Date.now,

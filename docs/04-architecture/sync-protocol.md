@@ -117,11 +117,13 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 - **Idempotency:** the server stores `(clientId → lastProcessedSeq)`. Re-sent mutations with `seq ≤ lastProcessedSeq` return their stored result without being re-executed.
 - **Ordering across reconnects:** the client never sends seq N+1 before N has been sent. Batches are sent one at a time per client.
 - A batch holds 1–100 mutations with **consecutive, ascending** seqs, starting at 1 for a new client. `input` is any JSON value. `at` is optional and informational (SPEC-002 E11). `results` has one entry per mutation, in the same seq order.
+- **CSRF** (SPEC-001 §6.1, Q7; pending until PLAN-001 S3 is on `main`, and a server without it ignores the header): a signed-in browser sends the `surface_csrf` cookie's value in the `X-CSRF-Token` header, read again for every request. API keys (M6) don't use cookies and send none.
 - **Whole-request errors** use the SPEC-003 §9 body `{"ok":false,"error":{"code","message","correlationId"}}`:
   - `426 CLIENT_OUTDATED`: `schemaHash` differs from the server's. The client shows the reload banner.
+  - `403 CSRF_INVALID`: the token is missing or does not match the session, typically because the CSRF cookie was cleared or lost while the session cookie stayed. The client fetches `GET /auth/session`, which sets the cookie again, and resends the same batch at once. Refused a second time, or if the session call fails (`401`: no session), it backs off and retries like any failure below, so a token that stays wrong never makes requests loop. Any other `403` backs off without a renewal.
   - `400 SEQ_GAP`: the batch starts after `lastSeq + 1`. The body adds `"lastSeq": <n>`, the last seq the server processed for this client, so the client resends from `lastSeq + 1`.
   - `413` (body over the limit, §9) and any other `400`/`422` with that body (a request the server read and refused): the same batch would fail forever, so the client sends smaller batches until the mutation at fault is alone, then rejects it locally (`PAYLOAD_TOO_LARGE`, or the server's code and message) and sends the rest. The seq it skipped makes the next batch a `SEQ_GAP`, which renumbers past it. The client also refuses at dispatch a mutation whose UTF-8 encoding exceeds 90 % of the limit.
-  - Anything else (5xx, a network error, an unreadable body) retries the same batch with backoff. A request with no answer after 30 s, or in flight when the socket drops, is abandoned and sent again; the server dedupes it.
+  - Anything else (5xx, a network error, an unreadable body) retries the same batch with backoff. An attempt with no answer after 30 s (the request, plus the CSRF renewal and resend when there is one), or in flight when the socket drops, is abandoned and sent again; the server dedupes it.
 
 ---
 
@@ -233,6 +235,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-07 | v0.4 | PLAN-002 S8 follow-up (CSRF), no codec change. `POST /sync/mutate` carries `X-CSRF-Token` from the `surface_csrf` cookie; `403 CSRF_INVALID` makes the client renew it through `GET /auth/session` and resend once (§4.4, SPEC-001 §6.1, Q7). `@surface/sync-protocol` exports `CSRF_HEADER`, `CSRF_COOKIE`, `CSRF_INVALID` and `SESSION_PATH` for both sides | Session A (session-d2 Handoffs; A defined the server side in PLAN-001 S3) |
 | 2026-11-07 | v0.4 | PLAN-002 S9, client only, no wire change. The client abandons a bootstrap whose response has not started within 30 s (§4.1); found by the sync simulation, where a hung bootstrap left a tab loading for good | — (no server change) |
 | 2026-11-07 | v0.4 | PLAN-002 S4, server only, no codec change. The hub refuses before the upgrade with `503`, `403` (a foreign `Origin`, or an API key, SPEC-002 Q9) or `400`, and may close with `1003`, `1008`, `1009`, `1011` or `1013`, all of which the client already treats as "reconnect with backoff" (§4.3). A `since` ahead of the server's head gets `resync(too_old)` (Q10). After a `resync` the server sends nothing more but pings (§4.3) | — |
 | 2026-11-07 | v0.4 | PLAN-002 S3, server only, no codec change. Bootstrap answers `400` to `?groups=` until M7; errors before the first frame use the SPEC-003 body with `401`, `403` (an API key, SPEC-002 Q7) or `503`; the body is gzipped when `Accept-Encoding` allows it (§4.1). A row's groups travel in the model's `groups` field, if declared (§4.1, §6, SPEC-002 Q8) | — |

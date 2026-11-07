@@ -15,9 +15,13 @@ import type {
   ServerMessage,
 } from '@surface/sync-protocol';
 import {
+  CSRF_COOKIE,
+  CSRF_HEADER,
+  CSRF_INVALID,
   CloseCode,
   MAX_MUTATION_BATCH_BYTES,
   MUTATE_PATH,
+  SESSION_PATH,
   decodeClientMessage,
   decodeMutateRequest,
   decodeSocketConnectParams,
@@ -41,6 +45,14 @@ export function quietConnection(): ConnectionOptions {
 interface ServerRow {
   row: ModelRow;
   archived: boolean;
+}
+
+/** A whole-request error in the SPEC-003 shape. */
+function errorResponse(status: number, code: string): Response {
+  return new Response(
+    JSON.stringify({ ok: false, error: { code, message: `Refused: ${code}`, correlationId: 'c' } }),
+    { status, headers: { 'content-type': 'application/json' } },
+  );
 }
 
 export class FakeHub {
@@ -75,14 +87,43 @@ export class FakeHub {
   holdResponses = false;
   readonly #held: (() => void)[] = [];
   #acking: Ack | undefined;
+  /**
+   * CSRF as the server checks it (SPEC-001 §6.1): when set, a mutate request
+   * must carry this token in `X-CSRF-Token`, or gets `403 CSRF_INVALID`.
+   */
+  csrfToken: string | undefined;
+  /** The browser's cookie jar: `GET /auth/session` sets `surface_csrf` in it. */
+  readonly cookies = new Map<string, string>();
+  /** `GET /auth/session` requests, and mutate requests refused for CSRF. */
+  sessionRequests = 0;
+  csrfRefusals = 0;
+  /** What `GET /auth/session` answers: `401` when the session is gone. */
+  sessionStatus = 200;
+  /** Refuse every mutate request with `403 FORBIDDEN` (not a CSRF refusal). */
+  forbidMutate = false;
+  /** The headers of every mutate request, in order. */
+  readonly mutateHeaders: Headers[] = [];
 
   constructor(head = 100) {
     this.head = head;
   }
 
-  /** `GET /sync/bootstrap` from the current state, or `POST /sync/mutate`. */
+  /** `GET /sync/bootstrap` from the current state, `POST /sync/mutate`, or `GET /auth/session`. */
   readonly fetch: FetchLike = (url, init) => {
     if (url.endsWith(MUTATE_PATH)) return this.#mutate(init);
+    if (url.endsWith(SESSION_PATH)) {
+      this.sessionRequests += 1;
+      if (this.sessionStatus !== 200) {
+        this.cookies.delete(CSRF_COOKIE);
+        return Promise.resolve(errorResponse(this.sessionStatus, 'UNAUTHENTICATED'));
+      }
+      if (this.csrfToken !== undefined) this.cookies.set(CSRF_COOKIE, this.csrfToken);
+      return Promise.resolve(
+        new Response(JSON.stringify({ userId: 'user-1', workspaceId: 'ws' }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }
     this.bootstraps += 1;
     return Promise.resolve(ndjsonResponse(this.snapshot()));
   };
@@ -104,6 +145,13 @@ export class FakeHub {
       this.failRequests -= 1;
       return Promise.reject(new TypeError('Failed to fetch'));
     }
+    const headers = new Headers(init.headers);
+    this.mutateHeaders.push(headers);
+    if (this.csrfToken !== undefined && headers.get(CSRF_HEADER) !== this.csrfToken) {
+      this.csrfRefusals += 1;
+      return Promise.resolve(errorResponse(403, CSRF_INVALID));
+    }
+    if (this.forbidMutate) return Promise.resolve(errorResponse(403, 'FORBIDDEN'));
     if (typeof init.body !== 'string') throw new Error('The queue sends a JSON string body');
     const respond = (status: number, body: unknown) =>
       new Response(JSON.stringify(body), {

@@ -21,13 +21,16 @@
 import type { AnyOperation, InputOf, OperationRegistry } from '@surface/operations';
 import type { MutateRequest, MutationResult } from '@surface/sync-protocol';
 import {
-  MAX_MUTATIONS_PER_BATCH,
-  MAX_MUTATION_BATCH_BYTES,
-  MUTATE_PATH,
-  MutateErrorCode,
+  CSRF_HEADER,
+  CSRF_INVALID,
   decodeMutateErrorBody,
   decodeMutateResponse,
+  MAX_MUTATION_BATCH_BYTES,
+  MAX_MUTATIONS_PER_BATCH,
+  MUTATE_PATH,
+  MutateErrorCode,
   mutationSchema,
+  SESSION_PATH,
 } from '@surface/sync-protocol';
 import type { IObservableArray } from 'mobx';
 import { observable, runInAction } from 'mobx';
@@ -104,6 +107,8 @@ export interface QueueOptions {
   readonly onOutdated: () => void;
   /** Another tab owns this queue now; this tab must stop. */
   readonly onFenced: () => void;
+  /** The CSRF token to send, read at each request (SPEC-001 §6.1). */
+  readonly csrfToken: () => string | undefined;
 }
 
 interface Entry {
@@ -114,6 +119,15 @@ interface Entry {
   persisted: boolean;
   sent: boolean;
   readonly settle: (outcome: MutationOutcome) => void;
+}
+
+/** A refusal of the CSRF token, not of the batch (SPEC-001 §6.1). */
+function csrfRefusal(json: unknown): boolean {
+  try {
+    return decodeMutateErrorBody(json).error.code === CSRF_INVALID;
+  } catch {
+    return false;
+  }
 }
 
 export class MutationQueue {
@@ -383,6 +397,38 @@ export class MutationQueue {
     return batch;
   }
 
+  #url(path: string): string {
+    return `${this.#options.baseUrl.replace(/\/$/, '')}${path}`;
+  }
+
+  async #post(body: string, signal: AbortSignal): Promise<{ response: Response; json: unknown }> {
+    const token = this.#options.csrfToken();
+    const response = await this.#options.fetch(this.#url(MUTATE_PATH), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token === undefined ? {} : { [CSRF_HEADER]: token }),
+      },
+      body,
+      credentials: 'same-origin',
+      signal,
+    });
+    return { response, json: await response.json() };
+  }
+
+  /**
+   * `GET /auth/session` sets the CSRF cookie again. False when there is no
+   * session (`401`): a resend would only be refused too.
+   */
+  async #renewCsrf(signal: AbortSignal): Promise<boolean> {
+    const response = await this.#options.fetch(this.#url(SESSION_PATH), {
+      credentials: 'same-origin',
+      signal,
+    });
+    await response.body?.cancel();
+    return response.ok;
+  }
+
   async #send(batch: readonly Entry[], signal: AbortSignal): Promise<'next' | 'retry' | 'stop'> {
     const mutations: MutateRequest['mutations'] = [];
     for (const { record } of batch) {
@@ -416,17 +462,15 @@ export class MutationQueue {
     let response: Response;
     let json: unknown;
     try {
-      response = await this.#options.fetch(
-        `${this.#options.baseUrl.replace(/\/$/, '')}${MUTATE_PATH}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-          credentials: 'same-origin',
-          signal,
-        },
-      );
-      json = await response.json();
+      ({ response, json } = await this.#post(JSON.stringify(body), signal));
+      // A stale CSRF token (a new session, or a cookie the browser lost): the
+      // session endpoint sets it again, and the batch goes once more at once
+      // (SPEC-001 §6.1). Refused again, it backs off like any failure.
+      if (response.status === 403 && csrfRefusal(json)) {
+        const renewed = await this.#renewCsrf(signal);
+        if (this.#stopped) return 'stop';
+        if (renewed) ({ response, json } = await this.#post(JSON.stringify(body), signal));
+      }
     } catch {
       // A timeout or going offline retries; only `stop` ends the send.
       if (this.#stopped) throw new Error('stopped');
