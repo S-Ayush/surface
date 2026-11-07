@@ -1,6 +1,7 @@
 // The app's view of authentication (SPEC-001 §3.2, §6.1; SPEC-005 §3 guards), over PLAN-001 S3's
 // routes. The guards read `AuthState.snapshot`; signing in, signing out and a session the server
-// ended change it, and the router re-runs the guards (`followAuth`).
+// ended change it, and the router re-runs the guards (`followAuth`). A reload while the server
+// can't be reached opens the session this device last had (ADR-0018, SPEC-002 AC-6).
 import { SESSION_PATH } from '@surface/sync-protocol';
 import { observable, runInAction } from 'mobx';
 import { z } from 'zod';
@@ -36,8 +37,107 @@ export type AuthSnapshot =
        * same user: the old store's socket was closed for good (4001).
        */
       readonly epoch: number;
+      /**
+       * The session is this device's last one, opened because the server couldn't be reached
+       * at load (ADR-0018). It is checked again, and confirmed or ended, once the server answers.
+       */
+      readonly offline?: boolean;
     }
   | { readonly status: 'failed'; readonly message: string };
+
+/** The server couldn't be reached: no answer, a 5xx, or none within `CHECK_TIMEOUT_MS`. */
+export class UnreachableError extends Error {
+  override readonly name = 'UnreachableError';
+  constructor(cause?: unknown) {
+    super('The server could not be reached', { cause });
+  }
+}
+
+/** What a reload needs to open the replica without the server: ids and a flag, no secrets. */
+export type RememberedStart = { readonly session: Session; readonly smtp: boolean };
+
+/** This device's last session (ADR-0018). Written while signed in, cleared when it ends. */
+export interface StartMemory {
+  read(): RememberedStart | undefined;
+  write(start: RememberedStart): void;
+  clear(): void;
+}
+
+const forgetful: StartMemory = {
+  read: () => undefined,
+  write: () => undefined,
+  clear: () => undefined,
+};
+
+const START_KEY = 'surface.last-session';
+const RememberedStartSchema = z.object({
+  session: z.object({ userId: z.string(), workspaceId: z.string() }),
+  smtp: z.boolean(),
+});
+
+/**
+ * `StartMemory` in `localStorage`. Storage that is blocked or full is treated as empty: the app
+ * then needs the server to load, as before ADR-0018.
+ */
+export function browserStartMemory(
+  storage: () => Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
+): StartMemory {
+  return {
+    read: () => {
+      try {
+        const raw = storage().getItem(START_KEY);
+        if (raw === null) return undefined;
+        const parsed = RememberedStartSchema.safeParse(JSON.parse(raw));
+        return parsed.success ? parsed.data : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    write: (start) => {
+      try {
+        storage().setItem(START_KEY, JSON.stringify(start));
+      } catch {
+        // Not kept, and the last session forgotten rather than kept for someone else: the next
+        // reload without the server shows the error page.
+        try {
+          storage().removeItem(START_KEY);
+        } catch {
+          // Storage that can't be written can't be cleared either; read() then finds nothing.
+        }
+      }
+    },
+    clear: () => {
+      try {
+        storage().removeItem(START_KEY);
+      } catch {
+        // Nothing could have been kept either.
+      }
+    },
+  };
+}
+
+/** Waits between checks of a remembered session: 2, 5, 10, then every 30 s (ADR-0018). */
+export const RETRY_MS: readonly number[] = [2000, 5000, 10_000, 30_000];
+
+/**
+ * Waits before the `attempt`th check, cut short when `browser` (the window) says it is online
+ * again.
+ */
+export function waitToRetry(
+  attempt: number,
+  browser: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> = window,
+): Promise<void> {
+  const delay = RETRY_MS[Math.min(attempt, RETRY_MS.length - 1)] ?? 30_000;
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      browser.removeEventListener('online', done);
+      resolve();
+    };
+    const timer = setTimeout(done, delay);
+    browser.addEventListener('online', done);
+  });
+}
 
 const UNREACHABLE = "Surface can't reach the server. Check your connection, then reload the page.";
 /** How long a 4001 check waits before its second look (see `recheck`). */
@@ -52,11 +152,24 @@ export class AuthState {
   /** Logouts in flight: while any is, it decides how the session ends, not a 4001 or a 401. */
   #loggingOut = 0;
   readonly #wait: () => Promise<void>;
+  readonly #memory: StartMemory;
+  readonly #retry: (attempt: number) => Promise<void>;
 
-  constructor(client: AuthClient, options: { readonly wait?: () => Promise<void> } = {}) {
+  constructor(
+    client: AuthClient,
+    options: {
+      readonly wait?: () => Promise<void>;
+      /** This device's last session; none by default (tests, and before ADR-0018). */
+      readonly memory?: StartMemory;
+      /** The wait before each check of a remembered session (default: `waitToRetry`). */
+      readonly retry?: (attempt: number) => Promise<void>;
+    } = {},
+  ) {
     this.#client = client;
     this.#wait =
       options.wait ?? (() => new Promise((resolve) => setTimeout(resolve, SECOND_LOOK_MS)));
+    this.#memory = options.memory ?? forgetful;
+    this.#retry = options.retry ?? waitToRetry;
   }
 
   get snapshot(): AuthSnapshot {
@@ -87,7 +200,8 @@ export class AuthState {
    * The session may have ended: its socket closed with 4001 (E10), or a request got 401 (E14).
    * Signing in again, in this tab or another, also ends the previous session (SPEC-001 Q11), so
    * both ask who is signed in now: still someone, and the shell reopens with a new store; nobody
-   * (or no answer), and the guards send to /login?next=.
+   * (or a wrong answer), and the guards send to /login?next=. A server that can't be reached
+   * says nothing about the session: it is kept, and the next 4001 or 401 asks again (ADR-0018).
    *
    * - "Nobody" gets a second look after a short wait: the 4001 or 401 can come before the
    *   browser has stored the new session's cookie, so the first check may carry the old one.
@@ -97,7 +211,11 @@ export class AuthState {
   async recheck(epoch?: number): Promise<void> {
     const checked = this.#epoch();
     if (checked === undefined || (epoch !== undefined && epoch !== checked)) return;
-    const ask = () => this.#client.session().catch(() => null);
+    // undefined: no answer, so nothing is known about the session.
+    const ask = () =>
+      this.#client
+        .session()
+        .catch((error: unknown) => (error instanceof UnreachableError ? undefined : null));
     const current = () => this.#loggingOut === 0 && this.#epoch() === checked;
     let session = await ask();
     if (session === null && current()) {
@@ -106,7 +224,7 @@ export class AuthState {
     }
     // A late answer is about a session that has gone: the user logged out meanwhile (logging out
     // closes this tab's socket too), or signed in again and the check carried the old cookie.
-    if (!current()) return;
+    if (!current() || session === undefined) return;
     if (session === null) this.#end(false);
     else this.#begin(session);
   }
@@ -133,18 +251,26 @@ export class AuthState {
     return current.status === 'ready' && current.session !== null ? current.epoch : undefined;
   }
 
-  #begin(session: Session): void {
+  #begin(session: Session, capabilities?: Capabilities): void {
     const current = this.snapshot;
     if (current.status !== 'ready') return;
-    runInAction(() =>
-      this.#snapshot.set({ ...current, session, loggedOut: false, epoch: current.epoch + 1 }),
-    );
+    const next = {
+      ...current,
+      capabilities: capabilities ?? current.capabilities,
+      session,
+      loggedOut: false,
+      epoch: current.epoch + 1,
+      offline: false,
+    };
+    this.#memory.write({ session, smtp: next.capabilities.smtp });
+    runInAction(() => this.#snapshot.set(next));
   }
 
   #end(loggedOut: boolean): void {
     const current = this.snapshot;
     if (current.status !== 'ready') return;
-    runInAction(() => this.#snapshot.set({ ...current, session: null, loggedOut }));
+    this.#memory.clear();
+    runInAction(() => this.#snapshot.set({ ...current, session: null, loggedOut, offline: false }));
   }
 
   async #load(): Promise<AuthSnapshot> {
@@ -155,11 +281,68 @@ export class AuthState {
         this.#client.session(),
       ]);
       next = { status: 'ready', capabilities, session, epoch: 0 };
-    } catch {
-      next = { status: 'failed', message: UNREACHABLE };
+      if (session === null) this.#memory.clear();
+      else this.#memory.write({ session, smtp: capabilities.smtp });
+    } catch (error) {
+      const remembered = error instanceof UnreachableError ? this.#memory.read() : undefined;
+      next =
+        remembered === undefined
+          ? { status: 'failed', message: UNREACHABLE }
+          : {
+              status: 'ready',
+              // Only a workspace that was set up has a session to remember.
+              capabilities: { setupComplete: true, smtp: remembered.smtp },
+              session: remembered.session,
+              epoch: 0,
+              offline: true,
+            };
     }
     runInAction(() => this.#snapshot.set(next));
+    if (next.status === 'ready' && next.offline === true) void this.#confirm(next.epoch);
     return next;
+  }
+
+  /**
+   * Checks a remembered session until the server answers (ADR-0018): the same session is
+   * confirmed under the same epoch, so the shell keeps its store; nobody signed in ends it
+   * (`/login?next=`); someone else opens theirs; an answer that is wrong rather than missing
+   * shows the error page, as a reload would. Stops once the session changed some other way.
+   */
+  async #confirm(epoch: number): Promise<void> {
+    const stillOffline = () => {
+      const current = this.snapshot;
+      return current.status === 'ready' && current.offline === true && current.epoch === epoch;
+    };
+    for (let attempt = 0; ; attempt += 1) {
+      await this.#retry(attempt);
+      if (!stillOffline()) return;
+      let answer: [Capabilities, Session | null];
+      try {
+        answer = await Promise.all([this.#client.capabilities(), this.#client.session()]);
+      } catch (error) {
+        if (error instanceof UnreachableError) continue;
+        if (stillOffline()) {
+          runInAction(() => this.#snapshot.set({ status: 'failed', message: UNREACHABLE }));
+        }
+        return;
+      }
+      const current = this.snapshot;
+      if (!stillOffline() || current.status !== 'ready') return;
+      const [capabilities, session] = answer;
+      if (session === null) {
+        this.#end(false);
+      } else if (
+        current.session !== null &&
+        session.userId === current.session.userId &&
+        session.workspaceId === current.session.workspaceId
+      ) {
+        this.#memory.write({ session, smtp: capabilities.smtp });
+        runInAction(() => this.#snapshot.set({ ...current, capabilities, offline: false }));
+      } else {
+        this.#begin(session, capabilities);
+      }
+      return;
+    }
   }
 }
 
@@ -170,22 +353,49 @@ const SessionBody = ok(z.object({ userId: z.string(), workspaceId: z.string() })
 
 const JSON_ACCEPT = { accept: 'application/json' };
 
+/** How long a check of capabilities or the session may take before the server counts as away. */
+export const CHECK_TIMEOUT_MS = 10_000;
+
+/**
+ * A GET that fails as `UnreachableError` on no answer, no answer in time, or a 5xx other than
+ * 503. A 503 is returned to the caller, which tells "not ready" from `SETUP_REQUIRED`.
+ */
+async function check(fetchFn: FetchLike, url: string): Promise<Response> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => {
+    abort.abort();
+  }, CHECK_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetchFn(url, { headers: JSON_ACCEPT, signal: abort.signal });
+  } catch (error) {
+    throw new UnreachableError(error);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (response.status >= 500 && response.status !== 503) throw new UnreachableError();
+  return response;
+}
+
 /** PLAN-001 S3's routes. `cookies` reads `document.cookie`, for the CSRF token on sign-out. */
 export function httpAuthClient(fetchFn: FetchLike, cookies: () => string): AuthClient {
   const writes = csrfFetch(fetchFn, cookies);
   return {
     capabilities: async () => {
-      const response = await fetchFn('/auth/capabilities', { headers: JSON_ACCEPT });
+      const response = await check(fetchFn, '/auth/capabilities');
+      if (response.status === 503) throw new UnreachableError();
       if (!response.ok) throw new Error(`capabilities ${String(response.status)}`);
       return CapabilitiesBody.parse(await response.json()).result;
     },
     session: async () => {
-      const response = await fetchFn(SESSION_PATH, { headers: JSON_ACCEPT });
+      const response = await check(fetchFn, SESSION_PATH);
       if (response.ok) return SessionBody.parse(await response.json()).result;
       if (response.status === 401) return null;
-      // Before setup no one can be signed in; the guards send every page to /setup.
-      if (response.status === 503 && (await errorOf(response))?.code === 'SETUP_REQUIRED') {
-        return null;
+      if (response.status === 503) {
+        // Before setup no one can be signed in; the guards send every page to /setup. Any
+        // other 503 is a server not ready to answer.
+        if ((await errorOf(response))?.code === 'SETUP_REQUIRED') return null;
+        throw new UnreachableError();
       }
       throw new Error(`session ${String(response.status)}`);
     },

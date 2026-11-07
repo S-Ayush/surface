@@ -6,7 +6,13 @@ import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { AppErrorPage } from '../src/app/AppErrorPage.js';
 import { AppModel } from '../src/app/AppModel.js';
-import { AuthState, type AuthClient, type Session } from '../src/app/auth.js';
+import {
+  AuthState,
+  UnreachableError,
+  type AuthClient,
+  type Session,
+  type StartMemory,
+} from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
 import { createAppRouter, followAuth } from '../src/app/router.js';
 
@@ -36,9 +42,20 @@ const environment = (path: string) => ({
   scrollRestoration: false,
 });
 
-async function open(path: string, auth: AuthClient, Model: typeof AppModel = AppModel) {
-  // The second look after a 4001 (AuthState.recheck) without a real wait.
-  const app = new Model(new AuthState(auth, { wait: () => Promise.resolve() }));
+async function open(
+  path: string,
+  auth: AuthClient,
+  Model: typeof AppModel = AppModel,
+  memory?: StartMemory,
+) {
+  // The second look after a 4001 (AuthState.recheck) without a real wait; a remembered session
+  // is checked again only when a test lets it.
+  const app = new Model(
+    new AuthState(auth, {
+      wait: () => Promise.resolve(),
+      ...(memory === undefined ? {} : { memory, retry: () => new Promise<never>(() => {}) }),
+    }),
+  );
   const router = createAppRouter(app, environment(path));
   await router.load();
   return { app, router, href: () => router.state.location.href };
@@ -142,6 +159,20 @@ describe('AC-15: route guards in the router', () => {
     );
     expect(html).toContain('Surface can&#x27;t reach the server');
     expect(html).not.toContain('ECONNREFUSED');
+  });
+
+  it('opens the page in the shell, not the error page, from the session this device remembers', async () => {
+    // ADR-0018: the server is away at load, and the replica opens for the last session.
+    const away = () => Promise.reject(new UnreachableError());
+    const down = client({ capabilities: away, session: away });
+    const remembered: StartMemory = {
+      read: () => ({ session: SESSION, smtp: false }),
+      write: () => undefined,
+      clear: () => undefined,
+    };
+    const { router, href } = await open('/team/ENG', down, AppModel, remembered);
+    expect(href()).toBe('/team/ENG');
+    expect(router.state.matches.map((match) => match.status)).not.toContain('error');
   });
 
   it('renders a public page without the shell', async () => {

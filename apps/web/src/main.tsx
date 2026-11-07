@@ -3,7 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
 import { AppModel } from './app/AppModel.js';
-import { AuthState, httpAuthClient } from './app/auth.js';
+import { AuthState, browserStartMemory, httpAuthClient } from './app/auth.js';
 import './styles/app.css';
 
 const root = document.getElementById('root');
@@ -15,6 +15,8 @@ const app = new AppModel(
       (url, init) => window.fetch(url, init),
       () => document.cookie,
     ),
+    // A reload without the server opens this device's last session (ADR-0018).
+    { memory: browserStartMemory(() => window.localStorage) },
   ),
 );
 

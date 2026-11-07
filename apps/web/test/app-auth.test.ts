@@ -2,7 +2,13 @@
 // state the guards read: signing in, signing out, and a session the server ended (E10, E14).
 import { CSRF_HEADER } from '@surface/sync-protocol';
 import { describe, expect, it } from 'vitest';
-import { AuthState, httpAuthClient, type AuthClient, type Session } from '../src/app/auth.js';
+import {
+  AuthState,
+  UnreachableError,
+  httpAuthClient,
+  type AuthClient,
+  type Session,
+} from '../src/app/auth.js';
 import type { FetchLike } from '../src/app/http.js';
 
 const json = (status: number, body: unknown) =>
@@ -186,7 +192,7 @@ describe('AuthState', () => {
     expect(auth.snapshot).toMatchObject({ status: 'ready', session: null, loggedOut: false });
   });
 
-  it('treats a failed check after a 4001 close as signed out', async () => {
+  it('treats a wrong answer to the check after a 4001 close as signed out', async () => {
     const { client } = fakeClient(SESSION);
     let reachable = true;
     const auth = new AuthState(
@@ -200,6 +206,31 @@ describe('AuthState', () => {
     reachable = false;
     await auth.recheck();
     expect(sessionOf(auth)).toBeNull();
+  });
+
+  it('keeps the session when the check after a 4001 close cannot reach the server (ADR-0018)', async () => {
+    // A server that is away says nothing about the session: the next 4001 or 401 asks again.
+    // Signing out here would also forget the session a reload needs to open offline.
+    const { client } = fakeClient(SESSION);
+    let reachable = true;
+    const forgotten: string[] = [];
+    const auth = new AuthState(
+      {
+        ...client,
+        session: () => (reachable ? client.session() : Promise.reject(new UnreachableError())),
+      },
+      {
+        wait: noWait,
+        memory: { read: () => undefined, write: () => undefined, clear: () => forgotten.push('x') },
+      },
+    );
+    await auth.ready();
+    const before = epochOf(auth);
+    reachable = false;
+    await auth.recheck();
+    expect(sessionOf(auth)).toEqual(SESSION);
+    expect(epochOf(auth)).toBe(before);
+    expect(forgotten).toEqual([]);
   });
 });
 

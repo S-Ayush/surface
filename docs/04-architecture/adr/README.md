@@ -19,5 +19,6 @@
 | [0015](0015-client-model-immutability.md) | Client model immutability (supersedes the enforcement clause of 0003) |
 | [0016](0016-sync-simulation-harness.md) | Where the sync simulation harness lives (`tests/sync-sim`) |
 | [0017](0017-sync-react-package.md) | Where the sync inspector and UI hooks live (`@surface/sync-react`) |
+| [0018](0018-offline-start.md) | Opening the app while the server can't be reached (remembered session) |
 
 Format: context → options → decision → consequences. An accepted ADR is never edited in substance; a new ADR supersedes it.
