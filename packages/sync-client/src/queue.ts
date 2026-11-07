@@ -358,12 +358,22 @@ export class MutationQueue {
     );
   }
 
-  /** Persisted mutations without a result, from the lowest seq, within the batch limits. */
+  /**
+   * Persisted mutations without a result, from the lowest seq, within the
+   * batch limits. The seqs must be consecutive (sync-protocol.md §5.1), so the
+   * batch ends where one is missing (confirmed already) or has a result
+   * (committed): the rest go in the next batch (found by PLAN-002 S9).
+   */
   #nextBatch(): Entry[] {
     const batch: Entry[] = [];
     let bytes = 0;
     for (const entry of this.#entries.values()) {
-      if (entry.record.lastSyncId !== undefined) continue;
+      const last = batch.at(-1);
+      if (entry.record.lastSyncId !== undefined) {
+        if (last === undefined) continue;
+        break;
+      }
+      if (last !== undefined && entry.record.seq !== last.record.seq + 1) break;
       if (!entry.persisted || batch.length === this.#batchLimit) break;
       const size = wireBytes(entry.record);
       if (batch.length > 0 && bytes + size > MAX_SEND_BYTES) break;

@@ -299,6 +299,58 @@ describe('failures and resends', () => {
     await store.close();
   });
 
+  it('never sends a batch with a gap in its seqs, even when a later mutation was confirmed first (PLAN-002 S9)', async () => {
+    // Found by the sync simulation: a rejection lost with its response, a later
+    // mutation confirmed by its ack, then a new one. sync-protocol.md §5.1: the
+    // seqs of a batch are consecutive, so `[1, 3]` is refused by the server.
+    const hub = seededHub();
+    const batches: number[][] = [];
+    const { store, timers } = liveStore(hub, {
+      fetch: (url, init) => {
+        if (url.endsWith(MUTATE_PATH) && typeof init.body === 'string') {
+          const body: unknown = JSON.parse(init.body);
+          const mutations: unknown =
+            typeof body === 'object' && body !== null ? Reflect.get(body, 'mutations') : [];
+          if (Array.isArray(mutations)) {
+            batches.push(mutations.map((m: unknown) => Number(Reflect.get(Object(m), 'seq'))));
+          }
+        }
+        return hub.fetch(url, init);
+      },
+    });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.loseResponses = 2;
+    const exists = store.dispatch(debugCreate, { id: id(1), title: 'Taken' }); // seq 1: CONFLICT
+    await eventually(() => hub.executed() === 1 && timers.pending.includes(500));
+    const touched = store.dispatch(debugTouch, { id: id(2) }); // seq 2
+    await idle(); // saved, so the resend carries it
+    timers.runNext(); // resend [1, 2]: the answer is lost again, but seq 2's ack arrives
+    expect(await touched).toEqual({ status: 'confirmed' });
+    const later = store.dispatch(debugTouch, { id: id(3) }); // seq 3
+    const settled = { exists: false, later: false };
+    void exists.then(() => (settled.exists = true));
+    void later.then(() => (settled.later = true));
+    // Checked after every send, so a gap fails here instead of timing out on
+    // a server that keeps refusing the batch.
+    const consecutive = () => {
+      for (const batch of batches) {
+        expect(batch, JSON.stringify(batches)).toEqual(batch.map((_, i) => (batch[0] ?? 0) + i));
+      }
+    };
+    for (let i = 0; i < 10 && !(settled.exists && settled.later); i += 1) {
+      timers.runNext();
+      await idle();
+      consecutive();
+    }
+
+    expect(settled).toEqual({ exists: true, later: true });
+    expect(await exists).toMatchObject({ status: 'rejected', error: { code: 'CONFLICT' } });
+    expect(await later).toEqual({ status: 'confirmed' });
+    expect(clientItems(store)).toEqual(serverItems(hub));
+    await store.close();
+  });
+
   it('gives up on a request that hangs, and sends it again (review M3)', async () => {
     const hub = seededHub();
     const { store, timers } = liveStore(hub);
