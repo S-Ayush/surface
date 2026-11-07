@@ -81,6 +81,22 @@ describe('the real server for the sync simulation', () => {
     expect((await s.items())[0]).toMatchObject({ id, counter: 1 });
   });
 
+  it('compacts the log down to its newest row, as retention does', async () => {
+    const s = await start(1);
+    const user = s.users[0] ?? expect.fail('user 0');
+    for (const title of ['One', 'Two']) {
+      expect((await s.run(user, 'debug.create', { id: randomUUID(), title })).ok).toBe(true);
+    }
+    const head = await s.head();
+    await s.compactLog();
+    const pool = db?.pool ?? expect.fail('no database');
+    const { rows } = await pool.query<{ ids: string[] }>(
+      'SELECT array_agg(sync_id::text) AS ids FROM sync_log',
+    );
+    expect(rows[0]?.ids).toEqual([String(head)]);
+    expect(await s.head()).toBe(head);
+  });
+
   it('says so when the database was already set up, instead of failing obscurely', async () => {
     const s = await start(1);
     await s.stop();

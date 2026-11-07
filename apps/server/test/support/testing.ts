@@ -25,6 +25,7 @@ import { SESSION_COOKIE } from '../../src/auth/session.js';
 import { pgAuthStore } from '../../src/auth/store.js';
 import { loadConfig, type Config } from '../../src/config.js';
 import { createPool } from '../../src/db/pool.js';
+import { createLogger } from '../../src/logger.js';
 import { uuidv7 } from '../../src/db/uuidv7.js';
 import { transactionRunner } from '../../src/executor/transaction.js';
 import { startServer, type RunningServer } from '../../src/server.js';
@@ -32,8 +33,16 @@ import { gracefulShutdown } from '../../src/shutdown.js';
 import { setupInputSchema } from '../../src/setup/input.js';
 import { pgSetupStore } from '../../src/setup/store.js';
 import { serverSyncRegistry } from '../../src/sync/registry.js';
-import { syncRepo } from '../../src/sync/repo.js';
+import { pruneSyncLog, syncRepo } from '../../src/sync/repo.js';
 import { CSRF_COOKIE, CSRF_HEADER } from '@surface/sync-protocol';
+
+export {
+  createDatabaseFrom,
+  createTemplateDatabase,
+  startTestPostgres,
+  type TestDatabaseHandle,
+  type TestPostgres,
+} from './postgres.js';
 
 export interface TestServerOptions {
   /**
@@ -43,7 +52,7 @@ export interface TestServerOptions {
   readonly databaseUrl: string;
   /** Users to sign in (default 1). The first is the workspace's Admin. */
   readonly users?: number;
-  /** Defaults to a silent logger. */
+  /** Defaults to a silent logger; `errorLogger` reports the server's errors to a harness. */
   readonly logger?: Logger;
 }
 
@@ -86,6 +95,11 @@ export interface TestServer {
   head(): Promise<number>;
   /** Every `debug_items` row, by id. */
   items(): Promise<DebugItemRow[]>;
+  /**
+   * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
+   * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
+   */
+  compactLog(): Promise<void>;
   /** Shut down like `SIGTERM` (sockets close with 1012), then start again on the same database. */
   restart(): Promise<void>;
   /** Shut down and release the database; a second call does nothing. The caller drops its database afterwards. */
@@ -182,6 +196,13 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
           };
         });
       },
+      compactLog: async () => {
+        // Every row older than year 9999: all but the newest (`pruneSyncLog` keeps it).
+        await pruneSyncLog(
+          drizzle({ client: db, casing: 'snake_case' }),
+          new Date('9999-12-31T00:00:00Z'),
+        );
+      },
       restart: async () => {
         await shutdown();
         await start();
@@ -201,6 +222,40 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
     await db.end().catch(() => undefined);
     throw error;
   }
+}
+
+const LogLine = z.object({
+  msg: z.string().optional(),
+  err: z.object({ message: z.string().optional() }).optional(),
+});
+
+/**
+ * A logger for `startTestServer` that calls `onError` with each line logged at
+ * error level or above, as "message: error message". It is the server's own
+ * logger (`createLogger`), redaction included; warnings and below are dropped.
+ */
+export function errorLogger(onError: (summary: string) => void): Logger {
+  return createLogger(
+    { logLevel: 'error' },
+    {
+      write: (line: string) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          onError(line.trim());
+          return;
+        }
+        const entry = LogLine.safeParse(parsed);
+        if (!entry.success) {
+          onError(line.trim());
+          return;
+        }
+        const { msg = '(no message)', err } = entry.data;
+        onError(err?.message === undefined ? msg : `${msg}: ${err.message}`);
+      },
+    },
+  );
 }
 
 /** A role-`web` server: the hub and HTTP, no job worker and no SMTP. */
