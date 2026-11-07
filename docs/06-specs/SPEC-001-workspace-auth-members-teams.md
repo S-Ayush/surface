@@ -128,11 +128,11 @@ Permissions follow [permissions §3.1–3.2](../03-domain/permissions.md): invit
 | `user.createResetLink` | m | 🛡 | Returns a URL (shown once) |
 | `session.list` / `session.revoke` / `session.revokeOthers` | q / m / m | self | |
 | `invite.create` / `invite.list` / `invite.revoke` | m / q / m | 🛡 | `create` returns `{url, emailed: bool}` |
-| `team.create` | m | any | `{name, key?, icon?, color?, timezone?}` → seeds statuses, adds the creator |
+| `team.create` | m | any | `{id?, name, key?, icon?, color?, timezone?}` → seeds statuses, adds the creator. `id` is the client's UUIDv7 (SPEC-003 §8); `key` defaults to a suggestion |
 | `team.update` | m | team member, 🛡 | name, icon, color, timezone |
-| `team.join` / `team.leave` | m | any (public) / member | |
-| `team.addMember` / `team.removeMember` | m | team member, 🛡 | `removeMember` is flagged `destructive` for API keys |
-| `team.suggestKey` | q | any | `{name}` → `{key}` |
+| `team.join` / `team.leave` | m | any (public) / member | Joining as a member, or leaving as a non-member, changes nothing |
+| `team.addMember` / `team.removeMember` | m | team member, 🛡 | `removeMember` is flagged `destructive` for API keys. Adding a member or removing a non-member changes nothing |
+| `team.suggestKey` | q | any | `{name}` → `{key}`; `key` is null when the name suggests none |
 
 ## 7. UI
 
@@ -163,8 +163,8 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 | E8 | Magic link opened on a different device | Works (token-based). That device gets a new session. |
 | E9 | Several magic links requested | Only the newest is valid. Older unused links are invalidated. |
 | E10 | Password changed or reset | All other sessions are revoked. Their open sockets close with code `4001 session_revoked`, and the clients go to `/login`. |
-| E11 | Team key collides, or is reserved or invalid | Inline error, plus the next suggestion |
-| E12 | The last member leaves a team | Allowed (the team is public). The team stays and can be joined. |
+| E11 | Team key collides, or is reserved or invalid | Inline error, plus the next suggestion for the name. Keys are unique across the workspace, so a private team's key reads as taken to non-members (D2) |
+| E12 | The last member leaves a team | Allowed for a public team: it stays and can be joined. The last member of a **private** team cannot leave or be removed (`CONFLICT`) (D3) |
 | E13 | Login attempts exceed the rate limit | 429 with a "Try again in N minutes" message. An audit entry is added (in M7). |
 | E14 | The session expires while the app is open | The next request or socket gets 401, and the app redirects to `/login?next=<current>`. Queued offline mutations are kept until the same user logs in again. |
 
@@ -205,3 +205,5 @@ States: loading skeletons, inline field errors, a toast for network errors. Befo
 | Q2 | Should email addresses be visible to all members? | Yes (internal tool) |
 | Q3 | Should Admins be able to edit other users' profiles? | No: only roles and reset links |
 | D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |
+| D2 | (2026-11-07) May a non-member learn that a private team's key exists? | Yes, by decision of the user (PLAN-001 S8 review): keys are unique across the workspace (INV-03), so `team.create` with a private team's key is `CONFLICT` and `team.suggestKey` skips it. The answer names the key only, never the team's name, id or anything else. An exception to "private teams never leak", recorded in permissions.md §5. |
+| D3 | (2026-11-07) Can the last member of a private team leave or be removed? | No, by decision of the user (PLAN-001 S8 review): nobody else can see a private team (Admins included, until M7), so nobody could rejoin it. `team.leave` and `team.removeMember` answer `CONFLICT` and ask to add someone first. A public team's last member may leave (E12). |

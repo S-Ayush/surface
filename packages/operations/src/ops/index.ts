@@ -8,8 +8,18 @@ import {
   debugRename,
   debugTouch,
 } from './debug.js';
+import {
+  teamAddMember,
+  teamCreate,
+  teamJoin,
+  teamLeave,
+  teamRemoveMember,
+  teamSuggestKey,
+  teamUpdate,
+} from './team.js';
 
 export * from './debug.js';
+export * from './team.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -23,6 +33,15 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   debugCreate,
   debugRename,
   debugDelete,
+  teamSuggestKey,
+  teamCreate,
+  teamUpdate,
+  // Leave before join: the examples run in this order (registry contract test) and leave the
+  // seed's actor a member of ENG again.
+  teamLeave,
+  teamJoin,
+  teamAddMember,
+  teamRemoveMember,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

@@ -4,3 +4,5 @@ export * from './refs.js';
 export * from './permissions.js';
 export * from './filter/index.js';
 export * from './workspace.js';
+export * from './team.js';
+export * from './team-key.js';

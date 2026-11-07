@@ -40,9 +40,43 @@ export const RESERVED_TEAM_KEYS: readonly string[] = ['NEW', 'API', 'MCP', 'SYNC
 export function teamKeyProblem(key: string): string | undefined {
   if (!TEAM_KEY_PATTERN.test(key)) return 'Team key must be 2–5 capital letters, like ENG';
   if (RESERVED_TEAM_KEYS.includes(key)) {
-    return `${key} is reserved; choose another team key, like ${key.slice(0, 2)}X`;
+    return `${key} is reserved; choose another team key`;
   }
   return undefined;
+}
+
+/** `UTC`, or `Area/Location` with optional deeper parts (`America/Argentina/Buenos_Aires`). */
+const IANA_ZONE_NAME = /^(?:utc|[a-z]+(?:\/[a-z0-9_+-]+)+)$/i;
+
+/**
+ * Why `timeZone` isn't an IANA time zone this runtime knows, or undefined if it is. Teams and
+ * users store one (domain-model §4.2, §4.3). Only `UTC` and `Area/Location` names: ICU also
+ * accepts legacy ids like `PST` or `EST5EDT`, and offsets like `+05:00`, which are not zones.
+ * Store `canonicalTimeZone(timeZone)`, not the input.
+ */
+export function timeZoneProblem(timeZone: string): string | undefined {
+  if (timeZone === '') return 'Time zone is required, like Europe/Berlin';
+  const problem = `"${timeZone.slice(0, 64)}" is not a time zone. Use an IANA name, like Europe/Berlin or UTC`;
+  if (timeZone.length > 64 || !IANA_ZONE_NAME.test(timeZone)) return problem;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return undefined;
+  } catch {
+    return problem;
+  }
+}
+
+/**
+ * The runtime's canonical name for a valid zone (`europe/berlin` → `Europe/Berlin`,
+ * `US/Pacific` → `America/Los_Angeles`), so equal zones compare equal. Returns anything else
+ * unchanged: check it with `timeZoneProblem` first.
+ */
+export function canonicalTimeZone(timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone }).resolvedOptions().timeZone;
+  } catch {
+    return timeZone;
+  }
 }
 
 export interface WorkflowStatusSeed {

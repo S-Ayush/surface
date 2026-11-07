@@ -129,6 +129,8 @@ A user can never act on something they cannot see.
 - [ ] Webhook payloads for private-team events are sent only if an Admin explicitly includes private teams (default: excluded).
 - [ ] An API key with `teamIds=[A]` cannot read team B through MCP `search_operations` examples or errors.
 
+**Accepted exception (SPEC-001 D2, 2026-11-07):** team keys are unique across the workspace (INV-03), so a non-member can learn that a private team's key is taken (`team.create` answers `CONFLICT`, `team.suggestKey` skips the key). Nothing else about the team: the answer never carries its name or id. Every other reference to a private team by a non-member is `NOT_FOUND`, worded exactly as for a team that doesn't exist (`server/test/team-ops-leak.int.test.ts`).
+
 ---
 
 ## 6. Purge & reference rules (INV-21)

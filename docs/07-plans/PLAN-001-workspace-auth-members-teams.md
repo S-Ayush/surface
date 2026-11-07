@@ -91,12 +91,78 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 - Web: Settings → Members (list, role menu, reset-link modal) and Settings → Workspace (name, logo).
 - **Tests:** AC-10 (last-admin guard), AC-14 (Members get `FORBIDDEN` from the API, and admin routes return not-found in the UI).
 
-### S8: Teams · L
+### S8: Teams · L · server half built 2026-11-07; web half pending (after PLAN-005 S4)
 - Ops `team.suggestKey`, `team.create` (key validation, reserved keys, seeds the workflow, adds the creator as a member; client-generated ID), `team.update`, `team.join`, `team.leave`, `team.addMember`, `team.removeMember` (destructive). All mutations have `optimistic` implementations.
 - The key-suggestion algorithm lives in `packages/domain` (shared, so the client suggests instantly while the user types).
 - Web: create-team modal, Settings → Teams (browse with join buttons), team General and Members settings, and the team ⋯ menu join/leave. The sidebar team list comes from PLAN-005 S4.
 - **Tests:** AC-11 (key rules and suggestions), AC-12 (create shows in another tab < 150 ms), AC-13 (membership changes live), E11, E12.
 - **Unblocks:** PLAN-002 S10 (inspector and UI hooks; its demo e2e is held, SPEC-002 D1).
+
+> **As built, server half (2026-11-07).** The web half (create-team modal, Settings → Teams, team General and Members, ⋯ join/leave) starts when session C's PLAN-005 S4 shell is on `main`. The slice is done, and gets its ✅, only then.
+> - **Versions:** no new packages.
+> - **Domain (`packages/domain`):**
+>   - `team-key.ts`: `suggestTeamKey(name, isTaken)` and `teamKeyCandidates(name)`. Initials of up to 3 words, or the first 3 letters of one word, A–Z only (accents dropped). On a collision or reserved key it grows from the name a letter at a time (`ENG` → `ENGI` → `ENGIN`; `MP` → `MPL` …), then tries the name's first letters. `undefined` when nothing fits (the user picks).
+>   - `team.ts`: `NEW_TEAM_SETTINGS` (equal to the `teams` column defaults; a server test keeps them so) and `canEndMembership(team, memberCount)` (E12, D3).
+>   - `workspace.ts`: `timeZoneProblem(zone)` accepts `UTC` or `Area/Location` names, in any case, that Intl knows. ICU also accepts legacy ids (`PST`, `EST5EDT`) and offsets, which are rejected; this was found while hand-checking, test first. `canonicalTimeZone(zone)` gives one spelling per zone (`europe/berlin` → `Europe/Berlin`). The reserved-key message no longer suggests a key it hasn't checked.
+> - **Operations (`packages/operations/src/ops/team.ts`):**
+>   - The ops: `team.suggestKey`, `team.create`, `team.update`, `team.join`, `team.leave`, `team.addMember`, `team.removeMember` (`destructive`).
+>   - Inputs: names are trimmed and keys trimmed and uppercased. Time zones are checked, then stored canonically. `team.create`'s `id` must be a UUIDv7 (SPEC-003 §8).
+>   - **Key rules live in the handler**, not the input schema, so a malformed, reserved or taken key each gets the next free suggestion for the name (E11, AC-11).
+>   - Permissions per permissions.md §3.2: `p.admin() || p.teamMember(team)` for settings and membership, `p.any()` to create, join or leave. **Leave is `p.any()`** (review), so a leave replayed after someone removed you succeeds, and leaving a team you're not in changes nothing.
+>   - The registry lists `team.leave` before `team.join`, so the examples leave the seed's actor a member of ENG.
+> - **Optimistic updates (SPEC-003 §8):**
+>   - `team.create` (given an `id` and a valid `key`) shows the team with `NEW_TEAM_SETTINGS` and the creator's time zone, and the creator's membership. It does not show the statuses: they are server-computed and not simulated, and the team's `defaultStatusId` is a placeholder (the team's own id) until the server row arrives.
+>   - `team.join` and `team.addMember` show the membership. `team.update` patches the given fields.
+>   - **`team.leave` and `team.removeMember` have no `optimistic`:** the store finds rows by id only, and a membership is named by team and user (handoff to session D). They show once the server answers.
+>   - Membership rows that only live in the overlay get a deterministic id (the XOR of team and user ids, stamped v8), so replays agree. These ids are never sent to the server; the server's row, with its own UUIDv7, replaces them.
+>   - **Review change:** the first build derived persisted status and membership ids from the team id, which contradicted domain-model §1 and SPEC-003 §8 (UUIDv7, server-computed rows not simulated). It was dropped by decision of the user. Every persisted id is a UUIDv7 again.
+> - **No `ui` metadata yet:** there is no icon registry; PLAN-001 S9 adds it with the command-menu titles. Adding `ui` to `team.leave` or `team.removeMember` needs `optimistic` (lint rule 3), so it waits for session D's store lookup.
+> - **Server (`apps/server/src/handlers/teams/`):** one file per op, plus `shared.ts`.
+>   - **Create:** `team.create` reads every key (private and archived teams included: keys are unique) and checks the key with `keyProblem`:
+>     - malformed or reserved keys: `INVALID_INPUT`;
+>     - taken keys: `CONFLICT`, including a concurrent create's `teams_key_idx` violation.
+>     
+>     Each answer carries the next suggestion (message and `hint`) and never names the team that has the key (D2). It then inserts the team with `NEW_TEAM_SETTINGS` (time zone defaulting to the creator's), seeds the workflow (`seed.ts`, random ids as in S1), emits `team.created`, and adds the creator.
+>   - **Membership changes** lock the team row `FOR NO KEY UPDATE` before reading, so concurrent joins or leaves serialize and stay idempotent (review: they had surfaced a primary-key conflict or an internal id). Join, add and remove change nothing when there is nothing to change.
+>   - A private team keeps its last member (`canEndMembership`; SPEC-001 E12 and D3).
+>   - `team.update` writes and reports only fields that differ (`team.updated` with `changes`). Membership changes emit `team.member_added` / `team.member_removed` with `data.userId`.
+> - **Spec and domain docs:**
+>   - SPEC-001 §6.2 (inputs, idempotency), E11 and E12, and new decisions **D2** (a private team's key existence is visible to non-members; the rule-4 exception, also recorded in permissions.md §5) and **D3** (a private team keeps its last member), both confirmed by the user.
+> - **Test fixtures (session A's files):** `test/seed.ts` (the examples' seed fixture) now holds the actor Ada (Admin, member of ENG), ENG with its workflow, and Iris. They are seeded once per database, so `registry-contract.int.test.ts` runs every team example through the real handlers.
+> - **Tests:**
+>   - `domain/src/team-key.test.ts` (9, AC-11 suggestions): the algorithm's cases, accents and symbols, reserved and taken keys, no suggestion. fast-check properties: only free, valid keys made of the name's letters, always the first free candidate.
+>   - `domain/src/team.test.ts` (7): `canEndMembership` (E12); time zones (IANA in any case, legacy ids and offsets rejected, canonical spelling).
+>   - `operations/src/ops/team.test.ts` (13): input trimming and canonical zones, UUIDv7 ids, `destructive`. Each optimistic update runs against a fake store whose rows must pass the shared client models: create shows the team and my membership but no statuses, is the same on replay, and predicts nothing without an id or a valid key; join adds once; add; update. Leave and remove have no prediction.
+>   - `server/test/team-handlers.test.ts` (8, AC-11, E11): `NEW_TEAM_SETTINGS` equals the column defaults; `keyProblem` for free, taken, malformed and reserved keys, each with the next suggestion and never the rejected key; unique-violation detection.
+>   - `server/test/team-ops-leak.int.test.ts` (8, **leak test, not held**):
+>     - A non-member Member *and* a non-member Admin call `team.update/join/leave/addMember/removeMember` on private SEC, by key and by id. Each answers exactly like an unknown team and writes nothing to `sync_log`.
+>     - `team.create` with key SEC says only that the key is taken (D2). `team.suggestKey` skips SEC.
+>     - A SEC member's update and add succeed (the control).
+>     - Mutation-checked: with SEC visible to the Member, and separately to the Admin, the 5 op tests fail.
+> - **Held criteria, checked by hand** (temporary tests against Postgres 17, not committed):
+>   - **Create:**
+>     - Without a key: suggested `DO`, the creator's time zone, `team.created` then `team.member_added`.
+>     - Bad keys: a taken key, a lowercase taken key, a malformed key and a reserved key each answered with the next suggestion; a name with no key gives `INVALID_INPUT`.
+>     - A duplicate id gives `CONFLICT`; a v4 id gives `INVALID_INPUT`.
+>     - Two concurrent creates with one key: one succeeds, the other gets the taken-key `CONFLICT`.
+>   - **Time zones:** `europe/berlin` is stored as `Europe/Berlin`; `PST` is rejected.
+>   - **Membership:**
+>     - 3 concurrent joins: all succeed, one row. Then 3 concurrent leaves: all succeed.
+>     - Leaving as a non-member succeeds and changes nothing.
+>     - The last member leaves a public team: the team stays, and another user joins.
+>     - The last member of SEC leaving or being removed gets `CONFLICT`; leaving works once someone else is added.
+>     - Removing a non-member changes nothing.
+>     - The system actor joining gets `FORBIDDEN`.
+>   - **Update:** a no-op update makes no write and no event; updates by a member and by a non-member Admin both succeed.
+>   - AC-12 and AC-13 (changes appearing live in other clients) stay held: they need the web client.
+> - **Verified:** see the session log row "review fixed" for the commands and counts.
+> - **Notes for later slices:**
+>   - **Web half (E, after PLAN-005 S4):**
+>     - The modal suggests a key with `suggestTeamKey(name, key => the store has it)` while the user types, and checks it with `teamKeyProblem`.
+>     - It dispatches `team.create` with a fresh UUIDv7 `id` and the `key`, so the team and my membership appear at once.
+>     - A `key` error carries the next suggestion in its message and `hint`; the client can compute it itself.
+>   - **S3 (auth, A):** `actor.memberOf` must be read per request; `team.update`, `addMember` and `removeMember` check it.
+>   - **M7 (private teams):** Admins can't see private teams yet (permissions.md §3.2 says "metadata only"). The leak test pins today's behaviour (`NOT_FOUND`). D3 should be revisited then.
 
 ### S9: Hardening & lint · S
 - Registry lint passes for every SPEC-001 op (AC-16): summaries, keywords, examples, and `ui` metadata for command-menu use ("Create team", "Invite member…", "Rename team…", "Join team…").
@@ -126,8 +192,11 @@ Additive tables only. A rollback before any release is a code revert. After a re
 | AC-8 | ⏸ held (e2e) `e2e/session-revoke.spec.ts` |
 | AC-9 | `server/test/password-hash.test.ts` |
 | AC-10 | `server/test/last-admin-guard.test.ts` (the guard's decision, unit) (+ `server/test/set-role.int.test.ts`, ⏸ held) |
-| AC-11 | `domain/test/team-key.test.ts` (+ `server/test/team-create.int.test.ts`, ⏸ held) |
+| AC-11 | `domain/src/team-key.test.ts` (suggestions), `server/test/team-handlers.test.ts` (malformed, reserved and taken keys, with the next suggestion) (+ `server/test/team-create.int.test.ts`, ⏸ held) |
 | AC-12, AC-13 | ⏸ held (e2e) `e2e/teams-realtime.spec.ts` |
+| E11 (S8) | `server/test/team-handlers.test.ts` (`keyProblem`), `server/test/team-ops-leak.int.test.ts` (a private team's key: taken, nothing more) |
+| E12 (S8) | `domain/src/team.test.ts` (`canEndMembership`) (+ the handler path, ⏸ held, checked by hand) |
+| Private-team leak (S8) | `server/test/team-ops-leak.int.test.ts` (not held: permissions.md §5) |
 | AC-14 | ⏸ held (integration + e2e) `server/test/admin-permissions.int.test.ts`, `e2e/admin-routes.spec.ts` |
 | AC-15 | ⏸ held (e2e) `e2e/profile-realtime.spec.ts` |
 | AC-16 | CI registry lint |
