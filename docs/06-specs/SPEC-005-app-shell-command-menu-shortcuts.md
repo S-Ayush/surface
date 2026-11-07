@@ -48,26 +48,31 @@ URL state: filters and display (M2) are encoded in query params. Overlay state (
 ## 4. Command menu engine
 
 ### 4.1 Command model
+> **Changed 2026-11-07 (PLAN-005 S6):** `CommandContext.target` replaces `focused` and `selection`; `appliesTo` is added next to `when`; `title` is a string until context-dependent titles are needed (M1); `icon` arrives with the M1 commands that show one; the permission pre-check leaves input-dependent checks to the server; Suggested is defined in §4.2.
+
 ```ts
 type Command = {
   id: string;                         // "op:team.create" | "nav:my-issues" | "toggle:theme"
-  title: string | ((ctx) => string);  // "Set priority for 3 issues…"
-  section: "suggested" | "navigation" | "create" | "settings" | "help";
-  icon?: IconName; keywords?: string[]; shortcut?: string[];
+  title: string;                      // "Change team color…"
+  section: "navigation" | "create" | "settings" | "help"; // home section; Suggested is computed
+  icon?: IconName;                    // M1: not shown in M0
+  keywords?: string[]; shortcuts?: (string | string[])[];
   when?: (ctx: CommandContext) => boolean;            // context + permission filter
+  appliesTo?: (ctx: CommandContext) => boolean;       // acts on the target: Suggested, ×2 (§4.2)
   run?: (ctx) => void | Promise<void>;                 // leaf command
   page?: (ctx) => CommandPage;                         // nested page (picker)
 };
 ```
-- **Operation commands** are generated from registry entries with `ui` metadata. `when` combines the `ui.contexts` match with a client-side permission pre-check (the same predicate helpers, evaluated on the local store).
+- **Operation commands** are generated from registry entries with `ui` metadata, except `internal` and `deprecated` ones. `when` combines the `ui.contexts` match with a client-side permission pre-check (the same predicate helpers, bound to the actor; a predicate that throws because it needs the operation's input does not hide the command, as the server decides). `appliesTo` is the `ui.contexts` match on the target.
 - **Navigation commands** are generated from the route table plus the live store (one "Go to {team}" per team).
-- `CommandContext` = `{ route, focused, selection, actor, store }`, maintained by the shell (§6).
+- `CommandContext` = `{ route, target, actor, store, navigate?, teams }`, maintained by the shell (§6). `target` merges the focused entity and the selection: `{ kind: "global" }` or `{ kind: "team" | "issue" | "issues" | "project", ids, label }`, where `label` is the context chip text ("ENG", "3 selected issues"). Navigation commands are hidden while `navigate` is absent.
+- Titles that depend on the context ("Set priority for 3 issues…") arrive with the commands that need them (M1); until then `title` is a string.
 
 ### 4.2 Ranking
-`score = fuzzy(query, title + keywords) × (appliesToContext ? 2 : 1) × frecencyBoost`. Frecency is stored per user in `localStorage` (a convenience only). With an empty query: Suggested (context) first, then Navigation.
+`score = fuzzy(query, title + keywords) × (appliesToContext ? 2 : 1) × frecencyBoost`. Frecency is stored per user in `localStorage` (a convenience only). With an empty query: Suggested (context) first, then Navigation. Suggested holds the commands whose `appliesTo` is true: on a team page the team commands, with no target the global ones (AC-3). Section placement takes precedence over the score, and every command in Suggested has the ×2, so in M0 the boost changes no order; it is kept for the M2 search sections, where context results compete with search results (noted 2026-11-07, PLAN-005 S6).
 
 ### 4.3 Behaviour
-As specified in [command-menu.md](../05-design/command-menu.md) §3–4. In M0: the identifier fast path is wired up but stays inactive until issues exist (M1).
+As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The identifier fast path is built in M1 with issues (changed 2026-11-07, PLAN-005 S6: nothing to open in M0, so it is not wired up early).
 
 ## 5. Shortcut engine
 
@@ -140,7 +145,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. In M0: 
 | AC | Criterion | Test |
 |---|---|---|
 | AC-1 | **Keyboard-only M0 demo:** log in → `Mod+K` → "Create team" → fill and submit → `O T` opens the new team → `?` lists shortcuts → `Alt+Shift+T` toggles the theme, all without a mouse. | e2e |
-| AC-2 | Every M0 operation with `ui` metadata appears in the command menu for permitted users only. Admin-only commands never appear for Members. | e2e |
+| AC-2 | Every M0 operation with `ui` metadata appears in the command menu for permitted users only. Admin-only commands never appear for Members. (The pre-check runs without the operation's input: a predicate must check the role before reading input, or the input-dependent part is left to the server; noted 2026-11-07, PLAN-005 S6.) | e2e |
 | AC-3 | Context: with a team page open, team-context commands rank in Suggested. Without a context, they don't appear in Suggested. | e2e |
 | AC-4 | Nested pages: "Change team color…" opens the palette page. `Backspace` returns. `Enter` applies and closes. | e2e |
 | AC-5 | Single-letter shortcuts never fire while typing in an input, textarea, or contenteditable. `Mod+K` and `Esc` do. | e2e |

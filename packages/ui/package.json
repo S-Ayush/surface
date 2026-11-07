@@ -33,6 +33,7 @@
     "@storybook/addon-vitest": "^10.6.6",
     "@storybook/react-vite": "^10.6.6",
     "@surface/config": "workspace:*",
+    "@surface/domain": "workspace:*",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

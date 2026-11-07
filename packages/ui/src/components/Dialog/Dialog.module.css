@@ -47,6 +47,12 @@
   max-width: var(--dialog-lg);
 }
 
+.command {
+  max-width: var(--command-menu-width);
+  max-height: 60vh;
+  overflow: hidden;
+}
+
 .header {
   /* Room for the close button, which is positioned over the header's end. */
   padding: var(--space-16) var(--space-48) var(--space-8) var(--space-20);

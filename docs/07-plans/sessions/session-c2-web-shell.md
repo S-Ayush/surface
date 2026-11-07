@@ -28,9 +28,10 @@ Read [PLAN-005](../PLAN-005-app-shell-command-menu-shortcuts.md) S4–S8, [SPEC-
 3. **PLAN-005 S4: shell layout and routing.**
    - Starts when session A's PLAN-001 S3 (auth) and session E's PLAN-001 S1 (models) are on `main`.
    - Route guards: setup, auth, store-ready, admin.
+   - Register `PRODUCTION_MODELS` (`@surface/domain/model`) in the web client's store, so its schema hash matches the server's (session E handoff).
 4. **PLAN-005 S7: preferences, banners, screen restyle.**
    - Needs session D's PLAN-002 S10 UI hooks (`useConnectionState`, `usePendingCount`, `onRejected`, `onOutdated`).
-   - Needs the `users.preferences` column from E's S1.
+   - Needs the `UserPreferences` model from E's PLAN-001 S1 (on `main`): its own row, id = the user's id, `values` json, synced to `user:<id>`. `user.updatePreferences` shapes `values` (session E handoff).
    - You own the `user.updatePreferences` operation and its handler.
 5. **PLAN-005 S8: accessibility and polish.**
    - The keyboard-only demo e2e is held: run the demo by hand and record it in "As built".
@@ -53,7 +54,7 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 
 - `apps/server/**`, except your preferences handler
 - `packages/sync-client/**` and `packages/sync-protocol/**`: you consume D's hooks; ask D for changes
-- Migrations: ask session E for the preferences column
+- Migrations: ask session E (preferences need none: the `UserPreferences` model already exists)
 - `CLAUDE.md`, `.claude/**`
 
 ## Notes
@@ -66,6 +67,7 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 
 | To | Request | Why / blocking? | Status |
 |---|---|---|---|
+| E | When an operation gets `ui` metadata, add how the command menu runs it: `apps/web/src/features/<feature>/commands.ts` exporting a `Record<string, OperationCommand>` (`{ opens: '<command id>' }` for a form, `{ run }` or `{ page }` otherwise, plus `refs` for team-scoped permissions), and one spread line in `apps/web/src/features/commands.ts` (shared, append-only). `test/command-operations.test.ts` in `apps/web` fails until every `ui` operation has an entry. | Not blocking; the test points at what is missing. | open |
 
 ## Log (append-only)
 
@@ -75,6 +77,9 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 | 2026-11-07 | PLAN-005 S5 | p005-s5-shortcuts | built | Shortcut engine, registry, conflict check, `?` help, command handler registry (`apps/web/src/{shortcuts,commands,theme}`). SPEC-005 §5 gains "overlay capture" and E3 is refined (Alt/Ctrl letters by `event.code`, non-Latin fallback); shortcuts.md rules 2 and 5 and an `F8` row updated. `pnpm check` green (web 97 tests); checked by hand in Chromium. Waiting for /review and /commit. |
 | 2026-11-07 | PLAN-005 S5 review | p005-s5-shortcuts | fixed | slice-reviewer: 0 blockers, 2 majors, 6 minor, 3 nits; all fixed. M1: the second key of a sequence now passes the typing and overlay gate. M2: command handlers have explicit levels (`app` < `page` < `overlay`) instead of mount order. Minor: last-word help search, `Alt+<symbol>` rejected and `Mod+,` without Option, override direction checked, editor/page scopes overlap, `Mod+Enter` uses the focused form and respects a disabled or busy submit button, hint and `inBuild` tests. Nits: Zod comment, SPEC E3 "outside A–Z", stable `bindings` note. Each fix mutation-checked. Rebased onto `db3128c`; `pnpm check` green (web 112 tests); real page rechecked in Chromium. |
 | 2026-11-07 | Zod jitless + PLAN-005 S5 | main | merged | Rebased onto `db3128c` (no-op). `pnpm install`, `pnpm check` (web 112 tests) green; `pnpm test:int` 179 + 2 of 3 perf passed: `sync-lock.perf` (p95 < 2 ms) failed once under load (load average about 4, other sessions running) and passed on two re-runs; server code untouched by this branch. `main` is checked out in the primary worktree, so it was fast-forwarded there with `git merge --ff-only` instead of `git fetch . HEAD:main`; main at `7ddc5d1`. Next: PLAN-005 S6. |
+| 2026-11-07 | PLAN-005 S6 | p005-s6-command-menu | built | Command menu (`apps/web/src/command-menu/`): operation, navigation and app sources, fuzzy × context × frecency ranking, nested pages, `Mod+Enter`, ARIA combobox, virtualisation above 50 rows. `packages/ui`: `Dialog variant="command"`, `VisuallyHidden`, `command-menu-width` token. `mobx` added to `apps/web` (single 7.1.5 copy). SPEC-005 §4.1–4.2 updated (`target` replaces `focused`/`selection`, `appliesTo`, Suggested semantics). `pnpm check` green (web 145 tests); checked by hand in Chromium, including 305 commands (filter < 1 ms, open < 3 ms). **For E:** append `OPERATION_COMMANDS` entries for ops with `ui` metadata. **For S4:** pass `actor`, `store`, `navigate`, `teams`, `route` to `<CommandMenuProvider>`. Rebased onto `acf0fa1`; session E's handoff picked up: `packages/ui/test/label-hues.test.ts` keeps `LABEL_HUES` equal to `COLOR_HUES` (`@surface/domain` added to ui as a dev dependency), the `UserPreferences` model replaces the preferences column in the S4/S7 notes, and S4 registers `PRODUCTION_MODELS`. Waiting for /review and /commit. |
+| 2026-11-07 | PLAN-005 S6 review | p005-s6-command-menu | fixed | slice-reviewer: 0 blockers, 5 majors, 11 minors, 7 nits; all fixed except two nits (`aria-expanded` kept; the reaction's second ranking run kept, as timing only the render run would call `performance.now()` during render) and the Storybook/visual minor (deferred, recorded as a gap). M1 a click runs the clicked row; M2 IME keys ignored; M4 commands run from `Dialog` `onClosed` after focus restore (new `packages/ui` prop); M5 run logic is a pure `execute` with tests; M3 operation commands move to the shared `apps/web/src/features/commands.ts` (sessions README §7 list extended; handoff to E). Docs: SPEC-005 §4.1 dated note, §4.3 and AC-2 notes; command-menu.md §4–5. Each fix mutation-checked (13 mutants killed). `pnpm check` green (web 163 tests); real page rechecked in Chromium. |
+| 2026-11-07 | PLAN-005 S6 second review | p005-s6-command-menu | fixed | slice-reviewer: 0 blockers, 1 major, 4 minors, 5 nits; all fixed, plus one gap recorded (no DOM test for `Dialog` `onClosed` ordering). Major: `useCommandContext` precedence by level (`page` < `focus` < `selection`), relabels in place. Minors: `checkOperationCommands` (refs, bound shortcut, offered to a fully permitted user) replaces the names-only coverage test; unbound `ui.shortcut` hints hidden; "No results" outside the listbox; frecency cap tested. Nits: SPEC §4.2 boost note, `track` closes the render-to-subscribe gap, frecency tabs comment, command-menu.md fast path M1. Rebased onto `08f2ccd`. Mutation-checked (7 mutants killed). |
 
 ## Prompt
 

@@ -7,6 +7,7 @@ export { THEME_BOOTSTRAP_SCRIPT } from './theme-bootstrap.js';
 export { PlatformProvider, detectPlatform, usePlatform } from './platform.js';
 export type { Platform } from './platform.js';
 export { ariaKeyShortcuts, keyLabels, parseChord, spokenShortcut } from './keys.js';
+export { VisuallyHidden } from './visually-hidden.js';
 
 export { Avatar, AvatarGroup, avatarHue, initials } from './components/Avatar/Avatar.js';
 export type { AvatarGroupProps, AvatarProps, AvatarSize } from './components/Avatar/Avatar.js';

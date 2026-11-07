@@ -66,6 +66,7 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 - **Sidebar M0 content** (SPEC-005 §7), live from the store: user's teams with expandable sections, "Browse teams", Settings, and the avatar menu (Profile, Theme, Keyboard shortcuts, Log out).
 - **Pages:** team home placeholder, My Issues empty state, not-found, a Settings layout hosting the PLAN-001 screens.
 - `ShellStore`: focus/selection context API for pages (`useCommandContext(ctx)`), sidebar width and collapse persisted in `localStorage`.
+- The web client's store registers `PRODUCTION_MODELS` (`@surface/domain/model`), so its schema hash matches the server's (session E handoff, PLAN-001 S1).
 - **Tests:** AC-15 (guards), AC-16 (375 px drawer), E5 (lost team access → redirect and toast).
 
 ### S5: Shortcut engine & help overlay · M · ✅ Done 2026-11-07
@@ -132,7 +133,7 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 >   - Give focusable regions `data-shortcut-scope`, and call `usePageScope` for page scopes.
 >   - S6's command model should reuse `COMMANDS` ids and `CommandRegistry.isAvailable` for `when`. `when` takes no context yet; S6 adds `CommandContext`.
 
-### S6: Command menu · L
+### S6: Command menu · L · ✅ Done 2026-11-07
 - `apps/web/src/command-menu/`: the Command model (SPEC-005 §4.1). **Sources:** registry operations with `ui` metadata (via `when` = context match plus a client-side permission pre-check using the shared predicate helpers on the store), navigation (route table plus live teams), and toggles.
 - Ranking: a fuzzy matcher (in-house or a small library) × context boost × frecency (`localStorage`).
 - **UI:** context chip, sections, nested pages using the shared Property-picker list, breadcrumb, footer hints, `Mod+Enter` run-and-keep-open, virtualisation over 50 items.
@@ -140,6 +141,38 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 - Running a command calls `dispatch(op, input)` or opens the relevant UI. Errors go to a toast.
 - **Perf marks:** open < 50 ms, and filter < 16 ms per keystroke with 300 synthetic commands (AC-9).
 - **Tests:** AC-2 (permission filtering with a Member versus an Admin), AC-3 (context ranking), AC-4 (nested page: "Change team color…"), E4 (live permission change).
+
+> **As built:** one new dependency in `apps/web`: `mobx` (^7.1.5), already in the workspace through `sync-client` and resolved to a single copy (7.1.5), so a `reaction` in the menu tracks the store's observables (E4). Fuzzy matching, frecency and virtualisation are in-house.
+> - **Structure:** `apps/web/src/command-menu/`:
+>   - `model.ts`: `Command`, `CommandContext`, `CommandTarget`, `CommandPage`, `SECTIONS`;
+>   - `fuzzy.ts`, `frecency.ts` and `ranking.ts`: the §4.2 score;
+>   - `state.ts`: a pure reducer and `keyToAction` (arrows, `Ctrl+N`/`Ctrl+P`, `Tab` per section, `Enter`, `Mod+Enter`, `Backspace`);
+>   - `reactive.ts`: `watch` and `useReactive`, a MobX `reaction` that re-ranks when anything read by `when` changes (the reaction runs the ranking once more when it subscribes, to learn its reads; the `command-menu:filter` measure records whichever run came last, the same work either way);
+>   - `context.ts`: `TargetStore`, `useCommandContext(target, level?)` and `useCurrentTarget()`. Precedence is by level (`page` < `focus` < `selection`), the newest winning only within a level, as for command handlers; a changed label updates the entry in place;
+>   - `pages.ts`: `colorPage` (the 12 label hues);
+>   - `sources/`: `operations.ts`, `navigation.ts`, `app.ts`, `shortcuts.ts`;
+>   - `CommandMenu.tsx`: the view; `CommandMenuProvider.tsx`: mounts it inside `<ShortcutProvider>` and registers `ui:command-menu` (`Mod+K` toggles) and `nav:open-team` (`O T` opens on the teams page).
+>
+>   In `packages/ui`: `Dialog` gains `variant="command"` (title and description visually hidden, no header or close button; width from the new `command-menu-width` token, 640 px), and `VisuallyHidden` is exported.
+> - **Deviations, recorded in SPEC-005 §4.1–4.2:**
+>   - `CommandContext` is `{ route, target, actor, store, navigate?, teams }`. `target` merges the spec's `focused` and `selection` and carries the chip label.
+>   - `Command` has `appliesTo` next to `when`. `when` decides whether the command is offered (context match and permission); `appliesTo` decides Suggested and the ×2 boost. With no target, Suggested holds the global commands.
+>   - `title` is a string for now; context-dependent titles arrive with the M1 commands that need them.
+>   - The permission pre-check runs the operation's predicates bound to the actor, with the references from the command's `refs(ctx)` and no input. A predicate that throws because it needs the input does not hide the command: the server decides.
+> - **Operation commands** are the registry operations with `ui` metadata that are not `internal` or `deprecated` and have an entry in `OPERATION_COMMANDS` (`apps/web/src/features/commands.ts`, a shared append-only file since the review: each feature keeps its entries in `features/<feature>/commands.ts` and adds one spread line, sessions README §7). An entry gives exactly one of `run(ctx, op)`, `page(ctx, op)` or `opens: CommandId` (a form registered with `useCommand`; hidden until registered), and optionally `section` and `refs`. `checkOperationCommands` (run by a unit test on the real registry) reports an operation with `ui` and no entry, an entry naming no operation, an entity-scoped entry without `refs`, a `ui.shortcut` no binding uses, and an entry not offered in its first context to a user every permission allows. Operation shortcut hints show only keys the shortcut registry binds in this build. The map is empty in M0 because no operation with `ui` metadata is on `main` yet.
+> - **Running:** `state.ts` `execute(row, keepOpen, ctx)` decides what an option does (run, open its page, or report a page that cannot be built), and the view applies it. A click runs the clicked row (`optionHandlers`), a key the selected one. `Enter` closes the menu and the command runs from the dialog's new `onClosed` (`Dialog` in `packages/ui`, called from Radix `onCloseAutoFocus` after focus is restored), so a dialog it opens returns focus to where it was, and focus it moves is not taken back. `Mod+Enter` runs it and keeps the menu open; an error then shows inline (`role="alert"`), while after `Enter` it goes to a toast. Each run is recorded for frecency (per user, `localStorage` key `surface.commandFrecency.<userId>`, `anonymous` before sign-in, validated with Zod, at most 200 entries).
+> - **ARIA:** combobox input with `aria-activedescendant` and `aria-controls`, a listbox of options with `aria-setsize`/`aria-posinset` (so they stay correct when virtualised) and `aria-keyshortcuts`, a visually hidden results count (`role="status"`). Section headers are `role="presentation"` and hidden; each option names its section through `aria-describedby` (pointing at hidden labels outside the virtualised list). The selection follows the row the user pointed at (by id), so rows coming or going above it do not move it. The menu ignores keys while an IME composes (`isComposing`, `keyCode` 229), a held `Backspace` never closes a page or drops the chip, and `Ctrl+N`/`Ctrl+P` move only on macOS (command-menu.md §4 updated). Above 50 rows only the rows in view plus 8 either side are rendered (`visibleRange`).
+> - **Tests (unit):** `command-ranking.test.ts` (AC-3, ranking, fuzzy), `command-operations.test.ts` (AC-2 unit part with fixture operations for Admin and Member, the `OPERATION_COMMANDS` coverage check, E4 through a MobX observable), `command-menu-state.test.ts` (keyboard table, IME and repeat, selection by id, `execute` and click handlers, AC-4 unit part with "Change team color…" including Enter applying it, E4 on an open page, `visibleRange`), `command-sources.test.ts`, `command-frecency.test.ts`, `commands-registry.test.ts` (`invoke`, handlers observed by an open menu), `command-target.test.ts` (target precedence by level, in-place relabels). A predicate that throws on the empty input is covered by a fixture (`team.archiveMany`). AC-2 and AC-4 e2e and the AC-9 perf test are ⏸ held.
+> - **Checked by hand in Chromium** (dev server, Playwright script, not committed):
+>   - `Mod+K` opens with focus in the input; arrows move `aria-activedescendant`; typing filters and highlights; `Enter` runs and closes with focus restored; `Mod+Enter` runs and stays open; `Mod+K` closes; "No results"; `O T` without navigation says "Open team… isn't available here".
+>   - After the review fixes: with focus on `<main>`, `Enter` on "Keyboard shortcuts" opens help with focus inside it, and closing help returns focus to `<main>`; hovering "Toggle light and dark theme", pressing `ArrowDown` and clicking without moving runs the theme toggle (not help); options are described by their section ("Settings"). No console problems.
+>   - With 300 synthetic teams passed in temporarily (305 commands): 17 options rendered at first and 26 after 120 × `ArrowDown`, the active option in the DOM with `aria-posinset` 121 of 305; filter 0.1–0.7 ms per keystroke; open 1.7–2.3 ms (AC-9 budgets: 16 ms and 50 ms). `O T` opens the teams page, typing and `Enter` navigates, `Backspace` returns from a page. No console errors or warnings.
+> - **For S4 and session E:**
+>   - S4 passes `actor`, `store`, `navigate`, `teams` (live, sidebar order) and `route` to `<CommandMenuProvider>`; navigation commands and `O T` stay hidden until `navigate` is passed. Pages call `useCommandContext(target)` to set the context chip (a team page: `{ kind: 'team', ids: [id], label: key }`); a focused component passes `'focus'` and a selection `'selection'`, so a nested view wins over its layout whatever the mount order.
+>   - Session E adds entries in `features/<feature>/commands.ts` and one line in `features/commands.ts` per feature (for `team.create`, `opens` the create-team dialog's command; handoff in session-c2). The coverage test points at any that are missing. Permission predicates should check the role before reading input (SPEC-005 AC-2 note).
+> - **Review (slice-reviewer, 0 blockers, 5 majors, 11 minors, 7 nits), fixed:** a click ran the selected row instead of the clicked one; Enter confirming an IME composition ran a command; the command ran before Radix restored focus; the run logic had no tests; session E could not edit the operation-commands map (moved to the shared `features/commands.ts`). Minors: selection by id, held Backspace, `Ctrl+N` outside macOS, guarded `appliesTo`/sources/page items, E4 on an open page (it closes with "… isn't available anymore."), the throwing-predicate fixture, code-point highlight indices, docs (SPEC dated note, `icon` M1, identifier fast path M1, AC-2 note), section names announced, app commands observed while open (`CommandRegistry` has a MobX revision and `invoke`). Nits: frecency keyed on the user only, `appliesTo` from `ui.contexts`, `opens` errors inline after `Mod+Enter`, scroll maths include the list padding, hue dots as an inline `var(--label-<hue>)`. Not changed: `aria-expanded` stays `true` (the listbox is always shown); the double ranking run per input change and its measure (timing the render-time run alone needs `performance.now()` during render, which the React Compiler lint rejects; the second run is the same < 1 ms of work).
+> - **Second review (0 blockers, 1 major, 4 minors, 5 nits), fixed:** the command target let the newest registration win, so a layout beat the view inside it on a reload (now levels, like command handlers, with in-place relabels); the entry check above replaces a names-only test; unbound operation shortcuts are no longer shown; "No results" moved out of the listbox; tests for the 200-entry frecency cap. Nits: SPEC §4.2 says Suggested takes precedence over the ×2; a store change between render and subscription refreshes the menu (`track`); a comment on tabs overwriting each other's frecency; command-menu.md marks the identifier fast path M1; rebased onto `08f2ccd`.
+> - **Gaps:** no automated check that `Dialog`'s `onClosed` runs after focus is restored (needs a DOM test environment, which `apps/web` and `packages/ui` don't have; traced in Radix 1.3.1 and checked by hand in Chromium). No Storybook story or visual snapshot for `Dialog variant="command"` (Storybook and visual tests deferred by the user; a new story without its snapshot would fail `pnpm test:visual`), so add both when those tests resume. Nested pages use the menu's own list, not a shared Property-picker list: none exists yet. The Property picker (M1) should reuse `CommandPage`/`PageItem` or replace both.
 
 ### S7: Preferences, banners & screen restyle · M
 - Op `user.updatePreferences` (theme, density, font size, home view; `optimistic`; `user:<id>` group). The theme applies live, including the "system" listener (E7, AC-10).
@@ -158,7 +191,7 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 `packages/ui/{tokens,src,icons}/*`, `packages/ui/.storybook/*`, `apps/web/src/{app,routes,shell,shortcuts,command-menu,preferences}/*`, `packages/operations/user/updatePreferences.ts` and its handler, `e2e/shell-*.spec.ts`, `e2e/visual/*`, CI (Storybook build, visual, axe).
 
 ## 3. Migration & rollback
-`users.preferences jsonb` (or a separate `user_preferences` table), added in the S7 migration. Additive.
+None. Preferences are the `UserPreferences` model added by PLAN-001 S1 (its own row, id = the user's id, `values` json, synced to `user:<id>`); S7 only shapes `values` in `user.updatePreferences`.
 
 ## 4. Test plan (AC → test)
 
@@ -167,13 +200,13 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 | AC | Test |
 |---|---|
 | AC-1 | ⏸ held (e2e) `e2e/m0-keyboard-demo.spec.ts` (demo run by hand) |
-| AC-2 | ⏸ held (e2e) `e2e/command-menu-permissions.spec.ts` |
+| AC-2 | `web/test/command-operations.test.ts` (unit part) + ⏸ held (e2e) `e2e/command-menu-permissions.spec.ts` |
 | AC-3 | `web/test/command-ranking.test.ts` (+ e2e, ⏸ held) |
-| AC-4 | ⏸ held (e2e) `e2e/command-menu-nested.spec.ts` |
+| AC-4 | `web/test/command-menu-state.test.ts` (unit part) + ⏸ held (e2e) `e2e/command-menu-nested.spec.ts` |
 | AC-5, AC-6 | `web/test/shortcuts-engine.test.ts` (+ `e2e/shortcuts.spec.ts`, ⏸ held) |
 | AC-7 | `web/test/shortcuts-conflicts.test.ts` (CI) |
 | AC-8 | `web/test/shortcut-help.test.tsx` |
-| AC-9 | ⏸ held (perf) `e2e/perf/command-menu.perf.ts` |
+| AC-9 | ⏸ held (perf) `e2e/perf/command-menu.perf.ts` (checked by hand in S6) |
 | AC-10 | ⏸ held (e2e) `e2e/preferences-sync.spec.ts` |
 | AC-11 | `pnpm test:tokens` + Stylelint |
 | AC-12 | `pnpm test:storybook` (addon-vitest + addon-a11y, both themes) (+ `e2e/a11y.spec.ts`, ⏸ held) |

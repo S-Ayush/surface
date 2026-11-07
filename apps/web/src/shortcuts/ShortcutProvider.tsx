@@ -122,6 +122,11 @@ export function useCommand(
   useCommandHandler(useShortcutContext().commands, id, run, options);
 }
 
+/** The app's command handlers, for code that lists or runs commands (the command menu). */
+export function useCommandRegistry(): CommandRegistry {
+  return useShortcutContext().commands;
+}
+
 /** Activates a page scope (shortcuts.md §2: `inbox`, `triage`) while the page is mounted. */
 export function usePageScope(scope: Scope): void {
   const { scopes } = useShortcutContext();

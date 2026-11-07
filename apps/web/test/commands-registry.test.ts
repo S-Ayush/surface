@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { watch } from '../src/command-menu/reactive.js';
 import { CommandRegistry } from '../src/commands/registry.js';
 import { ScopeStack } from '../src/shortcuts/ShortcutProvider.js';
 
@@ -63,6 +64,26 @@ describe('CommandRegistry', () => {
     registry.run('nav:settings');
     registry.run('toggle:theme');
     await vi.waitFor(() => expect(errors).toHaveLength(2));
+  });
+});
+
+describe('CommandRegistry for the command menu', () => {
+  it('invoke returns the handler’s result, so the menu reports its failure', async () => {
+    const registry = new CommandRegistry(() => undefined);
+    registry.register('toggle:theme', { run: () => Promise.reject(new Error('nope')) });
+    await expect(registry.invoke('toggle:theme')).rejects.toThrow('nope');
+    expect(() => registry.invoke('help:shortcuts')).toThrow('not available');
+  });
+
+  it('tells an open menu when a handler comes or goes', () => {
+    const registry = new CommandRegistry(() => undefined);
+    const changed = vi.fn();
+    const stop = watch(() => registry.isAvailable('toggle:theme'), changed);
+    const unregister = registry.register('toggle:theme', { run: vi.fn() });
+    expect(changed).toHaveBeenCalledTimes(1);
+    unregister();
+    expect(changed).toHaveBeenCalledTimes(2);
+    stop();
   });
 });
 

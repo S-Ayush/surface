@@ -2,6 +2,7 @@
 // it is mounted. Precedence is explicit, not mount order: React runs a child's effects before its
 // parent's, so "newest wins" would let the shell beat a page on a deep-link load and lose to it
 // after in-app navigation. The highest level wins; within a level, the newest registration.
+import { observable, runInAction } from 'mobx';
 import { useEffect, useRef } from 'react';
 import type { CommandId } from './catalog.js';
 
@@ -21,6 +22,11 @@ export class CommandRegistry {
   readonly #handlers = new Map<CommandId, Entry[]>();
   readonly #onError: (error: unknown) => void;
   #order = 0;
+  /**
+   * Bumped on every registration change. `isAvailable` reads it, so a MobX reaction (the open
+   * command menu) sees a handler come or go.
+   */
+  readonly #revision = observable.box(0);
 
   constructor(onError: (error: unknown) => void) {
     this.#onError = onError;
@@ -29,15 +35,22 @@ export class CommandRegistry {
   register(id: CommandId, handler: CommandHandler, level: CommandLevel = 'app'): () => void {
     const entry: Entry = { handler, rank: COMMAND_LEVELS.indexOf(level), order: ++this.#order };
     this.#handlers.set(id, [...(this.#handlers.get(id) ?? []), entry]);
+    this.#changed();
     return () => {
       this.#handlers.set(
         id,
         (this.#handlers.get(id) ?? []).filter((other) => other !== entry),
       );
+      this.#changed();
     };
   }
 
+  #changed(): void {
+    runInAction(() => this.#revision.set(this.#revision.get() + 1));
+  }
+
   #handler(id: CommandId): CommandHandler | undefined {
+    this.#revision.get();
     let best: Entry | undefined;
     for (const entry of this.#handlers.get(id) ?? []) {
       if (
@@ -54,6 +67,18 @@ export class CommandRegistry {
   isAvailable(id: CommandId): boolean {
     const handler = this.#handler(id);
     return handler !== undefined && (handler.when?.() ?? true);
+  }
+
+  /**
+   * Runs the command's handler and returns its result, so the caller handles failures (the command
+   * menu shows them inline after Mod+Enter). Throws if the command is not available.
+   */
+  invoke(id: CommandId): void | Promise<void> {
+    const handler = this.#handler(id);
+    if (handler === undefined || !(handler.when?.() ?? true)) {
+      throw new Error(`Command ${id} is not available`);
+    }
+    return handler.run();
   }
 
   /** Runs the command if it is available. Failures go to `onError` (a toast in the app). */

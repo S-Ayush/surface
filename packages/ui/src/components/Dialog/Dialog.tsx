@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { AlertDialog as RadixAlertDialog, Dialog as RadixDialog } from 'radix-ui';
+import { AlertDialog as RadixAlertDialog, Dialog as RadixDialog, VisuallyHidden } from 'radix-ui';
 import { useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { cx } from '../../internal/cx.js';
 import { useModalLayer } from '../../overlays/layer.js';
@@ -26,6 +26,17 @@ export type DialogProps = {
   trigger?: ReactElement;
   /** Right-aligned actions, e.g. Cancel (<DialogClose>) and the primary button. */
   footer?: ReactNode;
+  /**
+   * `command`: the command menu's frame (command-menu.md §1). 640 px, no header, close button or
+   * padding: the title is only announced, and the content lays itself out. `Esc` still closes it.
+   */
+  variant?: 'default' | 'command';
+  /**
+   * Called once the dialog has closed and focus has been restored, after Radix's own deferred
+   * focus handling. Work that moves focus or opens another overlay belongs here, not in the
+   * close handler, or focus restoration would undo it.
+   */
+  onClosed?: () => void;
   children?: ReactNode;
 };
 
@@ -39,12 +50,18 @@ export function Dialog({
   dirty = false,
   trigger,
   footer,
+  variant = 'default',
+  onClosed,
   children,
 }: DialogProps) {
   const [confirming, setConfirming] = useState(false);
   // Closed by its owner while asking (e.g. the issue was deleted elsewhere): drop the question too.
   if (!open && confirming) setConfirming(false);
   const layer = useModalLayer(open);
+  const onCloseAutoFocus = (event: Event) => {
+    layer.onCloseAutoFocus(event);
+    onClosed?.();
+  };
 
   // Every way of closing goes through Radix onOpenChange, so this one guard covers them all.
   const requestOpenChange = (next: boolean) => {
@@ -57,28 +74,44 @@ export function Dialog({
       {trigger !== undefined && <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger>}
       <RadixDialog.Portal>
         <RadixDialog.Overlay className={styles.backdrop} />
-        <RadixDialog.Content
-          className={cx(styles.content, styles[size])}
-          onCloseAutoFocus={layer.onCloseAutoFocus}
-          // Without a description, opt out explicitly so Radix does not point at a missing element.
-          {...(description === undefined ? { 'aria-describedby': undefined } : {})}
-        >
-          <div className={styles.header}>
-            <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
-          </div>
-          {description !== undefined && (
-            <RadixDialog.Description className={styles.description}>
-              {description}
-            </RadixDialog.Description>
-          )}
-          {children !== undefined && <div className={styles.body}>{children}</div>}
-          {footer !== undefined && <div className={styles.footer}>{footer}</div>}
-          {/* Last in the DOM (shown top-right): Radix focuses the first focusable element on open,
-              which should be the first field, not "Close". */}
-          <RadixDialog.Close asChild>
-            <IconButton aria-label="Close" icon={<X />} size="sm" className={styles.close} />
-          </RadixDialog.Close>
-        </RadixDialog.Content>
+        {variant === 'command' ? (
+          <RadixDialog.Content
+            className={cx(styles.content, styles.command)}
+            onCloseAutoFocus={onCloseAutoFocus}
+            {...(description === undefined ? { 'aria-describedby': undefined } : {})}
+          >
+            <VisuallyHidden.Root>
+              <RadixDialog.Title>{title}</RadixDialog.Title>
+              {description !== undefined && (
+                <RadixDialog.Description>{description}</RadixDialog.Description>
+              )}
+            </VisuallyHidden.Root>
+            {children}
+          </RadixDialog.Content>
+        ) : (
+          <RadixDialog.Content
+            className={cx(styles.content, styles[size])}
+            onCloseAutoFocus={onCloseAutoFocus}
+            // Without a description, opt out explicitly so Radix does not point at a missing element.
+            {...(description === undefined ? { 'aria-describedby': undefined } : {})}
+          >
+            <div className={styles.header}>
+              <RadixDialog.Title className={styles.title}>{title}</RadixDialog.Title>
+            </div>
+            {description !== undefined && (
+              <RadixDialog.Description className={styles.description}>
+                {description}
+              </RadixDialog.Description>
+            )}
+            {children !== undefined && <div className={styles.body}>{children}</div>}
+            {footer !== undefined && <div className={styles.footer}>{footer}</div>}
+            {/* Last in the DOM (shown top-right): Radix focuses the first focusable element on open,
+                which should be the first field, not "Close". */}
+            <RadixDialog.Close asChild>
+              <IconButton aria-label="Close" icon={<X />} size="sm" className={styles.close} />
+            </RadixDialog.Close>
+          </RadixDialog.Content>
+        )}
       </RadixDialog.Portal>
       <DiscardConfirm
         open={confirming}

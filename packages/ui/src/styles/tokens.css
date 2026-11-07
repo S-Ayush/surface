@@ -76,6 +76,7 @@
   --dialog-sm: 420px;
   --dialog-md: 560px;
   --dialog-lg: 720px;
+  --command-menu-width: 640px;
   --menu-min-width: 200px;
   --popover-max-width: 360px;
   --toast-width: 360px;

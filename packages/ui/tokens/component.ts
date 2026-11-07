@@ -87,6 +87,8 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'dialog-sm': px(420),
   'dialog-md': px(560),
   'dialog-lg': px(720),
+  // The command menu (command-menu.md §1): 640 px wide, at most 60% of the viewport tall.
+  'command-menu-width': px(640),
   'menu-min-width': px(200),
   'popover-max-width': px(360),
   'toast-width': px(360),

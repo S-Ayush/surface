@@ -119,6 +119,7 @@ export const token = {
   dialogSm: 'var(--dialog-sm)',
   dialogMd: 'var(--dialog-md)',
   dialogLg: 'var(--dialog-lg)',
+  commandMenuWidth: 'var(--command-menu-width)',
   menuMinWidth: 'var(--menu-min-width)',
   popoverMaxWidth: 'var(--popover-max-width)',
   toastWidth: 'var(--toast-width)',

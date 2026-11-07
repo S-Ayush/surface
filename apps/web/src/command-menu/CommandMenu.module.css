@@ -1,0 +1,142 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 60vh;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.chip {
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.crumb {
+  display: inline-flex;
+  gap: var(--space-6);
+}
+
+.input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-lg-size);
+  line-height: var(--text-lg-line);
+}
+
+.input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-8);
+}
+
+.header,
+.option {
+  display: flex;
+  align-items: center;
+  height: var(--row-height);
+  box-sizing: border-box;
+}
+
+.header {
+  padding: 0 var(--space-8);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+  font-weight: var(--text-xs-weight);
+}
+
+.option {
+  gap: var(--space-8);
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.option[aria-selected='true'] {
+  background: var(--bg-selected);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match {
+  background: transparent;
+  color: inherit;
+  font-weight: var(--text-md-weight);
+  text-decoration: underline;
+}
+
+.keys {
+  display: inline-flex;
+  gap: var(--space-4);
+}
+
+.dot {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  border-radius: var(--radius-full);
+}
+
+.spacer {
+  flex: none;
+}
+
+.empty {
+  margin: 0;
+  /* Outside the list now: its own inset matches the option text (list 8 + option 8). */
+  padding: var(--space-12) var(--space-16);
+  color: var(--text-secondary);
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-8) var(--space-16);
+  color: var(--danger);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-16);
+  padding: var(--space-8) var(--space-16);
+  border-top: var(--border-width) solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs-size);
+}
+
+.footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
