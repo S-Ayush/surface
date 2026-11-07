@@ -286,7 +286,7 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - Not checked: a Member refused by `user.createResetLink` (no Member exists before S5's invites; unit-tested with `evaluatePermission`).
 > - **Notes for later:**
 >   - S5: add `invite` to `ctx.links`.
->   - S7: the Members ⋯ "Generate reset link" calls `user.createResetLink` (give it `ui` then).
+>   - S7: the Members ⋯ "Generate reset link" calls `user.createResetLink`. (S7 as built: it gets no `ui`; the command menu has no per-user context.)
 >   - Clearing the lockout on reset is not done: reset signs in by itself.
 
 ### S5: Invites · M
@@ -300,12 +300,25 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 - Ops `user.me`, `user.updateProfile` (with `optimistic`), `user.changePassword` (revokes other sessions), `session.list`, `session.revoke`, `session.revokeOthers`.
 - **Minimal `BlobStore`** (ADR-0014, local volume) plus `POST /files` and `GET /files/:id` for **avatars only** in M0: size ≤ 2 MB, image sniffing, square crop, thumbnails via sharp. It is generalised for attachments in M1.
 - Web: Settings → Account → Profile and Security pages.
+- Settings → Workspace: the **logo** (moved here from S7 on 2026-11-07: it needs this slice's `POST /files`). `workspace.update` gains `logoFileId`.
 - **Tests:** AC-15 (a profile change appears live in another user's client), session revoke closes the socket (with S3).
 
-### S7: Members (Admin) · S
+### S7: Members (Admin) · S · ✅ Done 2026-11-07
 - Ops `user.list`, `user.get`, `user.setRole` (INV-01 guard, E6), `workspace.get`, `workspace.update`.
 - Web: Settings → Members (list, role menu, reset-link modal) and Settings → Workspace (name, logo).
 - **Tests:** AC-10 (last-admin guard), AC-14 (Members get `FORBIDDEN` from the API, and admin routes return not-found in the UI).
+
+> **As built (2026-11-07, session E).** Both halves. No migration, no new dependency.
+> - **Ops** (`packages/operations/src/ops/member.ts`, `workspace.ts`): `user.list` (any; `listInput` with filters `role`, `active`, `name`, `displayName`, `email`, `createdAt`, sorted by name by default; deactivated users are listed, filter on `active`), `user.get` (any), `user.setRole` (🛡, optimistic role patch), `workspace.get` (any), `workspace.update` (🛡, name only). No `ui` on any of them: the command menu has no per-user context, and none of these is a command-menu action in S9's list. `user.createResetLink` keeps no `ui` either.
+> - **INV-01 guard** (`packages/domain/src/members.ts`: `leavesNoAdmin`, `LAST_ADMIN_MESSAGE`, shared by the server and the web). `handlers/members/set-role.ts` locks every active Admin row (`FOR NO KEY UPDATE`) before counting. Two Admins demoting each other at once run one after the other, and the second, re-reading the locked rows under READ COMMITTED, is refused. Setting the role a user already has writes nothing. The actor's role is read when a request is signed in (`auth/sessions.ts`), and the handler also refuses an actor who is no longer among the locked Admins, so a demotion holds even against that user's request already in flight. Admin rows are locked in id order. The `active` filter matters from M7 and, like the locking SQL, is checked by hand until the held integration test. Emits `user.role_changed` and `workspace.updated` (events.md).
+> - **Deviations:** (1) **The logo moved to S6**: it needs `POST /files` (ADR-0014), which S6 builds. `workspace.get` already returns `logoFileId` (null). (2) **`workspace.update` predicts nothing**, an exception to SPEC-003 §3.1 (recorded as SPEC-001 D6, with S4's `team.leave` and `team.removeMember`): the client store finds rows by id or reference, and the workspace has no reference type. Settings → Workspace waits for the server, and offline keeps the edit with a note. Handoff to D (session-e2) for a way to name a singleton's row. (3) The E6 message gained how to fix it: "Surface needs at least one Admin. Make someone else an Admin first." (SPEC-001 E6 updated).
+> - **Web** (`apps/web/src/features/members/`, `features/workspace/`): Members lists active users from the store (live), with role badge, teams, join date and a role filter. Each row's ⋯ menu has a Role radio, where Member is disabled for the last Admin and the reason is shown above the list, and "Generate reset link…". Making yourself a Member asks first, then goes to Profile. The reset-link modal asks, then shows the link once. It can't be closed while the link is being generated, because the link would be made anyway and never seen. Copy is confirmed in the modal, since a toast over an open dialog waits until it closes (overlay manager), and it says when the browser can't copy (no clipboard on plain http). The link comes from `POST /api/ops/user.createResetLink` (`members/api.ts`, `csrfFetch`), not the store, because the mutation queue keeps no results and a queued link would only turn off the earlier one. Workspace: name form, the operation's own validation messages. Not-found for Members stays C's `SettingsPage` guard; C's `settings-page.test.tsx` now checks that an Admin gets the section rather than the placeholder (approved edit, coordinated with C).
+> - **Tests:** `server/test/last-admin-guard.test.ts` (AC-10: the rule, a fast-check property that any allowed sequence keeps an Admin, the handler on a fake transaction (refusal, lock before read, no-op, events, a demoted actor in flight), and AC-14's permission split). `web/test/members-screens.test.tsx` covers the list model, the menu, the role-menu actions (`members/actions.ts`), the reset-link flow (one request at a time, stays open while busy, copy fallback), the HTTP client, the Workspace save outcomes (`workspace/save.ts`) and both screens. The fake transaction ignores the WHERE clause: which rows count is checked by hand. The seed fixture gained the workspace for the contract test. 13 deliberate mutations, all caught.
+> - **Checked by hand** (dev stack, `e.localhost:5175`, users seeded through the repo):
+>   - AC-14 over HTTP: a Member reads `user.list`, `user.get` and `workspace.get`, and gets `FORBIDDEN` for `user.setRole`, `workspace.update` and `user.createResetLink`.
+>   - AC-10 in Postgres: two Admins demoted each other while a psql session held the Admin rows' lock. Both requests waited on it; one succeeded and the other got `CONFLICT`. The last Admin demoting themselves gets `CONFLICT`. The demoted user gets `FORBIDDEN` on the next request.
+>   - One `sync_log` row and one event per change; none for a no-op.
+>   - In Chrome: role changes from another client appear live, the last-Admin option is disabled and does nothing, self-demotion asks and then leaves Members, Workspace and Members show not-found to a Member, and the rename shows in the sidebar.
 
 ### S8: Teams · L · ✅ Done 2026-11-07
 - Ops `team.suggestKey`, `team.create` (key validation, reserved keys, seeds the workflow, adds the creator as a member; client-generated ID), `team.update`, `team.join`, `team.leave`, `team.addMember`, `team.removeMember` (destructive). All mutations have `optimistic` implementations.
@@ -442,13 +455,13 @@ Additive tables only. A rollback before any release is a code revert. After a re
 | AC-8 | `server/test/auth-routes.test.ts` "ends the session, closes its sockets, and the next request is 401" (unit part, sign-out) + ⏸ held (e2e) `e2e/session-revoke.spec.ts` (sign-out checked by hand in S3; `session.revoke` comes with the account slice) |
 | AC-8, E10 (handlers ending sessions, S3 follow-up) | `server/test/executor-context.test.ts` (deleted in the operation's transaction, sockets closed after the commit only, the committed attempt only) + `server/test/auth-store.test.ts` (`deleteUserSessions`, unit part) + ⏸ held (integration) `server/test/session-delete.int.test.ts`: only the user's own sessions end, a foreign or malformed id ends nothing (checked by hand in the follow-up) |
 | AC-9 | `server/test/password-hash.test.ts` + `domain/src/auth.test.ts` (minimum length) (S2) |
-| AC-10 | `server/test/last-admin-guard.test.ts` (the guard's decision, unit) (+ `server/test/set-role.int.test.ts`, ⏸ held) |
+| AC-10 | `server/test/last-admin-guard.test.ts` (S7: the rule, a property test over role-change sequences, the handler's lock, refusal and no-op) + `web/test/members-screens.test.tsx` (the last Admin's Member option disabled, with the reason) (+ `server/test/set-role.int.test.ts`, ⏸ held; concurrent demotions checked by hand in S7) |
 | AC-11 | `domain/src/team-key.test.ts` (suggestions, `teamKeyIssue`), `server/test/team-handlers.test.ts` (malformed, reserved and taken keys, with the next suggestion), `web/test/teams-forms.test.ts` (suggested while typing, checked inline in the server's words) (+ `server/test/team-create.int.test.ts`, ⏸ held) |
 | AC-12, AC-13 | ⏸ held (e2e) `e2e/teams-realtime.spec.ts` |
 | E11 (S8) | `server/test/team-handlers.test.ts` (`keyProblem`), `server/test/team-ops-leak.int.test.ts` (a private team's key: taken, nothing more), `web/test/teams-forms.test.ts` (a refused key shows on the key field; archived keys are taken) |
 | E12 (S8) | `domain/src/team.test.ts` (`canEndMembership`), `web/test/teams-model.test.ts`, `web/test/teams-screens.test.tsx` (Leave and Remove disabled) (+ the handler path, ⏸ held, checked by hand) |
 | Private-team leak (S8) | `server/test/team-ops-leak.int.test.ts` (not held: permissions.md §5) |
-| AC-14 | ⏸ held (integration + e2e) `server/test/admin-permissions.int.test.ts`, `e2e/admin-routes.spec.ts` |
+| AC-14 | Unit parts (S7): `server/test/last-admin-guard.test.ts` (`user.setRole`, `workspace.update` Admin-only; reads for anyone), `server/test/link-tokens.test.ts` (`user.createResetLink`), `web/test/settings-page.test.tsx` (not-found for Members) + ⏸ held (integration + e2e) `server/test/admin-permissions.int.test.ts`, `e2e/admin-routes.spec.ts` (checked by hand in S7) |
 | AC-15 | ⏸ held (e2e) `e2e/profile-realtime.spec.ts` |
 | AC-16 | CI registry lint |
 

@@ -5,6 +5,7 @@
 // - /login/magic?token=: signs in with a login link (`POST /auth/magic`). It asks first: a mail scanner opening the
 //   link uses nothing, and another site can't sign the browser into someone else's account.
 // They render inside the public page (pages/PublicPage.tsx), as the login card does.
+import { LINK_LIFETIME_TEXT } from '@surface/domain';
 import { Button, Input } from '@surface/ui';
 import { Link, useLocation } from '@tanstack/react-router';
 import { useState, type FormEvent, type ReactNode } from 'react';
@@ -15,10 +16,8 @@ import styles from './account.module.css';
 import { enterApp, useAccountApi } from './api.js';
 import { AccountSubmit, emailMissing, IDLE, newPasswordProblem, type FormView } from './submit.js';
 
-export const CHECK_EMAIL_TEXT =
-  'If an account exists for that email, we sent it a login link. The link works once, for 15 minutes.';
-export const RESET_SENT_TEXT =
-  'If an account exists for that email, we sent it a reset link. The link works once, for 1 hour.';
+export const CHECK_EMAIL_TEXT = `If an account exists for that email, we sent it a login link. The link works once, for ${LINK_LIFETIME_TEXT.magicLink}.`;
+export const RESET_SENT_TEXT = `If an account exists for that email, we sent it a reset link. The link works once, for ${LINK_LIFETIME_TEXT.passwordReset}.`;
 export const ASK_ADMIN_TEXT =
   'This server doesn’t send email. Ask an Admin for a reset link: they can make one in Settings → Members.';
 export const INCOMPLETE_LINK = 'This link is incomplete. Open it from the email again.';

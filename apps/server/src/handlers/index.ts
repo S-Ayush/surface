@@ -14,6 +14,11 @@ import teamRemoveMember from './teams/remove-member.js';
 import teamSuggestKey from './teams/suggest-key.js';
 import teamUpdate from './teams/update.js';
 import userCreateResetLink from './account/create-reset-link.js';
+import userGet from './members/get.js';
+import userList from './members/list.js';
+import userSetRole from './members/set-role.js';
+import workspaceGet from './workspace/get.js';
+import workspaceUpdate from './workspace/update.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -32,4 +37,9 @@ export const HANDLERS: readonly Handler[] = [
   teamRemoveMember,
   userUpdatePreferences,
   userCreateResetLink,
+  workspaceGet,
+  workspaceUpdate,
+  userList,
+  userGet,
+  userSetRole,
 ];

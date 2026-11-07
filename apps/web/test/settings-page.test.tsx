@@ -61,10 +61,13 @@ describe('AC-15: admin-only settings', () => {
   });
 
   it('shows an Admin the section, and waits while the role is unknown', async () => {
-    expect(await render(SETTINGS.members, true)).toContain('Members isn&#x27;t available yet');
+    const shown = await render(SETTINGS.members, true);
+    expect(shown).toContain('aria-label="Members"');
+    expect(shown).not.toContain('Members isn&#x27;t available yet');
+    expect(shown).not.toContain(NOT_FOUND);
     const waiting = await render(SETTINGS.members, undefined);
     expect(waiting).toContain('aria-label="Loading"');
-    expect(waiting).not.toContain('Members isn&#x27;t available yet');
+    expect(waiting).not.toContain('aria-label="Members"');
     expect(waiting).not.toContain(NOT_FOUND);
   });
 

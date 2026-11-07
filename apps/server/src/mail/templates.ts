@@ -7,12 +7,10 @@
  * escaped, because names come from users.
  */
 
-/** How long each link works (state-machines.md "Tokens"; SPEC-001 §3.4). */
-export const LINK_LIFETIME_TEXT = {
-  magicLink: '15 minutes',
-  passwordReset: '1 hour',
-  invite: '7 days',
-} as const;
+import { LINK_LIFETIME_TEXT } from '@surface/domain';
+
+/** How long each link works; the web pages say the same (`@surface/domain`). */
+export { LINK_LIFETIME_TEXT };
 
 export interface MagicLinkEmail {
   readonly template: 'magicLink';

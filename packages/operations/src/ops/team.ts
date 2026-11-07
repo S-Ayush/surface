@@ -22,6 +22,7 @@ import {
 } from '@surface/domain';
 import { z } from 'zod';
 import { defineOperation } from '../define.js';
+import { Timestamp } from './shared.js';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
 
 export const TEAM_NAME_MAX = 80;
@@ -57,8 +58,6 @@ const TimeZone = z
 
 /** An icon name or emoji; null clears it. */
 const TeamIcon = z.string().trim().min(1).max(64).nullable();
-
-const Timestamp = z.iso.datetime({ offset: true });
 
 export const TeamSchema = z.object({
   id: z.uuid(),

@@ -8,6 +8,9 @@
  * database, and examples run in registry order, so they share it: an example that changes a
  * row changes it for the ones after (`team.update` renames ENG; `team.leave` then `team.join`
  * leave the actor a member, as the actor's `memberships` say).
+ *
+ * PLAN-001 S7: the workspace (`workspace.get`, `workspace.update` renames it). The `user.setRole`
+ * examples make Iris an Admin and then a Member again.
  */
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
@@ -42,6 +45,7 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
   try {
     await client.query('BEGIN');
     const repo = syncRepo(drizzle({ client, casing: 'snake_case' }), new Date());
+    await repo.insert('Workspace', { id: randomUUID(), name: 'Surface', syncGroups: [] });
     await repo.insert('User', {
       id: users.me,
       email: 'ada@example.com',

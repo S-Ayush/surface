@@ -10,9 +10,11 @@ import {
   MagicLinkScreen,
   ResetScreen,
 } from './account/AccountScreens.js';
+import { MembersScreen } from './members/MembersScreen.js';
 import { TeamGeneralScreen } from './teams/TeamGeneralScreen.js';
 import { TeamMembersScreen } from './teams/TeamMembersScreen.js';
 import { TeamsScreen } from './teams/TeamsScreen.js';
+import { WorkspaceScreen } from './workspace/WorkspaceScreen.js';
 
 export const SCREENS: ScreenRegistry = {
   'settings/account/preferences': PreferencesScreen,
@@ -23,4 +25,6 @@ export const SCREENS: ScreenRegistry = {
   forgot: ForgotScreen,
   reset: ResetScreen,
   'login/magic': MagicLinkScreen,
+  'settings/members': MembersScreen,
+  'settings/workspace': WorkspaceScreen,
 };
