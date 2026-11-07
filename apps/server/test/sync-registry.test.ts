@@ -1,7 +1,15 @@
 // PLAN-002 S3: the sync registry is built from the shared model definitions the client uses
 // (`@surface/domain/model`), so both sides compute the same schema hash, and a server row is
 // projected to exactly the client row (sync-protocol §4.1, SPEC-002 Q6).
-import { array, DebugItem, defineModel, int, str, timestamp } from '@surface/domain/model';
+import {
+  array,
+  DebugItem,
+  defineModel,
+  int,
+  PRODUCTION_MODELS,
+  str,
+  timestamp,
+} from '@surface/domain/model';
 import { computeSchemaHash, decodeBootstrapFrame } from '@surface/sync-protocol';
 import { describe, expect, it } from 'vitest';
 import { debugItems } from '../src/db/schema/index.js';
@@ -10,15 +18,16 @@ import { clientRow, syncModel, syncRegistry } from '../src/sync/registry.js';
 describe('the sync registry', () => {
   it('outside production, syncs the DebugItem fixture with the hash the client computes', () => {
     const registry = syncRegistry({ includeFixtures: true });
-    expect(registry.eager.map((m) => m.name)).toEqual(['DebugItem']);
+    const models = [DebugItem, ...PRODUCTION_MODELS];
+    expect(registry.eager.map((m) => m.name)).toEqual(models.map((m) => m.name));
     // The client store hashes its model list the same way (sync-client `store.ts`).
-    expect(registry.schemaHash).toBe(computeSchemaHash([DebugItem]));
+    expect(registry.schemaHash).toBe(computeSchemaHash(models));
   });
 
   it('in production, leaves the fixture out of the models and the hash', () => {
     const registry = syncRegistry({ includeFixtures: false });
-    expect(registry.models).toEqual([]);
-    expect(registry.schemaHash).toBe(computeSchemaHash([]));
+    expect(registry.models.map((m) => m.name)).toEqual(PRODUCTION_MODELS.map((m) => m.name));
+    expect(registry.schemaHash).toBe(computeSchemaHash(PRODUCTION_MODELS));
     expect(registry.schemaHash).not.toBe(syncRegistry({ includeFixtures: true }).schemaHash);
   });
 

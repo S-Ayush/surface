@@ -65,7 +65,7 @@ const taskList = defineListModel({
   groupings: (groups) => ({
     team: {
       key: sql`${tasks.teamId}::text`,
-      label: sql`(SELECT t.name FROM ${sql.identifier(FIXTURE_SCHEMA)}.teams t
+      label: sql`(SELECT t.name FROM public.teams t
         WHERE t.id = ${tasks.teamId} AND t.sync_groups && ${sql.param([...groups])}::text[])`,
     },
     points: { key: sql`${tasks.points}::text`, label: sql`${tasks.points}::text` },
@@ -81,7 +81,7 @@ beforeAll(async () => {
   h = await executorHarness();
   await h.pool.query(`
     CREATE TABLE ${FIXTURE_SCHEMA}.tasks (
-      id uuid PRIMARY KEY, title text, team_id uuid NOT NULL REFERENCES ${FIXTURE_SCHEMA}.teams,
+      id uuid PRIMARY KEY, title text, team_id uuid NOT NULL REFERENCES public.teams,
       points integer, due_on date, updated_at timestamptz(3), archived_at timestamptz(3),
       sync_groups text[] NOT NULL);
   `);

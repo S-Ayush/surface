@@ -25,6 +25,13 @@ const INLINE_STYLE_MESSAGE =
  */
 export const SYNCED_TABLES = [
   { identifier: 'debugItems', name: 'debug_items' },
+  { identifier: 'workspace', name: 'workspace' },
+  { identifier: 'users', name: 'users' },
+  { identifier: 'userPreferences', name: 'user_preferences' },
+  { identifier: 'teams', name: 'teams' },
+  { identifier: 'teamMemberships', name: 'team_memberships' },
+  { identifier: 'workflowStatuses', name: 'workflow_statuses' },
+  { identifier: 'labels', name: 'labels' },
   { identifier: 'syncLog', name: 'sync_log' },
   { identifier: 'syncState', name: 'sync_state' },
 ];

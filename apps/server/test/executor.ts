@@ -1,6 +1,7 @@
 /**
- * Executor test harness: a migrated database, fixture `teams` for reference resolution, the
- * real registry plus test-only operations, and helpers to seed debug items and read the outbox.
+ * Executor test harness: a migrated database with two real teams (PLAN-001 S1) for reference
+ * resolution, the real registry plus test-only operations, and helpers to seed debug items and
+ * read the outbox.
  */
 import { randomUUID } from 'node:crypto';
 import { TeamRef, type Actor } from '@surface/domain';
@@ -25,6 +26,7 @@ import {
 import { SYNCED_MODELS } from '../src/sync/models.js';
 import { syncRepo } from '../src/sync/repo.js';
 import { HANDLERS } from '../src/handlers/index.js';
+import { seedTeamWorkflow, teamWorkflow } from '../src/handlers/teams/seed.js';
 import { createTestDatabase, type TestDatabase } from './db.js';
 import { actorFor, captureLogs } from './helpers.js';
 
@@ -32,32 +34,27 @@ export const FIXTURE_SCHEMA = 'exec_fixture';
 
 export interface ExecutorHarness {
   db: TestDatabase;
-  /** Pool whose connections see the fixture `teams` table. */
+  /** Pool whose connections also see the fixture `notes` table. */
   pool: pg.Pool;
   teams: { eng: string; sec: string };
   close(): Promise<void>;
 }
 
-/** A migrated database with fixture teams: ENG (public) and SEC (private). */
+/** A migrated database with teams ENG (public) and SEC (private), each with its workflow. */
 export async function executorHarness(): Promise<ExecutorHarness> {
   const db = await createTestDatabase();
   const teams = { eng: randomUUID(), sec: randomUUID() };
+  await seedTeams(db.pool, [
+    { id: teams.eng, key: 'ENG', name: 'Engineering', private: false },
+    { id: teams.sec, key: 'SEC', name: 'Security', private: true },
+  ]);
   await db.pool.query(`
     CREATE SCHEMA ${FIXTURE_SCHEMA};
-    CREATE TABLE ${FIXTURE_SCHEMA}.teams (
-      id uuid PRIMARY KEY, key text NOT NULL UNIQUE, name text NOT NULL,
-      private boolean NOT NULL, sync_groups text[] NOT NULL);
     -- Not synced: only here so a handler can hit a foreign-key violation (SPEC-003 Q6).
     CREATE TABLE ${FIXTURE_SCHEMA}.notes (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      team_id uuid NOT NULL REFERENCES ${FIXTURE_SCHEMA}.teams (id));
+      team_id uuid NOT NULL REFERENCES public.teams (id));
   `);
-  await db.pool.query(
-    `INSERT INTO ${FIXTURE_SCHEMA}.teams VALUES
-       ($1, 'ENG', 'Engineering', false, '{workspace}'),
-       ($2, 'SEC', 'Security', true, $3)`,
-    [teams.eng, teams.sec, [`team:${teams.sec}`]],
-  );
   await auditSyncedWrites(db.pool);
   const pool = new pg.Pool({
     connectionString: db.url,
@@ -73,6 +70,37 @@ export async function executorHarness(): Promise<ExecutorHarness> {
       await db.drop();
     },
   };
+}
+
+/**
+ * Real teams with their default workflow, written through the repo like `team.create` will, so
+ * `sync_log` matches the tables. Before the write audit is installed.
+ */
+async function seedTeams(
+  pool: pg.Pool,
+  rows: readonly { id: string; key: string; name: string; private: boolean }[],
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const repo = syncRepo(drizzle({ client, casing: 'snake_case' }), new Date());
+    for (const team of rows) {
+      const workflow = teamWorkflow(team.id);
+      await repo.insert('Team', {
+        ...team,
+        defaultStatusId: workflow.defaultStatusId,
+        syncGroups: [],
+      });
+      await seedTeamWorkflow(repo, workflow);
+    }
+    await repo.flush({});
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

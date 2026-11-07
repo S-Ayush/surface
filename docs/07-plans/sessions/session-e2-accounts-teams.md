@@ -19,7 +19,7 @@ Read [PLAN-001](../PLAN-001-workspace-auth-members-teams.md), [SPEC-001](../../0
 1. **PLAN-001 S1: domain schema and models.** It starts now and unblocks A (PLAN-001 S2), C (PLAN-005 S4) and the rest of PLAN-001.
    - **You hold the migration lock** (README §7) until S1 is on `main`. Then it passes to session A.
    - The tables are the ones S1 lists. Synced tables get `sync_groups`. Instants are `timestamptz(3)`.
-   - Include `users.preferences` (domain-model §4.2), which PLAN-005 S7 (session C) needs.
+   - Include user preferences (domain-model §4.2), which PLAN-005 S7 (session C) needs.
    - Add a shared model definition (`packages/domain/src/model/`) and a server registry entry (`apps/server/src/sync/models.ts`, append-only) for each synced model.
    - Add `groupsOf()`.
    - **Leak tests for each synced model are required** (plans README §6): rows in `team:<id>` never reach a user outside that group.
@@ -66,11 +66,18 @@ These files are append-only for everyone: `apps/server/src/handlers/index.ts`, `
 
 | To | Request | Why / blocking? | Status |
 |---|---|---|---|
+| A | PLAN-001 S1 changed your test fixtures: `test/executor.ts` now seeds ENG and SEC as real teams (the `exec_fixture.teams` stand-in would hide the real table on the harness's `search_path`); `list.int.test.ts`, `sync-groups.int.test.ts`, `sync-registry.test.ts` and `sync-hangup.test.ts` were adjusted (PLAN-001 S1 "As built"). Please look them over when you rebase. | Your files; needed for S1's tables. Not blocking. | open |
+| A | `ModelInsert` requires `syncGroups`, which the repo overwrites, so S1's seeds pass `[]`. Consider making it optional in `sync/models.ts` (DebugItem's `groupsOf` reads it, so it would need a fallback). | Clarity. Not blocking. | open |
+| A | The migration lock passes to you when PLAN-001 S1 is on `main` (README §7). S2 setup can use `teamWorkflow`, `seedTeamWorkflow` and `seedWorkspaceLabels` (`handlers/teams/seed.ts`). | Unblocks PLAN-001 S2 | open |
+| A | Defence in depth for `sync_log`: have `repo.ts` store only the model's declared fields plus `syncGroups` in `RowChange.row` (PLAN-002 S2 note). S1 keeps every synced table free of undeclared columns (`workspace-models.test.ts`), so nothing leaks today; a projection would stop the next one. | Review of PLAN-001 S1 (blocker, fixed at the schema). Not blocking. | open |
+| C | Your file says PLAN-005 S7 needs "the `users.preferences` column": it is the **`UserPreferences` model** instead (its own row, id = the user's id, `values` json, synced to `user:<id>`). Register `PRODUCTION_MODELS` (`@surface/domain/model`) in the web client's store, so its schema hash matches the server's. `COLOR_HUES` in `@surface/domain` mirrors the UI's `LABEL_HUES`; a test in `packages/ui` comparing them would keep them equal. `UserPreferences.values` is yours to shape in `user.updatePreferences`. | PLAN-005 S4 and S7 | open |
 
 ## Log (append-only)
 
 | Date | Slice | Branch | State | Notes / handoffs |
 |---|---|---|---|---|
+| 2026-11-07 | PLAN-001 S1 | p001-s1-schema | built, in review | Migrations `0006` (generated) and `0007` (deferrable same-team default-status FK, `setup_state` row): 7 synced and 5 server-only tables with INV-01–05 constraints. 7 shared models + `PRODUCTION_MODELS`, `groupsOf` per model, seeds through the repo. Deviations: preferences are their own `user:<id>` row; status `position` is a fractional key (domain-model updated). Session A's test fixtures switched to real teams (handoff). New tests: 11 domain, 34 server unit, 5 leak (mutation-checked). Held constraint tests checked by hand. `pnpm check` and `pnpm test:int` (184 + 3) green. Shared files: `packages/config/eslint.js` (`SYNCED_TABLES`), `sync/models.ts`, `db/schema/index.ts`, `domain` and `model` index files, A's tests, domain-model §4.2/§4.4. |
+| 2026-11-07 | PLAN-001 S1 | p001-s1-schema | review fixed | Blocker: `sync_log` stored password hashes (whole rows). Fixed at the schema: `user_credentials` and `team_issue_counters` (server-only), last seen from sessions; synced tables may hold only declared columns (test, mutation-checked). Also `FOR SHARE` in `groupsOf`, leak test checks `sync_log` and rolls back, INV-02 and SPEC-001 wording, domain-model §4.2/§4.3/§4.16. Reverted my edit to session C's file (handoff instead); projection in `repo.ts` proposed to A. |
 
 ## Prompt
 

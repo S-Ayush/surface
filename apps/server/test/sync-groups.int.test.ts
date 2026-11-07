@@ -4,7 +4,6 @@
 // also the wire contract with `@surface/sync-client`. Not held: a private-team leak test.
 import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
-import { DebugItem } from '@surface/domain/model';
 import {
   decodeBootstrapFrame,
   NdjsonDecoder,
@@ -106,7 +105,9 @@ async function bootstrap(actor: string, gzip = false): Promise<Bootstrap> {
   return { meta, rows, end };
 }
 
-const byId = (b: Bootstrap) => new Map(b.rows.map((r) => [r.d.id, r]));
+/** The debug items in a bootstrap by id. The harness's teams arrive too; team-groups covers them. */
+const byId = (b: Bootstrap) =>
+  new Map(b.rows.filter((r) => r.m === 'DebugItem').map((r) => [r.d.id, r]));
 
 describe('bootstrap for a user outside private team X', () => {
   it('contains none of X’s rows, nor another user’s', async () => {
@@ -147,7 +148,10 @@ describe('a bootstrap stream', () => {
 
   it('holds rows the client model accepts, archived ones marked', async () => {
     const { rows } = await bootstrap('engMember');
-    for (const row of rows) expect(DebugItem.rowSchema.parse(row.d)).toEqual(row.d);
+    for (const row of rows) {
+      const model = registry.models.find((m) => m.name === row.m);
+      expect(model?.def.rowSchema.parse(row.d)).toEqual(row.d);
+    }
     const archived = rows.filter((r) => r.archived === true).map((r) => r.d.id);
     expect(archived).toEqual([ids.archived]);
   });

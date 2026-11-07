@@ -26,7 +26,7 @@ Status: **Draft v0.1** · Date: 2026-11-06 · Implements: PRD §5 · Related: [g
 |---|---|---|
 | Workspace | Workspace (singleton) | Synced (`workspace`) |
 | Identity | User | Synced (`workspace`). Secret fields are server-only. |
-| | Session, MagicLinkToken, PasswordResetToken, Invite | Server-only |
+| | Session, MagicLinkToken, PasswordResetToken, Invite, UserCredentials, TeamIssueCounter | Server-only |
 | | ApiKey | User-scoped (the hash is server-only) |
 | Teams | Team, TeamMembership | Synced (`workspace`, or `team:<id>` if private) |
 | Workflow | WorkflowStatus, Label | Synced (inherits the team's scope; workspace labels use `workspace`) |
@@ -110,9 +110,9 @@ erDiagram
 | timezone | IANA tz | |
 | role | `admin` \| `member` | |
 | active | bool | Deactivated users can't log in, but remain referenced |
-| passwordHash 🔒 | string? | argon2id. Null if the user only uses magic links. |
-| lastSeenAt | timestamptz | |
-| preferences | json | Theme, home view, font size. User-scoped. |
+| passwordHash 🔒 | string? | argon2id, in the server-only **UserCredentials** row (§4.16), not on User: User is synced, and every write to it is broadcast. No row if the user only uses magic links. |
+| lastSeenAt 🔒 | timestamptz | Not stored on User: the latest `Session.lastUsedAt` (§4.16). |
+| preferences | → UserPreferences | Theme, home view, font size. A separate row (`UserPreferences`, id = the user's id, `values` json) synced to `user:<id>` only, because the User row itself is `workspace` (PLAN-001 S1). |
 
 ### 4.3 Team / TeamMembership
 | Field | Type | Notes |
@@ -128,7 +128,7 @@ erDiagram
 | autoArchiveMonths | int? | Default 6 |
 | autoCloseMonths | int? | Default null (off) |
 | parentAutoComplete | bool | Default false |
-| issueCounter 🔒 | int | Last issue number assigned |
+| issueCounter 🔒 | int | Last issue number assigned. Kept in the server-only **TeamIssueCounter** row (§4.16), so taking a number isn't a sync delta. |
 
 **TeamMembership:** `teamId`, `userId`, `triageResponsible: bool`. Unique on (`teamId`, `userId`).
 
@@ -139,7 +139,7 @@ erDiagram
 | name | string | Unique within the team |
 | category | `triage` \| `backlog` \| `unstarted` \| `started` \| `completed` \| `canceled` \| `duplicate` | |
 | color, description | | |
-| position | float | Order *within* the category |
+| position | fractional key | Order *within* the category (§1, manual order) |
 
 ### 4.5 Label / IssueLabel
 | Field | Type | Notes |
@@ -259,6 +259,8 @@ The other project entities:
 | Entity | Key fields |
 |---|---|
 | Session | userId, tokenHash, userAgent, ip, createdAt, lastUsedAt, expiresAt |
+| UserCredentials | userId (primary key), passwordHash (argon2id), updatedAt |
+| TeamIssueCounter | teamId (primary key), lastNumber. Upserted when an issue is created. |
 | Invite | email?, tokenHash, role, invitedById, expiresAt, acceptedAt?, revokedAt? |
 | MagicLinkToken / PasswordResetToken | userId, tokenHash, expiresAt (15 min / 1 h), usedAt? |
 | ApiKey (user-scoped) | userId, name, prefix (`sfc_xxxx`), keyHash 🔒, scope (`read` \| `read_write`), teamIds?, allowDestructive, lastUsedAt, revokedAt? |
@@ -294,7 +296,7 @@ Each invariant must hold after every committed transaction. The server enforces 
 | ID | Invariant |
 |---|---|
 | INV-01 | Exactly one Workspace exists. At least one **active Admin** exists at all times. |
-| INV-02 | `User.email` is unique (case-insensitive). `User.displayName` is unique. |
+| INV-02 | `User.email` is unique (case-insensitive). `User.displayName` is unique (case-insensitive: it is the @mention handle). |
 | INV-03 | `Team.key` is unique and matches `^[A-Z]{2,5}$`. |
 | INV-04 | Every team has ≥ 1 status in each of the categories Backlog, Unstarted, Started, Completed, and Canceled. It has exactly one system Duplicate status, and exactly one Triage status (which exists even when triage is disabled). |
 | INV-05 | `Team.defaultStatusId` refers to a status of that team in the Backlog or Unstarted category. |

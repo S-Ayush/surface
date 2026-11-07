@@ -9,10 +9,19 @@ import { buildApp } from '../src/app.js';
 import { Lifecycle } from '../src/lifecycle.js';
 import { createLogger } from '../src/logger.js';
 import type { BootstrapClient, BootstrapPool } from '../src/sync/bootstrap.js';
-import { syncRegistry } from '../src/sync/registry.js';
+import { DebugItem } from '@surface/domain/model';
+import { computeSchemaHash } from '@surface/sync-protocol';
+import { debugItems } from '../src/db/schema/index.js';
+import { syncModel, type SyncRegistry } from '../src/sync/registry.js';
 import { actorFor, captureLogs, headerActor, testConfig } from './helpers.js';
 
 const user = actorFor({ id: randomUUID() });
+
+/** One model, so the fake pool below answers for every query the bootstrap makes. */
+const debugOnly: SyncRegistry = (() => {
+  const model = syncModel('DebugItem', DebugItem, debugItems);
+  return { models: [model], eager: [model], schemaHash: computeSchemaHash([DebugItem]) };
+})();
 
 /** A pool with one connection. Its row count waits until `openCount()`; it records every call. */
 function fakePool() {
@@ -64,7 +73,7 @@ async function serve(pool: BootstrapPool) {
     logger: createLogger(config, captureLogs().stream),
     sync: {
       pool,
-      registry: syncRegistry({ includeFixtures: true }),
+      registry: debugOnly,
       resolveActor: headerActor({ user }),
     },
   });

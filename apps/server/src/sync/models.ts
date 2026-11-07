@@ -1,13 +1,73 @@
 /**
  * Synced models the repo layer may write, with how each computes its sync groups
  * (permissions.md §2). `sync/registry.ts` builds the sync registry (bootstrap, schema hash) from
- * it; PLAN-001 S1 adds the workspace, user and team models.
+ * it.
  */
-import { DebugItem, type ModelDef } from '@surface/domain/model';
-import type { SQL } from 'drizzle-orm';
+import { teamGroup, userGroup, WORKSPACE_GROUP } from '@surface/domain';
+import {
+  DebugItem,
+  Label,
+  Team,
+  TeamMembership,
+  User,
+  UserPreferences,
+  WorkflowStatus,
+  Workspace,
+  type ModelDef,
+} from '@surface/domain/model';
+import { eq, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import { debugItems } from '../db/schema/index.js';
+import {
+  debugItems,
+  labels,
+  teamMemberships,
+  teams,
+  userPreferences,
+  users,
+  workflowStatuses,
+  workspace,
+} from '../db/schema/index.js';
+
+/**
+ * What `groupsOf` receives: insert values or a full row. The repo calls it through a union of
+ * models, so every model's `groupsOf` takes this and reads the fields it needs with a check.
+ */
+type AnyRow = Readonly<Record<string, unknown>>;
+
+function stringField(row: AnyRow, field: string): string | undefined {
+  const value = row[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+const workspaceWide = (): readonly string[] => [WORKSPACE_GROUP];
+
+/** A team's groups: `workspace` while public, `team:<id>` once private (permissions.md §2). */
+function teamGroups(team: { readonly id: string; readonly private?: unknown }): string[] {
+  return team.private === true ? [teamGroup(team.id)] : [WORKSPACE_GROUP];
+}
+
+/** A row's groups from its `teamId`; none (nobody sees it) if the field is missing. */
+function groupsOfTeamRow(row: AnyRow, tx: NodePgDatabase): readonly string[] | Promise<string[]> {
+  const teamId = stringField(row, 'teamId');
+  return teamId === undefined ? [] : groupsOfTeam(teamId, tx);
+}
+
+/**
+ * Groups of a row that belongs to a team: the team's own (permissions.md §2, children inherit).
+ * Read in the row's transaction, so a team inserted earlier in it counts. A missing team gets no
+ * groups, so nobody sees the row, and its foreign key fails the transaction anyway.
+ */
+async function groupsOfTeam(teamId: string, tx: NodePgDatabase): Promise<string[]> {
+  const [team] = await tx
+    .select({ id: teams.id, private: teams.private })
+    .from(teams)
+    .where(eq(teams.id, teamId))
+    // Mutations run READ COMMITTED: without the lock, a child written while the team turns
+    // private could keep the old `workspace` groups. FOR SHARE waits for that update.
+    .for('share');
+  return team ? teamGroups(team) : [];
+}
 
 export const SYNCED_MODELS = {
   DebugItem: {
@@ -32,6 +92,67 @@ export const SYNCED_MODELS = {
      * Every model must state it; PLAN-001 S1 adds the first team-owned ones.
      */
     teamColumn: null,
+  },
+  // PLAN-001 S1 (SPEC-001 §5). M0 has no private teams yet, but the groups are ready for them.
+  Workspace: {
+    table: workspace,
+    def: Workspace,
+    fixture: false,
+    groupsOf: workspaceWide,
+    teamColumn: null,
+  },
+  User: {
+    table: users,
+    def: User,
+    fixture: false,
+    groupsOf: workspaceWide,
+    teamColumn: null,
+  },
+  UserPreferences: {
+    table: userPreferences,
+    def: UserPreferences,
+    fixture: false,
+    /** The row's id is its user's id: only that user sees it. */
+    groupsOf: (row: AnyRow): readonly string[] => {
+      const id = stringField(row, 'id');
+      return id === undefined ? [] : [userGroup(id)];
+    },
+    teamColumn: null,
+  },
+  Team: {
+    table: teams,
+    def: Team,
+    fixture: false,
+    groupsOf: (row: AnyRow): readonly string[] => {
+      const id = stringField(row, 'id');
+      return id === undefined ? [] : teamGroups({ id, private: row.private });
+    },
+    teamColumn: teams.id,
+  },
+  TeamMembership: {
+    table: teamMemberships,
+    def: TeamMembership,
+    fixture: false,
+    groupsOf: groupsOfTeamRow,
+    teamColumn: teamMemberships.teamId,
+  },
+  WorkflowStatus: {
+    table: workflowStatuses,
+    def: WorkflowStatus,
+    fixture: false,
+    groupsOf: groupsOfTeamRow,
+    teamColumn: workflowStatuses.teamId,
+  },
+  Label: {
+    table: labels,
+    def: Label,
+    fixture: false,
+    /** A workspace label (no team) is workspace-wide; a team label has its team's groups. */
+    groupsOf: (row: AnyRow, tx: NodePgDatabase): readonly string[] | Promise<string[]> =>
+      row.teamId === null || row.teamId === undefined
+        ? [WORKSPACE_GROUP]
+        : groupsOfTeamRow(row, tx),
+    teamColumn: labels.teamId,
   },
 } as const satisfies Record<
   string,

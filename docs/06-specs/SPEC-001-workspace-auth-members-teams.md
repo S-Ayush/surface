@@ -78,14 +78,14 @@ Keyboard: `Enter` advances each step. `Esc` does nothing (setup can't be skipped
 | Entity | Notes |
 |---|---|
 | Workspace | Created at setup. `signupPolicy = invite_only`. |
-| User | `role`, `active = true`, `passwordHash`, `timezone` |
+| User | `role`, `active = true`, `timezone`. The password hash is in **UserCredentials 🔒** (`userId`, `passwordHash`), a server-only table: a synced row's every write is broadcast (PLAN-001 S1). |
 | Session 🔒 | `tokenHash`, `userAgent`, `ip`, `lastUsedAt`, `expiresAt` (30-day sliding) |
 | Invite 🔒 | Adds **`teamIds uuid[]`** (an addition to domain-model §4.16) |
 | MagicLinkToken 🔒, PasswordResetToken 🔒 | 15 minutes / 1 hour, single-use |
 | SetupState 🔒 | **New:** `tokenHash`, `completedAt`. A singleton. |
 | Team, TeamMembership | As in the domain model |
 | WorkflowStatus | **Seeded per team:** Triage (triage) · Backlog (backlog, *default*) · Todo (unstarted) · In Progress (started) · In Review (started) · Done (completed) · Canceled (canceled) · Duplicate (duplicate, system) |
-| Label | **Seeded at setup:** workspace labels Bug (red), Feature (purple), Improvement (blue) |
+| Label | **Seeded at setup:** workspace labels Bug (red), Feature (violet), Improvement (blue). The palette has no purple (design-system §2.2). |
 
 **Key suggestion algorithm:** take the initials of the words (up to 3); for a single word, the first 3 letters, uppercased (`Engineering` → `ENG`, `Mobile Platform` → `MP`). If the key is taken, append a digit-free variation (`ENGI`), else ask the user.
 **Reserved keys:** `NEW`, `API`, `MCP`, `SYNC`, `AUTH`.
