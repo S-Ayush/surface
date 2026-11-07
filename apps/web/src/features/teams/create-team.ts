@@ -46,13 +46,24 @@ export function takenKeys(teams: readonly { readonly key: string }[]): ReadonlyS
 /**
  * What the dialog reads from the store: the taken keys and the creator's time zone. Archived teams
  * count, because keys stay unique after archiving; private teams the user can't see aren't in the
- * store, so the server's answer covers them (E11, D2).
+ * store, so the server's answer covers them (E11, D2). The team this dialog is creating
+ * (`creatingId`) doesn't: its optimistic row is in the store while the server answers.
  */
 export function createTeamContext(
-  teams: readonly { readonly key: string }[],
+  teams: readonly { readonly id: string; readonly key: string }[],
   me: { readonly timezone: string } | undefined,
+  creatingId?: string,
 ): { readonly keys: string[]; readonly myTimezone: string | undefined } {
-  return { keys: [...takenKeys(teams)], myTimezone: me?.timezone };
+  const others = teams.filter((team) => team.id !== creatingId);
+  return { keys: [...takenKeys(others)], myTimezone: me?.timezone };
+}
+
+/**
+ * Whether closing would lose something the user typed. Once submitted, nothing would: the change
+ * is queued and goes through even if the dialog closes (SPEC-002 §3.3).
+ */
+export function hasUnsavedChanges(form: CreateTeamForm, submitted: boolean): boolean {
+  return !submitted && (form.name !== '' || form.keyEdited || form.icon !== '');
 }
 
 /** A new name, and a new suggested key unless the user chose one. */

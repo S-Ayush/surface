@@ -12,6 +12,7 @@ import {
   createTeamProblems,
   emptyCreateTeamForm,
   hasProblems,
+  hasUnsavedChanges,
   placeServerError,
   takenKeys,
   withKey,
@@ -45,10 +46,34 @@ describe('create team: key suggestion (AC-11)', () => {
   });
 
   it('counts archived teams’ keys as taken, since keys stay unique (E11)', () => {
-    const teams = [{ key: 'ENG' }, { key: 'OLD', $archived: true }];
+    const teams = [
+      { id: 't-eng', key: 'ENG' },
+      { id: 't-old', key: 'OLD', $archived: true },
+    ];
     const context = createTeamContext(teams, { timezone: 'Asia/Tokyo' });
     expect(context).toEqual({ keys: ['ENG', 'OLD'], myTimezone: 'Asia/Tokyo' });
     expect(withName(empty, 'Oldies', new Set(context.keys)).key).toBe('OLDI');
+  });
+
+  it('doesn’t count the team being created as taken while it waits (hand-check bug)', () => {
+    // The optimistic insert puts the new team in the store before the server answers.
+    const teams = [
+      { id: 't-eng', key: 'ENG' },
+      { id: 't-new', key: 'PLA' },
+    ];
+    expect(createTeamContext(teams, undefined, 't-new').keys).toEqual(['ENG']);
+    expect(createTeamContext(teams, undefined).keys).toEqual(['ENG', 'PLA']);
+    const form = withName(empty, 'Platform', new Set(['ENG']));
+    const { keys } = createTeamContext(teams, undefined, 't-new');
+    expect(createTeamProblems(form, new Set(keys)).key).toBeUndefined();
+  });
+
+  it('has nothing unsaved once submitted, since the change is queued (hand-check bug)', () => {
+    const typed = withName(empty, 'Platform', taken);
+    expect(hasUnsavedChanges(empty, false)).toBe(false);
+    expect(hasUnsavedChanges(typed, false)).toBe(true);
+    expect(hasUnsavedChanges({ ...empty, icon: '🎨' }, false)).toBe(true);
+    expect(hasUnsavedChanges(typed, true)).toBe(false);
   });
 
   it('defaults the time zone to the creator’s, or UTC', () => {

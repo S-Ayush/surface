@@ -22,6 +22,7 @@ import {
   createTeamProblems,
   emptyCreateTeamForm,
   hasProblems,
+  hasUnsavedChanges,
   placeServerError,
   withKey,
   withRefusedKey,
@@ -38,14 +39,17 @@ export type CreateTeamDialogProps = {
 
 export function CreateTeamDialog({ open, onOpenChange }: CreateTeamDialogProps) {
   const app = useApp();
+  // The id of the team being created while the server answers: its optimistic row is in the store
+  // and must not count its own key as taken.
+  const [creatingId, setCreatingId] = useState<string>();
   const { keys, myTimezone } = useObserved(
     useCallback(() => {
       const store = app.store;
       const session = app.session;
       if (store === null || store.status !== 'ready') return { keys: [], myTimezone: undefined };
       const me = session === null ? undefined : store.pool.get(User, session.userId);
-      return createTeamContext(store.pool.all(Team), me);
-    }, [app]),
+      return createTeamContext(store.pool.all(Team), me, creatingId);
+    }, [app, creatingId]),
   );
   // Keys the server refused this opening (a private team's, D2) count as taken too.
   const [refused, setRefused] = useState<ReadonlySet<string>>(new Set());
@@ -66,13 +70,14 @@ export function CreateTeamDialog({ open, onOpenChange }: CreateTeamDialogProps) 
   const problems = createTeamProblems(form, taken);
   const shown = touched ? problems : {};
   const keyError = shown.key ?? (serverError?.field === 'key' ? serverError.message : undefined);
-  const dirty = form.name !== '' || form.keyEdited || form.icon !== '';
+  const dirty = hasUnsavedChanges(form, busy);
 
   const reset = () => {
     setForm(emptyCreateTeamForm(myTimezone));
     setTouched(false);
     setServerError(undefined);
     setBusy(false);
+    setCreatingId(undefined);
   };
 
   const submit = async (event: FormEvent) => {
@@ -82,10 +87,13 @@ export function CreateTeamDialog({ open, onOpenChange }: CreateTeamDialogProps) 
     const store = app.store;
     if (hasProblems(problems) || busy || store === null) return;
     setBusy(true);
-    const input = createTeamInput(form, uuidv7());
+    const id = uuidv7();
+    setCreatingId(id);
+    const input = createTeamInput(form, id);
     const result = await submitMutation(store, teamCreate, input);
     if (!openNow.current) return;
     setBusy(false);
+    setCreatingId(undefined);
     if (result.kind === 'rejected') {
       setServerError(placeServerError(result));
       setRefused(withRefusedKey(refused, result, input.key));
