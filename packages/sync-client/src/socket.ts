@@ -7,6 +7,12 @@
  *   browser's `online` event. The backoff resets only after a healthy message,
  *   so a server that accepts and then drops connections is not hammered.
  * - Close code `4001` (session revoked) stops reconnecting (E10).
+ * - Counts connection attempts in a row that never opened. A browser cannot
+ *   tell a proxy that refuses the upgrade from a server that is down, so
+ *   after the third it asks the server over plain HTTP (`probe`). When the
+ *   server answers, it dials at once, and if that attempt fails too, live
+ *   updates are unavailable (SPEC-005 §8, sync-protocol.md §4.3). A restart
+ *   never trips it: the server does not answer, or the next attempt opens.
  * - What a message means for the replica is the store's call (`onMessage`
  *   returns a verdict): carry on, reconnect (gap, bad data), or pause (the
  *   store is re-bootstrapping or outdated and calls `start()` again later).
@@ -62,6 +68,8 @@ export const BACKOFF_MIN_MS = 500;
 export const BACKOFF_MAX_MS = 30_000;
 /** No message for this long means the connection is dead. */
 export const SILENCE_LIMIT_MS = PING_INTERVAL_MS + PING_TIMEOUT_MS;
+/** Attempts in a row that never opened before live updates count as unavailable (SPEC-005 §8). */
+export const FAILED_CONNECTS_LIMIT = 3;
 
 /**
  * Delay before reconnect attempt `attempt` (0-based): a ceiling doubling from
@@ -84,6 +92,13 @@ export interface SyncSocketOptions {
   readonly timers?: Timers;
   readonly random?: () => number;
   readonly online?: OnlineSource;
+  /** Epoch ms, for `since`; defaults to `Date.now`. */
+  readonly clock?: () => number;
+  /**
+   * Whether the server answers plain HTTP, asked after repeated failed
+   * attempts. Without it, live updates never count as unavailable.
+   */
+  readonly probe?: () => Promise<boolean>;
 }
 
 export const globalTimers: Timers = {
@@ -97,7 +112,21 @@ export class SyncSocket {
   readonly #options: SyncSocketOptions;
   readonly #timers: Timers;
   readonly #random: () => number;
+  readonly #clock: () => number;
   readonly #state: IObservableValue<ConnectionState> = observable.box('disconnected');
+  readonly #since: IObservableValue<number>;
+  readonly #reconnectingSince = observable.box<number | undefined>(undefined);
+  readonly #failedConnects = observable.box(0);
+  readonly #unavailable = observable.box(false);
+  /** Whether the server answered plain HTTP during the current run of failures. */
+  #answered: 'unknown' | 'asking' | 'yes' = 'unknown';
+  /** Identifies the current run of failures; answers about an older one are ignored. */
+  #run = 0;
+  /**
+   * The current attempt has not opened yet. A dropped attempt never reports
+   * (its token is stale), so only `#closed` and `#fail` read this.
+   */
+  #opening = false;
   #connection: SocketConnection | undefined;
   /** Identifies the current connection; events of older ones are ignored. */
   #token = 0;
@@ -111,11 +140,43 @@ export class SyncSocket {
     this.#options = options;
     this.#timers = options.timers ?? globalTimers;
     this.#random = options.random ?? Math.random;
+    this.#clock = options.clock ?? Date.now;
+    this.#since = observable.box(this.#clock());
   }
 
   /** Observable. */
   get state(): ConnectionState {
     return this.#state.get();
+  }
+
+  /** Epoch ms when `state` last changed (for "Reconnecting > 5 s", SPEC-005 §8). Observable. */
+  get since(): number {
+    return this.#since.get();
+  }
+
+  /**
+   * Epoch ms since the socket has been trying to get back online: since it
+   * last was, or since `start()`. Retries do not reset it. `undefined` while
+   * online, stopped or revoked ("Reconnecting > 5 s", SPEC-005 §8). Observable.
+   */
+  get reconnectingSince(): number | undefined {
+    return this.#reconnectingSince.get();
+  }
+
+  /**
+   * Connection attempts in a row that closed or went silent before opening.
+   * Reset when one opens, on `stop()`, and by the browser's `online` event. Observable.
+   */
+  get failedConnects(): number {
+    return this.#failedConnects.get();
+  }
+
+  /**
+   * The server answers plain HTTP, but attempts still fail before opening:
+   * something between refuses WebSocket upgrades (SPEC-005 §8). Observable.
+   */
+  get liveUpdatesUnavailable(): boolean {
+    return this.#unavailable.get();
   }
 
   /** Connect now, and keep reconnecting until `stop()` or a revoked session. */
@@ -131,6 +192,7 @@ export class SyncSocket {
   stop(): void {
     this.#running = false;
     this.#halt();
+    this.#startOver();
     if (this.state !== 'revoked') this.#setState('disconnected');
   }
 
@@ -148,12 +210,15 @@ export class SyncSocket {
     this.#timers.clearTimeout(this.#retry);
     this.#retry = undefined;
     const token = (this.#token += 1);
+    this.#opening = true;
     this.#setState('connecting');
     this.#armWatchdog(token);
     try {
       const connection = this.#options.factory(this.#options.url(), {
         onOpen: () => {
           if (token !== this.#token) return;
+          this.#opening = false;
+          this.#startOver();
           this.#setState('online');
           this.#options.onOpen?.();
         },
@@ -199,6 +264,8 @@ export class SyncSocket {
 
   #closed(code: number): void {
     this.#connection = undefined;
+    const neverOpened = this.#opening;
+    this.#opening = false;
     this.#timers.clearTimeout(this.#watchdog);
     this.#watchdog = undefined;
     this.#token += 1;
@@ -211,12 +278,16 @@ export class SyncSocket {
       this.#options.onRevoked();
       return;
     }
+    if (neverOpened) this.#countFailedConnect();
     if (this.#running) this.#scheduleRetry();
     else this.#setState('disconnected');
   }
 
   #fail(reason: string): void {
+    // Only the silence watchdog fires before an attempt opens: an upgrade that hangs.
+    const neverOpened = this.#opening;
     this.#drop(reason);
+    if (neverOpened) this.#countFailedConnect();
     if (this.#running) this.#scheduleRetry();
   }
 
@@ -232,7 +303,10 @@ export class SyncSocket {
   }
 
   #online(): void {
-    if (!this.#running || this.state !== 'offline') return;
+    if (!this.#running) return;
+    // The network was down, so earlier failures say nothing about the proxy.
+    this.#startOver();
+    if (this.state !== 'offline') return;
     this.#attempt = 0;
     this.#dial();
   }
@@ -263,8 +337,49 @@ export class SyncSocket {
     }, SILENCE_LIMIT_MS);
   }
 
+  #countFailedConnect(): void {
+    const failed = this.#failedConnects.get() + 1;
+    runInAction(() => {
+      this.#failedConnects.set(failed);
+      if (this.#answered === 'yes') this.#unavailable.set(true);
+    });
+    if (failed >= FAILED_CONNECTS_LIMIT && this.#answered === 'unknown') this.#ask();
+  }
+
+  /** Does the server answer plain HTTP? Then the upgrade is what fails: try it once more now. */
+  #ask(): void {
+    const probe = this.#options.probe;
+    if (probe === undefined) return;
+    const run = this.#run;
+    this.#answered = 'asking';
+    const answered = (yes: boolean) => {
+      if (run !== this.#run) return;
+      this.#answered = yes ? 'yes' : 'unknown';
+      if (yes && this.#running && this.state === 'offline') this.#dial();
+    };
+    probe().then(answered, () => answered(false));
+  }
+
+  /** A new run of failures: an attempt opened, the network came back, or the socket stopped. */
+  #startOver(): void {
+    this.#run += 1;
+    this.#answered = 'unknown';
+    runInAction(() => {
+      this.#failedConnects.set(0);
+      this.#unavailable.set(false);
+    });
+  }
+
   #setState(state: ConnectionState): void {
-    runInAction(() => this.#state.set(state));
+    if (state === this.#state.get()) return;
+    const now = this.#clock();
+    runInAction(() => {
+      this.#state.set(state);
+      this.#since.set(now);
+      const trying = state === 'connecting' || state === 'offline';
+      if (!trying) this.#reconnectingSince.set(undefined);
+      else if (this.#reconnectingSince.get() === undefined) this.#reconnectingSince.set(now);
+    });
   }
 }
 

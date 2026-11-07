@@ -272,6 +272,40 @@ importers:
         specifier: ^4.10.2
         version: 4.10.2
 
+  packages/sync-react:
+    dependencies:
+      '@surface/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@surface/sync-client':
+        specifier: workspace:*
+        version: link:../sync-client
+      '@surface/ui':
+        specifier: workspace:*
+        version: link:../ui
+    devDependencies:
+      '@surface/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.3.0
+        version: 19.3.0(@types/react@19.3.0)
+      react:
+        specifier: ^19.3.1
+        version: 19.3.1
+      react-dom:
+        specifier: ^19.3.1
+        version: 19.3.1(react@19.3.1)
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/ui:
     dependencies:
       '@fontsource-variable/inter':

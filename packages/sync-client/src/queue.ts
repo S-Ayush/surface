@@ -109,6 +109,15 @@ export interface QueueOptions {
   readonly onFenced: () => void;
   /** The CSRF token to send, read at each request (SPEC-001 §6.1). */
   readonly csrfToken: () => string | undefined;
+  /**
+   * The latest of the mutations the replica now includes that this queue sent,
+   * with the epoch ms of its last send, for the inspector's lag (SPEC-002 §5.4).
+   */
+  readonly onConfirmed?: (latest: {
+    readonly op: string;
+    readonly seq: number;
+    readonly sentAt: number;
+  }) => void;
 }
 
 interface Entry {
@@ -118,6 +127,8 @@ interface Entry {
   readonly parsed: { readonly value: unknown } | undefined;
   persisted: boolean;
   sent: boolean;
+  /** Epoch ms of the last send, kept when `sent` is reset: a lost response may still commit. */
+  sentAt: number | undefined;
   readonly settle: (outcome: MutationOutcome) => void;
 }
 
@@ -222,6 +233,7 @@ export class MutationQueue {
       parsed: { value: parsed.data },
       persisted: false,
       sent: false,
+      sentAt: undefined,
       settle,
     };
     this.#entries.set(seq, entry);
@@ -270,6 +282,15 @@ export class MutationQueue {
     if (done.length === 0) return false;
     this.#remove(done);
     for (const entry of done) entry.settle({ status: 'confirmed' });
+    // Not one queued offline and confirmed by a resend from another tab or an
+    // earlier page: its wait is not the server's (review of PLAN-002 S10).
+    let latest: { op: string; seq: number; sentAt: number } | undefined;
+    for (const { record, sentAt } of done) {
+      if (sentAt !== undefined && (latest === undefined || record.seq > latest.seq)) {
+        latest = { op: record.op, seq: record.seq, sentAt };
+      }
+    }
+    if (latest !== undefined) this.#options.onConfirmed?.(latest);
     return true;
   }
 
@@ -295,6 +316,7 @@ export class MutationQueue {
       parsed: parsed?.success ? { value: parsed.data } : undefined,
       persisted,
       sent: false,
+      sentAt: undefined,
       settle,
     };
   }
@@ -354,7 +376,11 @@ export class MutationQueue {
       () => controller.abort('timeout'),
       REQUEST_TIMEOUT_MS,
     );
-    for (const entry of batch) entry.sent = true;
+    const sentAt = this.#options.clock();
+    for (const entry of batch) {
+      entry.sent = true;
+      entry.sentAt = sentAt;
+    }
     this.#publish();
     this.#send(batch, controller.signal).then(
       (next) => {

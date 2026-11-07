@@ -10,7 +10,7 @@ import type { debugRename } from './support/ops.js';
 import { TEST_MODELS } from './support/models.js';
 import { fakeFetch } from './support/server.js';
 
-it('exports only the store, read helpers and errors', () => {
+it('exports only the store, read helpers, UI bindings and errors', () => {
   expect(Object.keys(api).sort()).toEqual([
     'BootstrapFailedError',
     'CLIENT_PROTOCOL_VERSION',
@@ -18,7 +18,15 @@ it('exports only the store, read helpers and errors', () => {
     'InvalidInputError',
     'StorageUnavailableError',
     'SyncStore',
+    // Framework-free bindings and selectors (ADR-0017).
+    'bootstrapOf',
+    'connectionOf',
+    'inspect',
+    'observe',
+    'pendingCountOf',
     'rowOf',
+    'storageUsage',
+    'storageWarningOf',
   ]);
 });
 

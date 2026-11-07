@@ -18,6 +18,14 @@ import { decodeRow } from './bootstrap.js';
 import type { BaseChange, ObjectPool } from './pool.js';
 import type { StoredChange } from './storage/types.js';
 
+/** What an applied packet changed, without the row (the inspector, SPEC-002 §5.4). */
+export interface AppliedPacket {
+  readonly id: number;
+  readonly action: 'I' | 'U' | 'A' | 'V' | 'D';
+  readonly model: string;
+  readonly rowId: string;
+}
+
 export type DeltaPlan =
   | { readonly kind: 'gap' }
   | { readonly kind: 'resync' }
@@ -29,6 +37,8 @@ export type DeltaPlan =
       readonly stored: readonly StoredChange[];
       /** The id of the last packet applied: the new `lastSyncId`. */
       readonly lastSyncId: number;
+      /** In packet order. */
+      readonly applied: readonly AppliedPacket[];
     };
 
 /** Throws `ProtocolError` when a row does not match its model. */
@@ -45,19 +55,21 @@ export function planDeltas(
 
   const base: BaseChange[] = [];
   const stored: StoredChange[] = [];
+  const applied: AppliedPacket[] = [];
   for (const packet of fresh) {
     const change = toChange(pool, packet);
     if (change === undefined) continue;
     base.push(change.base);
     stored.push(change.stored);
+    applied.push(change.applied);
   }
-  return { kind: 'apply', base, stored, lastSyncId: last.id };
+  return { kind: 'apply', base, stored, lastSyncId: last.id, applied };
 }
 
 function toChange(
   pool: ObjectPool,
   packet: DeltaPacket,
-): { base: BaseChange; stored: StoredChange } | undefined {
+): { base: BaseChange; stored: StoredChange; applied: AppliedPacket } | undefined {
   const version = packet.id;
   switch (packet.a) {
     case 'I':
@@ -66,6 +78,7 @@ function toChange(
       return {
         base: { kind: 'upsert', model: packet.m, row },
         stored: { kind: 'upsert', model: packet.m, version, row },
+        applied: { id: packet.id, action: packet.a, model: packet.m, rowId: row.id },
       };
     }
     case 'A':
@@ -78,6 +91,7 @@ function toChange(
       return {
         base: { kind, model: packet.m, id: packet.mid },
         stored: { kind, model: packet.m, version, id: packet.mid },
+        applied: { id: packet.id, action: packet.a, model: packet.m, rowId: packet.mid },
       };
     }
     case 'G':

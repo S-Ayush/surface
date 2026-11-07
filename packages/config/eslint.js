@@ -10,6 +10,7 @@ const REACT_FILES = [
   'apps/web/**/*.{ts,tsx}',
   'packages/ui/**/*.{ts,tsx}',
   'packages/editor/**/*.{ts,tsx}',
+  'packages/sync-react/**/*.{ts,tsx}',
 ];
 
 /** Hex colours, px lengths and colour functions inside inline style values (esquery regex). */
@@ -80,7 +81,12 @@ export function surfaceEslint({ rootDir }) {
     {
       // AC-11 (lint part) for TSX: Stylelint covers CSS files, this covers inline `style={…}`.
       // Values must be tokens (var(--…)) or computed numbers, never hex, px or colour functions.
-      files: ['apps/web/src/**/*.tsx', 'packages/ui/src/**/*.tsx', 'packages/editor/src/**/*.tsx'],
+      files: [
+        'apps/web/src/**/*.tsx',
+        'packages/ui/src/**/*.tsx',
+        'packages/editor/src/**/*.tsx',
+        'packages/sync-react/src/**/*.tsx',
+      ],
       rules: {
         'no-restricted-syntax': [
           'error',

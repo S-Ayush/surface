@@ -153,7 +153,9 @@ packages/sync-client/
   queue.ts              pending mutations, seq, flusher, results handling
   overlay.ts            base ⊕ optimistic(pending) recomputation
   dispatch.ts           dispatch(op, input) entry point, typed from packages/operations
-  inspector/            dev panel
+  observe.ts            subscribe/getSnapshot adapters over the store, for any UI framework (ADR-0017)
+  inspect.ts            selectors for the UI hooks and the inspector
+packages/sync-react/    React hooks (useConnectionState, usePendingCount, …) and the inspector panel (ADR-0017)
 ```
 
 ### 5.2 Base vs overlay
@@ -173,6 +175,10 @@ export const Team = defineModel("Team", {
 
 ### 5.4 Sync inspector (dev builds, plus `?debug=sync` in prod for Admins)
 Shows connection state, `lastSyncId`, server lag, the pending queue (op, seq, state, age), recent packets, rejections, row counts per model, IDB size, and a "Force resync" button.
+
+- **Server lag** is the time from the last send to confirmation of this tab's most recent confirmed mutation. Time spent queued offline does not count, and a mutation this tab did not send (confirmed after a reload or a queue adoption, E5) is not timed. Packets carry no server time, so a lag in time can only be measured on the client's own changes; a replica that stops advancing shows as a connection problem instead.
+- **Recent packets** are the last 50 applied, newest first: id, action, model and row id (not the row).
+- **IDB size** is the origin's storage usage (`navigator.storage.estimate()`), where the browser reports it.
 
 ## 6. Operations used by v0 demos
 `team.update` (rename) and `user.updateProfile`, with their `optimistic()` implementations. v0 includes a test-only operation `debug.touch` to drive the simulation.
@@ -256,3 +262,4 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | 2026-11-07 | **AC-3:** qualified to mutations stored in the replica. | PLAN-002 S9 review (m1). The simulation now crashes tabs between storage calls, also after a dispatch but before its mutation is stored; no engine can keep a mutation it never wrote down. A stored mutation is never lost or applied twice. Approved by the user (2026-11-07). |
 | 2026-11-07 | **E13** added: a bootstrap with no response within 30 s is abandoned. | PLAN-002 S9 second review. The sync simulation found a hung bootstrap leaving a tab loading for good: a cold start never failed, so the app's "Try again" never showed, and a stuck resync blocked every later start and resync. Same deadline as a mutate request. Approved by the user (2026-11-07). |
 | 2026-11-07 | **§4.4:** the mutate request carries the CSRF token; `403 CSRF_INVALID` renews it once. | PLAN-001 S3 adds CSRF to every cookie-authenticated unsafe request (SPEC-001 §6.1, Q7, proposed by session A). Without the header every mutation would be refused and retried forever once S3 and S5 are on `main`. Client side in the PLAN-002 S8 follow-up (CSRF). Approved by the user (2026-11-07). |
+| 2026-11-07 | **§5.1:** the inspector panel and the UI hooks live in a new package, `@surface/sync-react`; `sync-client` exports framework-free adapters. **§5.4:** server lag, recent packets and IDB size defined. | PLAN-002 S10. `sync-client` is headless and `ui` may import only `domain`, so neither can hold a React panel ([ADR-0017](../04-architecture/adr/0017-sync-react-package.md)). Packets carry no server time, so lag is measured on the tab's own confirmed mutations, from their last send (S10 review: from dispatch, a change made offline showed hours of lag). Package chosen and §5.4 definitions approved by the user (2026-11-07). |

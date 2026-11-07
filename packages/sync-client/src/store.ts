@@ -17,6 +17,7 @@ import { registry as defaultRegistry } from '@surface/operations';
 import type { DeltasMessage, ResyncMessage, SyncGroup } from '@surface/sync-protocol';
 import {
   ProtocolError,
+  SESSION_PATH,
   SOCKET_PATH,
   computeSchemaHash,
   encodeSocketConnectParams,
@@ -25,6 +26,7 @@ import type { IObservableValue } from 'mobx';
 import { observable, reaction, runInAction } from 'mobx';
 import type { BootstrapProgress, FetchLike } from './bootstrap.js';
 import { ClientOutdatedError, bootstrap } from './bootstrap.js';
+import type { AppliedPacket } from './deltas.js';
 import { planDeltas } from './deltas.js';
 import type { HydrateResult } from './hydrate.js';
 import { hydrate } from './hydrate.js';
@@ -101,8 +103,26 @@ export interface SyncStoreOptions {
   readonly clock?: () => number;
 }
 
+/** How long the "is the server up?" probe waits for an answer (sync-protocol.md §4.3). */
+const PROBE_TIMEOUT_MS = 10_000;
+
 /** Rejections kept for the inspector (SPEC-002 §5.4). */
 const RECENT_REJECTIONS = 20;
+/** Applied packets kept for the inspector (SPEC-002 §5.4). */
+export const RECENT_PACKETS = 50;
+
+/** An applied delta packet, for the inspector: what changed, not the row (SPEC-002 §5.4). */
+export interface PacketView extends AppliedPacket {
+  /** Epoch ms when it was applied. */
+  readonly appliedAt: number;
+}
+
+/** This tab's most recent confirmed mutation and how long it took (SPEC-002 §5.4 server lag). */
+export interface RoundTrip {
+  readonly op: string;
+  readonly seq: number;
+  readonly ms: number;
+}
 /** Another tab took over this tab's queue while it had work in it. */
 const QUEUE_LOST = new QueueFencedError().message;
 
@@ -152,6 +172,9 @@ export class SyncStore {
     deep: false,
   });
   readonly #rejections = observable.array<Rejection>([], { deep: false });
+  /** Newest first. */
+  readonly #packets = observable.array<PacketView>([], { deep: false });
+  readonly #roundTrip = observable.box<RoundTrip | undefined>(undefined, { deep: false });
   /**
    * The id a new queue gets if no queue is adopted. Never reused once a start
    * may have sent under it: a new queue starts at seq 1, and the server would
@@ -194,6 +217,8 @@ export class SyncStore {
       ...(connection.timers ? { timers: connection.timers } : {}),
       ...(connection.random ? { random: connection.random } : {}),
       ...(online ? { online } : {}),
+      ...(options.clock ? { clock: options.clock } : {}),
+      probe: () => this.#serverAnswers(),
     });
     // SPEC-002 §3.6: queue while offline; send once connected on a usable replica.
     reaction(
@@ -255,6 +280,11 @@ export class SyncStore {
     return queue.dispatch(op, input);
   }
 
+  /** The models this store syncs, by name (for the inspector's row counts). */
+  get modelNames(): readonly string[] {
+    return this.#options.models.map((model) => model.name);
+  }
+
   /** The replica, for views to read (ADR-0015). Reactive. */
   get pool(): ReadonlyPool {
     return this.#pool;
@@ -293,6 +323,38 @@ export class SyncStore {
   /** The live connection, for the offline indicator. Observable. */
   get connection(): ConnectionState {
     return this.#socket.state;
+  }
+
+  /** Epoch ms when `connection` last changed. Observable. */
+  get connectionSince(): number {
+    return this.#socket.since;
+  }
+
+  /**
+   * Epoch ms since the connection has been trying to get back online;
+   * `undefined` while online or stopped ("Reconnecting > 5 s"). Observable.
+   */
+  get reconnectingSince(): number | undefined {
+    return this.#socket.reconnectingSince;
+  }
+
+  /**
+   * The server answers plain HTTP but connection attempts keep failing
+   * before they open, as when a proxy refuses WebSocket upgrades (SPEC-005
+   * §8, sync-protocol.md §4.3). Observable.
+   */
+  get liveUpdatesUnavailable(): boolean {
+    return this.#socket.liveUpdatesUnavailable;
+  }
+
+  /** The last applied delta packets, newest first, for the inspector. Observable. */
+  get recentPackets(): readonly PacketView[] {
+    return this.#packets;
+  }
+
+  /** This tab's latest confirmed mutation and its round trip, for the inspector. Observable. */
+  get lastRoundTrip(): RoundTrip | undefined {
+    return this.#roundTrip.get();
   }
 
   /**
@@ -473,6 +535,10 @@ export class SyncStore {
       },
       onOutdated: () => this.#outdated(),
       onFenced: () => this.#queueLost(persistence),
+      onConfirmed: ({ op, seq, sentAt }) => {
+        const ms = Math.max(0, (this.#options.clock ?? Date.now)() - sentAt);
+        runInAction(() => this.#roundTrip.set({ op, seq, ms }));
+      },
     });
     return queue;
   }
@@ -619,6 +685,7 @@ export class SyncStore {
         runInAction(() => {
           this.#pool.applyBase(plan.base);
           this.#position.set({ ...position, lastSyncId: plan.lastSyncId });
+          this.#recordPackets(plan.applied);
           const touched = plan.base.some((change) =>
             this.#overlay.dependsOn(
               change.model,
@@ -654,6 +721,37 @@ export class SyncStore {
     if (queue === undefined) return;
     const confirmed = queue.confirm(lastSyncId, acks);
     if (confirmed || baseTouched) this.#overlay.rebuild(queue.mutations);
+  }
+
+  #recordPackets(applied: readonly AppliedPacket[]): void {
+    const appliedAt = (this.#options.clock ?? Date.now)();
+    const views = applied.map((packet): PacketView => ({ ...packet, appliedAt })).reverse();
+    this.#packets.unshift(...views);
+    if (this.#packets.length > RECENT_PACKETS) this.#packets.length = RECENT_PACKETS;
+  }
+
+  /**
+   * Whether the server answers plain HTTP: any status below 500 from
+   * `GET /auth/session`. A server that is down, starting (`503`) or behind a
+   * proxy that cannot reach it (`502`, `504`) does not (sync-protocol.md §4.3).
+   */
+  async #serverAnswers(): Promise<boolean> {
+    const timers = this.#timers;
+    const controller = new AbortController();
+    const timeout = timers.setTimeout(() => controller.abort('timeout'), PROBE_TIMEOUT_MS);
+    try {
+      const base = (this.#options.baseUrl ?? '').replace(/\/$/, '');
+      const response = await this.#options.fetch(`${base}${SESSION_PATH}`, {
+        credentials: 'same-origin',
+        signal: controller.signal,
+      });
+      await response.body?.cancel();
+      return response.status < 500;
+    } catch {
+      return false;
+    } finally {
+      timers.clearTimeout(timeout);
+    }
   }
 
   #resyncFromServer(): void {

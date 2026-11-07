@@ -1,0 +1,33 @@
+{
+  "name": "@surface/sync-react",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React hooks over the sync store, and the sync inspector panel (ADR-0017).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@surface/domain": "workspace:*",
+    "@surface/sync-client": "workspace:*",
+    "@surface/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@surface/config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vitest": "^5.1.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

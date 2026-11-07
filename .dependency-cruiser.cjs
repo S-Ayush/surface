@@ -1,6 +1,7 @@
 // Package boundary rules (architecture.md §3). packages/config is build tooling and exempt.
 //   domain ← operations ← (sync-client, apps/server)
 //   apps/web → sync-client, ui, editor (and domain/operations)
+//   sync-react → sync-client, ui (React bindings and the sync inspector, ADR-0017)
 //   The server never imports UI or client packages; the client never imports server code.
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -73,6 +74,24 @@ module.exports = {
       severity: 'error',
       from: { path: '^apps/server/' },
       to: { path: '^(packages/(ui|sync-client)|apps/web)/' },
+    },
+    {
+      name: 'sync-react-deps',
+      comment:
+        'sync-react binds the sync store to React: sync-client, ui and domain only (ADR-0017).',
+      severity: 'error',
+      from: { path: '^packages/sync-react/' },
+      to: {
+        path: '^packages/(?!config/)',
+        pathNot: '^packages/(sync-react|sync-client|ui|domain)/',
+      },
+    },
+    {
+      name: 'server-no-sync-react',
+      comment: 'The server never imports the React bindings of the client store (ADR-0017).',
+      severity: 'error',
+      from: { path: '^apps/server/' },
+      to: { path: '^packages/sync-react/' },
     },
     {
       name: 'web-no-server-code',
