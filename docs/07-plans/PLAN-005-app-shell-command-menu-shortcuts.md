@@ -127,6 +127,7 @@ Order: **S1–S3 run in parallel from week 1** (after PLAN-004 S1). **S4–S8 ru
 >     - logout lands on `/login`;
 >     - on `/login` the command menu offers no navigation.
 >   - Web tests 248.
+> - **Feature hooks (2026-11-07, after the merge, for session E's PLAN-001 S8 web half):** `features/hosts.ts`, shared and append-only (README §7), with `SHELL_HOSTS` (mounted once by `Shell` through `FeatureHosts`) and `TEAM_MENU` (the team page header's ⋯ through `TeamMenuSlot`). The catalog has `form:create-team` ("Create team…"), and the sidebar shows its `+` (`CreateTeamButton`) only while a handler is registered. Tests: `web/test/shell-hosts.test.tsx`.
 > - **Open until S3:** the HTTP `AuthClient` (`/auth/capabilities`, a current-session endpoint, `/auth/logout`), the login page and its `next`, the 401 redirect, a real bootstrap, then ✅ Done.
 
 ### S5: Shortcut engine & help overlay · M · ✅ Done 2026-11-07

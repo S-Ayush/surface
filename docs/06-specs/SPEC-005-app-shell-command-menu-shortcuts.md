@@ -119,7 +119,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 - Teams the user belongs to are listed in **live** sidebar order (reorderable by drag in M2). "Browse teams" is at the end of the section.
 - Each team expands to its pages. M0 shows only "Home"; more items appear as their milestones land.
 - **The avatar menu** offers Profile, Theme ▸, Keyboard shortcuts, and Log out.
-- *As built (PLAN-005 S4, 2026-11-07):* the M0 sidebar has no logo, no `✎ New` button (issues arrive in M1) and no `[+]` (it appears once the create-team dialog registers its command, PLAN-001 S9). Teams are sorted by name until drag reordering (M2). Search opens the command menu.
+- *As built (PLAN-005 S4, 2026-11-07):* the M0 sidebar has no logo, no `✎ New` button (issues arrive in M1) and a `[+]` that shows only while a feature implements `form:create-team` (the teams feature's dialog, PLAN-001 S8). Teams are sorted by name until drag reordering (M2). Search opens the command menu. Features plug in through `apps/web/src/features/hosts.ts`: `SHELL_HOSTS` (dialogs and their commands, mounted once while the shell is open) and `TEAM_MENU` (the team ⋯ menu, SPEC-001 §3.7, in the team page header).
 
 ## 8. System banners
 

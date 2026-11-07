@@ -12,6 +12,8 @@ export const COMMANDS = {
   'ui:focus-notifications': { title: 'Focus notifications' },
   'nav:open-team': { title: 'Open team…' },
   'ui:submit-dialog': { title: 'Submit the dialog' },
+  // Implemented by the teams feature's host (features/hosts.ts); the sidebar "+" runs it too.
+  'form:create-team': { title: 'Create team…' },
 } as const satisfies Record<string, { readonly title: string }>;
 
 export type CommandId = keyof typeof COMMANDS;

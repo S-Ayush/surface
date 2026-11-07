@@ -3,8 +3,16 @@
 // new page title is announced.
 import { BannerRegion, VisuallyHidden } from '@surface/ui';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from 'react';
 import { useObserved } from '../app/context.js';
+import { SHELL_HOSTS } from '../features/hosts.js';
 import { useCommand } from '../shortcuts/ShortcutProvider.js';
 import { SIDEBAR_MAX, SIDEBAR_MIN } from './layout.js';
 import { ShellContext, useLayoutMode } from './ShellContext.js';
@@ -117,9 +125,16 @@ export function Shell({ children }: { children: ReactNode }) {
         <VisuallyHidden>
           <p role="status">{announcement}</p>
         </VisuallyHidden>
+        <FeatureHosts hosts={SHELL_HOSTS} />
       </div>
     </ShellContext>
   );
+}
+
+/** Features' dialogs and commands, mounted once for the life of the shell (features/hosts.ts). */
+export function FeatureHosts({ hosts }: { hosts: readonly ComponentType[] }) {
+  // The list is a module constant, so a host's index is a stable key.
+  return hosts.map((Host, index) => <Host key={index} />);
 }
 
 /** The sidebar's right edge: drag, or focus it and use the arrow keys (Shift for bigger steps). */

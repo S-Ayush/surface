@@ -4,10 +4,11 @@
 import { EmptyState, toast } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
 import { LayoutGrid } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ComponentType } from 'react';
 import { GLOBAL_TARGET } from '../command-menu/model.js';
 import { useCommandContext } from '../command-menu/context.js';
 import { useApp, useObserved } from '../app/context.js';
+import { TEAM_MENU, type TeamRef } from '../features/hosts.js';
 import { lostTeamMessage, observeTeam, type TeamView } from '../app/workspace.js';
 import { PageHeader } from '../shell/PageHeader.js';
 import { NotFoundPage } from './NotFoundPage.js';
@@ -43,7 +44,11 @@ export function TeamHomePage({ teamKey }: { teamKey: string }) {
   if (team === null) return null;
   return (
     <>
-      <PageHeader crumbs={[team.name]} title={team.name} />
+      <PageHeader
+        crumbs={[team.name]}
+        title={team.name}
+        actions={TEAM_MENU === null ? undefined : <TeamMenuSlot team={team} menu={TEAM_MENU} />}
+      />
       <div className={styles.centered}>
         <EmptyState
           icon={<LayoutGrid />}
@@ -53,4 +58,15 @@ export function TeamHomePage({ teamKey }: { teamKey: string }) {
       </div>
     </>
   );
+}
+
+/** The team ⋯ menu (SPEC-001 §3.7), from the teams feature (features/hosts.ts). */
+export function TeamMenuSlot({
+  team,
+  menu: Menu,
+}: {
+  team: TeamRef;
+  menu: ComponentType<{ readonly team: TeamRef }> | null;
+}) {
+  return Menu === null ? null : <Menu team={team} />;
 }

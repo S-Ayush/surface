@@ -1,8 +1,8 @@
 // The sidebar (SPEC-005 §7, M0): workspace and avatar menu, search, My issues, the user's teams
 // (live, expandable to their pages) with "Browse teams", and Settings.
-import { Kbd } from '@surface/ui';
+import { IconButton, Kbd } from '@surface/ui';
 import { Link } from '@tanstack/react-router';
-import { ChevronRight, CircleDot, House, Search, Settings, Users } from 'lucide-react';
+import { ChevronRight, CircleDot, House, Plus, Search, Settings, Users } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
 import { useApp, useObserved } from '../app/context.js';
 import { useCommandRegistry } from '../shortcuts/ShortcutProvider.js';
@@ -69,9 +69,12 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
           </Link>
         </li>
       </ul>
-      <h2 className={styles.section} id="sidebar-teams">
-        Your teams
-      </h2>
+      <div className={styles.sectionRow}>
+        <h2 className={styles.section} id="sidebar-teams">
+          Your teams
+        </h2>
+        <CreateTeamButton />
+      </div>
       <ul className={styles.nav} aria-labelledby="sidebar-teams">
         {teams.map((team) => {
           const open = expanded.includes(team.id);
@@ -130,5 +133,24 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
         </li>
       </ul>
     </nav>
+  );
+}
+
+/** The "+" next to Your teams (SPEC-001 §3.7): runs Create team, once a feature implements it. */
+export function CreateTeamButton() {
+  const commands = useCommandRegistry();
+  const available = useObserved(
+    useCallback(() => commands.isAvailable('form:create-team'), [commands]),
+  );
+  if (!available) return null;
+  return (
+    <IconButton
+      aria-label="Create team"
+      size="sm"
+      icon={<Plus />}
+      onClick={() => {
+        commands.run('form:create-team');
+      }}
+    />
   );
 }
