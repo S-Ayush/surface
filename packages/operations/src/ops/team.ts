@@ -167,6 +167,7 @@ export const teamCreate = defineOperation({
   permission: (p) => p.any(),
   destructive: false,
   examples: [{ name: 'Mobile Platform', key: 'MP', color: 'blue' }],
+  ui: { title: 'Create team…', icon: 'plus', contexts: ['global'], shortcut: null },
   optimistic: (store, input) => {
     // Without an id or a valid key the server decides; nothing to predict.
     if (input.id === undefined || input.key === undefined) return;
@@ -233,6 +234,8 @@ export const teamJoin = defineOperation({
   permission: (p) => p.any(),
   destructive: false,
   examples: [{ team: 'ENG' }],
+  // A team page's command menu (SPEC-005 §4.1). For a member it changes nothing.
+  ui: { title: 'Join team', icon: 'user-plus', contexts: ['team'], shortcut: null },
   optimistic: (store, input) => {
     const teamId = idOf(store.get('Team', input.team));
     const myId = idOf(store.get('User', 'me'));

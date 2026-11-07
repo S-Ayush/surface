@@ -1,7 +1,7 @@
 // SPEC-001 AC-11 (suggestions), §4 key algorithm, E11 (the next suggestion after a collision).
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { suggestTeamKey, teamKeyCandidates } from './team-key.js';
+import { suggestTeamKey, teamKeyCandidates, teamKeyIssue } from './team-key.js';
 import { RESERVED_TEAM_KEYS, teamKeyProblem } from './workspace.js';
 
 const taken =
@@ -50,6 +50,41 @@ describe('suggestTeamKey (SPEC-001 §4)', () => {
 
   it('accepts a two-letter name as its own key', () => {
     expect(suggestTeamKey('QA')).toBe('QA');
+  });
+});
+
+describe('teamKeyIssue (AC-11, E11: shared by the create form and the server)', () => {
+  it('accepts a free, valid key', () => {
+    expect(teamKeyIssue('MP', 'Mobile Platform', taken('ENG'))).toBeUndefined();
+  });
+
+  it('calls a taken key taken, and suggests the next free key for the name', () => {
+    expect(teamKeyIssue('ENG', 'Engineering', taken('ENG', 'ENGI'))).toEqual({
+      kind: 'taken',
+      message: 'Team key ENG is taken. Try ENGIN, or choose another.',
+      suggestion: 'ENGIN',
+    });
+  });
+
+  it('calls malformed and reserved keys invalid, with a suggestion', () => {
+    expect(teamKeyIssue('E1', 'Engineering', taken())).toMatchObject({
+      kind: 'invalid',
+      message: 'Team key must be 2–5 capital letters, like ENG. Try ENG, or choose another.',
+    });
+    expect(teamKeyIssue('API', 'Api platform', taken('AP'))).toMatchObject({
+      kind: 'invalid',
+      suggestion: 'APL',
+    });
+  });
+
+  it('never suggests the key it rejects, and says how to pick one when nothing fits', () => {
+    expect(teamKeyIssue('ENG', 'Engineering', taken())).toBeUndefined();
+    expect(teamKeyIssue('ENG', 'Engineering', taken('ENG'))?.suggestion).toBe('ENGI');
+    const none = teamKeyIssue('OPS', 'Ops', taken('OPS'));
+    expect(none).toEqual({
+      kind: 'taken',
+      message: 'Team key OPS is taken. Choose another: 2–5 capital letters, like ENG.',
+    });
   });
 });
 

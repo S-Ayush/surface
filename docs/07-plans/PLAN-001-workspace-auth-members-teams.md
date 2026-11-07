@@ -215,14 +215,14 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 - Web: Settings → Members (list, role menu, reset-link modal) and Settings → Workspace (name, logo).
 - **Tests:** AC-10 (last-admin guard), AC-14 (Members get `FORBIDDEN` from the API, and admin routes return not-found in the UI).
 
-### S8: Teams · L · server half built 2026-11-07; web half pending (after PLAN-005 S4)
+### S8: Teams · L · ✅ Done 2026-11-07
 - Ops `team.suggestKey`, `team.create` (key validation, reserved keys, seeds the workflow, adds the creator as a member; client-generated ID), `team.update`, `team.join`, `team.leave`, `team.addMember`, `team.removeMember` (destructive). All mutations have `optimistic` implementations.
 - The key-suggestion algorithm lives in `packages/domain` (shared, so the client suggests instantly while the user types).
 - Web: create-team modal, Settings → Teams (browse with join buttons), team General and Members settings, and the team ⋯ menu join/leave. The sidebar team list comes from PLAN-005 S4.
 - **Tests:** AC-11 (key rules and suggestions), AC-12 (create shows in another tab < 150 ms), AC-13 (membership changes live), E11, E12.
 - **Unblocks:** PLAN-002 S10 (inspector and UI hooks; its demo e2e is held, SPEC-002 D1).
 
-> **As built, server half (2026-11-07).** The web half (create-team modal, Settings → Teams, team General and Members, ⋯ join/leave) starts when session C's PLAN-005 S4 shell is on `main`. The slice is done, and gets its ✅, only then.
+> **As built, server half (2026-11-07).** The web half is recorded below.
 > - **Versions:** no new packages.
 > - **Domain (`packages/domain`):**
 >   - `team-key.ts`: `suggestTeamKey(name, isTaken)` and `teamKeyCandidates(name)`. Initials of up to 3 words, or the first 3 letters of one word, A–Z only (accents dropped). On a collision or reserved key it grows from the name a letter at a time (`ENG` → `ENGI` → `ENGIN`; `MP` → `MPL` …), then tries the name's first letters. `undefined` when nothing fits (the user picks).
@@ -288,6 +288,36 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - **S3 (auth, A):** `actor.memberOf` must be read per request; `team.update`, `addMember` and `removeMember` check it.
 >   - **M7 (private teams):** Admins can't see private teams yet (permissions.md §3.2 says "metadata only"). The leak test pins today's behaviour (`NOT_FOUND`). D3 should be revisited then.
 
+
+> **As built, web half (2026-11-07).** Built on C's PLAN-005 S4 shell and its feature hosts (`f6d5030`, `features/hosts.ts`). Three hooks connect the feature to the shell: `TeamsHost` in `SHELL_HOSTS` answers the `form:create-team` command (command menu and the sidebar "+") with the create-team dialog, offered only once the replica is ready and someone is signed in (`canCreateTeam`); `TEAM_MENU = TeamMenu` (the ⋯ menu in the team page header); and `ui` on `team.create` (`Create team…`, `contexts: ['global']`, entry `opens: 'form:create-team'`).
+> - **Versions:** no new packages.
+> - **Domain:** `teamKeyIssue(key, name, isTaken)` in `team-key.ts` gives the key problem (`invalid` or `taken`) and the next suggestion in the server's exact words. The server's `keyProblem` now wraps it, so the dialog's inline error and the server's refusal read the same (AC-11, E11).
+> - **Operations:** `team.create` has `ui` and opens the form (above). `team.join` has `ui` (`Join team`, `contexts: ['team']`), with a `run` in `features/teams/commands.ts` that joins the targeted team. `team.leave` and `team.removeMember` still have no `ui`: lint rule 3 needs `optimistic`, which waits for session D's store lookup.
+> - **Domain:** `uuidv7(now?, random?)` in `uuid.ts`, a client UUIDv7 for create ops (`team.create`'s `id`), moved from the feature after review since every create op will need one. The server keeps its own monotonic generator (`apps/server/src/db/uuidv7.ts`, A's).
+> - **Web (`apps/web/src/features/teams/`):** pure read models and forms, tested without a DOM, and thin components over them.
+>   - `model.ts` (row types extend the shell's in `app/workspace.ts`): `browseTeams` (every visible team by name, member count, my membership), `teamMembers`, `addableUsers` (active non-members), `teamAccess` (edit and manage members, from the ops' own `permission` functions, so the UI can't drift from the server), `canEndMembershipOf` (E12, D3), `memberCountText`.
+>   - `create-team.ts`: the create form. The key is suggested as the name is typed (`suggestTeamKey` against the keys in the store, archived teams included) until the user edits it; clearing it resumes suggesting. Problems are checked inline in the server's words; a server refusal of the key lands on the key field (`placeServerError`), and a key refused as taken (a private team's, D2) counts as taken for the rest of that opening (`withRefusedKey`), so it isn't suggested again.
+>   - `team-settings.ts`: General's form keeps only the fields the user edited, over the live saved values (`withEdits`), and `teamSettingsChanges` sends only those. A field another member changes meanwhile shows their value and is never overwritten. (Review fix: the first build copied every field into the draft on the first keystroke, so Save reverted concurrent changes.)
+>   - `submit.ts`: `submitMutation` waits for the server's answer while online, and stops waiting (`queued`) when the connection drops meanwhile: the outcome only settles on the server's answer, so the button would otherwise spin until reconnect (review fix). A change the store didn't take at all is `failed`; buttons with no form toast it (`toastIfFailed`), since the shell only toasts server refusals.
+>   - Create dialog (`CreateTeamDialog.tsx`, `useCreateTeamDialog`): a refusal shows inline; success navigates to `/team/$key`; offline it closes and the team shows optimistically. Cancel is disabled while waiting, and an answer that arrives after the dialog was closed is ignored (no jump to the team). Each opening mounts a fresh form, so its defaults (the creator's time zone, taken keys) come from the replica as it is then: hosts mount before it is ready.
+>   - Screens, registered in `features/screens.ts`: `TeamsScreen` (Settings → Teams: Join or Leave per team; Create team runs the shell's `form:create-team`, so it is enabled only when `TeamsHost` offers it; empty and loading states), `TeamGeneralScreen` (editable for members and Admins; read-only with a note otherwise, the color as a static swatch rather than an inert picker; the key is read-only), `TeamMembersScreen` (Add member menu; Remove with a confirmation; Leave as below). Both team screens share `TeamSettingsLayout`, which shows not-found for a team the user can't see (permissions.md §5).
+>   - `TeamMenu.tsx`: Join or Leave team, and Team settings (`teamMenuItems`, a plain function so tests can read the items: Radix menus don't render server-side).
+>   - `useLeaveTeam.tsx`: leaving works the same from Settings → Teams, the ⋯ menu and Members. A private team asks first (only a member can add you back); a public team is one click to rejoin, so it doesn't.
+>   - For the last member of a private team (E12, D3), Leave and Remove are disabled and the reason is visible text the button points to (`aria-describedby`), since a disabled button takes no focus; menu items have no description, so the ⋯ menu's label says it ("Leave team (add a member first)"). Joins and adds show at once; leaves and removes show when the server confirms them (no `optimistic`, see above).
+>   - "Join team" in the command menu is listed on every team page, because an operation entry has no `when` of its own yet (handoff to C). On a team the user is in, it says "You're already a member of ENG." instead of doing nothing.
+> - **Not unit-testable without a DOM** (server rendering runs no effects, and Radix portals and menus render nothing): the dialog's fresh form per opening, ignoring a late answer, and the leave confirmation. Check them by hand (below).
+> - **Known issue:** a refused `team.create` shows both the shell's rejection toast (`ShellRoute`'s `onRejected`) and the dialog's inline error. The rejection doesn't say who dispatched it, so the fix is a per-dispatch flag on D's `dispatch`; C logged it as a PLAN-005 S7 follow-up with D (2026-11-07).
+> - **Found in self-review, test first:** the dialog left archived teams out of the taken keys, so it could suggest a key the server refuses. `createTeamContext` now counts them (mutation-checked).
+> - **Tests (unit, no DOM):**
+>   - `domain/src/team-key.test.ts` (+4, 13): `teamKeyIssue` for free, taken, malformed and reserved keys, with the server's wording and suggestion.
+>   - `web/test/teams-model.test.ts` (7): browse, archived rows, members, addable users, `teamAccess` for members, Admins, non-members and no actor, `canEndMembershipOf` (E12).
+>   - `domain/src/uuid.test.ts` (2): UUIDv7 that Zod's v7 check accepts, ordered by time, version and variant bits.
+>   - `web/test/teams-forms.test.ts` (19, AC-11 and E11 unit parts): key suggestion while typing, a typed key kept, archived keys taken, the default time zone, inline problems in the server's words, every `teamKeyIssue` message placed on the key field, a refused key not suggested again, a `team.create` input the op accepts; General sends only edited fields and keeps another member's concurrent change; `submitMutation` online, offline, on a connection drop while waiting (`queued`) and on a store failure (`failed`).
+>   - `web/test/teams-commands.test.ts` (3): Join team dispatches for the focused team, says so on a team the user is in, and toasts a store failure.
+>   - `web/test/teams-screens.test.tsx` (15, server-rendered with a fake store; every "not disabled" check first requires exactly one such button): Settings → Teams lists teams with counts and Join or Leave; Leave disabled on a private team's last member with the visible reason it points to (E12); Create team enabled only while the command is available; loading and empty states; General editable for a member and an Admin, read-only with a swatch for a non-member, not found for an invisible team; Members lists members with Add member, Remove and Leave for a member, Leave disabled with the visible reason on a private team's last member, no controls for a non-member; the ⋯ menu renders only for a visible team and its items (Join, Leave, blocked Leave with its reason); `SHELL_HOSTS` holds `TeamsHost`, `TEAM_MENU` is `TeamMenu`, and `canCreateTeam` needs a ready replica and a session.
+> - **Held, not checked by hand:** AC-12 and AC-13 (changes live in another tab) are e2e and held. The screens have not been clicked through: S3's server is on `main`, but the web sign-in page is session C's (S3's web half). **To do (E, tracked in the session file):** once it lands, check by hand the create dialog's defaults and late answers, the leave confirmation, and General with two clients editing.
+> - **Verified:** see the session log row "review fixed" for the commands and counts.
+
 ### S9: Hardening & lint · S
 - Registry lint passes for every SPEC-001 op (AC-16): summaries, keywords, examples, and `ui` metadata for command-menu use ("Create team", "Invite member…", "Rename team…", "Join team…").
 - Log events for the M7 audit log: `auth.*`, `user.*`.
@@ -316,10 +346,10 @@ Additive tables only. A rollback before any release is a code revert. After a re
 | AC-8 | `server/test/auth-routes.test.ts` "ends the session, closes its sockets, and the next request is 401" (unit part, sign-out) + ⏸ held (e2e) `e2e/session-revoke.spec.ts` (sign-out checked by hand in S3; `session.revoke` comes with the account slice) |
 | AC-9 | `server/test/password-hash.test.ts` + `domain/src/auth.test.ts` (minimum length) (S2) |
 | AC-10 | `server/test/last-admin-guard.test.ts` (the guard's decision, unit) (+ `server/test/set-role.int.test.ts`, ⏸ held) |
-| AC-11 | `domain/src/team-key.test.ts` (suggestions), `server/test/team-handlers.test.ts` (malformed, reserved and taken keys, with the next suggestion) (+ `server/test/team-create.int.test.ts`, ⏸ held) |
+| AC-11 | `domain/src/team-key.test.ts` (suggestions, `teamKeyIssue`), `server/test/team-handlers.test.ts` (malformed, reserved and taken keys, with the next suggestion), `web/test/teams-forms.test.ts` (suggested while typing, checked inline in the server's words) (+ `server/test/team-create.int.test.ts`, ⏸ held) |
 | AC-12, AC-13 | ⏸ held (e2e) `e2e/teams-realtime.spec.ts` |
-| E11 (S8) | `server/test/team-handlers.test.ts` (`keyProblem`), `server/test/team-ops-leak.int.test.ts` (a private team's key: taken, nothing more) |
-| E12 (S8) | `domain/src/team.test.ts` (`canEndMembership`) (+ the handler path, ⏸ held, checked by hand) |
+| E11 (S8) | `server/test/team-handlers.test.ts` (`keyProblem`), `server/test/team-ops-leak.int.test.ts` (a private team's key: taken, nothing more), `web/test/teams-forms.test.ts` (a refused key shows on the key field; archived keys are taken) |
+| E12 (S8) | `domain/src/team.test.ts` (`canEndMembership`), `web/test/teams-model.test.ts`, `web/test/teams-screens.test.tsx` (Leave and Remove disabled) (+ the handler path, ⏸ held, checked by hand) |
 | Private-team leak (S8) | `server/test/team-ops-leak.int.test.ts` (not held: permissions.md §5) |
 | AC-14 | ⏸ held (integration + e2e) `server/test/admin-permissions.int.test.ts`, `e2e/admin-routes.spec.ts` |
 | AC-15 | ⏸ held (e2e) `e2e/profile-realtime.spec.ts` |

@@ -1,0 +1,38 @@
+// Command-menu entries for the team operations (SPEC-005 §4.1; session C's handoff, PLAN-005 S6).
+// `team.create` opens the create-team form, which TeamsHost answers (features/hosts.ts). `team.leave`
+// and `team.removeMember` get `ui` once they can predict their effect (lint rule 3).
+import { teamJoin } from '@surface/operations';
+import { toast } from '@surface/ui';
+import type { CommandContext } from '../../command-menu/model.js';
+import type { OperationCommand } from '../../command-menu/sources/operations.js';
+import { submitMutation, toastIfFailed } from './submit.js';
+
+/** The team a command acts on: the focused team (a team page's context chip). */
+const targetTeamId = ({ target }: CommandContext): string | undefined =>
+  target.kind === 'team' ? target.ids[0] : undefined;
+
+/** Join the focused team. */
+async function join(ctx: CommandContext): Promise<void> {
+  const id = targetTeamId(ctx);
+  if (id === undefined || ctx.store === null) return;
+  // The menu lists Join on every team page: an operation entry has no `when` of its own yet
+  // (handoff to session C). Until then, joining a team you're in says so instead of doing nothing.
+  const mine = ctx.teams().find((team) => team.id === id);
+  if (mine !== undefined) {
+    toast({ message: `You're already a member of ${mine.key}.` });
+    return;
+  }
+  // A server refusal is the shell's toast (SPEC-002 §3.5); a change the store didn't take isn't.
+  toastIfFailed(await submitMutation(ctx.store, teamJoin, { team: id }));
+}
+
+export const TEAM_COMMANDS: Readonly<Record<string, OperationCommand>> = {
+  'team.create': { opens: 'form:create-team' },
+  'team.join': {
+    refs: (ctx) => {
+      const id = targetTeamId(ctx);
+      return id === undefined ? {} : { team: { id } };
+    },
+    run: (ctx) => join(ctx),
+  },
+};

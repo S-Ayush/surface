@@ -2,13 +2,7 @@
  * Helpers the team handlers share (PLAN-001 S8): output shapes, key conflicts, and membership
  * reads and writes.
  */
-import {
-  canEndMembership,
-  suggestTeamKey,
-  teamKeyProblem,
-  type RefEntity,
-  type ResolvedRef,
-} from '@surface/domain';
+import { canEndMembership, teamKeyIssue, type RefEntity, type ResolvedRef } from '@surface/domain';
 import type { TeamMembershipStateSchema, TeamSchema } from '@surface/operations';
 import { and, count, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -99,16 +93,11 @@ export function keyProblem(
   name: string,
   taken: ReadonlySet<string>,
 ): SurfaceError | undefined {
-  const problem = teamKeyProblem(key);
-  const isTaken = problem === undefined && taken.has(key);
-  if (problem === undefined && !isTaken) return undefined;
-  const next = suggestTeamKey(name, (k) => k === key || taken.has(k));
-  const what = problem ?? `Team key ${key} is taken`;
-  const message = next
-    ? `${what}. Try ${next}, or choose another.`
-    : `${what}. Choose another: 2–5 capital letters, like ENG.`;
-  return new SurfaceError(isTaken ? 'CONFLICT' : 'INVALID_INPUT', message, {
-    issues: [{ path: ['key'], message, ...(next ? { hint: `e.g. ${next}` } : {}) }],
+  const issue = teamKeyIssue(key, name, (k) => taken.has(k));
+  if (issue === undefined) return undefined;
+  const { message, suggestion } = issue;
+  return new SurfaceError(issue.kind === 'taken' ? 'CONFLICT' : 'INVALID_INPUT', message, {
+    issues: [{ path: ['key'], message, ...(suggestion ? { hint: `e.g. ${suggestion}` } : {}) }],
   });
 }
 

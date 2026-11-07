@@ -65,3 +65,37 @@ export function suggestTeamKey(
 ): string | undefined {
   return teamKeyCandidates(name).find((key) => teamKeyProblem(key) === undefined && !isTaken(key));
 }
+
+/** Why a key can't be a new team's key (INV-03, SPEC-001 E11), with the next free suggestion. */
+export interface TeamKeyIssue {
+  /** `invalid`: malformed or reserved (`INVALID_INPUT`); `taken`: another team has it (`CONFLICT`). */
+  readonly kind: 'invalid' | 'taken';
+  /** Says what is wrong and how to fix it, with the suggestion when there is one. */
+  readonly message: string;
+  /** The next free key for the name, never `key` itself. */
+  readonly suggestion?: string;
+}
+
+/**
+ * Why `key` can't be the key of a new team called `name`, or `undefined` if it can. Shared so the
+ * create form's inline error and the server's answer say the same thing (AC-11, E11). The message
+ * names the key only, never the team that has it, which may be private (SPEC-001 D2).
+ */
+export function teamKeyIssue(
+  key: string,
+  name: string,
+  isTaken: (key: string) => boolean,
+): TeamKeyIssue | undefined {
+  const problem = teamKeyProblem(key);
+  const taken = problem === undefined && isTaken(key);
+  if (problem === undefined && !taken) return undefined;
+  const suggestion = suggestTeamKey(name, (k) => k === key || isTaken(k));
+  const what = problem ?? `Team key ${key} is taken`;
+  return {
+    kind: taken ? 'taken' : 'invalid',
+    message: suggestion
+      ? `${what}. Try ${suggestion}, or choose another.`
+      : `${what}. Choose another: 2–5 capital letters, like ENG.`,
+    ...(suggestion === undefined ? {} : { suggestion }),
+  };
+}

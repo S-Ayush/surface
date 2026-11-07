@@ -8,3 +8,4 @@ export * from './team.js';
 export * from './team-key.js';
 export * from './auth.js';
 export * from './names.js';
+export * from './uuid.js';

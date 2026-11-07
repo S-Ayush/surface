@@ -5,5 +5,8 @@
 // only, and on a rebase conflict keep both sides. test/command-operations.test.ts fails while an
 // operation with `ui` metadata has no entry, or an entry names no operation.
 import type { OperationCommand } from '../command-menu/sources/operations.js';
+import { TEAM_COMMANDS } from './teams/commands.js';
 
-export const OPERATION_COMMANDS: Readonly<Record<string, OperationCommand>> = {};
+export const OPERATION_COMMANDS: Readonly<Record<string, OperationCommand>> = {
+  ...TEAM_COMMANDS,
+};
