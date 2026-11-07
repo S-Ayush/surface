@@ -116,7 +116,7 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - **`team.leave` and `team.removeMember` have no `optimistic`:** the store finds rows by id only, and a membership is named by team and user (handoff to session D). They show once the server answers.
 >   - Membership rows that only live in the overlay get a deterministic id (the XOR of team and user ids, stamped v8), so replays agree. These ids are never sent to the server; the server's row, with its own UUIDv7, replaces them.
 >   - **Review change:** the first build derived persisted status and membership ids from the team id, which contradicted domain-model §1 and SPEC-003 §8 (UUIDv7, server-computed rows not simulated). It was dropped by decision of the user. Every persisted id is a UUIDv7 again.
-> - **No `ui` metadata yet:** there is no icon registry; PLAN-001 S9 adds it with the command-menu titles. Adding `ui` to `team.leave` or `team.removeMember` needs `optimistic` (lint rule 3), so it waits for session D's store lookup.
+> - **No `ui` metadata yet:** session E adds it with the web half, together with the command-menu entries in `apps/web/src/features/teams/commands.ts` (PLAN-005 S6's operation commands). This was reassigned from S9 by the user on 2026-11-07, and S9 keeps the registry lint. Adding `ui` to `team.leave` or `team.removeMember` needs `optimistic` (lint rule 3), so it waits for session D's store lookup.
 > - **Server (`apps/server/src/handlers/teams/`):** one file per op, plus `shared.ts`.
 >   - **Create:** `team.create` reads every key (private and archived teams included: keys are unique) and checks the key with `keyProblem`:
 >     - malformed or reserved keys: `INVALID_INPUT`;
