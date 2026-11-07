@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { HTTP_STATUS, type OperationError } from '../executor/errors.js';
 import type { ExecuteResult, Executor } from '../executor/execute.js';
 import type { Lifecycle } from '../lifecycle.js';
-import { errorBody } from './errors.js';
+import { errorBody, ROUTE_ERROR_STATUS } from './errors.js';
 
 /**
  * Who sent a request, or `undefined` for nobody. Sessions (PLAN-001 S3) and API keys (M6)
@@ -93,7 +93,7 @@ export async function signedIn(
   if (!deps.lifecycle.everReady) {
     // Migrations may still be running; tables an operation needs may not exist yet.
     await reply
-      .code(503)
+      .code(ROUTE_ERROR_STATUS.UNAVAILABLE)
       .header('retry-after', '5')
       .send(errorBody(request, 'UNAVAILABLE', 'Surface is starting. Try again in a few seconds.'));
     return undefined;

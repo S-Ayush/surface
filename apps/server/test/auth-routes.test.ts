@@ -2,6 +2,7 @@
 // (unit parts of AC-5 to AC-8; their integration and e2e tests are held, plans README §6).
 // Passwords are hashed with the real argon2id, so AC-5 compares the real work.
 import { createHash } from 'node:crypto';
+import type { ServerResponse } from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
@@ -48,7 +49,13 @@ async function authApp({
   const now = () => clock.now;
   const auth = new SessionAuth(store, { now });
   const closed: string[] = [];
+  /** Sign-in responses and socket closes, in the order they happen. */
+  const trace: string[] = [];
   const verified: string[] = [];
+  /** The gate password checks wait on; a test may swap it after signing in. */
+  const gates = { verify: verifyGate };
+  /** Each sign-in's raw response, so a test can drop the connection mid-way. */
+  const loginResponses: ServerResponse[] = [];
   const app = await buildApp({
     config,
     lifecycle,
@@ -58,10 +65,13 @@ async function authApp({
       store,
       attempts,
       now,
-      closeSessions: (ids) => void closed.push(...ids),
+      closeSessions: (ids) => {
+        closed.push(...ids);
+        trace.push(...ids.map((id) => `closed ${id}`));
+      },
       verify: async (hash, password) => {
         verified.push(hash);
-        await verifyGate;
+        await gates.verify;
         return verifyPassword(hash, password);
       },
     },
@@ -73,7 +83,19 @@ async function authApp({
   });
   app.get('/api/echo', async (request) => {
     const actor = await auth.resolveActor(request);
-    return { userId: actor?.userId, groups: actor?.groups };
+    return {
+      userId: actor?.userId,
+      groups: actor?.groups,
+      sessionId: actor?.sessionId,
+      session: auth.sessionIdOf(request),
+    };
+  });
+  app.addHook('onRequest', async (request, reply) => {
+    if (request.url === '/auth/login') loginResponses.push(reply.raw);
+  });
+  app.addHook('onSend', async (request, _reply, payload) => {
+    if (request.url === '/auth/login') trace.push('login response');
+    return payload;
   });
   apps.push(app);
   if (ready) lifecycle.markReady();
@@ -109,7 +131,10 @@ async function authApp({
     clock,
     logs,
     closed,
+    trace,
     verified,
+    gates,
+    loginResponses,
     login,
     signIn,
     config,
@@ -317,6 +342,45 @@ describe('signing in again', () => {
     expect([...store.sessions.values()].map((s) => s.id)).toEqual(['session-2']);
     expect(closed).toEqual(['session-1']);
   });
+
+  it('closes the old session’s sockets only after the sign-in response is on its way', async () => {
+    // Otherwise the other tabs see `4001` and recheck before the browser holds the new cookie,
+    // with the old one (Q11; C's check against the real server).
+    const { app, signIn, trace } = await authApp();
+    const first = await signIn();
+    await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'ada@example.com', password: PASSWORD },
+      headers: { cookie: first.cookie },
+    });
+    await eventually(() => trace.includes('closed session-1'));
+    expect(trace).toEqual(['login response', 'login response', 'closed session-1']);
+  });
+
+  it('still closes the old session’s sockets when the browser drops the sign-in mid-way', async () => {
+    // The session row is deleted either way; its sockets must not go on as the old user (Q11).
+    const { app, signIn, closed, verified, gates, loginResponses } = await authApp();
+    const first = await signIn();
+    let release = () => {};
+    gates.verify = new Promise<void>((resolve) => (release = resolve));
+    const pending = app
+      .inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'ada@example.com', password: PASSWORD },
+        headers: { cookie: first.cookie },
+      })
+      .catch(() => undefined);
+    await eventually(() => verified.length === 2);
+    // The connection drops while the password is being checked.
+    loginResponses.at(-1)?.destroy();
+    await eventually(() => loginResponses.at(-1)?.destroyed === true);
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    await pending;
+    await eventually(() => closed.includes('session-1'));
+  });
 });
 
 describe('a signed-in request', () => {
@@ -327,6 +391,21 @@ describe('a signed-in request', () => {
     const res = await app.inject({ url: '/auth/session', headers: { cookie } });
     expect(res.json()).toEqual({ ok: true, result: { userId: ADA, workspaceId: WORKSPACE } });
     expect(String(res.headers['set-cookie'])).toMatch(/^surface_csrf=/);
+  });
+
+  it('acts through its own session, so "Revoke all others" can keep it', async () => {
+    const { app, signIn } = await authApp();
+    const echo = async (cookie: string) =>
+      (await app.inject({ url: '/api/echo', headers: { cookie } })).json<{
+        sessionId?: string;
+        session?: string;
+      }>();
+    const laptop = await echo((await signIn()).cookie);
+    const phone = await echo((await signIn()).cookie);
+    expect(laptop.sessionId).toBeDefined();
+    expect(laptop.sessionId).toBe(laptop.session);
+    expect(phone.sessionId).toBe(phone.session);
+    expect(phone.sessionId).not.toBe(laptop.sessionId);
   });
 
   it('reads memberships per request, so joining a team applies at once', async () => {
@@ -385,13 +464,15 @@ describe('a signed-in request', () => {
     expect(res.headers['cache-control']).toBe('no-store');
   });
 
-  it('is signed out once the session expires (E14); the stale cookie is cleared', async () => {
+  it('is signed out once the session expires (E14), and leaves the cookies alone', async () => {
     const { app, clock, signIn } = await authApp();
     const { cookie } = await signIn();
     clock.now = new Date(clock.now.getTime() + SESSION_TTL_MS + 1);
     const res = await app.inject({ url: '/auth/session', headers: { cookie } });
     expect(res.statusCode).toBe(401);
-    expect(String(res.headers['set-cookie'])).toContain('surface_session=; Path=/; Max-Age=0');
+    // A 401 can answer a request sent with an old cookie after the browser stored a newer one
+    // (signing in again in another tab); clearing them would sign that new session out too.
+    expect(res.headers['set-cookie']).toBeUndefined();
   });
 });
 

@@ -4,6 +4,19 @@
  */
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
+/**
+ * Codes the HTTP layer answers before an operation runs, with their statuses (SPEC-003 §9): the
+ * CSRF check (SPEC-001 Q7), the setup guard (Q5) and startup. The executor's own codes are
+ * `ERROR_CODES`; the OpenAPI `Error` response lists both.
+ */
+export const ROUTE_ERROR_STATUS = {
+  /** Fastify's own refusals (`registerErrorHandler`): malformed JSON 400; also 413 and 415. */
+  INVALID_REQUEST: 400,
+  CSRF_INVALID: 403,
+  SETUP_REQUIRED: 503,
+  UNAVAILABLE: 503,
+} as const;
+
 export interface ErrorBody {
   ok: false;
   error: { code: string; message: string; correlationId: string };

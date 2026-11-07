@@ -14,11 +14,13 @@ import { createPool, waitForDatabase, type Pool } from './db/pool.js';
 import { prepareDatabase } from './db/prepare.js';
 import { createExecutor, missingHandlers } from './executor/execute.js';
 import { tokenBucket } from './executor/rate-limit.js';
+import { transactionRunner } from './executor/transaction.js';
 import { HANDLERS } from './handlers/index.js';
 import { pgAttemptStore } from './auth/attempts.js';
 import { SessionAuth } from './auth/sessions.js';
 import { pgAuthStore } from './auth/store.js';
 import type { ActorResolver } from './http/ops.js';
+import { emailOutbox } from './jobs/email.js';
 import { startJobs, type Jobs } from './jobs/index.js';
 import { Lifecycle } from './lifecycle.js';
 import { createLogger } from './logger.js';
@@ -30,7 +32,7 @@ import { pgSyncLogSource, sessionCloser } from './sync/hub-source.js';
 import { announceSetup } from './setup/announce.js';
 import { SetupGate } from './setup/routes.js';
 import { pgSetupStore } from './setup/store.js';
-import { syncRegistry } from './sync/registry.js';
+import { serverSyncRegistry } from './sync/registry.js';
 
 export interface StartOptions {
   logger?: Logger;
@@ -40,6 +42,12 @@ export interface StartOptions {
   databaseWaitMs?: number;
   /** Who sent a request, instead of the session cookie (tests that sign in without it). */
   resolveActor?: ActorResolver;
+  /**
+   * Sync the engine fixtures (`DebugItem`) too, for tests of the sync engine (session D's
+   * real-server entry). Off by default in every `NODE_ENV`: the web app syncs the production
+   * models only, and a schema hash that counted the fixtures would refuse it (SPEC-002 Q8).
+   */
+  syncFixtures?: boolean;
 }
 
 export interface RunningServer {
@@ -79,8 +87,7 @@ export async function startServer(
   const authStore = pgAuthStore(pool);
   const sessions = new SessionAuth(authStore, { log: logger });
   const resolveActor = options.resolveActor ?? sessions.resolveActor;
-  // Engine fixtures (DebugItem) only outside production, like internal operations.
-  const sync = syncRegistry({ includeFixtures: config.nodeEnv !== 'production' });
+  const sync = serverSyncRegistry(options);
   // The hub serves WebSockets, so it runs where HTTP traffic is served (SPEC-004 §7 roles).
   const hub =
     config.role === 'worker'
@@ -102,6 +109,14 @@ export async function startServer(
           registry: sync,
           log: logger.child({ component: 'sync-hub' }),
         });
+  // Here at once (if this replica has a hub), and on every replica through `NOTIFY`.
+  const closeSessions = sessionCloser({ hub, pool, log: logger });
+  // Email is queued on the request's own transaction, in pg-boss once startup has started it.
+  const email = emailOutbox({
+    enabled: config.smtp !== null,
+    sessionSecret: config.sessionSecret,
+    sender: () => jobs?.boss,
+  });
   const setupStore = pgSetupStore(pool);
   const setupGate = new SetupGate(setupStore);
   // Before HTTP stops: clients reconnect elsewhere, or here once we are back (1012).
@@ -123,8 +138,9 @@ export async function startServer(
       auth: sessions,
       store: authStore,
       attempts: pgAttemptStore(pool),
-      // Here at once (if this replica has a hub), and on every replica through `NOTIFY`.
-      closeSessions: sessionCloser({ hub, pool, log: logger }),
+      closeSessions,
+      email,
+      withTransaction: transactionRunner(pool),
     },
     ops: {
       registry,
@@ -138,6 +154,8 @@ export async function startServer(
           // Internal (debug) operations exist only outside production (SPEC-003 §6 step 2).
           allowInternal: config.nodeEnv !== 'production',
           rateLimiter: tokenBucket(),
+          email,
+          closeSessions,
           ...(metrics ? { metrics } : {}),
         }),
     },
@@ -167,8 +185,18 @@ export async function startServer(
       });
     }
     await hub?.start();
-    if (config.role !== 'web') {
-      jobs = await startJobs({ databaseUrl: config.databaseUrl, pool, log: logger });
+    // `all` and `worker` run the jobs; `web` starts the queue only to queue email (PLAN-001 S4).
+    const work = config.role !== 'web';
+    if (work || config.smtp !== null) {
+      jobs = await startJobs({
+        databaseUrl: config.databaseUrl,
+        pool,
+        log: logger,
+        work,
+        ...(config.smtp === null
+          ? {}
+          : { mail: { smtp: config.smtp, sessionSecret: config.sessionSecret } }),
+      });
     }
 
     lifecycle.markReady();

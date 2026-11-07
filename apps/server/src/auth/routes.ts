@@ -17,9 +17,11 @@ import { EMAIL_MAX_LENGTH, normaliseEmail, PASSWORD_MAX_LENGTH } from '@surface/
 import { CSRF_COOKIE, CSRF_HEADER, CSRF_INVALID, SESSION_PATH } from '@surface/sync-protocol';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { errorBody } from '../http/errors.js';
+import { errorBody, ROUTE_ERROR_STATUS } from '../http/errors.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { accountKey, ipKey, type AttemptStore } from './attempts.js';
+import type { WithTransaction } from '../executor/transaction.js';
+import type { EmailOutbox } from '../jobs/email.js';
 import { csrfCookie, csrfToken, csrfTokenMatches } from './csrf.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { clearedCookie, readCookie, SESSION_COOKIE, sessionCookie } from './session.js';
@@ -47,6 +49,16 @@ export interface AuthRouteDeps {
   readonly setupComplete: () => Promise<boolean>;
   /** Closes these sessions' sockets with `4001` (the sync hub; absent on a worker). */
   readonly closeSessions?: (sessionIds: readonly string[]) => void;
+  /**
+   * Queues email on the route's own transaction (`enqueue(client, email)`), for the magic-link
+   * and reset routes (PLAN-001 S4, session E). Absent in tests that send none.
+   */
+  readonly email?: EmailOutbox;
+  /**
+   * One transaction for a route's writes and the email it queues: `withTransaction(async (client)
+   * => { …writes on client…; await email.enqueue(client, job) })`. Absent in tests that need none.
+   */
+  readonly withTransaction?: WithTransaction;
   readonly now?: () => Date;
   /** Password checking, swappable so tests can count the work done (AC-5). */
   readonly verify?: (hash: string, password: string) => Promise<boolean>;
@@ -92,7 +104,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     // Its own code, not FORBIDDEN: the client can tell a missing or stale token from a refusal,
     // get the cookie again (`GET /auth/session`) and resend once (SPEC-001 Q7).
     return reply
-      .code(403)
+      .code(ROUTE_ERROR_STATUS.CSRF_INVALID)
       .send(
         errorBody(
           request,
@@ -188,7 +200,23 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     const previous = await deps.auth.session(request);
     if (previous !== undefined) {
       await deps.store.deleteSession(previous.id);
-      deps.closeSessions?.([previous.id]);
+      // Its sockets close once this response is on its way (Q11). The browser's other tabs
+      // recheck `GET /auth/session` on `4001`; before then they would still send the old cookie.
+      // 'close' fires whether the response finished or the connection dropped; if it dropped
+      // already (during the password check), it fired before we could listen, so close now.
+      const closeSessions = deps.closeSessions;
+      if (closeSessions) {
+        const close = () => {
+          // An event listener: a throw here would end the process, not this request.
+          try {
+            closeSessions([previous.id]);
+          } catch (error) {
+            request.log.error({ err: error }, 'could not close the replaced session’s sockets');
+          }
+        };
+        if (reply.raw.destroyed || reply.raw.closed) close();
+        else reply.raw.once('close', close);
+      }
     }
     const session = await deps.store.createSession({
       userId: credentials.userId,
@@ -222,12 +250,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     if (!deps.lifecycle.everReady) return unavailable(request, reply);
     const session = await deps.auth.session(request);
     if (session === undefined) {
-      const reply401 = reply.code(401);
-      // A cookie that no longer works is cleared, so the app stops sending it.
-      if (readCookie(request.headers.cookie, SESSION_COOKIE) !== undefined) {
-        reply401.header('set-cookie', clearCookies());
-      }
-      return reply401.send(errorBody(request, 'UNAUTHENTICATED', 'Sign in to continue.'));
+      // The cookies are left alone: this may answer a request sent with an old cookie after the
+      // browser stored a newer one (signing in again, Q11), and clearing them would end that new
+      // session too. A dead cookie only earns more 401s; signing out or in replaces it.
+      return reply
+        .code(401)
+        .header('cache-control', 'no-store')
+        .send(errorBody(request, 'UNAUTHENTICATED', 'Sign in to continue.'));
     }
     // Sets the CSRF cookie again, in case the browser lost it.
     return reply
@@ -250,7 +279,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
 
 function unavailable(request: FastifyRequest, reply: FastifyReply): FastifyReply {
   return reply
-    .code(503)
+    .code(ROUTE_ERROR_STATUS.UNAVAILABLE)
     .header('retry-after', '5')
     .send(errorBody(request, 'UNAVAILABLE', 'Surface is starting. Try again in a few seconds.'));
 }

@@ -92,6 +92,7 @@ export class SessionAuth {
         userId: record.userId,
         role: record.role,
         memberships: record.memberships,
+        sessionId: record.id,
       }),
     };
     this.#resolved.set(request, resolved);

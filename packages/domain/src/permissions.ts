@@ -33,6 +33,11 @@ export interface Actor {
    */
   readonly memberOf: readonly string[];
   readonly apiKey?: ApiKeyScope;
+  /**
+   * The session a `user` actor signed in with, so "Revoke all others" and a password change
+   * can keep it (PLAN-001 S3 follow-up). Absent for API keys, MCP and the system.
+   */
+  readonly sessionId?: string;
 }
 
 export const WORKSPACE_GROUP = 'workspace';
@@ -59,10 +64,12 @@ export interface UserActorInput {
   readonly memberships: readonly Membership[];
   /** Set for API and MCP calls (M6). */
   readonly via?: { readonly kind: 'api' | 'mcp'; readonly apiKey: ApiKeyScope };
+  /** The session behind a signed-in request; ignored for API and MCP calls. */
+  readonly sessionId?: string;
 }
 
 /** The actor for an active user, from a session (PLAN-001 S3) or an API key (M6). */
-export function userActor({ userId, role, memberships, via }: UserActorInput): Actor {
+export function userActor({ userId, role, memberships, via, sessionId }: UserActorInput): Actor {
   return {
     kind: via?.kind ?? 'user',
     userId,
@@ -70,6 +77,7 @@ export function userActor({ userId, role, memberships, via }: UserActorInput): A
     groups: syncGroupsFor(userId, memberships),
     memberOf: memberships.map((m) => m.teamId),
     ...(via ? { apiKey: via.apiKey } : {}),
+    ...(sessionId !== undefined && !via ? { sessionId } : {}),
   };
 }
 

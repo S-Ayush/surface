@@ -17,7 +17,7 @@ import {
   type SocketConnectParams,
 } from '@surface/sync-protocol';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { errorBody } from '../http/errors.js';
+import { errorBody, ROUTE_ERROR_STATUS } from '../http/errors.js';
 import type { ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
 import type { SyncHub } from './hub.js';
@@ -58,7 +58,7 @@ export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps)
         preValidation: async (request, reply) => {
           if (deps.lifecycle.state !== 'ready' || !deps.hub.started) {
             return reply
-              .code(503)
+              .code(ROUTE_ERROR_STATUS.UNAVAILABLE)
               .header('retry-after', '5')
               .send(
                 errorBody(

@@ -11,7 +11,9 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import type { Logger } from 'pino';
 import type { z } from 'zod';
+import type { SessionSelection } from '../auth/store.js';
 import type { Queryable } from '../db/pool.js';
+import type { EmailJob } from '../mail/job.js';
 import { SYNCED_MODELS, type ModelName, type ModelRow } from '../sync/models.js';
 import {
   countQuery,
@@ -71,6 +73,20 @@ export interface HandlerContext {
   /** One timestamp for the whole execution. */
   now(): Date;
   readonly log: Logger;
+  /**
+   * Queues an email on this operation's transaction, so it is sent only if the operation commits
+   * (PLAN-001 S4); a worker sends it later. Resolves to `false`, queuing nothing, when SMTP isn't
+   * configured: the handler then offers the link another way. Throws (`INTERNAL`) for an address
+   * the email schema refuses (`z.email()`: no IDN domains or quoted local parts), so check first.
+   */
+  enqueueEmail(email: EmailJob): Promise<boolean>;
+  /**
+   * Ends sessions of `userId` in this transaction: all of them (`{ all: true }`), all but one
+   * (`{ except }`, e.g. `ctx.actor.sessionId` for "Revoke all others") or one (`{ only }`).
+   * Once the operation commits, their sockets close with `4001` on every replica (AC-8).
+   * Resolves to how many ended; 0 for a session that isn't the user's.
+   */
+  closeSessions(userId: string, which: SessionSelection): Promise<number>;
 }
 
 export interface Handler<Op extends AnyOperation = AnyOperation> {

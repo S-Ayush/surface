@@ -29,6 +29,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Logger } from 'pino';
 import type { Registry } from 'prom-client';
 import type { z } from 'zod';
+import { deleteUserSessions } from '../auth/store.js';
 import type { Pool } from '../db/pool.js';
 import { eventOutbox } from '../db/schema/index.js';
 import { uuidv7 } from '../db/uuidv7.js';
@@ -50,6 +51,7 @@ import { refNotFound, refPlan, resolveRefs, single, valueAt } from './refs/resol
 import { syncRepo, type RepoFactory, type RowChange, type TransactionRepo } from '../sync/repo.js';
 import { nearestNames } from './suggest.js';
 import { inTransaction, jitterBackoff, postgresCode } from './transaction.js';
+import { NO_EMAIL, type EmailOutbox } from '../jobs/email.js';
 
 /** Step 10: automations and invariant checks, run after the handler inside the transaction. */
 export type PostHandlerCheck = (state: {
@@ -76,6 +78,13 @@ export interface ExecutorDeps {
   readonly retries?: number;
   readonly backoff?: (attempt: number) => number;
   readonly clock?: () => Date;
+  /** Where `ctx.enqueueEmail` queues email. Default: no SMTP, nothing is queued. */
+  readonly email?: EmailOutbox;
+  /**
+   * Closes the sockets of sessions an operation ended, on every replica (`sessionCloser`).
+   * Called only after the commit that deleted them.
+   */
+  readonly closeSessions?: (sessionIds: readonly string[]) => void;
 }
 
 interface TransactionOutcome {
@@ -84,6 +93,8 @@ interface TransactionOutcome {
   readonly replayed?: true;
   /** When the sync lock was taken, if it was: it is held until the commit. */
   readonly lockedAt?: number;
+  /** Sessions the handler ended, whose sockets close once this commits. */
+  readonly endedSessions?: readonly string[];
 }
 
 export interface ExecuteOptions {
@@ -135,6 +146,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   const repoFactory = deps.repoFactory ?? syncRepo;
   const checks = deps.checks ?? [];
   const clock = deps.clock ?? (() => new Date());
+  const email = deps.email ?? NO_EMAIL;
   const transactionOptions = { retries: deps.retries ?? 3, backoff: deps.backoff ?? jitterBackoff };
 
   const callable = (def: AnyOperation, actor: Actor) =>
@@ -184,7 +196,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     const viewer = narrowToKeyTeams(actor);
 
     // 6–12
-    const { result, lastSyncId, replayed, lockedAt } = await inTransaction(
+    const { result, lastSyncId, replayed, lockedAt, endedSessions } = await inTransaction(
       deps.pool,
       { ...transactionOptions, readOnly: def.kind === 'query' },
       async (client): Promise<TransactionOutcome> => {
@@ -192,6 +204,8 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         const tx = drizzle({ client, casing: 'snake_case' });
         const repo = repoFactory(tx, now);
         const events: DomainEvent[] = [];
+        // Per attempt: a retried transaction starts again from nothing.
+        const ended: string[] = [];
 
         // 6. Idempotency, before anything is read: a replay doesn't look at the present.
         if (owner !== undefined && clientMutationId !== undefined) {
@@ -230,6 +244,12 @@ export function createExecutor(deps: ExecutorDeps): Executor {
           emit: (event) => void events.push(event),
           now: () => new Date(now),
           log,
+          enqueueEmail: (job) => email.enqueue(client, job),
+          closeSessions: async (userId, which) => {
+            const ids = await deleteUserSessions(client, userId, which);
+            ended.push(...ids);
+            return ids.length;
+          },
         };
         const raw = await handler.run(ctx, input);
 
@@ -278,10 +298,20 @@ export function createExecutor(deps: ExecutorDeps): Executor {
           result: output.data,
           lastSyncId: flushed.lastSyncId,
           ...(flushed.lockedAt === undefined ? {} : { lockedAt: flushed.lockedAt }),
+          ...(ended.length > 0 ? { endedSessions: ended } : {}),
         };
       },
     );
     if (lockedAt !== undefined) syncLock.observeLockHold((performance.now() - lockedAt) / 1000);
+    // After the commit: a socket closed earlier could reconnect while the session still existed.
+    // The operation is committed by now, so a failure here is logged, never returned.
+    if (endedSessions !== undefined && deps.closeSessions) {
+      try {
+        deps.closeSessions(endedSessions);
+      } catch (error) {
+        log.error({ err: loggableError(error), op: def.name }, 'could not close ended sessions');
+      }
+    }
 
     // 13. Result
     return {

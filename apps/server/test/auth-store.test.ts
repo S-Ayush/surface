@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { createSession, SESSION_TTL_MS } from '../src/auth/session.js';
-import { pgAuthStore } from '../src/auth/store.js';
+import { deleteUserSessions, pgAuthStore } from '../src/auth/store.js';
 
 const NOW = new Date('2026-11-07T10:00:00Z');
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -88,5 +88,37 @@ describe('pgAuthStore', () => {
       },
       { text: 'DELETE FROM sessions WHERE id = $1', values: ['s1'] },
     ]);
+  });
+});
+
+describe('deleteUserSessions', () => {
+  /** Answers the `DELETE … RETURNING id` with the ids it is given. */
+  function deletingClient(ids: string[]) {
+    const statements: { text: string; values: unknown[] }[] = [];
+    const query = (text: string, values: unknown[] = []) => {
+      statements.push({ text: text.replace(/\s+/g, ' ').trim(), values });
+      return Promise.resolve({ rows: ids.map((id) => ({ id })) });
+    };
+    return { statements, client: { query } as unknown as Pick<pg.PoolClient, 'query'> };
+  }
+
+  it('ends only the user’s own sessions: all, all but one, or one, and says which', async () => {
+    const all = deletingClient(['s1', 's2']);
+    expect(await deleteUserSessions(all.client, 'u1', { all: true })).toEqual(['s1', 's2']);
+    const others = deletingClient(['s2']);
+    await deleteUserSessions(others.client, 'u1', { except: 's1' });
+    const one = deletingClient(['s2']);
+    await deleteUserSessions(one.client, 'u1', { only: 's2' });
+
+    for (const { statements } of [all, others, one]) {
+      expect(statements).toHaveLength(1);
+      expect(statements[0]?.text).toMatch(
+        /^DELETE FROM sessions WHERE user_id = \$1 .* RETURNING id$/,
+      );
+    }
+    // $1 the user, $2 the one session to end, $3 the session to keep.
+    expect(all.statements[0]?.values).toEqual(['u1', null, null]);
+    expect(others.statements[0]?.values).toEqual(['u1', null, 's1']);
+    expect(one.statements[0]?.values).toEqual(['u1', 's2', null]);
   });
 });

@@ -1,12 +1,13 @@
 // Executor building blocks that need no database: suggestions, ids, retry detection, errors.
 import { describe, expect, it } from 'vitest';
-import { registry } from '@surface/operations';
+import { registry, toOpenApi } from '@surface/operations';
 import { uuidv7 } from '../src/db/uuidv7.js';
 import { ERROR_CODES, HTTP_STATUS } from '../src/executor/errors.js';
 import { missingHandlers } from '../src/executor/execute.js';
 import { editDistance, nearestNames } from '../src/executor/suggest.js';
 import { isRetryable } from '../src/executor/transaction.js';
 import { HANDLERS } from '../src/handlers/index.js';
+import { ROUTE_ERROR_STATUS } from '../src/http/errors.js';
 
 describe('nearestNames', () => {
   const names = ['team.update', 'team.create', 'team.list', 'user.setRole', 'issue.update'];
@@ -73,6 +74,20 @@ describe('error codes', () => {
       ['CLIENT_OUTDATED', 426],
       ['INTERNAL', 500],
     ]);
+  });
+
+  it('are all listed with their statuses in the OpenAPI Error response, the routes’ own too', () => {
+    const doc = toOpenApi(registry.list(), { version: '0.0.0' });
+    const { description } = (doc.components as { responses: { Error: { description: string } } })
+      .responses.Error;
+    const listed = [...description.matchAll(/\b([A-Z][A-Z_]+) (\d{3})\b/g)].map(
+      ([, code, status]) => `${code} ${status}`,
+    );
+    const answered = [
+      ...ERROR_CODES.map((code) => `${code} ${HTTP_STATUS[code]}`),
+      ...Object.entries(ROUTE_ERROR_STATUS).map(([code, status]) => `${code} ${status}`),
+    ];
+    expect(listed.sort()).toEqual(answered.sort());
   });
 });
 

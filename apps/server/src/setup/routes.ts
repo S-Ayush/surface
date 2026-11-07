@@ -12,7 +12,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { csrfCookie, csrfToken } from '../auth/csrf.js';
 import { sessionCookie } from '../auth/session.js';
-import { errorBody } from '../http/errors.js';
+import { errorBody, ROUTE_ERROR_STATUS } from '../http/errors.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { setupInputSchema } from './input.js';
 import type { SetupStore } from './store.js';
@@ -140,7 +140,7 @@ async function guard(
     )
   ) {
     return reply
-      .code(503)
+      .code(ROUTE_ERROR_STATUS.SETUP_REQUIRED)
       .send(
         errorBody(
           request,
@@ -201,7 +201,7 @@ function tokenParam(request: FastifyRequest): string | undefined {
 
 function unavailable(request: FastifyRequest, reply: FastifyReply): FastifyReply {
   return reply
-    .code(503)
+    .code(ROUTE_ERROR_STATUS.UNAVAILABLE)
     .header('retry-after', '5')
     .send(errorBody(request, 'UNAVAILABLE', 'Surface is starting. Try again in a few seconds.'));
 }

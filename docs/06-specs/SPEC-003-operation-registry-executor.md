@@ -136,7 +136,7 @@ execute(opName, rawInput, actor, opts{fields?, clientMutationId?, clientId?, seq
 → { ok: true, result, lastSyncId? } | { ok: false, error }
 ```
 
-**Handler context (`ctx`):** `actor`, `refs`, `tx`, `repo` (the only writer of synced tables, per SPEC-002 §4.2), `query` (read helpers that apply visibility), `emit(event)` (outbox), `now()` (one timestamp per execution), `log`.
+**Handler context (`ctx`):** `actor`, `refs`, `tx`, `repo` (the only writer of synced tables, per SPEC-002 §4.2), `query` (read helpers that apply visibility), `emit(event)` (outbox), `now()` (one timestamp per execution), `log`, `enqueueEmail(email)` (queued on the operation's transaction, so sent only if it commits; `false` without SMTP; throws on an address the email schema refuses), `closeSessions(userId, which)` (deletes sessions in the transaction; their sockets close on every replica only after the commit). The last two since PLAN-001's S3 follow-up (2026-11-07).
 
 **Rules for handlers:** no network I/O inside the transaction (emails and webhooks go through the outbox) · deterministic given input + DB state · no direct `db.*` writes · may call other operations' *internal functions* (not `execute`) to compose, sharing the transaction.
 

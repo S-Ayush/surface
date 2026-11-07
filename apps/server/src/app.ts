@@ -12,6 +12,8 @@ import type { AttemptStore } from './auth/attempts.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import type { SessionAuth } from './auth/sessions.js';
 import type { AuthStore } from './auth/store.js';
+import type { EmailOutbox } from './jobs/email.js';
+import type { WithTransaction } from './executor/transaction.js';
 import type { Config } from './config.js';
 import type { Executor } from './executor/execute.js';
 import { trustReverseProxy } from './http/client-address.js';
@@ -55,6 +57,10 @@ export interface AuthDeps {
   attempts: AttemptStore;
   /** Closes sessions' sockets on sign-out (the sync hub, where it runs). */
   closeSessions?: (sessionIds: readonly string[]) => void;
+  /** Queues email on a route's transaction (magic link, reset; PLAN-001 S4). */
+  email?: EmailOutbox;
+  /** A transaction for a route's writes and the email it queues, together. */
+  withTransaction?: WithTransaction;
   now?: () => Date;
   /** Password checking, for tests that count the work (AC-5). */
   verify?: (hash: string, password: string) => Promise<boolean>;

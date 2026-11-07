@@ -13,10 +13,10 @@ import {
 import { computeSchemaHash, decodeBootstrapFrame } from '@surface/sync-protocol';
 import { describe, expect, it } from 'vitest';
 import { debugItems } from '../src/db/schema/index.js';
-import { clientRow, syncModel, syncRegistry } from '../src/sync/registry.js';
+import { clientRow, serverSyncRegistry, syncModel, syncRegistry } from '../src/sync/registry.js';
 
 describe('the sync registry', () => {
-  it('outside production, syncs the DebugItem fixture with the hash the client computes', () => {
+  it('with fixtures, syncs DebugItem too, with the hash the sync-engine tests compute', () => {
     const registry = syncRegistry({ includeFixtures: true });
     const models = [DebugItem, ...PRODUCTION_MODELS];
     expect(registry.eager.map((m) => m.name)).toEqual(models.map((m) => m.name));
@@ -24,11 +24,20 @@ describe('the sync registry', () => {
     expect(registry.schemaHash).toBe(computeSchemaHash(models));
   });
 
-  it('in production, leaves the fixture out of the models and the hash', () => {
+  it('without them, leaves the fixture out of the models and the hash', () => {
     const registry = syncRegistry({ includeFixtures: false });
     expect(registry.models.map((m) => m.name)).toEqual(PRODUCTION_MODELS.map((m) => m.name));
     expect(registry.schemaHash).toBe(computeSchemaHash(PRODUCTION_MODELS));
     expect(registry.schemaHash).not.toBe(syncRegistry({ includeFixtures: true }).schemaHash);
+  });
+
+  it('serves the web app’s models in every environment, the fixtures only when a test asks', () => {
+    // The web client syncs PRODUCTION_MODELS; a dev server that counted DebugItem in its hash
+    // would refuse it as outdated (C's check against `pnpm dev`; SPEC-002 Q8).
+    expect(serverSyncRegistry({}).schemaHash).toBe(computeSchemaHash(PRODUCTION_MODELS));
+    expect(serverSyncRegistry({ syncFixtures: true }).models.map((m) => m.name)).toContain(
+      'DebugItem',
+    );
   });
 
   it('maps each declared field to its column, with groups taken from sync_groups', () => {

@@ -54,6 +54,25 @@ describe('actors', () => {
     expect(actor).toMatchObject({ kind: 'mcp', userId: 'u-1', role: 'admin', apiKey });
   });
 
+  it('keeps the session a signed-in user acts through, but never for an API key', () => {
+    const signedIn = userActor({
+      userId: 'u-1',
+      role: 'member',
+      memberships: [],
+      sessionId: 's-1',
+    });
+    expect(signedIn.sessionId).toBe('s-1');
+    const apiKey = { id: 'key-1', scope: 'read' as const, teamIds: [], allowDestructive: false };
+    const viaKey = userActor({
+      userId: 'u-1',
+      role: 'member',
+      memberships: [],
+      via: { kind: 'api', apiKey },
+      sessionId: 's-1',
+    });
+    expect(viaKey).not.toHaveProperty('sessionId');
+  });
+
   it('has a frozen system actor with no user and no groups', () => {
     expect(systemActor()).toEqual({ kind: 'system', groups: [], memberOf: [] });
     expect(Object.isFrozen(systemActor())).toBe(true);

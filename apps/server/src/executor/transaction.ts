@@ -91,3 +91,24 @@ export function postgresCode(error: unknown): string | undefined {
   }
   return undefined;
 }
+
+/** Runs `fn` in one read-write transaction on one connection, and resolves to its result. */
+export type WithTransaction = <T>(fn: (client: PoolClient) => Promise<T>) => Promise<T>;
+
+/**
+ * Transactions for routes outside the executor (sign-in, magic link, reset; PLAN-001 S4), so a
+ * route's writes and the email it queues (`EmailOutbox.enqueue(client, …)`) commit or roll back
+ * together. Like the executor's: `READ COMMITTED`, a serialization failure or deadlock reruns
+ * `fn`, so `fn` must have no effect outside the transaction.
+ */
+export function transactionRunner(
+  pool: Pool,
+  options: Partial<Omit<TransactionOptions, 'readOnly'>> = {},
+): WithTransaction {
+  const settings: TransactionOptions = {
+    readOnly: false,
+    retries: options.retries ?? 3,
+    backoff: options.backoff ?? jitterBackoff,
+  };
+  return (fn) => inTransaction(pool, settings, fn);
+}

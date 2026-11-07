@@ -96,3 +96,35 @@ export function pgAuthStore(pool: Pick<pg.Pool, 'query'>): AuthStore {
     },
   };
 }
+
+/**
+ * Which of a user's sessions end: every one (`{ all: true }`), every one but the caller's
+ * (`{ except }`: "Revoke all others", a password change) or a single one (`{ only }`). Always
+ * explicit: an actor without a session id must not turn "all but mine" into "all".
+ */
+export type SessionSelection =
+  { readonly all: true } | { readonly except: string } | { readonly only: string };
+
+/**
+ * Deletes a user's sessions on `client`, the caller's transaction, and returns their ids so
+ * their sockets can be closed once it commits. Only `userId`'s own sessions match, so the id of
+ * someone else's session ends nothing. Session ids are compared as text, so a malformed one
+ * from input matches nothing instead of failing the statement.
+ */
+export async function deleteUserSessions(
+  client: Pick<pg.PoolClient, 'query'>,
+  userId: string,
+  which: SessionSelection,
+): Promise<string[]> {
+  const only = 'only' in which ? which.only : null;
+  const except = 'except' in which ? which.except : null;
+  const { rows } = await client.query<{ id: string }>(
+    `DELETE FROM sessions
+      WHERE user_id = $1
+        AND ($2::text IS NULL OR id::text = $2)
+        AND ($3::text IS NULL OR id::text <> $3)
+      RETURNING id`,
+    [userId, only, except],
+  );
+  return rows.map((row) => row.id);
+}

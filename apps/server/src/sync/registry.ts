@@ -36,7 +36,7 @@ export interface SyncRegistry {
 }
 
 export interface RegistryOptions {
-  /** Include engine fixtures (`DebugItem`). Off in production, like internal operations. */
+  /** Include engine fixtures (`DebugItem`): only for sync-engine tests (SPEC-002 Q8). */
   readonly includeFixtures: boolean;
 }
 
@@ -54,6 +54,15 @@ export function syncRegistry({ includeFixtures }: RegistryOptions): SyncRegistry
     eager: models.filter((m) => m.def.load === 'eager'),
     schemaHash: computeSchemaHash(models.map((m) => m.def)),
   };
+}
+
+/**
+ * The models a server syncs: the production ones, plus the engine fixtures only when a test asks
+ * (`startServer`'s `syncFixtures`), in every `NODE_ENV`; the web app syncs the production models
+ * only (SPEC-002 Q8).
+ */
+export function serverSyncRegistry(options: { readonly syncFixtures?: boolean }): SyncRegistry {
+  return syncRegistry({ includeFixtures: options.syncFixtures ?? false });
 }
 
 /** One model's registry entry. Exported for tests. */
