@@ -1,6 +1,6 @@
 // SPEC-012 AC-10 and D19: <displayName>/<identifier lowercased>-<title slug>, at most 60 characters.
 import { describe, expect, it } from 'vitest';
-import { BRANCH_NAME_MAX, gitBranchName } from './git-branch.js';
+import { BRANCH_NAME_MAX, foldToSlug, gitBranchName } from './git-branch.js';
 
 describe('gitBranchName', () => {
   it('joins the name, the lowercased identifier and the slug', () => {
@@ -45,5 +45,27 @@ describe('gitBranchName', () => {
 
   it('is stable for the same input', () => {
     expect(gitBranchName('Ada', 'ENG-42', 'fix-it')).toBe(gitBranchName('Ada', 'ENG-42', 'fix-it'));
+  });
+});
+
+describe('foldToSlug', () => {
+  it.each([
+    ['Søren', 'soren'],
+    ['Straße', 'strasse'],
+    ['Æther Œuvre', 'aether-oeuvre'],
+    ['Đorđe Łukasz', 'dorde-lukasz'],
+    ['Þór', 'thor'],
+    ['ØÆŒ', 'oaeoe'],
+    ['Café  Crème!', 'cafe-creme'],
+  ])('folds %s to %s', (input, expected) => {
+    expect(foldToSlug(input)).toBe(expected);
+  });
+
+  it('gives an empty slug for text with no Latin letters or digits', () => {
+    expect(foldToSlug('山田 太郎')).toBe('');
+  });
+
+  it('drops the name prefix for a non-Latin display name', () => {
+    expect(gitBranchName('山田太郎', 'ENG-42', 'fix-it')).toBe('eng-42-fix-it');
   });
 });

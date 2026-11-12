@@ -101,6 +101,7 @@ The user preference "font size" (FR-AUTH-10) scales the root by 12 / 13 / 14 px.
 - **Spacing (4 px grid):** `0, 2, 4, 6, 8, 12, 16, 20, 24, 32, 40, 48, 64`. The 2 px and 6 px steps are for tight icon alignment only.
 - **Control heights:** `sm 24 · md 28 · lg 32`.
 - **Row heights:** list row `36` (comfortable) or `32` (compact preference). Board card minimum height `72`.
+- **Property picker and issue row sizes (PLAN-012 S2):** `picker-width 280` · `picker-list-max-height 320` · `dot-size 8` · `row-id-width 64` · `row-estimate-width 40` · `row-date-width 64` · `row-created-width 80`. Group header height is `32`.
 - **Radius:** `xs 4` (badges, kbd) · `sm 6` (buttons, inputs, rows) · `md 8` (cards, popovers) · `lg 12` (modals) · `full` (avatars, pills).
 - **Elevation:** `e1` popovers and menus · `e2` modals and the command menu · `e3` toasts. Light theme uses soft shadows. Dark theme uses a 1 px `--border-default` plus a deeper shadow, because shadows read poorly on dark backgrounds.
 - **Z-index scale:** base 0 · sticky headers 10 · sidebar 20 · overlays 50 (popovers, menus, modals and the command menu share one level and stack in the order they open) · toast 70 · tooltip 80.
@@ -203,7 +204,7 @@ Built on **Radix primitives** wherever a primitive exists (ADR-0004). Every comp
 | **PropertyPill** | Compact button showing a property value (icon + text). Variants by property: status, priority, assignee, labels, estimate, cycle, project, milestone, due date. An empty value shows a muted placeholder on hover only. |
 | **Property picker** | The **single** picker for every property: search field, filtered list with icons, keyboard numbers for quick choice where it makes sense (priority `0–4`), multi-select for labels (`Space` toggles, `Enter` applies), and a "No X" option. Opens anchored, or as a sub-page of the command menu. |
 | **LabelChip** | Colour dot plus name, removable in edit mode |
-| **IssueRow** | Grid: [select] · priority · identifier · status · title (flex) · labels · project · cycle · estimate · due · assignee · created. Columns follow the display properties. Hover reveals quick pills. Heights per §2.5. |
+| **IssueRow** | Grid: [select] · priority · identifier · status · title (flex) · labels · project · cycle · estimate · due · assignee · created. Columns follow the display properties. Hover reveals quick pills. Heights per §2.5. The list is a windowed ARIA `treegrid` (group headers are expandable rows at level 1, issue rows level 2; SPEC-012 D22). |
 | **GroupHeader** | Group icon, name, count or estimate sum (click toggles), collapse (`T` when focused or hovered; click), add (+). Sticky. |
 | **BoardColumn · BoardCard** | Column = group. The card shows identifier, title (2 lines), and the chosen properties. Drag and drop with keyboard alternatives (`Mod+Shift+←/→` moves the focused card between columns). |
 | **EditableTitle** | `text-2xl` inline title editor |

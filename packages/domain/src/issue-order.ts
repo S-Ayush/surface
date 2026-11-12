@@ -18,6 +18,7 @@ function priorityRank(priority: number): number {
   return priority === 0 ? 5 : priority;
 }
 
+/** `Date.parse` truncates to milliseconds, so ties below 1 ms fall through to number and id. */
 function instant(iso: string): number {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? 0 : ms;
@@ -62,7 +63,7 @@ export interface IssueGroup<I extends GroupableIssue> {
   readonly issues: readonly I[];
 }
 
-/** Completed and Canceled groups start collapsed (SPEC-012 D16). */
+/** Completed and Canceled groups start collapsed (SPEC-012 D16); Duplicate stays expanded. */
 export function startsCollapsed(category: StatusCategory): boolean {
   return category === 'completed' || category === 'canceled';
 }

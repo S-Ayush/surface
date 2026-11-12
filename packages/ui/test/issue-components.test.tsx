@@ -155,6 +155,11 @@ describe('IssueRow', () => {
     createdLabel: 'Nov 6',
   };
 
+  it('is a level-2 treegrid row by default, and takes another level', () => {
+    expect(render(<IssueRow {...row} />)).toContain('aria-level="2"');
+    expect(render(<IssueRow {...row} level={3} />)).toContain('aria-level="3"');
+  });
+
   it('is a grid row with an index and a cell per column', () => {
     const html = render(<IssueRow {...row} />);
     expect(html).toContain('role="row"');

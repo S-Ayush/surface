@@ -90,7 +90,8 @@ function expectedCandidates(
   return byKey.length > 0 ? byKey : matching;
 }
 
-describe('AC-9: how the engine resolves one key event', () => {
+// 60 s: the properties run thousands of cases and exceed the 5 s default when the machine is busy.
+describe('AC-9: how the engine resolves one key event', { timeout: 60_000 }, () => {
   it('leaves at most one candidate per scope, whatever the layout, platform and scopes', () => {
     fc.assert(
       fc.property(

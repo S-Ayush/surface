@@ -3,9 +3,33 @@
 /** Longest branch name, in characters, prefix and slug together (SPEC-012 D19). */
 export const BRANCH_NAME_MAX = 60;
 
-/** ASCII-folds, lowercases and turns every run of other characters into one hyphen, trimmed. */
-function foldToSlug(text: string): string {
+/** Letters NFKD leaves alone: they have no combining-mark decomposition (SPEC-012 §4.1). */
+const TRANSLITERATIONS: Readonly<Record<string, string>> = {
+  ß: 'ss',
+  ẞ: 'ss',
+  ø: 'o',
+  Ø: 'o',
+  æ: 'ae',
+  Æ: 'ae',
+  œ: 'oe',
+  Œ: 'oe',
+  đ: 'd',
+  Đ: 'd',
+  ł: 'l',
+  Ł: 'l',
+  þ: 'th',
+  Þ: 'th',
+};
+
+/**
+ * The one folding function for slugs (SPEC-012 §4.1, D19): transliterates `ß ø æ œ đ ł þ`,
+ * strips diacritics (NFKD), lowercases, and turns every run of other characters into one
+ * hyphen, trimmed. PLAN-011 S4's `issueSlug` must use this function, not a copy, so the issue
+ * URL slug and the branch name never disagree.
+ */
+export function foldToSlug(text: string): string {
   return text
+    .replace(/[ßẞøØæÆœŒđĐłŁþÞ]/gu, (c) => TRANSLITERATIONS[c] ?? c)
     .normalize('NFKD')
     .replace(/\p{M}+/gu, '')
     .toLowerCase()

@@ -188,6 +188,13 @@ describe('labels picker (multi mode)', () => {
     expect(effects).toEqual([{ type: 'apply', ids: ['web', 'design'] }, { type: 'close' }]);
   });
 
+  it('Enter with nothing toggled and nothing highlighted closes without applying', () => {
+    const typed = press(start, labels, 'multi', 'z', 'z', 'z');
+    expect(typed.state.highlightId).toBeNull();
+    const { effects } = press(typed.state, labels, 'multi', 'Enter');
+    expect(effects).toEqual([{ type: 'close' }]);
+  });
+
   it('Esc applies every toggle in one apply (there is no cancel)', () => {
     const { effects } = press(start, labels, 'multi', ' ', 'ArrowDown', 'ArrowDown', ' ', 'Escape');
     expect(effects).toEqual([{ type: 'apply', ids: ['web', 'bug', 'design'] }, { type: 'close' }]);

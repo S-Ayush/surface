@@ -70,6 +70,10 @@ export function PropertyPicker(props: PropertyPickerProps) {
   useEffect(() => {
     latest.current = { state, props };
   });
+  // A toggle after an apply (the picker stayed mounted) makes the unmount apply again.
+  useEffect(() => {
+    applied.current = false;
+  }, [state.selected]);
 
   const visible = filterOptions(options, state.query);
 

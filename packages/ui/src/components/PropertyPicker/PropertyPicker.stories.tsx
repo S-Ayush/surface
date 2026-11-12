@@ -291,3 +291,41 @@ export const LabelsApplyOnClose: Story = {
     await expect(args.onApply).toHaveBeenCalledWith(['bug', 'web']);
   },
 };
+
+/** A picker that stays mounted after `Enter` still applies on unmount once more is toggled. */
+export const LabelsApplyAgainAfterEnter: Story = {
+  args: { onApply: fn() },
+  render: (args) => {
+    function Host() {
+      const [open, setOpen] = useState(true);
+      return (
+        <div>
+          <button type="button" onClick={() => setOpen(false)}>
+            Click outside
+          </button>
+          {open && (
+            <div className={panel['panel']}>
+              <PropertyPicker
+                mode="multi"
+                label="Change labels"
+                options={LABEL_OPTIONS}
+                values={[]}
+                onApply={args.onApply}
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+    return <Host />;
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.keyboard(' {Enter}');
+    await expect(args.onApply).toHaveBeenCalledTimes(1);
+    await userEvent.click(canvas.getByRole('option', { name: /Web/ }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Click outside' }));
+    await expect(args.onApply).toHaveBeenCalledTimes(2);
+    await expect(args.onApply).toHaveBeenLastCalledWith(['bug', 'web']);
+  },
+};

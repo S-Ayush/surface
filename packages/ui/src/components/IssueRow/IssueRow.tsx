@@ -37,7 +37,7 @@ export type IssueRowProps = {
   focused?: boolean;
   /** Roving tabindex from VirtualList. */
   tabIndex?: 0 | -1;
-  /** `aria-level` in a treegrid: 2 under a group header. */
+  /** `aria-level` in a treegrid: group headers are 1, so rows default to 2. */
   level?: number;
   style?: CSSProperties;
   className?: string;
@@ -70,7 +70,7 @@ export function IssueRow(props: IssueRowProps) {
     pending = false,
     focused = false,
     tabIndex = -1,
-    level,
+    level = 2,
     style,
     className,
     onOpen,
@@ -167,14 +167,14 @@ export function IssueRow(props: IssueRowProps) {
                   }}
                 >
                   <VisuallyHidden>{`Labels: ${labels.map((label) => label.name).join(', ')}, change`}</VisuallyHidden>
-                  <span aria-hidden="true" className={styles.labelsButton}>
+                  <span aria-hidden="true" className={styles.labelsInner}>
                     {labels.map((label) => (
                       <LabelChip key={label.id} name={label.name} color={label.color} />
                     ))}
                   </span>
                 </button>
               ) : (
-                <span className={styles.labelsButton}>
+                <span className={styles.labelsInner}>
                   {labels.map((label) => (
                     <LabelChip key={label.id} name={label.name} color={label.color} />
                   ))}

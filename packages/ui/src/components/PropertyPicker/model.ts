@@ -167,7 +167,8 @@ export function onKey(
       return result(state, mode === 'multi' ? closeEffects(state) : [{ type: 'close' }]);
     case 'Enter': {
       if (state.highlightId === null && !(mode === 'multi' && state.touched)) {
-        return result(state);
+        // Multi mode, nothing toggled, nothing highlighted: close without applying.
+        return result(state, mode === 'multi' ? [{ type: 'close' }] : []);
       }
       if (mode === 'single') {
         return result(state, [{ type: 'select', id: state.highlightId ?? '' }, { type: 'close' }]);

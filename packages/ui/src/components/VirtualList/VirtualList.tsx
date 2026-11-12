@@ -68,6 +68,11 @@ export function VirtualList({
   const [scrollTop, setScrollTop] = useState(initialScrollTop);
   const [viewportHeight, setViewportHeight] = useState(initialViewportHeight);
 
+  // Keyed on `count` alone, not on the callbacks: a caller's inline arrow functions would
+  // otherwise rebuild the offsets (O(count)) on every render, and a scroll event causes one. The
+  // closure always reads this render's callbacks when `count` changes. A caller that changes
+  // heights or header positions without changing `count` must remount the list (heights are
+  // fixed per kind, design-system §2.5).
   const { offsets, headerIndices } = useMemo(() => {
     const heights = new Float64Array(count);
     const headers: number[] = [];
@@ -76,7 +81,8 @@ export function VirtualList({
       if (isHeader?.(i)) headers.push(i);
     }
     return { offsets: buildOffsets(heights), headerIndices: headers };
-  }, [count, itemHeight, isHeader]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [count]);
 
   const win = computeWindow({
     offsets,
@@ -147,6 +153,9 @@ export function VirtualList({
         style={{ height: win.totalHeight }}
       >
         {win.indices.map((index) => {
+          // The sticky header is positioned from React state, so in a fast scroll it can lag the
+          // native scroll by a frame (it jumps, never flickers). CSS `position: sticky` can't
+          // work here: the rows are absolutely positioned in a windowed list. Accepted for M1.
           const sticky = win.sticky?.index === index;
           const top = sticky ? (win.sticky?.top ?? 0) : (offsets[index] ?? 0);
           return (
