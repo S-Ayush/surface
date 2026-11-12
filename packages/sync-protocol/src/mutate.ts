@@ -85,11 +85,29 @@ export const mutationOkSchema = z.object({
   lastSyncId: syncIdSchema,
 });
 
-/** The server rejected the mutation; the client drops it and rolls back (SPEC-002 §3.5). */
+/**
+ * One problem with a field of the input, as the operations API reports it
+ * (SPEC-003 §9): `path` names the field, so a form can show it there.
+ */
+export const mutationIssueSchema = z.object({
+  path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
+  message: z.string(),
+  hint: z.string().optional(),
+});
+
+/**
+ * The server rejected the mutation; the client drops it and rolls back (SPEC-002 §3.5).
+ * `issues` (v0.6) are the ones the operations API returns for the same error; older
+ * servers send none.
+ */
 export const mutationErrorSchema = z.object({
   seq: seqSchema,
   status: z.literal('error'),
-  error: z.object({ code: errorCodeSchema, message: z.string() }),
+  error: z.object({
+    code: errorCodeSchema,
+    message: z.string(),
+    issues: z.array(mutationIssueSchema).optional(),
+  }),
 });
 
 export const mutationResultSchema = z.discriminatedUnion('status', [
@@ -109,6 +127,7 @@ export const mutateResponseSchema = z
   });
 
 export type MutationOk = z.infer<typeof mutationOkSchema>;
+export type MutationIssue = z.infer<typeof mutationIssueSchema>;
 export type MutationError = z.infer<typeof mutationErrorSchema>;
 export type MutationResult = z.infer<typeof mutationResultSchema>;
 export type MutateResponse = z.infer<typeof mutateResponseSchema>;

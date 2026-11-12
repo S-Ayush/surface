@@ -34,7 +34,7 @@ export type {
   StorageEstimator,
 } from './inspect.js';
 export { InvalidInputError } from './queue.js';
-export type { MutationOutcome, PendingView, Rejection } from './queue.js';
+export type { MutationOutcome, PendingView, Rejection, RejectionError } from './queue.js';
 export type {
   ConnectionState,
   OnlineSource,

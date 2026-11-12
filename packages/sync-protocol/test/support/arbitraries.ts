@@ -133,10 +133,24 @@ export const mutateResponse: fc.Arbitrary<MutateResponse> = fc
         fc.record({ status: fc.constant('ok' as const), lastSyncId: syncId }),
         fc.record({
           status: fc.constant('error' as const),
-          error: fc.record({
-            code: fc.constantFrom('NOT_FOUND', 'FORBIDDEN', 'CONFLICT', 'INVALID_INPUT'),
-            message: fc.string(),
-          }),
+          error: fc.record(
+            {
+              code: fc.constantFrom('NOT_FOUND', 'FORBIDDEN', 'CONFLICT', 'INVALID_INPUT'),
+              message: fc.string(),
+              issues: fc.array(
+                fc.record(
+                  {
+                    path: fc.array(fc.oneof(fc.string(), fc.nat()), { maxLength: 3 }),
+                    message: fc.string(),
+                    hint: fc.string(),
+                  },
+                  { requiredKeys: ['path', 'message'] },
+                ),
+                { maxLength: 3 },
+              ),
+            },
+            { requiredKeys: ['code', 'message'] },
+          ),
         }),
       ),
       { maxLength: 10 },

@@ -1,6 +1,6 @@
 # Surface: Sync Protocol (v1)
 
-Status: **Draft v0.5** · Date: 2026-11-12 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
+Status: **Draft v0.6** · Date: 2026-11-12 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
 
 This is the contract between `packages/sync-client` and `apps/server`. Every wire type here lives in `packages/sync-protocol`, as a Zod codec. Decoders strip unknown keys instead of rejecting them, so additive changes stay compatible. Changes are listed in §11.
 
@@ -115,9 +115,12 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 // response
 {"results":[
   {"seq":57,"status":"ok","lastSyncId":18236},
-  {"seq":58,"status":"error","error":{"code":"NOT_FOUND","message":"Issue was deleted"}}
+  {"seq":58,"status":"error","error":{"code":"NOT_FOUND","message":"Issue was deleted"}},
+  {"seq":59,"status":"error","error":{"code":"CONFLICT","message":"That username is taken. Pick another.",
+    "issues":[{"path":["username"],"message":"That username is taken. Pick another."}]}}
 ]}
 ```
+- **An error's `issues`** (optional, v0.6) are the ones the operations API returns for the same error (SPEC-003 §9: `path`, `message`, optional `hint`), so a form can show each on its field; no `operation`, `candidates` or `correlationId`. The stored result keeps them, so a replayed seq returns the same issues. They follow the API's visibility rule: a row in a private team the user isn't in gets `NOT_FOUND` with the same result a missing row gets, and no issue reveals that it exists (permissions.md §5). Older servers send none, and a client must work without them.
 - The server processes a batch **in seq order**, with **one DB transaction per mutation** (one failure doesn't block the others).
 - **Idempotency:** the server stores `(clientId → lastProcessedSeq)` with the results of the last 100 seqs (SPEC-002 Q11). Re-sent mutations with `seq ≤ lastProcessedSeq` return their stored result without being re-executed; an `error` result is stored too, so a rejected mutation is never run again. Each mutation's transaction locks the client's row first, so concurrent resends of one batch get the same results. A seq older than the kept results gets `{"status":"error","error":{"code":"CONFLICT",…}}`; a client that follows this protocol never sends one.
 - **Whose queue:** `userId` is the user the client's queue belongs to. The server compares it with the session's user before anything runs or a `clientId` is registered (SPEC-002 E14), so a queue is never committed as whoever signed in next on the browser.
@@ -248,6 +251,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-12 | v0.6 | Additive. §4.4: a mutation's `error` may carry `issues` (`[{path, message, hint?}]`, `path` of strings and non-negative integers), the operations API's issues for the same error, also in the stored result a replay returns. The client passes them on in `MutationOutcome` and `Rejection` (`RejectionError`), so a form can show a server refusal on its field. A client reading a server without them sees none. | Session A (the executor's issues in the mutate result and in the stored `client_mutations` result; a leak test that a hidden row's rejection, issues included, matches a missing row's) |
 | 2026-11-12 | v0.5 | Text only, no wire change. §4.4 `401`: the web app now keeps the store when the same session answers after a mutate `401`, so the client's backoff applies in the app (C's fix of D2's handoff, `30cbb7d`, SPEC-005 §3). | — |
 | 2026-11-12 | v0.5 | No wire change. The package also holds the paths the server answers itself: `SERVER_PREFIXES` and `isServerPath(pathname)` (`src/server-paths.ts`, no imports), exported from the root and alone as `@surface/sync-protocol/server-paths`, so the offline worker (ADR-0019) can import them without the package's schemas. The server's app-page fallback uses them; a new top-level server prefix is added there. | Session C (switch `apps/web/src/offline/app-cache.ts` to it; C's PLAN-005 S9 handoff, item 3, agreed with D2) |
 | 2026-11-12 | v0.5 | SPEC-002 E14 part 2, client only, no wire change. §4.4 `401`: the queue stops sending and keeps every mutation, and the client redials the socket; `4001` keeps it offline until its user signs in again, a socket that opens again resends after a backoff that grows while the answer stays `401`. | Session C (session-d2 Handoffs: the app's session check opens a new store at every `401`, so its retries skip that backoff) |

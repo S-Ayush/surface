@@ -26,7 +26,7 @@
  *   `lastSeq + 1` and sent again.
  */
 import type { AnyOperation, InputOf, OperationRegistry } from '@surface/operations';
-import type { MutateRequest, MutationResult } from '@surface/sync-protocol';
+import type { MutateRequest, MutationIssue, MutationResult } from '@surface/sync-protocol';
 import {
   CSRF_HEADER,
   CSRF_INVALID,
@@ -59,21 +59,26 @@ export const REQUEST_TIMEOUT_MS = 30_000;
 const wireBytes = (value: unknown) => encoder.encode(JSON.stringify(value)).length;
 const megabytes = (bytes: number) => (bytes / 1_000_000).toFixed(1);
 
+/**
+ * Why a mutation was rejected. `issues` name the fields at fault when the server
+ * sent them (sync-protocol v0.6, SPEC-003 §9), so a form can show each on its field.
+ */
+export interface RejectionError {
+  readonly code: string;
+  readonly message: string;
+  readonly issues?: readonly MutationIssue[];
+}
+
 /** How a dispatched mutation ended. */
 export type MutationOutcome =
   | { readonly status: 'confirmed' }
-  | {
-      readonly status: 'rejected';
-      readonly error: { readonly code: string; readonly message: string };
-    };
+  | { readonly status: 'rejected'; readonly error: RejectionError };
 
-/** A mutation the server rejected (SPEC-002 §3.5): for the toast and the inspector. */
-export interface Rejection {
+/** A mutation the server rejected (SPEC-002 §3.5): for the toast, the inspector and forms. */
+export interface Rejection extends RejectionError {
   readonly op: string;
   readonly seq: number;
   readonly input: unknown;
-  readonly code: string;
-  readonly message: string;
 }
 
 /** A pending mutation, for the inspector and the offline badge (SPEC-002 §5.4, §7). */
@@ -620,7 +625,7 @@ export class MutationQueue {
 
   /** Apply the results of a batch (one per mutation, in seq order). */
   #apply(results: readonly MutationResult[]): void {
-    const rejected: { entry: Entry; error: { code: string; message: string } }[] = [];
+    const rejected: { entry: Entry; error: RejectionError }[] = [];
     const committed: PendingRecord[] = [];
     for (const result of results) {
       const entry = this.#entries.get(result.seq);
@@ -642,7 +647,7 @@ export class MutationQueue {
     // Reported once rolled back, so a toast handler sees what the user sees (review m2).
     for (const { entry, error } of rejected) {
       const { op, seq, input } = entry.record;
-      this.#options.onRejected({ op, seq, input, code: error.code, message: error.message });
+      this.#options.onRejected({ op, seq, input, ...error });
       entry.settle({ status: 'rejected', error });
     }
   }

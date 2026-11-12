@@ -261,7 +261,13 @@ export class FakeHub {
       switch (op) {
         case 'debug.create':
           if (existing) {
-            return { seq, status: 'error', error: { code: 'CONFLICT', message: 'Exists' } };
+            // With issues, as the server sends a field's refusal (SPEC-003 §9).
+            const message = 'A debug item with this id exists.';
+            return {
+              seq,
+              status: 'error',
+              error: { code: 'CONFLICT', message, issues: [{ path: ['id'], message }] },
+            };
           }
           this.#upsertRow({
             id: itemId,

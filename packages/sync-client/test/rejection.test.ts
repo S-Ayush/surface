@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FakeHub } from './support/hub.js';
 import { clientItems, liveStore, serverItems, until } from './support/live.js';
 import { DebugItem, id } from './support/models.js';
-import { debugBroken, debugRename, debugTouch } from './support/ops.js';
+import { debugBroken, debugCreate, debugRename, debugTouch } from './support/ops.js';
 
 function seededHub(): FakeHub {
   const hub = new FakeHub();
@@ -52,6 +52,47 @@ describe('a rejected mutation (AC-7)', () => {
     hub.last.deliver();
     await until(() => store.pending.length === 0);
     expect(clientItems(store)).toEqual(serverItems(hub));
+    await store.close();
+  });
+});
+
+describe("a rejection's issues", () => {
+  it('reach the outcome and the handler, so a form can show each on its field', async () => {
+    const hub = seededHub();
+    const onRejected = vi.fn();
+    const { store } = liveStore(hub, { onRejected });
+    await store.start();
+    await until(() => store.connection === 'online');
+
+    const outcome = await store.dispatch(debugCreate, { id: id(1), title: 'Again' });
+
+    const message = 'A debug item with this id exists.';
+    const issues = [{ path: ['id'], message }];
+    expect(outcome).toEqual({ status: 'rejected', error: { code: 'CONFLICT', message, issues } });
+    expect(onRejected).toHaveBeenCalledWith({
+      op: 'debug.create',
+      seq: 1,
+      input: { id: id(1), title: 'Again' },
+      code: 'CONFLICT',
+      message,
+      issues,
+    });
+    await store.close();
+  });
+
+  it('are absent when the server sends none', async () => {
+    const hub = seededHub();
+    const onRejected = vi.fn();
+    const { store } = liveStore(hub, { onRejected });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.last.paused = true;
+    hub.remove(1);
+
+    const outcome = await store.dispatch(debugRename, { id: id(1), title: 'Too late' });
+
+    expect(outcome.status === 'rejected' && 'issues' in outcome.error).toBe(false);
+    expect(onRejected.mock.calls[0]?.[0]).not.toHaveProperty('issues');
     await store.close();
   });
 });

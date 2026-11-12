@@ -122,6 +122,32 @@ describe('mutate response', () => {
     ).toEqual(['ok', 'error']);
   });
 
+  it("keeps an error's issues, so a form can show each on its field (SPEC-003 §9)", () => {
+    const error = {
+      code: 'CONFLICT',
+      message: 'That username is taken. Pick another.',
+      issues: [
+        { path: ['username'], message: 'That username is taken. Pick another.' },
+        { path: ['links', 0, 'url'], message: 'Not a link', hint: 'e.g. https://example.com' },
+      ],
+    };
+    const [result] = decodeMutateResponse({
+      results: [{ seq: 3, status: 'error', error }],
+    }).results;
+    expect(result).toEqual({ seq: 3, status: 'error', error });
+  });
+
+  it('reads an error without issues, as servers before them send', () => {
+    const [result] = decodeMutateResponse({
+      results: [{ seq: 1, status: 'error', error: { code: 'NOT_FOUND', message: 'Gone' } }],
+    }).results;
+    expect(result).toEqual({
+      seq: 1,
+      status: 'error',
+      error: { code: 'NOT_FOUND', message: 'Gone' },
+    });
+  });
+
   it.each([
     [
       'results out of seq order',
@@ -140,6 +166,30 @@ describe('mutate response', () => {
     [
       'a lowercase error code',
       { results: [{ seq: 1, status: 'error', error: { code: 'not_found', message: 'no' } }] },
+    ],
+    [
+      'an issue without a path',
+      {
+        results: [
+          {
+            seq: 1,
+            status: 'error',
+            error: { code: 'X', message: 'no', issues: [{ message: 'no' }] },
+          },
+        ],
+      },
+    ],
+    [
+      'an issue path holding an object',
+      {
+        results: [
+          {
+            seq: 1,
+            status: 'error',
+            error: { code: 'X', message: 'no', issues: [{ path: [{}], message: 'no' }] },
+          },
+        ],
+      },
     ],
     ['an unknown status', { results: [{ seq: 1, status: 'pending' }] }],
   ])('rejects %s', (_case, body) => {
