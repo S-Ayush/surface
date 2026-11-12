@@ -67,11 +67,11 @@ flowchart LR
 
 ## 5. M0 exit checklist
 
-- [ ] **Demo (METHODOLOGY M0):** two tabs, rename a team in one, and it updates in the other in < 150 ms. The change survives an offline reload.
-- [ ] **Keyboard-only demo** (SPEC-005 AC-1)
+- [x] **Demo (METHODOLOGY M0):** two tabs, rename a team in one, and it updates in the other in < 150 ms. The change survives an offline reload. _2026-11-12: checked by hand by session C. The rename shows in the other tab in 46–105 ms (PLAN-005 S8). The offline reload passes on the built app in a secure context (HTTPS or localhost) since PLAN-005 S9 (`34225e6`, ADR-0019); over plain `http://` on another host there is no offline reload, which the user accepted._
+- [x] **Keyboard-only demo** (SPEC-005 AC-1). _2026-11-12: checked by hand by session C in PLAN-005 S8._
 - [ ] ⏸ **Install smoke:** fresh VM to first team in < 15 min (SPEC-004 AC-3). Held (§6).
-- [ ] Demos above: run by hand while e2e is held (§6).
-- [ ] **Sync property suite** at 1,000 cases green on main (SPEC-002 AC-2/3). Not held (§6).
+- [x] Demos above: run by hand while e2e is held (§6). _2026-11-12: both, as noted on each._
+- [x] **Sync property suite** at 1,000 cases green on main (SPEC-002 AC-2/3). Not held (§6). _2026-11-12, the user's decision that this run is enough: `pnpm sim --runs 1000` passed on `ee4047b`, AC-2 and AC-3 at 1,000 cases each, seed 20261107, against the fake hub. The real-server run in `test:int` uses 20 cases per property (the user's choice); the deepest real-server run so far was 100 per property._
 - [ ] All ACs of SPEC-001 to SPEC-005 have passing tests, except those held under §6
 - [ ] Release `v0.1.0` image published (amd64 + arm64)
 - [ ] Retro held. PRD and METHODOLOGY updated with what we learned. M1 specs (SPEC-010+) are next.
