@@ -1,10 +1,15 @@
 // `@surface/server/testing` (PLAN-002 S9 part 2): the real server the sync simulation runs
 // against. Part of the sync property suite, which the testing hold exempts (SPEC-002 D1).
 import { randomUUID } from 'node:crypto';
-import { BOOTSTRAP_PATH, CSRF_INVALID, bootstrapMetaSchema } from '@surface/sync-protocol';
+import {
+  BOOTSTRAP_PATH,
+  CSRF_INVALID,
+  bootstrapMetaSchema,
+  encodeBootstrapQuery,
+} from '@surface/sync-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestDatabase, type TestDatabase } from './db.js';
-import { startTestServer, type TestServer } from './support/testing.js';
+import { startTestServer, type TestServer, type TestUser } from './support/testing.js';
 
 let db: TestDatabase | undefined;
 let server: TestServer | undefined;
@@ -21,8 +26,11 @@ async function start(users: number): Promise<TestServer> {
   return server;
 }
 
-async function bootstrapMeta(s: TestServer, cookie: string) {
-  const response = await fetch(`${s.url}${BOOTSTRAP_PATH}`, { headers: { cookie } });
+async function bootstrapMeta(s: TestServer, user: TestUser) {
+  const query = encodeBootstrapQuery({ userId: user.id });
+  const response = await fetch(`${s.url}${BOOTSTRAP_PATH}?${query}`, {
+    headers: { cookie: user.cookie },
+  });
   expect(response.status).toBe(200);
   const [first] = (await response.text()).split('\n');
   return bootstrapMetaSchema.parse(JSON.parse(first ?? ''));
@@ -51,7 +59,7 @@ describe('the real server for the sync simulation', () => {
     expect(await s.head()).toBeGreaterThan(before);
     for (const user of s.users) {
       // The engine fixtures are in the hash the client must match (SPEC-002 Q8).
-      expect((await bootstrapMeta(s, user.cookie)).schemaHash).toBe(s.schemaHash);
+      expect((await bootstrapMeta(s, user)).schemaHash).toBe(s.schemaHash);
     }
   });
 

@@ -6,6 +6,7 @@
 import {
   decodeMutateRequest,
   MAX_MUTATION_BATCH_BYTES,
+  MissingUserIdError,
   MUTATE_PATH,
   MutateErrorCode,
   ProtocolError,
@@ -20,6 +21,7 @@ import type { Executor } from '../executor/execute.js';
 import { errorBody } from '../http/errors.js';
 import { signedIn, type ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
+import { sendClientOutdated, sendOtherUser } from './identity.js';
 
 /**
  * sync-protocol §4.4. Only this route answers it, so it is not in `ROUTE_ERROR_STATUS`, which lists
@@ -56,20 +58,15 @@ export function registerMutateRoute(app: FastifyInstance, deps: MutateRouteDeps)
     try {
       batch = decodeMutateRequest(request.body);
     } catch (error) {
+      // A client from before v0.5 (SPEC-002 E14). Its queue acts on the code: a 400 would make it
+      // reject its changes one by one.
+      if (error instanceof MissingUserIdError) return sendClientOutdated(request, reply);
       if (!(error instanceof ProtocolError)) throw error;
       return reply.code(400).send(errorBody(request, 'INVALID_INPUT', error.message));
     }
-    if (batch.schemaHash !== deps.schemaHash) {
-      return reply
-        .code(HTTP_STATUS.CLIENT_OUTDATED)
-        .send(
-          errorBody(
-            request,
-            MutateErrorCode.ClientOutdated,
-            'Surface was updated. Reload the page to continue.',
-          ),
-        );
-    }
+    // SPEC-002 E14: before anything runs or the clientId is registered to this session's user.
+    if (batch.userId !== actor.userId) return sendOtherUser(request, reply);
+    if (batch.schemaHash !== deps.schemaHash) return sendClientOutdated(request, reply);
 
     // In seq order, one at a time: each waits for the one before it to commit.
     const results: MutationResult[] = [];

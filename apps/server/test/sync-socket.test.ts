@@ -1,6 +1,6 @@
 // PLAN-002 S4: `GET /sync/ws` (sync-protocol §4.3): who may open it, what is refused before the
 // upgrade, and deltas end to end through real WebSockets (the server on 127.0.0.1, Node's own
-// WebSocket client) over the in-memory sync log.
+// WebSocket client) over the in-memory sync log. SPEC-002 E14: the replica's user (`userId`).
 import { randomUUID } from 'node:crypto';
 import {
   CloseCode,
@@ -10,7 +10,7 @@ import {
   type ServerMessage,
 } from '@surface/sync-protocol';
 import pg from 'pg';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { Lifecycle } from '../src/lifecycle.js';
 import { createLogger } from '../src/logger.js';
@@ -74,12 +74,19 @@ async function app({ ready = true } = {}) {
   return { app: built, hub, source, url: url.replace(/^http/, 'ws') };
 }
 
-const params = (over: { since?: number; schemaHash?: string; clientId?: string } = {}) =>
+const params = (
+  over: { since?: number; schemaHash?: string; clientId?: string; userId?: string } = {},
+) =>
   encodeSocketConnectParams({
     since: over.since ?? 0,
     clientId: over.clientId ?? randomUUID(),
+    userId: over.userId ?? member.userId ?? '',
     schemaHash: over.schemaHash ?? registry.schemaHash,
   });
+
+/** What a client from before sync-protocol v0.5 sends: no `userId` (SPEC-002 E14). */
+const paramsWithoutUser = (clientId = randomUUID()) =>
+  new URLSearchParams({ since: '0', clientId, schemaHash: registry.schemaHash }).toString();
 
 /** Opens a socket and records what it receives, decoded like the client does. */
 function open(url: string, query: string, headers: Record<string, string>) {
@@ -155,7 +162,14 @@ describe('GET /sync/ws refuses before the upgrade', () => {
       headers: { 'x-test-actor': 'member' },
     });
     expect(res.statusCode).toBe(403);
-    expect(res.json()).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'FORBIDDEN',
+        message:
+          "This clientId belongs to another user. Use a new clientId for this user's changes.",
+      },
+    });
     // The member's own registered client is accepted.
     const mine = randomUUID();
     owners.set(mine, member.userId ?? '');
@@ -168,11 +182,77 @@ describe('GET /sync/ws refuses before the upgrade', () => {
   it('invalid connect parameters, with 400 naming the problem', async () => {
     const { app: server } = await app();
     const res = await server.inject({
-      url: `${SOCKET_PATH}?since=01&clientId=x&schemaHash=y`,
+      url: `${SOCKET_PATH}?since=01&clientId=x&userId=${member.userId ?? ''}&schemaHash=y`,
       headers: { 'x-test-actor': 'member' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } });
+    // A userId that is there but isn't one is invalid too, not an old client.
+    const badUser = await server.inject({
+      url: `${SOCKET_PATH}?${paramsWithoutUser()}&userId=ada`,
+      headers: { 'x-test-actor': 'member' },
+    });
+    expect(badUser.statusCode).toBe(400);
+  });
+});
+
+describe('GET /sync/ws and the replica’s user (SPEC-002 E14)', () => {
+  it('closes a socket for another user’s replica with 4001, sending nothing and registering nothing', async () => {
+    const { url, hub, source } = await app();
+    const registered = [vi.spyOn(hub, 'connect'), vi.spyOn(hub, 'connectOutdated')];
+    source.write({}, {});
+    const { messages, closed } = open(url, params({ userId: randomUUID() }), {
+      'x-test-actor': 'member',
+    });
+    expect(await closed).toBe(CloseCode.SessionRevoked);
+    expect(messages).toEqual([]);
+    expect(registered.map((spy) => spy.mock.calls.length)).toEqual([0, 0]);
+  });
+
+  it('closes with 4001, not 403, a replica’s own registered client opened under another user’s cookie', async () => {
+    // The tab of the user who registered the client, after someone else signed in on the browser:
+    // a 403 can't be read by a browser (1006) and would be retried forever.
+    const { url, hub } = await app();
+    const registered = vi.spyOn(hub, 'connect');
+    const firstUser = randomUUID();
+    const clientId = randomUUID();
+    owners.set(clientId, firstUser);
+    const { messages, closed } = open(url, params({ clientId, userId: firstUser }), {
+      'x-test-actor': 'member',
+    });
+    expect(await closed).toBe(CloseCode.SessionRevoked);
+    expect(messages).toEqual([]);
+    expect(registered).not.toHaveBeenCalled();
+  });
+
+  it('answers a client without userId (before v0.5) with resync(schema) and no deltas, until its session ends', async () => {
+    const { url, hub, source } = await app();
+    // Its clientId is neither checked nor registered: another user's is fine.
+    const theirs = randomUUID();
+    owners.set(theirs, randomUUID());
+    const old = open(url, paramsWithoutUser(theirs), {
+      'x-test-actor': 'member',
+      'x-test-session': 'old-tab',
+    });
+    await eventually(() => old.messages.length === 1);
+    expect(old.messages).toEqual([{ t: 'resync', reason: 'schema' }]);
+    expect(hub.connectionCount).toBe(1);
+    // A row committed now reaches a current client, and not the old one.
+    const current = open(url, params(), { 'x-test-actor': 'member' });
+    await eventually(() => hub.connectionCount === 2);
+    source.write({});
+    await eventually(() => current.messages.some((m) => m.t === 'deltas'));
+    expect(old.messages).toEqual([{ t: 'resync', reason: 'schema' }]);
+    // Signing out closes it like any socket of that session.
+    hub.closeSessions(['old-tab']);
+    expect(await old.closed).toBe(CloseCode.SessionRevoked);
+  });
+
+  it('answers a client without a session with 4001 even without userId', async () => {
+    const { url } = await app();
+    const { messages, closed } = open(url, paramsWithoutUser(), {});
+    expect(await closed).toBe(CloseCode.SessionRevoked);
+    expect(messages).toEqual([]);
   });
 });
 

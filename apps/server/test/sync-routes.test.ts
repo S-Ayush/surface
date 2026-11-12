@@ -1,5 +1,6 @@
-// PLAN-002 S3: who may bootstrap. These answers come before any database work, so the pool here
-// never connects. What a bootstrap contains is `sync-groups.int.test.ts` (AC-11).
+// PLAN-002 S3: who may bootstrap, and SPEC-002 E14: for whose replica. These answers come before
+// any database work, so the pool here never connects. What a bootstrap contains is
+// `sync-groups.int.test.ts` (AC-11).
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -77,11 +78,38 @@ describe('GET /sync/bootstrap refuses', () => {
     const res = await (
       await app()
     ).inject({
-      url: '/sync/bootstrap?groups=team:x',
+      url: `/sync/bootstrap?userId=${member.userId ?? ''}&groups=team:x`,
       headers: { 'x-test-actor': 'member' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } });
+  });
+
+  it('another user’s replica, with 401, before anything is streamed (SPEC-002 E14)', async () => {
+    const res = await (
+      await app()
+    ).inject({
+      url: `/sync/bootstrap?userId=${randomUUID()}`,
+      headers: { 'x-test-actor': 'member' },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'UNAUTHENTICATED' } });
+  });
+
+  it('a client without userId (before v0.5), with 426 CLIENT_OUTDATED', async () => {
+    const built = await app();
+    const missing = await built.inject({
+      url: '/sync/bootstrap',
+      headers: { 'x-test-actor': 'member' },
+    });
+    expect(missing.statusCode).toBe(426);
+    expect(missing.json()).toMatchObject({ ok: false, error: { code: 'CLIENT_OUTDATED' } });
+    // There but not a user id: invalid, not old.
+    const invalid = await built.inject({
+      url: '/sync/bootstrap?userId=ada',
+      headers: { 'x-test-actor': 'member' },
+    });
+    expect(invalid.statusCode).toBe(400);
   });
 });
 

@@ -119,6 +119,13 @@ afterAll(async () => {
   await h.close();
 });
 
+/** The user each test actor signs in as: their own replica (SPEC-002 E14). */
+function userOf(actor: string): string {
+  if (actor === 'engMember') return eng.id;
+  if (actor === 'secMember') return sec.id;
+  throw new Error(`no test actor ${actor}`);
+}
+
 interface Bootstrap {
   meta: Extract<BootstrapFrame, { t: 'meta' }>;
   rows: Extract<BootstrapFrame, { t: 'row' }>[];
@@ -128,7 +135,7 @@ interface Bootstrap {
 /** One bootstrap through HTTP, decoded and validated frame by frame like the client does. */
 async function bootstrap(actor: string, gzip = false): Promise<Bootstrap> {
   const res = await app.inject({
-    url: '/sync/bootstrap',
+    url: `/sync/bootstrap?userId=${userOf(actor)}`,
     headers: { 'x-test-actor': actor, ...(gzip ? { 'accept-encoding': 'gzip' } : {}) },
   });
   expect(res.statusCode).toBe(200);
@@ -222,7 +229,12 @@ describe('a bootstrap stream', () => {
 function connect(actor: string, clientId: string = randomUUID(), since = 0) {
   const raw: string[] = [];
   const deltas: DeltasMessage[] = [];
-  const query = encodeSocketConnectParams({ since, clientId, schemaHash: registry.schemaHash });
+  const query = encodeSocketConnectParams({
+    since,
+    clientId,
+    userId: userOf(actor),
+    schemaHash: registry.schemaHash,
+  });
   const socket = new WebSocket(`${socketUrl}${SOCKET_PATH}?${query}`, {
     headers: { 'x-test-actor': actor },
   });

@@ -97,7 +97,11 @@ afterAll(async () => {
 });
 
 async function bootstrapRows(actor: string): Promise<Row[]> {
-  const res = await app.inject({ url: '/sync/bootstrap', headers: { 'x-test-actor': actor } });
+  const userId = actor === 'ana' ? ana : sam;
+  const res = await app.inject({
+    url: `/sync/bootstrap?userId=${userId}`,
+    headers: { 'x-test-actor': actor },
+  });
   expect(res.statusCode).toBe(200);
   const decoder = new NdjsonDecoder();
   return [...decoder.push(new Uint8Array(res.rawPayload)), ...decoder.end()]

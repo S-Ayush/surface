@@ -5,13 +5,15 @@
  * retries with backoff), `403` for a foreign `Origin` or an API key (SPEC-002 Q9) and `400` for invalid
  * connect parameters. Nobody signed in is different: the upgrade is accepted and closed at once
  * with `4001`, because a browser can't read a refused upgrade's status and would retry forever
- * (SPEC-002 E10).
+ * (SPEC-002 E10). So is a replica of another user than the session's (E14), checked before the
+ * `clientId`'s owner. A client that names no user (before v0.5) is accepted and told to reload.
  */
 import websocket from '@fastify/websocket';
 import type { Actor } from '@surface/domain';
 import {
   CloseCode,
   decodeSocketConnectParams,
+  MissingUserIdError,
   ProtocolError,
   SOCKET_PATH,
   type SocketConnectParams,
@@ -20,7 +22,8 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { errorBody, ROUTE_ERROR_STATUS } from '../http/errors.js';
 import type { ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
-import type { SyncHub } from './hub.js';
+import { FOREIGN_CLIENT_MESSAGE } from './client-mutations.js';
+import type { HubConnection, SyncHub } from './hub.js';
 
 export interface SocketRouteDeps {
   readonly hub: SyncHub;
@@ -52,13 +55,18 @@ const MAX_CLIENT_MESSAGE_BYTES = 4096;
 const UNSUPPORTED_DATA = 1003;
 const INTERNAL_ERROR = 1011;
 
-interface Admitted {
-  readonly actor: Actor & { readonly userId: string };
-  readonly params: SocketConnectParams;
-}
+type Admitted =
+  | {
+      readonly kind: 'client';
+      readonly actor: Actor & { readonly userId: string };
+      readonly params: SocketConnectParams;
+    }
+  /** A client from before v0.5, without `userId` (SPEC-002 E14): only `resync(schema)`. */
+  | { readonly kind: 'outdated' };
 
 export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps): void {
-  // What the upgrade check decided, for the handler. Undefined: nobody signed in (→ 4001).
+  // What the upgrade check decided, for the handler. Undefined: nobody signed in, or a session of
+  // another user than the replica's (→ 4001).
   const admitted = new WeakMap<FastifyRequest, Admitted>();
 
   void app.register(websocket, { options: { maxPayload: MAX_CLIENT_MESSAGE_BYTES } });
@@ -111,22 +119,27 @@ export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps)
           try {
             params = decodeSocketConnectParams(request.query);
           } catch (error) {
+            if (error instanceof MissingUserIdError) {
+              // Its clientId is neither checked nor registered: it only learns to reload.
+              admitted.set(request, { kind: 'outdated' });
+              return;
+            }
             if (!(error instanceof ProtocolError)) throw error;
             return reply.code(400).send(errorBody(request, 'INVALID_INPUT', error.message));
           }
+          // SPEC-002 E14, before the owner: a tab whose own user registered its clientId, opened
+          // under another user's cookie, must re-check the session (4001), not get a 403 it can't
+          // read and retries forever.
+          if (params.userId !== actor.userId) return; // accepted, then closed with 4001
           const owner = await deps.clientOwner?.(params.clientId);
           if (owner !== undefined && owner !== actor.userId) {
-            return reply
-              .code(403)
-              .send(
-                errorBody(
-                  request,
-                  'FORBIDDEN',
-                  'This clientId belongs to another user. Start a new queue with a new clientId.',
-                ),
-              );
+            return reply.code(403).send(errorBody(request, 'FORBIDDEN', FOREIGN_CLIENT_MESSAGE));
           }
-          admitted.set(request, { actor: { ...actor, userId: actor.userId }, params });
+          admitted.set(request, {
+            kind: 'client',
+            actor: { ...actor, userId: actor.userId },
+            params,
+          });
         },
       },
       (socket, request) => {
@@ -135,22 +148,30 @@ export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps)
           socket.close(CloseCode.SessionRevoked, 'Sign in again');
           return;
         }
-        const { actor, params } = entry;
+        const listen = (connection: HubConnection) => {
+          socket.on('message', (data, isBinary) => {
+            if (isBinary) socket.close(UNSUPPORTED_DATA, 'Text messages only');
+            else connection.receive(textOf(data));
+          });
+          socket.on('close', () => connection.closed());
+          socket.on('error', (error) => request.log.warn({ err: error }, 'sync socket error'));
+        };
         const sessionId = deps.sessionIdOf?.(request);
-        const connection = deps.hub.connect(socket, {
-          userId: actor.userId,
-          ...(sessionId === undefined ? {} : { sessionId }),
-          clientId: params.clientId,
-          groups: actor.groups,
-          since: params.since,
-          schemaHash: params.schemaHash,
-        });
-        socket.on('message', (data, isBinary) => {
-          if (isBinary) socket.close(UNSUPPORTED_DATA, 'Text messages only');
-          else connection.receive(textOf(data));
-        });
-        socket.on('close', () => connection.closed());
-        socket.on('error', (error) => request.log.warn({ err: error }, 'sync socket error'));
+        if (entry.kind === 'outdated') {
+          listen(deps.hub.connectOutdated(socket, sessionId));
+        } else {
+          const { actor, params } = entry;
+          listen(
+            deps.hub.connect(socket, {
+              userId: actor.userId,
+              ...(sessionId === undefined ? {} : { sessionId }),
+              clientId: params.clientId,
+              groups: actor.groups,
+              since: params.since,
+              schemaHash: params.schemaHash,
+            }),
+          );
+        }
         // PLAN-001 S9, security review L2. Every revocation commits, then calls `closeSessions`:
         // either this read sees it, or `closeSessions` runs after `connect` and finds the socket.
         const sessionLive = deps.sessionLive;

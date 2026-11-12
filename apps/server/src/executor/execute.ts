@@ -56,7 +56,12 @@ import {
 } from './metrics.js';
 import { unlimited, type RateLimiter } from './rate-limit.js';
 import { refNotFound, refPlan, resolveRefs, single, valueAt } from './refs/resolve.js';
-import { claimSeq, recordResult, visibleHead } from '../sync/client-mutations.js';
+import {
+  claimSeq,
+  FOREIGN_CLIENT_MESSAGE,
+  recordResult,
+  visibleHead,
+} from '../sync/client-mutations.js';
 import { serverSyncRegistry } from '../sync/registry.js';
 import { syncRepo, type RepoFactory, type RowChange, type TransactionRepo } from '../sync/repo.js';
 import { nearestNames } from './suggest.js';
@@ -478,10 +483,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         const claimed = await claimSeq(client, { clientId, userId, seq }, log);
         switch (claimed.kind) {
           case 'foreign':
-            throw new SurfaceError(
-              'FORBIDDEN',
-              'This clientId belongs to another user. Start a new queue with a new clientId.',
-            );
+            throw new SurfaceError('FORBIDDEN', FOREIGN_CLIENT_MESSAGE);
           case 'gap':
             return { outcome: claimed };
           case 'replay':

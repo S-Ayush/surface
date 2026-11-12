@@ -39,6 +39,15 @@ const LOCK_ROW = `
     (SELECT e FROM jsonb_array_elements(last_results) AS e WHERE e->>'seq' = $2) AS stored
   FROM client_mutations WHERE client_id = $1 FOR UPDATE`;
 
+/**
+ * A `clientId` another user registered: `403` on mutate and the socket. Since SPEC-002 E14 it comes
+ * only when the request's `userId` is the session's user, so the queue is this user's own and a
+ * new `clientId` is safe: the `userId` check, not this message, keeps a queue under its user.
+ * Signing in as the owner wouldn't help: the `userId` check would answer `401`.
+ */
+export const FOREIGN_CLIENT_MESSAGE =
+  "This clientId belongs to another user. Use a new clientId for this user's changes.";
+
 /** Locks the client's row for this transaction (registering it on first use) and places `seq`. */
 export async function claimSeq(
   db: Queryable,

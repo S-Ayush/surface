@@ -106,7 +106,7 @@ describe('a client that hangs up', () => {
   ])('while rows are being counted (%s): rolls back and releases', async (_, encoding) => {
     const fake = fakePool();
     const { url, abort } = await serve(fake.pool);
-    const request = http.get(`${url}/sync/bootstrap`, {
+    const request = http.get(`${url}/sync/bootstrap?userId=${user.userId ?? ''}`, {
       headers: { 'x-test-actor': 'user', ...encoding },
     });
     request.on('error', () => {});
@@ -124,7 +124,9 @@ describe('a client that hangs up', () => {
     const fake = fakePool();
     fake.openCount();
     const { url } = await serve(fake.pool);
-    const res = await fetch(`${url}/sync/bootstrap`, { headers: { 'x-test-actor': 'user' } });
+    const res = await fetch(`${url}/sync/bootstrap?userId=${user.userId ?? ''}`, {
+      headers: { 'x-test-actor': 'user' },
+    });
     const lines = (await res.text()).trim().split('\n');
     expect(lines.map((l) => (JSON.parse(l) as { t: string }).t)).toEqual(['meta', 'row', 'end']);
     expect(await eventually(() => fake.released())).toBe(true);

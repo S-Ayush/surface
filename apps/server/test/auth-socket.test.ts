@@ -33,10 +33,8 @@ async function stack(clientOwner?: (clientId: string) => Promise<string | undefi
   const lifecycle = new Lifecycle();
   const logger = createLogger(config, captureLogs().stream);
   const store = new FakeAuthStore();
-  store.users.set('ada@example.com', {
-    userId: randomUUID(),
-    passwordHash: await hashPassword(PASSWORD),
-  });
+  const userId = randomUUID();
+  store.users.set('ada@example.com', { userId, passwordHash: await hashPassword(PASSWORD) });
   const sessions = new SessionAuth(store);
   const hub = new SyncHub({ source: new FakeLog(), registry, log: logger });
   // The bootstrap route needs a pool; nothing here reaches it.
@@ -88,6 +86,7 @@ async function stack(clientOwner?: (clientId: string) => Promise<string | undefi
     const query = encodeSocketConnectParams({
       since: 0,
       clientId: randomUUID(),
+      userId,
       schemaHash: registry.schemaHash,
     });
     const socket = new WebSocket(`${url}${SOCKET_PATH}?${query}`, { headers: { cookie } });

@@ -4,7 +4,15 @@
  */
 import { pipeline, Readable } from 'node:stream';
 import { createGzip } from 'node:zlib';
-import { BOOTSTRAP_PATH, encodeNdjsonLine, NDJSON_CONTENT_TYPE } from '@surface/sync-protocol';
+import {
+  BOOTSTRAP_PATH,
+  decodeBootstrapQuery,
+  encodeNdjsonLine,
+  MissingUserIdError,
+  NDJSON_CONTENT_TYPE,
+  ProtocolError,
+  type BootstrapQuery,
+} from '@surface/sync-protocol';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { errorBody } from '../http/errors.js';
 import { signedIn, type ActorResolver } from '../http/ops.js';
@@ -12,6 +20,7 @@ import type { Lifecycle } from '../lifecycle.js';
 import { bootstrapFrames, type BootstrapPool } from './bootstrap.js';
 import type { Executor } from '../executor/execute.js';
 import type { SyncHub } from './hub.js';
+import { sendClientOutdated, sendOtherUser } from './identity.js';
 import { registerMutateRoute } from './mutate.js';
 import type { SyncRegistry } from './registry.js';
 import { registerSocketRoute, type SocketRouteDeps } from './socket-route.js';
@@ -55,6 +64,16 @@ export function registerSyncRoutes(
           errorBody(request, 'FORBIDDEN', 'Sync is for signed-in users. Use the operations API.'),
         );
     }
+    let query: BootstrapQuery;
+    try {
+      query = decodeBootstrapQuery(request.query);
+    } catch (error) {
+      if (error instanceof MissingUserIdError) return sendClientOutdated(request, reply);
+      if (!(error instanceof ProtocolError)) throw error;
+      return reply.code(400).send(errorBody(request, 'INVALID_INPUT', error.message));
+    }
+    // SPEC-002 E14: another user's replica never receives this user's rows.
+    if (query.userId !== actor.userId) return sendOtherUser(request, reply);
     if (hasQuery(request, 'groups')) {
       // Partial bootstrap comes with group changes (`G` packets, M7: SPEC-002 §2).
       return reply

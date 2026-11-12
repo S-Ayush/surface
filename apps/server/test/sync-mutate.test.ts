@@ -318,6 +318,13 @@ const op = (seq: number, input: Record<string, unknown>, name = 'debug.count'): 
   input: input as Mutation['input'],
 });
 
+/** The user each test actor signs in as: by default, a queue belongs to whoever sends it. */
+const USER_OF: Readonly<Record<string, string | undefined>> = {
+  ada: ada.userId,
+  bob: bob.userId,
+  key: key.userId,
+};
+
 function send(
   app: App,
   mutations: Mutation[],
@@ -325,13 +332,20 @@ function send(
     clientId,
     as = 'ada',
     schemaHash = SCHEMA_HASH,
-  }: { clientId: string; as?: string; schemaHash?: string },
+    userId = USER_OF[as] ?? randomUUID(),
+  }: {
+    clientId: string;
+    as?: string;
+    schemaHash?: string;
+    /** The queue's user (SPEC-002 E14); `null` leaves it out, as a client before v0.5 does. */
+    userId?: string | null;
+  },
 ) {
   return app.inject({
     method: 'POST',
     url: MUTATE_PATH,
     headers: { 'x-test-actor': as },
-    payload: { clientId, schemaHash, mutations },
+    payload: { clientId, ...(userId === null ? {} : { userId }), schemaHash, mutations },
   });
 }
 
@@ -653,7 +667,10 @@ describe('POST /sync/mutate', () => {
       as: 'bob',
     });
     expect(stranger.statusCode).toBe(403);
-    expect(decodeMutateErrorBody(stranger.json()).error.code).toBe('FORBIDDEN');
+    expect(decodeMutateErrorBody(stranger.json()).error).toMatchObject({
+      code: 'FORBIDDEN',
+      message: "This clientId belongs to another user. Use a new clientId for this user's changes.",
+    });
     // Not even the stored result of seq 1 is shown.
     expect(stranger.body).not.toContain('lastSyncId');
     expect(counts(db)).toEqual({ a: 1 });
@@ -674,6 +691,45 @@ describe('POST /sync/mutate', () => {
     });
     const starting = await server(db, { ready: false });
     expect((await send(starting, [op(1, { key: 'a' })], { clientId })).statusCode).toBe(503);
+    expect(db.statements).toEqual([]);
+  });
+
+  it('refuses another user’s queue with 401 before running or registering anything (SPEC-002 E14)', async () => {
+    const db = fakeDatabase();
+    const app = await server(db);
+    // A queue that only ever queued offline: nobody has registered its clientId yet.
+    const fresh = randomUUID();
+    const unregistered = await send(app, [op(1, { key: 'a' })], {
+      clientId: fresh,
+      as: 'bob',
+      userId: ada.userId ?? '',
+    });
+    expect(unregistered.statusCode).toBe(401);
+    expect(decodeMutateErrorBody(unregistered.json()).error.code).toBe('UNAUTHENTICATED');
+    expect(db.statements).toEqual([]);
+    expect(db.committed().ledger.has(fresh)).toBe(false);
+    // Ada's registered queue under Bob's cookie: 401 too, not the 403 for a foreign clientId.
+    const adas = randomUUID();
+    await results(app, [op(1, { key: 'a' })], { clientId: adas });
+    const registered = await send(app, [op(2, { key: 'b' })], {
+      clientId: adas,
+      as: 'bob',
+      userId: ada.userId ?? '',
+    });
+    expect(registered.statusCode).toBe(401);
+    expect(counts(db)).toEqual({ a: 1 });
+  });
+
+  it('answers 426 CLIENT_OUTDATED to a body without userId (before v0.5), even a malformed one', async () => {
+    const db = fakeDatabase();
+    const app = await server(db);
+    const clientId = randomUUID();
+    for (const mutations of [[op(1, { key: 'a' })], [op(2, { key: 'a' }), op(1, { key: 'a' })]]) {
+      const response = await send(app, mutations, { clientId, userId: null });
+      expect(response.statusCode).toBe(426);
+      // Old queues act on the code: anything else would reject their changes one by one.
+      expect(decodeMutateErrorBody(response.json()).error.code).toBe('CLIENT_OUTDATED');
+    }
     expect(db.statements).toEqual([]);
   });
 

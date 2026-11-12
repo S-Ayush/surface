@@ -121,6 +121,19 @@ function changesGroups(
   });
 }
 
+/**
+ * What an outdated client's connection carries (`connectOutdated`): nothing but its session, if
+ * any. It is idle from the start, so none of it is read, except as an empty `userId` in a log line
+ * about a missed pong.
+ */
+const OUTDATED_CLIENT: ConnectionInfo = {
+  userId: '',
+  clientId: '',
+  groups: [],
+  since: 0,
+  schemaHash: '',
+};
+
 interface Connection {
   readonly info: ConnectionInfo;
   /** `info.groups`, as a set. Fixed for the connection's life: a change resyncs it instead. */
@@ -237,6 +250,34 @@ export class SyncHub {
   }
 
   connect(socket: HubSocket, info: ConnectionInfo): HubConnection {
+    return this.#register(socket, info, (connection, upTo) => {
+      if (info.schemaHash !== this.#options.registry.schemaHash) {
+        this.#resync(connection, 'schema');
+        return;
+      }
+      void this.#catchUp(connection, upTo);
+    });
+  }
+
+  /**
+   * A client from before sync-protocol v0.5, which names no user (SPEC-002 E14): `resync(schema)`
+   * at once, then only pings, as after a schema mismatch. It has no user, groups or client, so it is
+   * never caught up and never sent a delta; it is kept only to be pinged, and closed on shutdown or
+   * when its session ends (4001, as any socket of that session).
+   */
+  connectOutdated(socket: HubSocket, sessionId?: string): HubConnection {
+    const info = sessionId === undefined ? OUTDATED_CLIENT : { ...OUTDATED_CLIENT, sessionId };
+    return this.#register(socket, info, (connection) => {
+      this.#resync(connection, 'schema');
+    });
+  }
+
+  /** Registers the socket and hands it to `start`, unless the hub is starting or stopping. */
+  #register(
+    socket: HubSocket,
+    info: ConnectionInfo,
+    start: (connection: Connection, upTo: number) => void,
+  ): HubConnection {
     const groups = new Set(info.groups);
     const connection: Connection = {
       info,
@@ -266,11 +307,7 @@ export class SyncHub {
     }
     this.#connections.add(connection);
     this.#metrics?.setConnections(this.#connections.size);
-    if (info.schemaHash !== this.#options.registry.schemaHash) {
-      this.#resync(connection, 'schema');
-      return handle;
-    }
-    void this.#catchUp(connection, upTo);
+    start(connection, upTo);
     return handle;
   }
 

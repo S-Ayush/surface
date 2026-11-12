@@ -660,6 +660,40 @@ describe('metrics (SPEC-002 §10)', () => {
   });
 });
 
+// SPEC-002 E14: a client from before sync-protocol v0.5 names no user. The hub tells it to reload
+// and keeps it idle: pinged and counted, closed with its session or on shutdown, never sent a row.
+describe('a client without userId (connectOutdated)', () => {
+  it('gets resync(schema), then only pings: no rows and no group resync, however the log changes', async () => {
+    fakeTimers();
+    const source = new FakeLog();
+    const { metrics, connections } = recordedMetrics();
+    const h = await startHub(source, { metrics });
+    const old = new FakeSocket();
+    h.connectOutdated(old);
+    expect(connections).toEqual([1]);
+    // A current client in the team sees both writes; the old one sees neither.
+    const current = new FakeSocket();
+    h.connect(current, info({ groups: ['workspace', team] }));
+    source.write({ groups: [team] }, membership('D', randomUUID()));
+    await eventually(() => current.messages.length >= 1);
+    await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS);
+    expect(old.messages).toEqual([{ t: 'resync', reason: 'schema' }, { t: 'ping' }]);
+  });
+
+  it('is closed with 4001 when its session ends, and with 1012 on shutdown', async () => {
+    const { metrics, connections } = recordedMetrics();
+    const h = await startHub(new FakeLog(), { metrics });
+    const signedOut = new FakeSocket();
+    const open = new FakeSocket();
+    h.connectOutdated(signedOut, 's1');
+    h.connectOutdated(open);
+    expect(h.closeSessions(['s1'])).toBe(1);
+    await h.stop();
+    expect([signedOut.closedWith, open.closedWith]).toEqual([CloseCode.SessionRevoked, 1012]);
+    expect(connections.at(-1)).toBe(0);
+  });
+});
+
 describe('closing', () => {
   it('closes the connections of revoked sessions with 4001, and only those', async () => {
     const h = await startHub(new FakeLog());

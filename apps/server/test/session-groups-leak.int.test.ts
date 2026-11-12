@@ -102,7 +102,10 @@ async function groupsOf(name: keyof typeof users): Promise<string[]> {
 }
 
 async function bootstrapRows(name: keyof typeof users): Promise<Row[]> {
-  const res = await app.inject({ url: '/sync/bootstrap', headers: { cookie: cookies[name] } });
+  const res = await app.inject({
+    url: `/sync/bootstrap?userId=${users[name].id}`,
+    headers: { cookie: cookies[name] },
+  });
   expect(res.statusCode).toBe(200);
   const decoder = new NdjsonDecoder();
   return [...decoder.push(new Uint8Array(res.rawPayload)), ...decoder.end()]
