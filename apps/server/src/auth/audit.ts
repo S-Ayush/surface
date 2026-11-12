@@ -38,6 +38,13 @@ export interface AuditFields {
   readonly to?: string;
 }
 
+/** One line, as an operation's handler records it for after the commit (`ctx.audit`). */
+export interface AuditLine {
+  readonly event: AuditEvent;
+  readonly fields: AuditFields;
+  readonly message: string;
+}
+
 const FAILURES: ReadonlySet<AuditEvent> = new Set([
   'auth.login_failed',
   'auth.password_reset_failed',

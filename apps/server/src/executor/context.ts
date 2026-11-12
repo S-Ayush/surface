@@ -3,6 +3,7 @@
  * Handlers write only through `ctx.repo`, emit events with `ctx.emit()`, take time from
  * `ctx.now()`, and never commit, retry or call the network.
  */
+import type { AuditEvent, AuditFields } from '../auth/audit.js';
 import type { Actor, ResolvedRefs } from '@surface/domain';
 import type { AnyOperation, ParsedInputOf } from '@surface/operations';
 import type { FilterFields } from '@surface/domain';
@@ -71,6 +72,12 @@ export interface HandlerContext {
   readonly query: QueryHelpers;
   /** Buffers a domain event; the executor writes it to `event_outbox` before commit. */
   emit(event: DomainEvent): void;
+  /**
+   * An audit line (SPEC-001 §10, `auth/audit.ts`), written once the operation commits, by the
+   * attempt that committed: a retried (E5) or rolled-back attempt, a rejected or refused sync
+   * mutation, or a replay logs nothing (PLAN-001 S9). Ids only, never an email, password or token.
+   */
+  audit(event: AuditEvent, fields: AuditFields, message: string): void;
   /** One timestamp for the whole execution. */
   now(): Date;
   readonly log: Logger;

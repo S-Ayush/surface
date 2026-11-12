@@ -1,11 +1,12 @@
 // What the executor gives handlers beyond the repo (PLAN-001 S3 follow-up, session E's handoff):
 // `ctx.closeSessions` ends sessions in the operation's transaction and closes their sockets only
-// after it commits (AC-8), and `ctx.enqueueEmail` queues on that same transaction (PLAN-001 S4).
+// after it commits (AC-8), `ctx.enqueueEmail` queues on that same transaction (PLAN-001 S4), and
+// `ctx.audit` writes its line only for the attempt that committed (PLAN-001 S9).
 // Against a scripted connection: no database (new integration tests are held, plans README §6).
 import { userActor } from '@surface/domain';
 import { createRegistry, defineOperation } from '@surface/operations';
 import type { PoolClient } from 'pg';
-import { pino } from 'pino';
+import { pino, type Logger } from 'pino';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { Pool } from '../src/db/pool.js';
@@ -14,6 +15,7 @@ import { createExecutor } from '../src/executor/execute.js';
 import { transactionRunner } from '../src/executor/transaction.js';
 import type { EmailOutbox } from '../src/jobs/email.js';
 import type { EmailJob } from '../src/mail/job.js';
+import { captureLogs } from './helpers.js';
 
 const endSessions = defineOperation({
   name: 'debug.endSessions',
@@ -43,6 +45,8 @@ interface Script {
   readonly deleted?: readonly string[][];
   /** Make the first COMMIT fail as a serialization failure, so the transaction runs again. */
   readonly failFirstCommit?: boolean;
+  /** Who registered the sync client: its `client_mutations` row, at seq 0. */
+  readonly clientOwner?: string;
 }
 
 /** One connection that records what it is sent, and answers as `script` says. */
@@ -59,6 +63,10 @@ function scriptedPool(script: Script = {}) {
         log.push(`  ${JSON.stringify(values)}`);
         return Promise.resolve({ rows: ids.map((id) => ({ id })), rowCount: ids.length });
       }
+      if (statement.includes('FROM client_mutations WHERE client_id') && script.clientOwner) {
+        const row = { user_id: script.clientOwner, last_seq: '0', stored: null };
+        return Promise.resolve({ rows: [row], rowCount: 1 });
+      }
       if (statement === 'COMMIT' && script.failFirstCommit && commits++ === 0) {
         return Promise.reject(Object.assign(new Error('could not serialize'), { code: '40001' }));
       }
@@ -74,7 +82,7 @@ function scriptedPool(script: Script = {}) {
 function executorWith(
   pool: Pool,
   run: (ctx: HandlerContext) => Promise<void>,
-  extra: { email?: EmailOutbox; closed?: string[][] } = {},
+  extra: { email?: EmailOutbox; closed?: string[][]; log?: Logger } = {},
 ) {
   return createExecutor({
     pool,
@@ -85,7 +93,7 @@ function executorWith(
         return {};
       }),
     ],
-    log: pino({ level: 'silent' }),
+    log: extra.log ?? pino({ level: 'silent' }),
     allowInternal: true,
     backoff: () => 0,
     ...(extra.email ? { email: extra.email } : {}),
@@ -221,6 +229,87 @@ describe('ctx.enqueueEmail', () => {
     });
     expect((await executor.execute('debug.endSessions', {}, ME)).ok).toBe(true);
     expect(result).toBe(false);
+  });
+});
+
+describe('ctx.audit', () => {
+  function audited(logs: ReturnType<typeof captureLogs>) {
+    return logs.lines.filter((l) => l.audit === true).map((l) => [l.event, l.to, l.msg]);
+  }
+
+  it('logs the line of the attempt that committed, once, when the transaction is retried', async () => {
+    const { pool, log } = scriptedPool({ failFirstCommit: true });
+    const logs = captureLogs();
+    let attempt = 0;
+    const executor = executorWith(
+      pool,
+      (ctx) => {
+        attempt += 1;
+        ctx.audit(
+          'user.role_changed',
+          { userId: 'u2', from: 'member', to: `attempt ${attempt}` },
+          'Role',
+        );
+        return Promise.resolve();
+      },
+      { log: pino({ level: 'info' }, logs.stream) },
+    );
+    expect((await executor.execute('debug.endSessions', {}, ME)).ok).toBe(true);
+    expect(log.filter((l) => l === 'COMMIT')).toHaveLength(2);
+    expect(audited(logs)).toEqual([['user.role_changed', 'attempt 2', 'Role']]);
+  });
+
+  it('logs nothing when the operation fails and rolls back', async () => {
+    const { pool } = scriptedPool();
+    const logs = captureLogs();
+    const executor = executorWith(
+      pool,
+      (ctx) => {
+        ctx.audit('user.role_changed', { userId: 'u2' }, 'Role');
+        return Promise.reject(new Error('the handler fails after recording a line'));
+      },
+      { log: pino({ level: 'info' }, logs.stream) },
+    );
+    expect((await executor.execute('debug.endSessions', {}, ME)).ok).toBe(false);
+    expect(audited(logs)).toEqual([]);
+  });
+
+  it('logs the line of a sync mutation once it commits', async () => {
+    const { pool, log } = scriptedPool({ clientOwner: 'u1' });
+    const logs = captureLogs();
+    const executor = executorWith(
+      pool,
+      (ctx) => {
+        ctx.audit('user.role_changed', { userId: 'u2', from: 'member', to: 'admin' }, 'Role');
+        return Promise.resolve();
+      },
+      { log: pino({ level: 'info' }, logs.stream) },
+    );
+    const origin = { clientId: '0190a0c0-0000-7000-8000-000000000001', seq: 1 };
+    const outcome = await executor.executeSynced('debug.endSessions', {}, ME, origin);
+    expect(outcome).toMatchObject({ kind: 'result', result: { seq: 1, status: 'ok' } });
+    expect(log).toContain('COMMIT');
+    expect(audited(logs)).toEqual([['user.role_changed', 'admin', 'Role']]);
+  });
+
+  it('logs nothing for a sync mutation that is rejected and rolled back to its savepoint', async () => {
+    const { pool, log } = scriptedPool({ clientOwner: 'u1' });
+    const logs = captureLogs();
+    const executor = executorWith(
+      pool,
+      (ctx) => {
+        ctx.audit('user.role_changed', { userId: 'u2' }, 'Role');
+        return Promise.reject(new Error('the handler fails after recording a line'));
+      },
+      { log: pino({ level: 'info' }, logs.stream) },
+    );
+    const origin = { clientId: '0190a0c0-0000-7000-8000-000000000001', seq: 1 };
+    const outcome = await executor.executeSynced('debug.endSessions', {}, ME, origin);
+    expect(outcome).toMatchObject({ kind: 'result', result: { seq: 1, status: 'error' } });
+    // The rejection is recorded and committed; only the mutation's own work was undone.
+    expect(log).toContain('ROLLBACK TO');
+    expect(log).toContain('COMMIT');
+    expect(audited(logs)).toEqual([]);
   });
 });
 

@@ -45,6 +45,7 @@ import { INTERNAL_MESSAGE, SurfaceError, type ErrorIssue, type OperationError } 
 import { checkClientMutationId, claim, idempotencyOwner, record } from './idempotency.js';
 import { keyScopeProblem, narrowToKeyTeams, refOutsideKeyTeams } from './key-scope.js';
 import { loggableError } from './log-error.js';
+import { audit, type AuditLine } from '../auth/audit.js';
 import {
   noMetrics,
   noSyncMetrics,
@@ -112,6 +113,8 @@ interface TransactionOutcome {
   readonly lockedAt?: number;
   /** Sessions the handler ended, whose sockets close once this commits. */
   readonly endedSessions?: readonly string[];
+  /** Audit lines the handler recorded, written once this commits. */
+  readonly audits?: readonly AuditLine[];
 }
 
 /** Where a sync client's mutation comes from (SPEC-002 §4.4); `seq` is per `clientId`. */
@@ -190,6 +193,16 @@ interface Applied {
   readonly lastSyncId: number | undefined;
   readonly lockedAt?: number;
   readonly endedSessions?: readonly string[];
+  readonly audits?: readonly AuditLine[];
+}
+
+/** What waits for the commit, carried from `apply` to `afterCommit`. */
+function postCommit(applied: Applied): Pick<Applied, 'lockedAt' | 'endedSessions' | 'audits'> {
+  return {
+    ...(applied.lockedAt === undefined ? {} : { lockedAt: applied.lockedAt }),
+    ...(applied.endedSessions === undefined ? {} : { endedSessions: applied.endedSessions }),
+    ...(applied.audits === undefined ? {} : { audits: applied.audits }),
+  };
 }
 
 export function createExecutor(deps: ExecutorDeps): Executor {
@@ -269,6 +282,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     const events: DomainEvent[] = [];
     // Per attempt: a retried transaction starts again from nothing.
     const ended: string[] = [];
+    const audits: AuditLine[] = [];
 
     // 7. References (visibility applied in SQL; key narrowing re-checked as a backstop)
     const refs = await resolveRefs(def, input, viewer, client);
@@ -299,6 +313,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       repo,
       query: queryHelpers(tx, client, viewer, now),
       emit: (event) => void events.push(event),
+      audit: (event, fields, message) => void audits.push({ event, fields, message }),
       now: () => new Date(now),
       log,
       enqueueEmail: (job) => email.enqueue(client, job),
@@ -325,7 +340,11 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     // 11. Sync log and outbox
     if (def.kind === 'query') {
       if (events.length > 0) throw new Error(`${def.name} is a query and cannot emit events`);
-      return { output: output.data, lastSyncId: undefined };
+      return {
+        output: output.data,
+        lastSyncId: undefined,
+        ...(audits.length > 0 ? { audits } : {}),
+      };
     }
     const flushed = await repo.flush({
       ...(origin.clientId !== undefined ? { clientId: origin.clientId } : {}),
@@ -354,12 +373,16 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       lastSyncId: flushed.lastSyncId,
       ...(flushed.lockedAt === undefined ? {} : { lockedAt: flushed.lockedAt }),
       ...(ended.length > 0 ? { endedSessions: ended } : {}),
+      ...(audits.length > 0 ? { audits } : {}),
     };
   }
 
-  /** After the commit: the lock metric, and the sockets of sessions the operation ended. */
+  /**
+   * After the commit: the lock metric, the sockets of sessions the operation ended, and its audit
+   * lines. The operation is committed by now, so nothing here may fail it.
+   */
   function afterCommit(
-    committed: { readonly lockedAt?: number; readonly endedSessions?: readonly string[] },
+    committed: Pick<Applied, 'lockedAt' | 'endedSessions' | 'audits'>,
     opName: string,
     log: Logger,
   ): void {
@@ -374,6 +397,11 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       } catch (error) {
         log.error({ err: loggableError(error), op: opName }, 'could not close ended sessions');
       }
+    }
+    try {
+      for (const line of committed.audits ?? []) audit(log, line.event, line.fields, line.message);
+    } catch (error) {
+      log.error({ err: loggableError(error), op: opName }, 'could not write audit lines');
     }
   }
 
@@ -406,12 +434,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         if (owner !== undefined && clientMutationId !== undefined) {
           await record(tx, owner, clientMutationId, applied.output, applied.lastSyncId);
         }
-        return {
-          result: applied.output,
-          lastSyncId: applied.lastSyncId,
-          ...(applied.lockedAt === undefined ? {} : { lockedAt: applied.lockedAt }),
-          ...(applied.endedSessions === undefined ? {} : { endedSessions: applied.endedSessions }),
-        };
+        return { result: applied.output, lastSyncId: applied.lastSyncId, ...postCommit(applied) };
       },
     );
     afterCommit(outcome, def.name, log);
@@ -500,11 +523,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
           (await visibleHead(client, { groups: actor.groups, models: syncedModels() }));
         const ok: MutationResult = { seq, status: 'ok', lastSyncId };
         await recordResult(client, clientId, ok);
-        return {
-          outcome: { kind: 'result', result: ok },
-          ...(applied.lockedAt === undefined ? {} : { lockedAt: applied.lockedAt }),
-          ...(applied.endedSessions === undefined ? {} : { endedSessions: applied.endedSessions }),
-        };
+        return { outcome: { kind: 'result', result: ok }, ...postCommit(applied) };
       },
     );
     afterCommit(done, opName, log);
@@ -591,6 +610,7 @@ interface SyncedTransaction {
   readonly outcome: SyncedOutcome;
   readonly lockedAt?: number;
   readonly endedSessions?: readonly string[];
+  readonly audits?: readonly AuditLine[];
 }
 
 function syncedLabel(outcome: SyncedOutcome): string {
