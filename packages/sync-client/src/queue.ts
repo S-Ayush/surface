@@ -13,7 +13,10 @@
  *   reconnect it flushes; confirmation still waits for the replica to reach
  *   each commit, so it does not matter whether catch-up has finished.
  * - **Failures:** a network error, a 5xx or an unreadable answer retries the
- *   same batch with backoff. `CLIENT_OUTDATED` stops the queue until reload.
+ *   same batch with backoff. A `429` or `503` with `Retry-After` (a rate
+ *   limit, or a server still starting, SPEC-003 §9) resends after that many
+ *   seconds instead, within the backoff's bounds (SPEC-002 Q12). `CLIENT_OUTDATED`
+ *   stops the queue until reload.
  *   `SEQ_GAP` means the server has lost seqs this client already removed
  *   (e.g. a database restore): the unsent mutations are renumbered from
  *   `lastSeq + 1` and sent again.
@@ -39,7 +42,7 @@ import type { OverlayMutation } from './overlay.js';
 import type { QueueOwnership } from './owner.js';
 import type { Persistence } from './persistence.js';
 import type { Timers } from './socket.js';
-import { backoffDelay } from './socket.js';
+import { BACKOFF_MAX_MS, BACKOFF_MIN_MS, backoffDelay } from './socket.js';
 import type { PendingRecord, QueueWrite } from './storage/types.js';
 import { QueueFencedError } from './storage/types.js';
 
@@ -153,6 +156,7 @@ export class MutationQueue {
   #stopped = false;
   #inFlight: AbortController | undefined;
   #retry: unknown;
+  /** The server's `Retry-After` for the next resend, in ms; it replaces the backoff once. */
   #attempt = 0;
   /** At most this many mutations per batch; lowered when the server refuses a batch (413, 400). */
   #batchLimit = MAX_MUTATIONS_PER_BATCH;
@@ -387,6 +391,7 @@ export class MutationQueue {
         this.#options.timers.clearTimeout(timeout);
         this.#inFlight = undefined;
         if (next === 'retry') this.#retryLater();
+        else if (typeof next === 'object') this.#retryLater(next.retryIn);
         else this.#flush();
       },
       () => {
@@ -439,7 +444,9 @@ export class MutationQueue {
       credentials: 'same-origin',
       signal,
     });
-    return { response, json: await response.json() };
+    // Not JSON (a proxy's page): `undefined`, so the status and headers still count.
+    const json: unknown = await response.json().catch(() => undefined);
+    return { response, json };
   }
 
   /**
@@ -455,7 +462,11 @@ export class MutationQueue {
     return response.ok;
   }
 
-  async #send(batch: readonly Entry[], signal: AbortSignal): Promise<'next' | 'retry' | 'stop'> {
+  /** What next: the next batch, a backoff, a resend when the server said (ms), or nothing. */
+  async #send(
+    batch: readonly Entry[],
+    signal: AbortSignal,
+  ): Promise<'next' | 'retry' | 'stop' | { retryIn: number }> {
     const mutations: MutateRequest['mutations'] = [];
     for (const { record } of batch) {
       // Checked at dispatch; a stored record that no longer passes can only be rejected.
@@ -521,6 +532,12 @@ export class MutationQueue {
         code: 'PAYLOAD_TOO_LARGE',
         message: 'This change is too large to save. Split it into smaller changes.',
       });
+    }
+    const retryAfterMs = retryAfter(response);
+    if (retryAfterMs !== undefined) {
+      // The server answered and said when to come back: not a failure to back off from.
+      this.#attempt = 0;
+      return { retryIn: retryAfterMs };
     }
     let code: string | undefined;
     let message: string | undefined;
@@ -631,13 +648,37 @@ export class MutationQueue {
     return true;
   }
 
-  #retryLater(): void {
+  /** Resend after `asked` ms (a `Retry-After`), or after the next backoff. */
+  #retryLater(asked?: number): void {
     if (this.#stopped) return;
-    const delay = backoffDelay(this.#attempt, this.#options.random());
-    this.#attempt += 1;
+    let delay: number;
+    if (asked === undefined) {
+      delay = backoffDelay(this.#attempt, this.#options.random());
+      this.#attempt += 1;
+    } else {
+      // Within the backoff's bounds, so `Retry-After: 0` can't make a tight loop.
+      // Spread a little, so tabs told the same thing don't all resend at once.
+      const bounded = Math.max(BACKOFF_MIN_MS, Math.min(asked, BACKOFF_MAX_MS));
+      delay = bounded + this.#options.random() * RETRY_AFTER_JITTER_MS;
+    }
     this.#retry = this.#options.timers.setTimeout(() => {
       this.#retry = undefined;
       this.#flush();
     }, delay);
   }
+}
+
+/** The most a `Retry-After` resend is spread by, so tabs told the same thing don't all resend at once. */
+const RETRY_AFTER_JITTER_MS = 250;
+
+/**
+ * `Retry-After` of a `429` or `503`, in ms: a whole number of seconds, the
+ * only form the server sends (SPEC-003 §9). Anything else (missing, a date,
+ * negative) is undefined, and the queue backs off as for any failure.
+ */
+function retryAfter(response: Response): number | undefined {
+  if (response.status !== 429 && response.status !== 503) return undefined;
+  const value = response.headers.get('retry-after')?.trim();
+  if (value === undefined || !/^\d{1,9}$/.test(value)) return undefined;
+  return Number(value) * 1000;
 }

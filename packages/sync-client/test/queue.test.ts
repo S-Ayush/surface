@@ -263,6 +263,165 @@ describe('persistence', () => {
   });
 });
 
+/**
+ * The hub behind a fetch that first answers `POST /sync/mutate` with the
+ * scripted refusals, in order (`429`/`503` with `Retry-After`, as the server
+ * sends them: SPEC-002 Q12, SPEC-003 §9), then passes through.
+ */
+function refusing(hub: FakeHub) {
+  const script: { status: number; retryAfter?: string; html?: boolean }[] = [];
+  const fetch = (url: string, init: RequestInit): Promise<Response> => {
+    const next = url.endsWith(MUTATE_PATH) ? script.shift() : undefined;
+    if (next === undefined) return hub.fetch(url, init);
+    const headers = new Headers({
+      'content-type': next.html ? 'text/html' : 'application/json',
+    });
+    if (next.retryAfter !== undefined) headers.set('retry-after', next.retryAfter);
+    const code = next.status === 429 ? 'RATE_LIMITED' : 'UNAVAILABLE';
+    const body = next.html
+      ? '<html><body>Service unavailable</body></html>'
+      : JSON.stringify({ ok: false, error: { code, message: 'Not now.', correlationId: 'c-1' } });
+    return Promise.resolve(new Response(body, { status: next.status, headers }));
+  };
+  return { script, fetch };
+}
+
+describe('Retry-After (SPEC-002 Q12)', () => {
+  it('waits as long as a 429 says before resending the batch', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 429, retryAfter: '7' });
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => timers.pending.includes(7000));
+    expect(hub.executed()).toBe(0);
+    expect(timers.runNext()).toBe(7000);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    expect(hub.executed()).toBe(1);
+    await store.close();
+  });
+
+  it('waits as long as a 503 says (a server starting, SPEC-003 §9)', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 503, retryAfter: '5' });
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => timers.pending.includes(5000));
+    expect(hub.executed()).toBe(0);
+    expect(timers.runNext()).toBe(5000);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  it('waits at most the backoff ceiling, plus up to 250 ms so tabs do not resend together', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 429, retryAfter: '3600' });
+    const { store, timers } = liveStore(hub, {
+      fetch: server.fetch,
+      connection: { random: () => 0.5 },
+    });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => timers.pending.includes(30_125));
+    expect(timers.runNext()).toBe(30_125);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  it('backs off as for any failure when the header is missing or not a number of seconds', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push(
+      { status: 429 },
+      { status: 429, retryAfter: 'Fri, 13 Nov 2026 12:00:00 GMT' },
+      { status: 429, retryAfter: '-3' },
+    );
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    for (const delay of [500, 1000, 2000]) {
+      await eventually(() => timers.pending.includes(delay));
+      expect(timers.runNext()).toBe(delay);
+    }
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  it("waits as long as a proxy says, even when its answer is not the server's JSON", async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 503, retryAfter: '9', html: true });
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => timers.pending.includes(9000));
+    expect(timers.runNext()).toBe(9000);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  it('ignores Retry-After on any other status, and backs off', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 500, retryAfter: '7' }, { status: 403, retryAfter: '7' });
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    for (const delay of [500, 1000]) {
+      await eventually(() => timers.pending.includes(delay));
+      expect(timers.runNext()).toBe(delay);
+    }
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  it('never resends sooner than the shortest backoff, even when told 0 seconds', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    server.script.push({ status: 429, retryAfter: '0' });
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => timers.pending.includes(500));
+    expect(timers.pending).not.toContain(0);
+    expect(timers.runNext()).toBe(500);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  it('counts a rate limit as an answer: the next failure backs off from the shortest delay', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.failRequests = 1;
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => timers.pending.includes(500));
+    server.script.push({ status: 429, retryAfter: '2' });
+    expect(timers.runNext()).toBe(500); // the resend is refused
+    await eventually(() => timers.pending.includes(2000));
+    hub.failRequests = 1;
+    expect(timers.runNext()).toBe(2000); // the next resend fails on the network
+    await eventually(() => timers.pending.includes(500));
+    expect(timers.runNext()).toBe(500);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    expect(hub.executed()).toBe(1);
+    await store.close();
+  });
+});
+
 describe('failures and resends', () => {
   it('retries a failed request with backoff', async () => {
     const hub = seededHub();
