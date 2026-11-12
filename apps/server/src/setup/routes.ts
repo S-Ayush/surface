@@ -7,7 +7,7 @@
  * - **Always open:** health, readiness, metrics, static files and the setup routes themselves.
  *
  * `/setup` is a page (the wizard) and `/setup/status` an endpoint, so `/setup/` is not one of the
- * SPA-excluded `SERVER_PREFIXES`: that would also exclude the page.
+ * SPA-excluded `SERVER_PREFIXES` (`@surface/sync-protocol`): that would also exclude the page.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { audit } from '../auth/audit.js';

@@ -9,20 +9,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import fastifyStatic from '@fastify/static';
+import { isServerPath } from '@surface/sync-protocol';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { sendNotFound } from './errors.js';
-
-/** Paths owned by the server; never answered with the SPA shell. */
-export const SERVER_PREFIXES = [
-  '/api/',
-  '/sync/',
-  '/auth/',
-  '/files/',
-  '/mcp',
-  '/healthz',
-  '/readyz',
-  '/metrics',
-];
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
@@ -71,13 +60,9 @@ export async function registerWebApp(
 function wantsAppShell(request: FastifyRequest): boolean {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
   const pathname = request.url.split('?')[0] ?? '/';
-  if (
-    SERVER_PREFIXES.some(
-      (prefix) => pathname === prefix.replace(/\/$/, '') || pathname.startsWith(prefix),
-    )
-  ) {
-    return false;
-  }
+  // The server's own paths (`SERVER_PREFIXES` in @surface/sync-protocol, shared with the offline
+  // worker) are never answered with the page.
+  if (isServerPath(pathname)) return false;
   // A missing file like /assets/old-abc123.js must 404, not return HTML.
   if (path.extname(pathname) !== '') return false;
   return request.headers.accept?.includes('text/html') ?? false;

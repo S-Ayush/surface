@@ -12,6 +12,11 @@
       "@surface/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./server-paths": {
+      "@surface/source": "./src/server-paths.ts",
+      "types": "./dist/server-paths.d.ts",
+      "default": "./dist/server-paths.js"
     }
   },
   "scripts": {
