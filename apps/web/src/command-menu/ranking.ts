@@ -88,7 +88,11 @@ export function rankCommands(
       const titleScore = matchCommand(query, command.title)?.score ?? 0;
       if (scoreOf(entry, titleScore) <= bestOther) {
         section = command.section;
-        score = Math.min(match.score * frecency.boost(command.id), bestOther * 0.99);
+        // Just under the best other command (the 0.99 only has to break the tie, so it stays below
+        // an equal score but above anything lower; SPEC-012 §3.8). With no other match there is
+        // nothing to stay under: keep the score, so it never collapses to 0 (scores only order).
+        const own = match.score * frecency.boost(command.id);
+        score = bestOther > 0 ? Math.min(own, bestOther * 0.99) : own;
       }
     }
     const list = bySection.get(section) ?? [];

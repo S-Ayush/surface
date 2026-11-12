@@ -54,7 +54,8 @@ export class CommandRegistry {
   /**
    * The handler for a command: the highest-ranked one that applies right now, so a page's Esc step
    * that does not apply here falls to the next step (SPEC-012 §4.2 "Esc chain"). If none applies,
-   * the highest-ranked one, so its `reason` can explain why.
+   * the highest-ranked one, so its `reason` can explain why. `when` must be cheap and free of side
+   * effects: it runs on every key press and again in `isAvailable`, `run` and `reason`.
    */
   #handler(id: CommandId): CommandHandler | undefined {
     this.#revision.get();

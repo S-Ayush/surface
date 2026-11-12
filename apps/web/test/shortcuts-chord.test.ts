@@ -120,6 +120,17 @@ describe('AC-9: per layout', () => {
   });
 });
 
+describe('digits match the top row only', () => {
+  it('Ctrl+Shift+1 matches Digit1 and not the numpad key', () => {
+    const event = { key: '1', ctrlKey: true, shiftKey: true };
+    expect(matches({ ...event, code: 'Digit1' }, 'Ctrl+Shift+1', 'mac')).toBe(true);
+    expect(matches({ ...event, code: 'Numpad1' }, 'Ctrl+Shift+1', 'mac')).toBe(false);
+    expect(
+      matches({ key: '7', code: 'Numpad7', metaKey: true, shiftKey: true }, 'Mod+Shift+7', 'mac'),
+    ).toBe(false);
+  });
+});
+
 describe('Ctrl is not Mod', () => {
   it('on macOS Ctrl+M does not fire on Cmd+M, and Cmd+M does not fire on Ctrl+M', () => {
     expect(matches({ key: 'm', code: 'KeyM', metaKey: true }, 'Ctrl+M', 'mac')).toBe(false);

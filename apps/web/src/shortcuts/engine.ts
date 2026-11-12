@@ -168,7 +168,22 @@ export class ShortcutEngine {
       // Not a continuation: the sequence ends and the key is read on its own.
     }
 
-    const candidates = this.#preferKeyMatches(
+    const candidates = this.#firstCandidates(event, context);
+    if (candidates.length === 0) return false;
+    return this.#advance(event, candidates, 1);
+  };
+
+  /**
+   * The bindings whose first chord this key press matches, most specific scope first, after the
+   * `event.key`-before-`event.code` preference. Exposed so tests can state the engine's
+   * resolution rules (one candidate per scope, key before code) as properties.
+   */
+  candidatesFor(event: KeyEventLike): readonly Shortcut[] {
+    return this.#firstCandidates(event, this.#context(event));
+  }
+
+  #firstCandidates(event: KeyEventLike, context: KeyContext): readonly Shortcut[] {
+    return this.#preferKeyMatches(
       context.scopes.flatMap((scope) =>
         this.#bindings.filter((binding) => {
           const first = binding.chords[0];
@@ -181,9 +196,7 @@ export class ShortcutEngine {
       ),
       0,
     );
-    if (candidates.length === 0) return false;
-    return this.#advance(event, candidates, 1);
-  };
+  }
 
   dispose(): void {
     this.#cancel();

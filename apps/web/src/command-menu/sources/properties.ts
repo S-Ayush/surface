@@ -18,12 +18,21 @@ export type PropertyCommand = {
   /** Sentence case; ends with "…" when it opens a picker ("Change status…"). */
   readonly title: string;
   readonly keywords?: readonly string[];
-  readonly section?: Command['section'];
+  /**
+   * Where it lists when it is not in Suggested. An offered property command always applies to the
+   * target, so this shows only for a destructive command ranked down (ranking.ts). Required so
+   * each definition chooses; SPEC-012 §3.8 and command-menu.md §1 name none.
+   */
+  readonly section: Command['section'];
   readonly appliesTo: readonly PropertyTargetKind[];
   /** The operation it dispatches: the permission pre-check runs on it. Default `issue.update`. */
   readonly operation?: string;
-  /** References for the permission pre-check, from the target: `{ issue: row }`. */
-  readonly refs?: (ctx: CommandContext) => ResolvedRefs;
+  /**
+   * References for the permission pre-check, from the target: `{ issue: row }`. Required: a
+   * team-scoped permission refuses every Member without them, and the command would be hidden with
+   * no sign of why (the same rule `checkOperationCommands` enforces for operation commands).
+   */
+  readonly refs: (ctx: CommandContext) => ResolvedRefs;
   /** As `ui.available` (SPEC-003 §3.1): false hides the command, e.g. on an archived issue. */
   readonly available?: (target: PropertyTarget, store: unknown) => boolean;
   readonly destructive?: boolean;
@@ -57,14 +66,14 @@ export function propertySource(
       const base = {
         id: def.id,
         title: def.title,
-        section: def.section ?? 'settings',
+        section: def.section,
         ...(def.keywords === undefined ? {} : { keywords: def.keywords }),
         ...(def.destructive === true ? { destructive: true } : {}),
         when: (ctx: CommandContext) => {
           const target = propertyTarget(ctx);
           if (target === null || !def.appliesTo.includes(target.kind)) return false;
           const op = registry.get(def.operation ?? DEFAULT_OPERATION);
-          if (op === undefined || !permits(op, ctx, def.refs?.(ctx) ?? {})) return false;
+          if (op === undefined || !permits(op, ctx, def.refs(ctx))) return false;
           const { available } = def;
           return isAvailableHere(
             available === undefined ? undefined : (_target, store) => available(target, store),

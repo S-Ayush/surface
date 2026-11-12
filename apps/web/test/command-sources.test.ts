@@ -72,6 +72,7 @@ describe('SPEC-012 §3.8: property commands', () => {
     id: 'prop:issue.status',
     title: 'Change status…',
     keywords: ['state'],
+    section: 'settings',
     appliesTo: ['issue', 'issues'],
     operation: 'team.rename',
     refs: () => ({ team: { id: ENG.id } }),
@@ -80,6 +81,7 @@ describe('SPEC-012 §3.8: property commands', () => {
   const assignToMe: PropertyCommand = {
     id: 'prop:issue.assignToMe',
     title: 'Assign to me',
+    section: 'settings',
     appliesTo: ['issue'],
     operation: 'team.rename',
     refs: () => ({ team: { id: ENG.id } }),

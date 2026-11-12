@@ -193,11 +193,14 @@ describe('SPEC-012 AC-16: a destructive command never ranks first on a keyword m
     );
   });
 
-  it('does not rank it first for a keyword-only match even when it would score best', () => {
+  it('still finds a destructive command that is the only match, with a score above 0', () => {
     const rename = command({ id: 'issue:rename', title: 'Rename issue', appliesTo: () => true });
     const sections = rankCommands([deleteIssue, rename], 'trash', ctx, noBoost);
-    // Only the destructive command matches: it is still found.
     expect(firstId(sections)).toBe('issue:delete');
+    expect(sections[0]?.items[0]?.score).toBeGreaterThan(0);
+  });
+
+  it('puts a command in an earlier section ahead of a destructive keyword match', () => {
     const both = rankCommands(
       [deleteIssue, command({ id: 'nav:trash', title: 'Go to trash', section: 'navigation' })],
       'trash',
@@ -208,6 +211,23 @@ describe('SPEC-012 AC-16: a destructive command never ranks first on a keyword m
       'nav:trash',
       'issue:delete',
     ]);
+  });
+
+  it('clamps a keyword-only destructive command under a better-scoring command of its own section', () => {
+    // Delete is in Suggested through `appliesTo` and its keyword "trash" is an exact match, so it
+    // would outscore this weak title match; the clamp keeps it below. (Tested on the same section,
+    // where the order is by score.)
+    const weak = command({
+      id: 'app:weak',
+      title: 'Manage the integrations of all teams in the workspace',
+    });
+    const delete2 = { ...deleteIssue, section: 'settings' as const, keywords: ['trash'] };
+    const unclamped = Math.max(0, fuzzyMatch('trash', 'trash')?.score ?? 0) * 0.8;
+    const weakScore = fuzzyMatch('trash', weak.title)?.score ?? 0;
+    expect(unclamped).toBeGreaterThan(weakScore);
+    const sections = rankCommands([delete2, weak], 'trash', ctx, noBoost);
+    expect(sections.map((section) => section.section)).toEqual(['settings']);
+    expect(sections[0]?.items.map((item) => item.command.id)).toEqual(['app:weak', 'issue:delete']);
   });
 
   it('ranks it first when its title matches better than any other command', () => {

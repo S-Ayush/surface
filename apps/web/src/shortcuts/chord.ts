@@ -98,6 +98,7 @@ function codeFor(key: string, flags: Flags): string | null | undefined {
     // Mod, Ctrl and Alt change `event.key` (Option+T types "†"), so the position is what counts.
     return flags.mod || flags.ctrl || flags.alt ? `Key${key}` : undefined;
   }
+  // Digits match the top row only (SPEC-012 §4.2): Numpad1 has its own code and is not bound.
   if (/^[0-9]$/.test(key)) return `Digit${key}`;
   if (flags.alt || flags.shift) return SYMBOL_CODES[key] ?? null;
   return undefined;
