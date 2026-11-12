@@ -1,8 +1,9 @@
 /**
- * Postgres for suites outside this app that run the real server (`@surface/server/testing`):
- * the sync simulation's real-server properties (PLAN-002 S9 part 2). The same steps as this
- * app's own `global-setup.ts` and `db.ts`, without Vitest's `inject`, and with a template name
- * of the caller's, so two suites on one cluster (CI's service container) never share one.
+ * Postgres for integration tests: this app's own (`global-setup.ts` and `db.ts` delegate here)
+ * and suites outside it that run the real server (`@surface/server/testing`), such as the sync
+ * simulation's real-server properties (PLAN-002 S9 part 2). No Vitest `inject`, and the
+ * template name is the caller's, so two suites on one cluster (CI's service container) never
+ * share one.
  */
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -21,6 +22,7 @@ export interface TestPostgres {
 }
 
 export interface TestDatabaseHandle {
+  readonly name: string;
   readonly url: string;
   /** Waits for its connections to close, then drops it. */
   drop(): Promise<void>;
@@ -61,25 +63,38 @@ export async function createTemplateDatabase(adminUrl: string, name: string): Pr
 }
 
 /** A new database cloned from `template`. */
-export async function createDatabaseFrom(
+export function createDatabaseFrom(
   adminUrl: string,
   template: string,
 ): Promise<TestDatabaseHandle> {
+  return createDatabase(adminUrl, template);
+}
+
+/** A new database: a clone of `template`, or empty (no extensions, no migrations) without one. */
+export async function createDatabase(
+  adminUrl: string,
+  template: string | undefined,
+): Promise<TestDatabaseHandle> {
+  // Random lowercase hex: always a safe identifier.
   const name = `t_${randomBytes(6).toString('hex')}`;
   await withAdmin(adminUrl, async (client) => {
     // Cloning a template is not safe to run concurrently; serialise with every suite on the cluster.
     await client.query('SELECT pg_advisory_lock($1)', [LOCKS.testDatabases]);
     try {
-      await client.query(`CREATE DATABASE ${name} TEMPLATE ${identifier(template)}`);
+      const from = template === undefined ? '' : ` TEMPLATE ${identifier(template)}`;
+      await client.query(`CREATE DATABASE ${name}${from}`);
     } finally {
       await client.query('SELECT pg_advisory_unlock($1)', [LOCKS.testDatabases]);
     }
   });
   return {
+    name,
     url: onDatabase(adminUrl, name),
     drop: () =>
       withAdmin(adminUrl, async (client) => {
-        // As in `db.ts`: wait for pools that are still closing; FORCE only clears leaks.
+        // `Pool#end()` resolves before its sockets close, and other pools on this database may
+        // still be closing. FORCE would terminate them mid-close, which surfaces as an unhandled
+        // FATAL 57P01 in the running file. So wait for them; FORCE only clears leaks.
         const deadline = performance.now() + DROP_WAIT_MS;
         while (performance.now() < deadline) {
           const { rows } = await client.query<{ n: number }>(

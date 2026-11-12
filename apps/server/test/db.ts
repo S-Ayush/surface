@@ -5,19 +5,15 @@
  *   const empty = await createTestDatabase({ migrated: false });
  *   afterAll(() => db.drop());
  */
-import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
 import { pino } from 'pino';
 import { inject } from 'vitest';
-import { LOCKS } from '../src/db/locks.js';
+import { createDatabase } from './support/postgres.js';
 
 export const silentLog = pino({ level: 'silent' });
-
-/** How long `drop()` waits for connections to close before terminating them. */
-const DROP_WAIT_MS = 10_000;
 
 /** Superuser URL for `database` on the test cluster. */
 export function testDatabaseUrl(database: string): string {
@@ -43,43 +39,20 @@ export interface TestDatabase {
   drop: () => Promise<void>;
 }
 
+/** A database of its own for one test file: cloned from the migrated template, or empty. */
 export async function createTestDatabase({ migrated = true } = {}): Promise<TestDatabase> {
-  // Random lowercase hex: always a safe identifier.
-  const name = `t_${randomBytes(6).toString('hex')}`;
-  await withAdmin(async (client) => {
-    // Cloning a template is not safe to run concurrently; serialise across test workers.
-    await client.query('SELECT pg_advisory_lock($1)', [LOCKS.testDatabases]);
-    try {
-      const template = migrated ? ` TEMPLATE ${inject('pgTemplateDb')}` : '';
-      await client.query(`CREATE DATABASE ${name}${template}`);
-    } finally {
-      await client.query('SELECT pg_advisory_unlock($1)', [LOCKS.testDatabases]);
-    }
-  });
-
-  const url = testDatabaseUrl(name);
-  const pool = new pg.Pool({ connectionString: url, max: 5 });
+  const database = await createDatabase(
+    inject('pgAdminUrl'),
+    migrated ? inject('pgTemplateDb') : undefined,
+  );
+  const pool = new pg.Pool({ connectionString: database.url, max: 5 });
   return {
-    name,
-    url,
+    name: database.name,
+    url: database.url,
     pool,
     drop: async () => {
       await pool.end();
-      await withAdmin(async (client) => {
-        // `Pool#end()` resolves before its sockets close, and other pools on this database may
-        // still be closing. FORCE would terminate them mid-close, which surfaces as an unhandled
-        // FATAL 57P01 in the running file. So wait for them; FORCE only clears leaks.
-        const deadline = Date.now() + DROP_WAIT_MS;
-        while (Date.now() < deadline) {
-          const { rows } = await client.query<{ n: number }>(
-            'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1',
-            [name],
-          );
-          if (rows[0]?.n === 0) break;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        await client.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-      });
+      await database.drop();
     },
   };
 }
