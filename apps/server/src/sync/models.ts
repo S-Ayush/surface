@@ -86,6 +86,11 @@ export const SYNCED_MODELS = {
       _tx: NodePgDatabase,
     ): readonly string[] | Promise<readonly string[]> => row.syncGroups ?? [],
     /**
+     * The fields `groupsOf` reads. `repo.updateWhere` keeps each row's stored groups, so it
+     * refuses a patch that sets one of them (SPEC-011 §5.1); `repo.update` recomputes the groups.
+     */
+    groupFields: ['syncGroups'],
+    /**
      * The column naming the row's team (the team's own `id` for Team), or `null` for
      * workspace-wide models. Reads by a key limited to some teams filter on it in SQL,
      * because public teams share the `workspace` group (permissions.md §3.5, §5 item 8).
@@ -99,6 +104,7 @@ export const SYNCED_MODELS = {
     def: Workspace,
     fixture: false,
     groupsOf: workspaceWide,
+    groupFields: [],
     teamColumn: null,
   },
   User: {
@@ -106,6 +112,7 @@ export const SYNCED_MODELS = {
     def: User,
     fixture: false,
     groupsOf: workspaceWide,
+    groupFields: [],
     teamColumn: null,
   },
   UserPreferences: {
@@ -117,6 +124,7 @@ export const SYNCED_MODELS = {
       const id = stringField(row, 'id');
       return id === undefined ? [] : [userGroup(id)];
     },
+    groupFields: ['id'],
     teamColumn: null,
   },
   Team: {
@@ -127,6 +135,7 @@ export const SYNCED_MODELS = {
       const id = stringField(row, 'id');
       return id === undefined ? [] : teamGroups({ id, private: row.private });
     },
+    groupFields: ['id', 'private'],
     teamColumn: teams.id,
   },
   TeamMembership: {
@@ -134,6 +143,7 @@ export const SYNCED_MODELS = {
     def: TeamMembership,
     fixture: false,
     groupsOf: groupsOfTeamRow,
+    groupFields: ['teamId'],
     teamColumn: teamMemberships.teamId,
   },
   WorkflowStatus: {
@@ -141,6 +151,7 @@ export const SYNCED_MODELS = {
     def: WorkflowStatus,
     fixture: false,
     groupsOf: groupsOfTeamRow,
+    groupFields: ['teamId'],
     teamColumn: workflowStatuses.teamId,
   },
   Label: {
@@ -152,6 +163,7 @@ export const SYNCED_MODELS = {
       row.teamId === null || row.teamId === undefined
         ? [WORKSPACE_GROUP]
         : groupsOfTeamRow(row, tx),
+    groupFields: ['teamId'],
     teamColumn: labels.teamId,
   },
 } as const satisfies Record<
@@ -159,6 +171,7 @@ export const SYNCED_MODELS = {
   {
     readonly def: ModelDef;
     readonly fixture: boolean;
+    readonly groupFields: readonly string[];
     readonly teamColumn: PgColumn | null;
     readonly [other: string]: unknown;
   }

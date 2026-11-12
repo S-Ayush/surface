@@ -15,6 +15,7 @@ import {
   chunked,
   columnOf,
   deleteWhereStatements,
+  removedKey,
   unloggedDeleteProblem,
   unloggedParent,
   updateWhereProblem,
@@ -146,10 +147,36 @@ export function modelShape(model: string): ModelShape | undefined {
 
 export type RepoFactory = (db: NodePgDatabase, now: Date) => TransactionRepo;
 
-export const syncRepo: RepoFactory = (db, now) => {
+/** Test seams of `syncRepo`. Production code passes none. */
+export interface SyncRepoOptions {
+  /**
+   * Each model's load strategy and content parent. Default `modelShape`. Tests pass a stand-in
+   * content model, since no production model is one before PLAN-011 S5a.
+   */
+  readonly shapeOf?: (model: string) => ModelShape | undefined;
+}
+
+export function syncRepo(
+  db: NodePgDatabase,
+  now: Date,
+  { shapeOf = modelShape }: SyncRepoOptions = {},
+): TransactionRepo {
   const buffered: RowChange[] = [];
   const unlogged: UnloggedDelete[] = [];
-  const push = (change: RowChange) => void buffered.push(change);
+  /**
+   * Rows this transaction really deleted (`purge`, a logged `deleteWhere`), and has not written
+   * since: the parents an unlogged content delete may name (ADR-0022). A group change's `D` is
+   * not a delete, so it never adds one; any later `I`, `U`, `A` or `V` of the row removes it.
+   */
+  const removed = new Set<string>();
+  const push = (change: RowChange) => {
+    buffered.push(change);
+    if (change.action !== 'D') removed.delete(removedKey(change.model, change.id));
+  };
+  const pushRemoved = (model: ModelName, id: string, groups: readonly string[]) => {
+    push({ action: 'D', model, id, groups });
+    removed.add(removedKey(model, id));
+  };
 
   /** Writes and logs a row whose groups may have changed (update, archive, unarchive). */
   async function change<M extends ModelName>(
@@ -224,7 +251,7 @@ export const syncRepo: RepoFactory = (db, now) => {
         .where(eq(table.id, id))
         .returning({ groups: table.syncGroups });
       if (!deleted) throw new SurfaceError('NOT_FOUND', `${model} ${id} not found.`);
-      push({ action: 'D', model, id, groups: deleted.groups });
+      pushRemoved(model, id, deleted.groups);
     },
 
     async updateWhere(model, ids, patch, { touchUpdatedAt }) {
@@ -261,16 +288,18 @@ export const syncRepo: RepoFactory = (db, now) => {
       const found = columnOf(table, field);
       if ('problem' in found) throw new Error(`deleteWhere(${model}): ${model} ${found.problem}`);
       if (!log) {
-        const allowed = unloggedParent(model, modelShape(model), field);
+        const allowed = unloggedParent(model, shapeOf(model), field);
         if ('problem' in allowed) throw new Error(allowed.problem);
       }
+      const statements = deleteWhereStatements(db, table, found.column, ids);
+      const locked = await statements.lock;
       const deleted: { id: string; groups: string[] }[] = [];
-      for (const chunk of deleteWhereStatements(db, table, found.column, ids)) {
+      for (const chunk of statements.deletes(locked.map((row) => row.id))) {
         deleted.push(...(await chunk.delete));
       }
       deleted.sort(byId);
       if (log) {
-        for (const row of deleted) push({ action: 'D', model, id: row.id, groups: row.groups });
+        for (const row of deleted) pushRemoved(model, row.id, row.groups);
       } else {
         unlogged.push({
           model,
@@ -287,7 +316,7 @@ export const syncRepo: RepoFactory = (db, now) => {
 
     async flush(origin) {
       // ADR-0022: the content deletes that logged nothing must sit next to their parent's `D`.
-      const problem = unloggedDeleteProblem(unlogged, buffered, modelShape);
+      const problem = unloggedDeleteProblem(unlogged, removed, shapeOf);
       if (problem !== undefined) throw new Error(problem);
       if (buffered.length === 0) return {};
       await db.execute(sql`SELECT pg_advisory_xact_lock(${LOCKS.sync}::bigint)`);
@@ -320,7 +349,7 @@ export const syncRepo: RepoFactory = (db, now) => {
       return { lastSyncId: state.lastSyncId, lockedAt };
     },
   };
-};
+}
 
 /**
  * Deletes `sync_log` rows older than `before`, except the newest, which the hub's retention check

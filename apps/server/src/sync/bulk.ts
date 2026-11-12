@@ -10,7 +10,7 @@
 import { asc, getTableColumns, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import type { ModelName, ModelTable } from './models.js';
+import { SYNCED_MODELS, type ModelName, type ModelTable } from './models.js';
 
 /**
  * Rows per statement, for `sync_log` inserts and the bulk writes. A `sync_log` row binds 8
@@ -27,9 +27,10 @@ export function chunked<T>(items: readonly T[], size: number = SYNC_LOG_CHUNK): 
 }
 
 /**
- * Distinct ids in ascending order, lower-cased. Postgres orders `uuid` by its bytes, which is the
- * order of the lower-case text, so rows are locked in the same order by every writer and two bulk
- * writes over overlapping ids can't deadlock (SPEC-011 §4.8).
+ * Distinct ids in ascending order, lower-cased: the order Postgres gives `uuid` (by its bytes, the
+ * order of the lower-case text). Chunks of these ids are locked one after another, each by a
+ * `SELECT … ORDER BY id FOR UPDATE`, so a bulk write takes its row locks in ascending id like
+ * every other writer (SPEC-011 §4.8, SPEC-015 §4.4, sync-protocol §7).
  */
 export function ascendingIds(ids: Iterable<string>): string[] {
   return [...new Set([...ids].map((id) => id.toLowerCase()))].sort((a, b) =>
@@ -43,20 +44,26 @@ function anyOf(column: PgColumn, ids: readonly string[]): SQL {
 }
 
 /**
- * Columns `updateWhere` never writes. The id, timestamps and groups are the repo's. A field the
- * groups derive from would change them, and `updateWhere` keeps each row's stored groups, so it
- * refuses those too: `teamId` for every team-owned model (a team move is M3's, which rewrites
- * groups), `private` for Team. `id` also covers UserPreferences, whose groups come from it.
+ * Columns `updateWhere` never writes, on any model. The id, timestamps and groups are the repo's,
+ * and archive state travels as `A`/`V` packets (`repo.archive`, `repo.unarchive`; SPEC-011 §5.5),
+ * never inside a `U`. Each model's `groupFields` (`SYNCED_MODELS`) are refused too: `updateWhere`
+ * keeps each row's stored groups, so it must not change a field they derive from.
  */
-const NEVER_PATCHED = ['id', 'createdAt', 'updatedAt', 'syncGroups', 'teamId'] as const;
-const GROUP_FIELDS: Partial<Record<ModelName, readonly string[]>> = { Team: ['private'] };
+const NEVER_PATCHED = ['id', 'createdAt', 'updatedAt', 'syncGroups', 'archivedAt'] as const;
+
+/** The fields a patch sets: `undefined` values set nothing (Drizzle skips them). */
+export function patchedFields(patch: object): string[] {
+  return Object.entries(patch)
+    .filter(([, value]) => value !== undefined)
+    .map(([field]) => field);
+}
 
 /** Why `updateWhere` refuses this patch, or `undefined` when it may run. */
 export function updateWhereProblem(model: ModelName, patch: object): string | undefined {
-  const refused = [...NEVER_PATCHED, ...(GROUP_FIELDS[model] ?? [])];
-  const touched = Object.keys(patch).filter((field) => refused.includes(field));
+  const refused: readonly string[] = [...NEVER_PATCHED, ...SYNCED_MODELS[model].groupFields];
+  const touched = patchedFields(patch).filter((field) => refused.includes(field));
   if (touched.length === 0) return undefined;
-  return `updateWhere on ${model} can't change ${touched.join(', ')}: it keeps each row's stored groups. Use repo.update for a change that moves rows between groups.`;
+  return `updateWhere on ${model} can't change ${touched.join(', ')}: it keeps each row's stored groups and logs only U. Use repo.update, repo.archive or repo.unarchive for that.`;
 }
 
 /**
@@ -71,7 +78,7 @@ export function updateWhereStatements(
   patch: Readonly<Record<string, unknown>>,
   options: { readonly touchUpdatedAt: boolean; readonly now: Date },
 ) {
-  const empty = Object.keys(patch).length === 0;
+  const empty = patchedFields(patch).length === 0;
   const values = options.touchUpdatedAt ? { ...patch, updatedAt: options.now } : patch;
   return chunked(ascendingIds(ids)).map((chunk) => ({
     ids: chunk,
@@ -100,22 +107,34 @@ export function columnOf(
 }
 
 /**
- * The statements of `repo.deleteWhere(model, column, ids)`: one
- * `DELETE … WHERE column = ANY($ids) RETURNING id, sync_groups` per chunk of ascending ids.
+ * The statements of `repo.deleteWhere(model, column, values)`. A bare `DELETE … WHERE column = ANY`
+ * locks rows in scan order, so the rows are locked first, in ascending id, by one
+ * `SELECT id … WHERE column = ANY($values) ORDER BY id FOR UPDATE` (`lock`); then `deletes(ids)`
+ * gives one `DELETE … WHERE id = ANY($chunk) RETURNING id, sync_groups` per chunk of the locked
+ * ids, ascending (SPEC-015 §4.4, sync-protocol §7).
  */
 export function deleteWhereStatements(
   db: NodePgDatabase,
   table: ModelTable<ModelName>,
   column: PgColumn,
-  ids: Iterable<string>,
+  values: Iterable<string>,
 ) {
-  return chunked(ascendingIds(ids)).map((chunk) => ({
-    ids: chunk,
-    delete: db
-      .delete(table)
-      .where(anyOf(column, chunk))
-      .returning({ id: table.id, groups: table.syncGroups }),
-  }));
+  return {
+    lock: db
+      .select({ id: table.id })
+      .from(table)
+      .where(anyOf(column, ascendingIds(values)))
+      .orderBy(asc(table.id))
+      .for('update'),
+    deletes: (ids: Iterable<string>) =>
+      chunked(ascendingIds(ids)).map((chunk) => ({
+        ids: chunk,
+        delete: db
+          .delete(table)
+          .where(anyOf(table.id, chunk))
+          .returning({ id: table.id, groups: table.syncGroups }),
+      })),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -171,26 +190,28 @@ export function unloggedParent(
   return { parent: shape.parent };
 }
 
+/** The key of a row in the repo's set of removed rows. */
+export function removedKey(model: string, id: string): string {
+  return `${model}\u0000${id.toLowerCase()}`;
+}
+
 /**
  * The assertion `flush` runs before it logs anything (ADR-0022, SPEC-011 §5.1): every unlogged
  * content delete names parents whose own row is deleted, with a logged `D`, in the same
- * transaction. `logged` are the transaction's buffered changes. Returns the first problem.
+ * transaction. `removed` holds the rows the transaction really deleted (`repo.purge`, a logged
+ * `repo.deleteWhere`) and didn't write again after: a group change's `D`+`U` pair is not a delete.
+ * Returns the first problem.
  */
 export function unloggedDeleteProblem(
   unlogged: readonly UnloggedDelete[],
-  logged: readonly { readonly action: string; readonly model: string; readonly id: string }[],
+  removed: ReadonlySet<string>,
   shapeOf: (model: string) => ModelShape | undefined,
 ): string | undefined {
   for (const entry of unlogged) {
     const found = unloggedParent(entry.model, shapeOf(entry.model), entry.field);
     if ('problem' in found) return found.problem;
     const { parent } = found;
-    const deleted = new Set(
-      logged
-        .filter((change) => change.action === 'D' && change.model === parent.model)
-        .map((change) => change.id.toLowerCase()),
-    );
-    const kept = entry.parentIds.find((id) => !deleted.has(id.toLowerCase()));
+    const kept = entry.parentIds.find((id) => !removed.has(removedKey(parent.model, id)));
     if (kept !== undefined) {
       return `deleteWhere(${entry.model}, { log: false }) refused: parent ${parent.model} ${kept} is not deleted with a logged D in this transaction (ADR-0022).`;
     }

@@ -118,8 +118,14 @@ describe('a systemOnly operation (SPEC-003 §6 step 2)', () => {
     examples: [{}],
     systemOnly: true,
   });
+  // Answers nothing, except the sync client's ledger row: registered to u1, nothing sent yet.
   const client = {
-    query: () => Promise.resolve({ rows: [], rowCount: 0 }),
+    query: (text: string) =>
+      Promise.resolve(
+        text.includes('FROM client_mutations WHERE client_id')
+          ? { rows: [{ user_id: 'u1', last_seq: '0', stored: null }], rowCount: 1 }
+          : { rows: [], rowCount: 0 },
+      ),
     release() {},
   };
   // Only `connect`, `query` and `release` are used; pg's overloads are more than a stand-in can match.
@@ -145,14 +151,42 @@ describe('a systemOnly operation (SPEC-003 §6 step 2)', () => {
     'is UNKNOWN_OPERATION for a %s actor, in production and outside it',
     async (_, actor) => {
       for (const allowInternal of [false, true]) {
-        const outcome = await executor(allowInternal).execute('issue.sweepFixture', {}, actor);
-        expect(outcome).toMatchObject({ ok: false, error: { code: 'UNKNOWN_OPERATION' } });
-        // The suggestions never name it either.
-        expect(JSON.stringify(outcome)).not.toContain('sweepFixture"');
-        expect(executor(allowInternal).operations(actor)).toEqual([]);
+        const run = executor(allowInternal);
+        const outcome = await run.execute('issue.sweepFixture', {}, actor);
+        expect(outcome).toMatchObject({
+          ok: false,
+          error: { code: 'UNKNOWN_OPERATION', message: 'Unknown operation "issue.sweepFixture".' },
+        });
+        // A near miss gets no "Did you mean": the suggestions never name it either.
+        const near = await run.execute('issue.sweepFixtur', {}, actor);
+        expect(near).toMatchObject({
+          ok: false,
+          error: { code: 'UNKNOWN_OPERATION', message: 'Unknown operation "issue.sweepFixtur".' },
+        });
+        expect(run.operations(actor)).toEqual([]);
       }
     },
   );
+
+  it('is rejected as UNKNOWN_OPERATION when a user sends it over sync, in production and outside it', async () => {
+    for (const allowInternal of [false, true]) {
+      const outcome = await executor(allowInternal).executeSynced(
+        'issue.sweepFixture',
+        {},
+        userActor(admin),
+        { clientId: 'c1', seq: 1 },
+      );
+      // Recorded as the seq's rejected result, so the client's queue moves on (SPEC-002 §4.4).
+      expect(outcome).toEqual({
+        kind: 'result',
+        result: {
+          seq: 1,
+          status: 'error',
+          error: { code: 'UNKNOWN_OPERATION', message: 'Unknown operation "issue.sweepFixture".' },
+        },
+      });
+    }
+  });
 
   it('runs for the system actor, and is never listed, even for it', async () => {
     for (const allowInternal of [false, true]) {

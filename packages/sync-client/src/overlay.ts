@@ -144,8 +144,7 @@ export class OverlayEngine {
           else rows.set(id, state.row);
         }
       }
-      // Ordered by id, so a replay finds the same rows in the same order (SPEC-011 §6.3, AC-7).
-      return [...rows.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      return [...rows.values()];
     };
     // References see base plus the mutations so far, never the screen (review m3).
     const view: RefSource = {
@@ -177,9 +176,11 @@ export class OverlayEngine {
       get: (model, ref) => live(model, ref)?.current.row,
       find: (model, fields) => {
         const wanted = Object.entries(fields);
-        return rowsOf(model).filter((row) =>
-          wanted.every(([field, value]) => row[field] === value),
-        );
+        // Ordered by id, so a replay finds the same rows in the same order (SPEC-011 §6.3, AC-7).
+        // Sorted after filtering: the matches are few, the model's rows may be many.
+        return rowsOf(model)
+          .filter((row) => wanted.every(([field, value]) => row[field] === value))
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       },
       patch: (model, ref, changes: StoreRow) => {
         const found = live(model, ref);

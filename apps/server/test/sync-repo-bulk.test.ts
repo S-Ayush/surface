@@ -10,6 +10,7 @@ import {
   ascendingIds,
   chunked,
   deleteWhereStatements,
+  removedKey,
   SYNC_LOG_CHUNK,
   unloggedDeleteProblem,
   updateWhereProblem,
@@ -17,7 +18,7 @@ import {
   type ModelShape,
 } from '../src/sync/bulk.js';
 import { SYNCED_MODELS } from '../src/sync/models.js';
-import { modelShape, syncRepo, type RowChange } from '../src/sync/repo.js';
+import { modelShape, syncRepo, type RowChange, type SyncRepoOptions } from '../src/sync/repo.js';
 
 const NOW = new Date('2026-11-12T10:00:00.000Z');
 const STORED_AT = '2026-01-01T00:00:00.000Z';
@@ -36,74 +37,95 @@ function columnList(list: string): string[] {
 }
 
 /**
- * A connection that holds rows per table (keyed by DB column) and answers the statements the
- * repo's bulk paths send. Every statement is recorded with its parameters.
+ * A connection that holds rows per table (keyed by DB column) and answers the single-table
+ * statements the repo sends (select, insert, update, delete, each with a `where` on one column
+ * by `= $n` or `= ANY($n::uuid[])`), plus the sync lock, `sync_state` and `sync_log`. Every
+ * statement is recorded with its parameters.
  */
-function fakeDb(seed: Record<string, Row[]> = {}) {
+function fakeDb(seed: Record<string, Row[]> = {}, options: SyncRepoOptions = {}) {
   const tables = new Map<string, Map<string, Row>>();
   for (const [table, rows] of Object.entries(seed)) {
     tables.set(table, new Map(rows.map((row) => [String(row['id']), { ...row }])));
   }
   const statements: { text: string; params: unknown[] }[] = [];
   let lastSyncId = 100;
-  const rowsOf = (table: string) => tables.get(table) ?? new Map<string, Row>();
+  const rowsOf = (table: string) => {
+    let rows = tables.get(table);
+    if (rows === undefined) tables.set(table, (rows = new Map<string, Row>()));
+    return rows;
+  };
   const asArrays = (rows: Row[], columns: string[]) =>
     rows.map((row) => columns.map((c) => row[c] ?? null));
+  const param = (params: unknown[], at: string | undefined) => params[Number(at) - 1];
+  /** The rows of `table` a `where` clause selects. */
+  const matching = (table: string, where: string, params: unknown[]): Row[] => {
+    const m = /^"\w+"\."(\w+)" = (?:ANY\(\$(\d+)::uuid\[\]\)|\$(\d+))$/.exec(where);
+    if (!m) throw new Error(`unexpected where: ${where}`);
+    const wanted = new Set(
+      m[2] === undefined ? [param(params, m[3])] : (param(params, m[2]) as unknown[]),
+    );
+    return [...rowsOf(table).values()].filter((row) => wanted.has(row[m[1] ?? '']));
+  };
+  const byId = (a: Row, b: Row) => String(a['id']).localeCompare(String(b['id']));
 
   const client = {
     query(config: { text: string }, params: unknown[] = []) {
       const text = config.text;
       statements.push({ text, params });
       const answer = (rows: unknown[]) => Promise.resolve({ rows, rowCount: rows.length });
-
-      let m =
-        /^select (.*) from "(\w+)" where "\w+"\."id" = ANY\(\$1::uuid\[\]\) order by "\w+"\."id" asc for update$/.exec(
-          text,
-        );
-      if (m) {
-        const ids = new Set(params[0] as string[]);
-        const rows = [...rowsOf(m[2] ?? '').values()]
-          .filter((row) => ids.has(String(row['id'])))
-          .sort((a, b) => String(a['id']).localeCompare(String(b['id'])));
-        return answer(asArrays(rows, columnList(m[1] ?? '')));
-      }
-      m =
-        /^update "(\w+)" set (.*) where "\w+"\."id" = ANY\(\$(\d+)::uuid\[\]\) returning (.*)$/.exec(
-          text,
-        );
-      if (m) {
-        const ids = new Set(params[Number(m[3]) - 1] as string[]);
-        const sets = [...(m[2] ?? '').matchAll(/"(\w+)" = \$(\d+)/g)].map(
-          ([, column, at]) => [column ?? '', params[Number(at) - 1]] as const,
-        );
-        const rows = [...rowsOf(m[1] ?? '').values()].filter((row) => ids.has(String(row['id'])));
-        for (const row of rows) for (const [column, value] of sets) row[column] = value;
-        // Postgres promises no order for RETURNING: answer in descending id.
-        rows.sort((a, b) => String(b['id']).localeCompare(String(a['id'])));
-        return answer(asArrays(rows, columnList(m[4] ?? '')));
-      }
-      m = /^delete from "(\w+)" where "\w+"\."(\w+)" = ANY\(\$1::uuid\[\]\) returning (.*)$/.exec(
-        text,
-      );
-      if (m) {
-        const ids = new Set(params[0] as string[]);
-        const table = rowsOf(m[1] ?? '');
-        const rows = [...table.values()].filter((row) => ids.has(String(row[m?.[2] ?? ''])));
-        for (const row of rows) table.delete(String(row['id']));
-        rows.sort((a, b) => String(b['id']).localeCompare(String(a['id'])));
-        return answer(asArrays(rows, columnList(m[3] ?? '')));
-      }
       if (text.startsWith('SELECT pg_advisory_xact_lock')) return answer([]);
       if (text.startsWith('update "sync_state"')) {
         lastSyncId += Number(params[0]);
         return answer([[lastSyncId, '']]);
       }
       if (text.startsWith('insert into "sync_log"')) return answer([]);
+
+      let m =
+        /^select (.*?) from "(\w+)" where (.*?)( order by "\w+"\."id" asc)?( for update)?$/.exec(
+          text,
+        );
+      if (m) {
+        const rows = matching(m[2] ?? '', m[3] ?? '', params);
+        if (m[4]) rows.sort(byId);
+        return answer(asArrays(rows, columnList(m[1] ?? '')));
+      }
+      m = /^update "(\w+)" set (.*) where (.*) returning (.*)$/.exec(text);
+      if (m) {
+        const sets = [...(m[2] ?? '').matchAll(/"(\w+)" = \$(\d+)/g)].map(
+          ([, column, at]) => [column ?? '', param(params, at)] as const,
+        );
+        const rows = matching(m[1] ?? '', m[3] ?? '', params);
+        for (const row of rows) for (const [column, value] of sets) row[column] = value;
+        // Postgres promises no order for RETURNING: answer in descending id.
+        rows.sort(byId).reverse();
+        return answer(asArrays(rows, columnList(m[4] ?? '')));
+      }
+      m = /^delete from "(\w+)" where (.*) returning (.*)$/.exec(text);
+      if (m) {
+        const table = rowsOf(m[1] ?? '');
+        const rows = matching(m[1] ?? '', m[2] ?? '', params);
+        for (const row of rows) table.delete(String(row['id']));
+        rows.sort(byId).reverse();
+        return answer(asArrays(rows, columnList(m[3] ?? '')));
+      }
+      m = /^insert into "(\w+)" \((.*?)\) values \((.*?)\) returning (.*)$/.exec(text);
+      if (m) {
+        const columns = columnList(m[2] ?? '');
+        const values = (m[3] ?? '').split(', ');
+        const row: Row = {};
+        columns.forEach((column, i) => {
+          const value = values[i] ?? 'default';
+          row[column] =
+            value === 'default' ? (column === 'counter' ? 0 : null) : param(params, value.slice(1));
+        });
+        rowsOf(m[1] ?? '').set(String(row['id']), row);
+        return answer(asArrays([row], columnList(m[4] ?? '')));
+      }
       return Promise.reject(new Error(`unexpected statement: ${text}`));
     },
   };
   const db = drizzle({ client: client as never, casing: 'snake_case' });
-  const repo = syncRepo(db, NOW);
+  const repo = syncRepo(db, NOW, options);
   return { db, repo, statements, rowsOf };
 }
 
@@ -186,13 +208,20 @@ describe('the bulk statements (SQL)', () => {
     expect(chunks[0]?.update).toBeUndefined();
   });
 
-  it('deleteWhere deletes per chunk on the given column and returns id and groups', () => {
+  it('deleteWhere locks the matching rows in ascending id first, then deletes them by id per chunk', () => {
+    const values = [id(9), id(3)];
+    const statements = deleteWhereStatements(db, labels, labels.parentId, values);
+    const lock = statements.lock.toSQL();
+    expect(lock.sql).toBe(
+      'select "id" from "labels" where "labels"."parent_id" = ANY($1::uuid[]) order by "labels"."id" asc for update',
+    );
+    expect(lock.params).toEqual([[id(3), id(9)]]);
     const ids = Array.from({ length: 5_001 }, (_, i) => id(5_001 - i));
-    const chunks = deleteWhereStatements(db, labels, labels.parentId, ids);
+    const chunks = statements.deletes(ids);
     expect(chunks.map((c) => c.ids.length)).toEqual([5_000, 1]);
     const first = chunks[0]?.delete.toSQL();
     expect(first?.sql).toBe(
-      'delete from "labels" where "labels"."parent_id" = ANY($1::uuid[]) returning "id", "sync_groups"',
+      'delete from "labels" where "labels"."id" = ANY($1::uuid[]) returning "id", "sync_groups"',
     );
     expect(first?.params[0]).toEqual(ids.slice(1).reverse());
     expect(chunks[1]?.ids).toEqual([id(5_001)]);
@@ -281,17 +310,38 @@ describe('repo.updateWhere', () => {
     ).rejects.toThrow("can't change private");
     expect(statements).toEqual([]);
     expect(updateWhereProblem('DebugItem', { syncGroups: [] })).toMatch(/can't change syncGroups/);
-    expect(updateWhereProblem('Label', { archivedAt: null, name: 'x' })).toBeUndefined();
+    expect(updateWhereProblem('Label', { name: 'x', parentId: null })).toBeUndefined();
+  });
+
+  it('refuses archivedAt: archive state travels as A and V packets (SPEC-011 §5.5)', async () => {
+    const { repo, statements } = fakeDb({ debug_items: [debugRow(1)] });
+    await expect(
+      repo.updateWhere('DebugItem', [id(1)], { archivedAt: NOW }, { touchUpdatedAt: false }),
+    ).rejects.toThrow("updateWhere on DebugItem can't change archivedAt");
+    expect(updateWhereProblem('Label', { archivedAt: null })).toMatch(/can't change archivedAt/);
+    expect(statements).toEqual([]);
+  });
+
+  it('treats a patch whose values are all undefined as empty: no update, one U per row', async () => {
+    const { repo, statements } = fakeDb({ debug_items: [debugRow(1)] });
+    await repo.updateWhere('DebugItem', [id(1)], { title: undefined }, { touchUpdatedAt: true });
+    expect(kinds(statements)).toEqual(['select "id",']);
+    expect(logged(repo.changes())).toEqual([`U ${id(1)}`]);
   });
 });
 
 describe('repo.deleteWhere', () => {
   it('deletes and logs one D per row, in ascending id, with the row’s groups', async () => {
-    const { repo, rowsOf } = fakeDb({
+    const handle = fakeDb({
       debug_items: [debugRow(2, ['team:a']), debugRow(1), debugRow(3)],
     });
+    const { repo, rowsOf } = handle;
+    const { statements } = handle;
     const deleted = await repo.deleteWhere('DebugItem', 'id', [id(2), id(1), id(8)]);
     expect(deleted).toEqual([id(1), id(2)]);
+    expect(kinds(statements)).toEqual(['select "id"', 'delete from']);
+    expect(statements[0]?.text).toMatch(/order by "debug_items"\."id" asc for update$/);
+    expect(statements[1]?.params).toEqual([[id(1), id(2)]]);
     expect(repo.changes()).toEqual([
       { action: 'D', model: 'DebugItem', id: id(1), groups: ['workspace'] },
       { action: 'D', model: 'DebugItem', id: id(2), groups: ['team:a'] },
@@ -363,43 +413,120 @@ describe('the unlogged content delete (ADR-0022)', () => {
     parentIds,
     ids: [id(50)],
   });
-  const D = (model: string, rowId: string) => ({ action: 'D', model, id: rowId });
+  const removed = (...keys: [string, string][]) =>
+    new Set(keys.map(([model, rowId]) => removedKey(model, rowId)));
 
   it('passes when every parent is deleted with a logged D in the same transaction', () => {
     expect(
       unloggedDeleteProblem(
         [purge([id(1), id(2)])],
-        [D('Issue', id(2)), D('Issue', id(1))],
+        removed(['Issue', id(2)], ['Issue', id(1)]),
         shapeOf,
       ),
     ).toBeUndefined();
   });
 
-  it('fails when a parent is not deleted, or only updated, in the transaction', () => {
-    expect(unloggedDeleteProblem([purge([id(1), id(2)])], [D('Issue', id(1))], shapeOf)).toBe(
+  it('fails when a parent is not among the rows the transaction removed', () => {
+    expect(unloggedDeleteProblem([purge([id(1), id(2)])], removed(['Issue', id(1)]), shapeOf)).toBe(
       `deleteWhere(IssueContent, { log: false }) refused: parent Issue ${id(2)} is not deleted with a logged D in this transaction (ADR-0022).`,
     );
-    const updated = [{ action: 'U', model: 'Issue', id: id(1) }];
-    expect(unloggedDeleteProblem([purge([id(1)])], updated, shapeOf)).toMatch(/is not deleted/);
-    // A D of another model with the same id is not the parent's.
-    expect(unloggedDeleteProblem([purge([id(1)])], [D('Label', id(1))], shapeOf)).toMatch(
+    expect(unloggedDeleteProblem([purge([id(1)])], removed(), shapeOf)).toMatch(/is not deleted/);
+    // A removed row of another model with the same id is not the parent.
+    expect(unloggedDeleteProblem([purge([id(1)])], removed(['Label', id(1)]), shapeOf)).toMatch(
       /is not deleted/,
     );
   });
 
   it('fails for an eager model, a content model without a parent, or the wrong field', () => {
     const eager = { ...purge([id(1)]), model: 'Issue', field: 'id' };
-    expect(unloggedDeleteProblem([eager], [D('Issue', id(1))], shapeOf)).toMatch(
+    expect(unloggedDeleteProblem([eager], removed(['Issue', id(1)]), shapeOf)).toMatch(
       /Issue is not a content model/,
     );
     const orphan = { ...purge([id(1)]), model: 'Orphan' };
-    expect(unloggedDeleteProblem([orphan], [D('Issue', id(1))], shapeOf)).toMatch(
+    expect(unloggedDeleteProblem([orphan], removed(['Issue', id(1)]), shapeOf)).toMatch(
       /declares no parent/,
     );
     const wrongField = { ...purge([id(1)]), field: 'id' };
-    expect(unloggedDeleteProblem([wrongField], [D('Issue', id(1))], shapeOf)).toMatch(
+    expect(unloggedDeleteProblem([wrongField], removed(['Issue', id(1)]), shapeOf)).toMatch(
       /must match on the parent field issueId/,
     );
+  });
+
+  describe('through the repo, with Label standing in for a content model of DebugItem', () => {
+    // No production model is a content model before S5a, so the repo gets a stand-in shape.
+    const asContent = (model: string): ModelShape | undefined =>
+      model === 'Label'
+        ? { load: 'content', parent: { model: 'DebugItem', field: 'parentId' } }
+        : modelShape(model);
+    const label = (n: number, parent: number): Row => ({
+      id: id(n),
+      parent_id: id(parent),
+      name: `L${n}`,
+      sync_groups: ['workspace'],
+    });
+    const setup = () =>
+      fakeDb(
+        {
+          debug_items: [debugRow(1), debugRow(2)],
+          labels: [label(11, 1), label(12, 1), label(21, 2)],
+        },
+        { shapeOf: asContent },
+      );
+
+    it('logs nothing for the content rows when their parent is purged in the transaction', async () => {
+      const { repo, rowsOf } = setup();
+      expect(await repo.deleteWhere('Label', 'parentId', [id(1)], { log: false })).toEqual([
+        id(11),
+        id(12),
+      ]);
+      await repo.purge('DebugItem', id(1));
+      await expect(repo.flush({})).resolves.toMatchObject({ lastSyncId: 101 });
+      expect(logged(repo.changes())).toEqual([`D ${id(1)}`]);
+      expect([...rowsOf('labels').keys()]).toEqual([id(21)]);
+      expect(repo.unloggedDeletes()).toEqual([
+        { model: 'Label', field: 'parentId', parentIds: [id(1)], ids: [id(11), id(12)] },
+      ]);
+    });
+
+    it('accepts a parent deleted by a logged deleteWhere', async () => {
+      const { repo } = setup();
+      await repo.deleteWhere('Label', 'parentId', [id(1), id(2)], { log: false });
+      await repo.deleteWhere('DebugItem', 'id', [id(1), id(2)]);
+      await expect(repo.flush({})).resolves.toMatchObject({ lastSyncId: 102 });
+    });
+
+    it('fails the flush when nothing else changed, before its early return', async () => {
+      const { repo, statements } = setup();
+      await repo.deleteWhere('Label', 'parentId', [id(1)], { log: false });
+      statements.length = 0;
+      await expect(repo.flush({})).rejects.toThrow(
+        `parent DebugItem ${id(1)} is not deleted with a logged D in this transaction`,
+      );
+      expect(statements).toEqual([]);
+    });
+
+    it('fails when the parent only changed groups: its D+U pair is not a delete (B1)', async () => {
+      const { repo } = setup();
+      await repo.deleteWhere('Label', 'parentId', [id(1)], { log: false });
+      await repo.update('DebugItem', id(1), { syncGroups: ['team:b'] });
+      expect(logged(repo.changes())).toEqual([`D ${id(1)}`, `U ${id(1)}`]);
+      await expect(repo.flush({})).rejects.toThrow(`parent DebugItem ${id(1)} is not deleted`);
+    });
+
+    it('fails when the parent is purged and then inserted again', async () => {
+      const { repo } = setup();
+      await repo.deleteWhere('Label', 'parentId', [id(1)], { log: false });
+      await repo.purge('DebugItem', id(1));
+      await repo.insert('DebugItem', { id: id(1), title: 'Again', syncGroups: ['workspace'] });
+      await expect(repo.flush({})).rejects.toThrow(`parent DebugItem ${id(1)} is not deleted`);
+    });
+
+    it('fails when another parent was purged, not this one', async () => {
+      const { repo } = setup();
+      await repo.deleteWhere('Label', 'parentId', [id(1)], { log: false });
+      await repo.purge('DebugItem', id(2));
+      await expect(repo.flush({})).rejects.toThrow(`parent DebugItem ${id(1)} is not deleted`);
+    });
   });
 
   it('reads each synced model’s shape from its definition: no content model before S5a', () => {
