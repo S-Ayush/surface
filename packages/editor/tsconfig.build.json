@@ -1,0 +1,16 @@
+{
+  // Builds only the headless schema entry, for the server image (SPEC-013 §4.4 "Packaging"),
+  // with Node module resolution. DOM *types* are needed by TipTap's declarations (parseHTML
+  // rules); no DOM runs: test/schema-node-env.test.ts imports the built entry with no DOM globals.
+  "extends": "@surface/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "customConditions": [],
+    "lib": ["ES2023", "DOM"],
+    "types": []
+  },
+  "include": ["src/schema"],
+  "exclude": ["src/**/*.test.ts"]
+}

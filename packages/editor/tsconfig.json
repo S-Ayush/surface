@@ -1,7 +1,10 @@
 {
   "extends": "@surface/config/tsconfig.web.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // Node types for the tests (node:crypto, dependency-cruiser's API). The schema build
+    // (tsconfig.build.json) has none, so a Node API in src/schema fails it.
+    "types": ["node"]
   },
   "include": ["src", "test"]
 }

@@ -33,6 +33,7 @@
     "@fastify/websocket": "^11.3.7",
     "@node-rs/argon2": "^2.2.2",
     "@surface/domain": "workspace:*",
+    "@surface/editor": "workspace:*",
     "@surface/operations": "workspace:*",
     "@surface/sync-protocol": "workspace:*",
     "drizzle-orm": "^0.45.4",

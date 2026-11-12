@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { DOC_SCHEMA_VERSION } from '@surface/domain';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import type { SchemaHashModel } from '../src/index.js';
@@ -34,9 +35,15 @@ describe('computeSchemaHash', () => {
   it('is pinned, so an accidental change to the algorithm is caught', () => {
     // If this fails on purpose (protocol version bump, canonical form change), every
     // client re-bootstraps on deploy: update the value and say so in the change summary.
+    // Changed once in PLAN-013 S1, when DOC_SCHEMA_VERSION joined the input (SPEC-013 D6).
     expect(computeSchemaHash([DEBUG_ITEM, TEAM])).toBe(
-      '9e39ab784c9ab1720438ab5fd8a5b0898cf3582d7f101c6956fa303ce1cd4a84',
+      'cbd6c4484f7b72c513f9169a39806196e65527cc12482d3ad31e93ff9e545bf6',
     );
+  });
+
+  it('includes the stored document schema version, so an editor schema change resyncs clients', () => {
+    expect(computeSchemaHash([TEAM])).toBe(computeSchemaHash([TEAM], DOC_SCHEMA_VERSION));
+    expect(computeSchemaHash([TEAM], DOC_SCHEMA_VERSION + 1)).not.toBe(computeSchemaHash([TEAM]));
   });
 
   it('produces a value the wire codecs accept', () => {

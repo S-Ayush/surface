@@ -2,6 +2,8 @@
 //   domain ← operations ← (sync-client, apps/server)
 //   apps/web → sync-client, ui, editor (and domain/operations)
 //   sync-react → sync-client, ui (React bindings and the sync inspector, ADR-0017)
+//   editor/src/schema is headless (@tiptap/core, @tiptap/pm, markdown-it, domain); the server
+//   imports only that entry, `@surface/editor/schema` (SPEC-013 §4.4)
 //   The server never imports UI or client packages; the client never imports server code.
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -67,6 +69,28 @@ module.exports = {
       severity: 'error',
       from: { path: '^packages/(ui|editor)/' },
       to: { path: '^packages/(?!config/)', pathNot: '^packages/(ui|editor|domain)/' },
+    },
+    {
+      name: 'editor-schema-headless',
+      comment:
+        'The schema entry runs on the server: no DOM, React, lowlight or Node APIs. It may import only itself, domain, @tiptap/core, @tiptap/pm and markdown-it (SPEC-013 §4.4, AC-10).',
+      severity: 'error',
+      from: { path: '^packages/editor/src/schema/' },
+      to: {
+        pathNot: [
+          '^packages/editor/src/schema/',
+          '^packages/domain/',
+          '(^|/)node_modules/(@tiptap/(core|pm)|markdown-it)/',
+        ],
+      },
+    },
+    {
+      name: 'server-editor-schema-only',
+      comment:
+        'The server imports only the headless `@surface/editor/schema` entry, never the React editor (SPEC-013 §4.4).',
+      severity: 'error',
+      from: { path: '^apps/server/' },
+      to: { path: '^packages/editor/', pathNot: '^packages/editor/src/schema/' },
     },
     {
       name: 'server-no-client-code',

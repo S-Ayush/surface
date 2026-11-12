@@ -3,17 +3,34 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Rich text editor (TipTap) configuration and extensions.",
+  "description": "Rich text editor (TipTap): the document schema (headless, also on the server) and the React editor.",
+  "files": [
+    "dist"
+  ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./schema": {
+      "@surface/source": "./src/schema/index.ts",
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@surface/domain": "workspace:*",
+    "@tiptap/core": "3.32.2",
+    "@tiptap/pm": "3.32.2",
+    "markdown-it": "15.0.3"
+  },
   "devDependencies": {
-    "@surface/config": "workspace:*"
+    "@surface/config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "dependency-cruiser": "^18.7.2",
+    "fast-check": "^4.10.2"
   }
 }

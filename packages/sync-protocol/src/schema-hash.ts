@@ -6,9 +6,10 @@
  * The input is structural, so the declarative `defineModel` output (PLAN-002 S6)
  * can be passed directly. Only what changes the meaning of synced rows is
  * hashed: model name, load strategy, and each field's name, type and
- * nullability. Client-only metadata (refs, indexes) is not, so changing it does
+ * nullability, plus `DOC_SCHEMA_VERSION` (SPEC-013 §4.4). Client-only metadata (refs, indexes) is not, so changing it does
  * not force every client to re-bootstrap.
  */
+import { DOC_SCHEMA_VERSION } from '@surface/domain';
 import { ProtocolError } from './errors.js';
 import { sha256Hex } from './sha256.js';
 
@@ -34,8 +35,15 @@ function byKey<T>(a: readonly [string, T], b: readonly [string, T]): number {
   return a[0] > b[0] ? 1 : 0;
 }
 
-/** Hash a set of synced model definitions. Independent of model and field order. */
-export function computeSchemaHash(models: Iterable<SchemaHashModel>): string {
+/**
+ * Hash a set of synced model definitions. Independent of model and field order. The stored
+ * rich-text document version is part of the input (SPEC-013 D6), so an editor schema change
+ * resyncs every client; the parameter exists for tests, callers keep the default.
+ */
+export function computeSchemaHash(
+  models: Iterable<SchemaHashModel>,
+  docSchemaVersion: number = DOC_SCHEMA_VERSION,
+): string {
   const seen = new Set<string>();
   const canonical = Array.from(models, (model) => {
     if (seen.has(model.name)) {
@@ -47,5 +55,5 @@ export function computeSchemaHash(models: Iterable<SchemaHashModel>): string {
       .map(([name, field]) => [name, field.type, field.nullable] as const);
     return [model.name, [model.load, fields]] as const;
   }).sort(byKey);
-  return sha256Hex(JSON.stringify([SYNC_PROTOCOL_VERSION, canonical]));
+  return sha256Hex(JSON.stringify([SYNC_PROTOCOL_VERSION, docSchemaVersion, canonical]));
 }

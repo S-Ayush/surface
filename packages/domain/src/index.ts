@@ -21,3 +21,4 @@ export * from './git-branch.js';
 export * from './issue-order.js';
 export * from './due-date.js';
 export * from './estimate-key.js';
+export * from './doc.js';

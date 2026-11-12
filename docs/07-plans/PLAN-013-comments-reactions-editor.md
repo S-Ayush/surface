@@ -12,7 +12,7 @@ Implements: [SPEC-013](../06-specs/SPEC-013-comments-reactions-editor.md) · Sta
 
 Sizes: S ≤ 1 day, M 2–3, L 4–5. Estimated total: about **17 ideal days** (S1 4.5 + S2 4.5 + S3 4 + S4 2.5 + S5 2.5; small rounding).
 
-### S1: Editor schema, domain constants, Markdown & server build · L
+### S1: Editor schema, domain constants, Markdown & server build · L · ✅ Done 2026-11-12
 Branch `p013-s1-editor-schema`. Starts at once. No UI and no operations.
 
 - **Domain (`packages/domain/src/`):** new `doc.ts` with `EMPTY_DOC` (one empty paragraph, frozen), `DOC_SCHEMA_VERSION = 1`, `DOC_MAX_BYTES` (50 KB comment, 200 KB description, SPEC-013 D14) and `reactionId(subjectId, userId, emoji)` (UUIDv5-style hash, same output on client and server; no Node-only API, so it runs in the browser). Exported from `index.ts`. `computeSchemaHash` input gains `DOC_SCHEMA_VERSION` (sync-protocol §8; the function lives in `packages/sync-protocol` or `domain`, check where on build). This changes the hash once; no model changes.
@@ -32,6 +32,14 @@ Branch `p013-s1-editor-schema`. Starts at once. No UI and no operations.
   - `packages/editor/test/schema-node-env.test.ts` (Vitest `environment: node`, no DOM globals): the entry imports and runs (AC-10). `packages/editor/test/boundaries.test.ts`: dependency-cruiser API on the real tree passes and on two synthetic violations fails (AC-10).
   - `packages/domain/src/doc.test.ts`: `EMPTY_DOC` valid shape, `reactionId` deterministic and distinct per input, schema hash changes with `DOC_SCHEMA_VERSION`.
   - `pnpm -r build` builds the schema entry before the server. `pnpm check` green.
+
+> **As built:** `@tiptap/core` and `@tiptap/pm` 3.32.2, `markdown-it` 15.0.3 (pinned exactly; ships its own types, so no `@types/markdown-it`), one `prosemirror-model` (1.25.13, through `@tiptap/pm`). Dev: `fast-check`, `dependency-cruiser` (for `boundaries.test.ts`), `@types/node`. `@surface/domain` became a dependency of `editor` and `sync-protocol`. 97 editor tests; `pnpm check` green.
+> - **No `@tiptap/pm/markdown` (deviation, SPEC-013 D26).** TipTap 3 dropped it (present in 3.20, gone by 3.26), so Markdown is our own writer and reader over `markdown-it` and the document JSON (`markdown.ts`, `inline.ts`). SPEC-013 §4.4 is updated. The round-trip property found that `normalize` needs more rules than the plan listed; they are in the `normalize.ts` docblock and SPEC-013 §4.4 (newlines and NUL in text, whitespace around hard breaks, no marks on hard breaks and file chips, emphasis CommonMark's flanking rules can't write is narrowed by a character, empty alt is null, a list item starts with a paragraph). Writing choices: empty paragraph `&nbsp;`, thematic break `___`, bullets switch `-`/`*` next to another list, nested markers never form `- - -`.
+> - **No StarterKit in the schema entry.** `extensions.ts` defines the 21 extensions with `Node.create`/`Mark.create` from `@tiptap/core` (attributes exactly the spec list: `orderedList` has no `start`, `link` only `href`, `image` `src` and `alt`). The schema-shape test checks the schema is built only from that list instead of "StarterKit extras disabled". **S2:** `extensions.web.ts` must `.extend()` `SCHEMA_EXTENSIONS` (same names and attributes; lowlight `codeBlock` included) so the web schema equals the headless one, and `isSingleEmoji` is still to add to the schema entry.
+> - **Domain:** `doc.ts` has `DocNodeJSON`/`DocMarkJSON`, `EMPTY_DOC`, `DOC_SCHEMA_VERSION = 1`, `DOC_MAX_BYTES` (`comment` 51 200, `description` 204 800; KB = 1024) and `docJsonBytes`; `reactionId` is UUIDv5 (own `sha1.ts`, no Node API) of `subject:user:emoji` with ids lowercased. The schema-hash test lives in `packages/sync-protocol/test/schema-hash.test.ts` (where `computeSchemaHash` is): its input is now `[SYNC_PROTOCOL_VERSION, DOC_SCHEMA_VERSION, models]`, and the pinned hash changed once.
+> - **For PLAN-011 S6 and S3:** use `validateDoc` (problems carry paths and the SPEC-013 §6.3 messages, `DOC_MESSAGES`), `docJsonBytes` with `DOC_MAX_BYTES`, `docToText`, `markdownToDoc`/`docToMarkdown` and `docFileIds` from `@surface/editor/schema`. `normalize` throws on an invalid document, so validate first.
+> - **Build:** `pnpm --filter @surface/server deploy --legacy --prod` ships `packages/editor/dist`; the Dockerfile's `build` stage was built by hand and `@surface/editor/schema` loaded in it under plain Node. `schema-node-env.test.ts` also loads the built `dist` in a child `node` process.
+> - **Tests not in the list above:** `markdown.test.ts` (examples, E7), `normalize.test.ts`, `text.test.ts`. The property describes have a 60 s timeout: the 1 000-run round trip takes longer than Vitest's 5 s default when the whole gate runs in parallel.
 
 ### S2: Editor component, DocView & emoji data · L
 Branch `p013-s2-editor-component`. Starts at once (needs S1 merged; can overlap on a stack).
@@ -159,7 +167,7 @@ Held rows are marked ⏸ per [README §6](README.md#6-testing-hold-e2e-smoke-and
 | AC-5 convergence | `tests/sync-sim/test/comments.prop.test.ts`, `reactions.prop.test.ts`; real-server run in `pnpm test:int` (sync suite, not held) | S3, S4 |
 | AC-6 archived and deleted issue | `comment-ops.test.ts` and `reaction-set.test.ts` (every operation, both states, nothing unarchives) | S3, S4 |
 | AC-7 `validateDoc` | `packages/editor/test/validate.test.ts`, `validate.prop.test.ts` | S1 |
-| AC-8 Markdown round trip | `packages/editor/test/markdown.prop.test.ts` | S1 |
+| AC-8 Markdown round trip | `packages/editor/test/markdown.prop.test.ts` (examples in `markdown.test.ts`, `normalize.test.ts`, `text.test.ts`) | S1 |
 | AC-9 schema shape and hash snapshot | `packages/editor/test/schema-shape.test.ts`; web equals headless in `test/keys.test.tsx` | S1, S2 |
 | AC-10 Node environment and boundaries | `packages/editor/test/schema-node-env.test.ts`, `boundaries.test.ts`; `pnpm lint:deps` | S1 |
 | AC-11 optimistic equals server rows | `packages/operations/src/ops/comment.test.ts`, `reaction.test.ts` | S3, S4 |
@@ -181,7 +189,7 @@ Held rows are marked ⏸ per [README §6](README.md#6-testing-hold-e2e-smoke-and
 | E1, E15, E17, E21 client rollback | `comment-flow.test.tsx` | S5 |
 | E2, E13, E14, E16 thread-lock races | `comment-ops.test.ts` (lock order asserted with a fake lock recorder) plus the sync property tests; real-Postgres concurrency is covered by the sync suite run | S3, S4 |
 | E5, E4 same emoji | `reaction-set.test.ts` | S4 |
-| E6, E7, E9 bad bodies via API | `validate.test.ts`, `markdown.prop.test.ts`, `comment-ops.test.ts` (E9 through the S3 file seam) | S1, S3 |
+| E6, E7, E9 bad bodies via API | `validate.test.ts`, `markdown.prop.test.ts`, `markdown.test.ts`, `comment-ops.test.ts` (E9 through the S3 file seam) | S1, S3 |
 | E11, E18 file paste, missing file marker | ⏸ upload part (PLAN-014 S5); the insert logic and the marker are in `paste.test.tsx` and `doc-view.test.tsx` | S2 |
 | E12 1,000 comments | unit: `comment.list` paging in `comment-ops.test.ts`; render budget ⏸ perf, by hand | S3, S5 |
 | E20 offline, never fetched | `comment-flow.test.tsx` | S5 |
