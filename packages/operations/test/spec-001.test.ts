@@ -61,7 +61,6 @@ const COMMANDS: readonly (readonly [string, string])[] = [
   ['invite.create', 'Invite member…'],
 ];
 const COMMANDS_PENDING: Readonly<Record<string, string>> = {
-  'team.update': 'handoff to session E (owner of team.ts)',
   'invite.create': 'S5',
 };
 

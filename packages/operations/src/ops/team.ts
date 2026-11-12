@@ -208,6 +208,7 @@ export const teamUpdate = defineOperation({
     timezone: TimeZone.optional(),
   }),
   output: TeamSchema,
+  ui: { title: 'Rename team…', icon: 'pencil', contexts: ['team'], shortcut: null },
   permission: (p, { team }) => p.admin() || p.teamMember(team),
   destructive: false,
   examples: [{ team: 'ENG', name: 'Engineering', color: 'blue' }],

@@ -1,7 +1,8 @@
 // PLAN-001 S8 web half: the team command-menu entries (SPEC-005 §4.1). "Join team" joins the
 // focused team; on a team the user is already in it says so instead of doing nothing; and a change
-// the store didn't take gets a toast (a server refusal is the shell's).
-import { teamJoin } from '@surface/operations';
+// the store didn't take gets a toast (a server refusal is the shell's). "Rename team…" opens the
+// focused team's General settings, where its rename form is.
+import { teamJoin, teamUpdate } from '@surface/operations';
 import type { SyncStore } from '@surface/sync-client';
 import type * as Ui from '@surface/ui';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,5 +67,44 @@ describe('Join team (command menu)', () => {
     expect(String((shown as { message?: unknown } | undefined)?.message)).toMatch(
       /^Changes cannot/,
     );
+  });
+});
+
+describe('Rename team… (command menu)', () => {
+  /** A replica holding `rows`, and the navigation the shell provides. */
+  function renameContext(rows: { id: string; key: string }[], navigate = vi.fn()) {
+    const store = { pool: { get: (_model: unknown, id: string) => rows.find((t) => t.id === id) } };
+    const ctx: CommandContext = {
+      route: '/team/ENG',
+      target: { kind: 'team', ids: ['t-eng'], label: 'Engineering' },
+      actor: null,
+      store: store as unknown as SyncStore,
+      teams: () => [],
+      navigate,
+    };
+    return { ctx, navigate };
+  }
+
+  async function runRename(ctx: CommandContext): Promise<void> {
+    const entry = TEAM_COMMANDS['team.update'];
+    if (entry === undefined || !('run' in entry)) throw new Error('team.update has no run');
+    await entry.run(ctx, teamUpdate);
+  }
+
+  it('opens the focused team’s General settings, found by its id in the replica', async () => {
+    const { ctx, navigate } = renameContext([{ id: 't-eng', key: 'ENG' }]);
+    await runRename(ctx);
+    expect(navigate).toHaveBeenCalledWith('/settings/teams/ENG/general');
+  });
+
+  it('does nothing for a team the replica doesn’t have', async () => {
+    const { ctx, navigate } = renameContext([]);
+    await runRename(ctx);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('gives the team as refs, for the menu’s permission pre-check', () => {
+    const { ctx } = renameContext([{ id: 't-eng', key: 'ENG' }]);
+    expect(TEAM_COMMANDS['team.update']?.refs?.(ctx)).toEqual({ team: { id: 't-eng' } });
   });
 });
