@@ -28,8 +28,12 @@ export interface VirtualItemProps {
 
 export type VirtualListProps = {
   count: number;
-  /** Height in px of item `index` (fixed per kind: row, compact row, group header). */
+  /**
+   * Height in px of item `index` (fixed per kind: row, compact row, group header). Must be
+   * stable (`useCallback` or module-level): a new function rebuilds every offset.
+   */
   itemHeight: (index: number) => number;
+  /** Whether item `index` is a group header. Must be stable, like `itemHeight`. */
   isHeader?: (index: number) => boolean;
   renderItem: (item: VirtualItemProps) => ReactNode;
   /** The focused row: kept mounted while scrolled out of view, and the roving tab stop. */
@@ -68,11 +72,9 @@ export function VirtualList({
   const [scrollTop, setScrollTop] = useState(initialScrollTop);
   const [viewportHeight, setViewportHeight] = useState(initialViewportHeight);
 
-  // Keyed on `count` alone, not on the callbacks: a caller's inline arrow functions would
-  // otherwise rebuild the offsets (O(count)) on every render, and a scroll event causes one. The
-  // closure always reads this render's callbacks when `count` changes. A caller that changes
-  // heights or header positions without changing `count` must remount the list (heights are
-  // fixed per kind, design-system §2.5).
+  // `itemHeight` and `isHeader` are real deps, so they must be stable (see the prop docs): an
+  // inline arrow would rebuild the offsets (O(count)) on every render, and a scroll event
+  // causes one.
   const { offsets, headerIndices } = useMemo(() => {
     const heights = new Float64Array(count);
     const headers: number[] = [];
@@ -81,8 +83,7 @@ export function VirtualList({
       if (isHeader?.(i)) headers.push(i);
     }
     return { offsets: buildOffsets(heights), headerIndices: headers };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [count]);
+  }, [count, itemHeight, isHeader]);
 
   const win = computeWindow({
     offsets,

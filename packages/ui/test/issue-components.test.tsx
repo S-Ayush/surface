@@ -227,6 +227,8 @@ describe('EditableTitle', () => {
   });
 });
 
+const rowHeight = () => 36;
+
 describe('VirtualList', () => {
   it('renders a treegrid with aria-rowcount for every item but mounts only a window', () => {
     const html = render(
@@ -234,7 +236,7 @@ describe('VirtualList', () => {
         <VirtualList
           aria-label="Issues in ENG"
           count={10_000}
-          itemHeight={() => 36}
+          itemHeight={rowHeight}
           initialViewportHeight={360}
           overscan={4}
           renderItem={({ index, style, tabIndex }) => (
@@ -262,7 +264,7 @@ describe('VirtualList', () => {
       <VirtualList
         aria-label="Issues"
         count={1_000}
-        itemHeight={() => 36}
+        itemHeight={rowHeight}
         initialViewportHeight={360}
         pinnedIndex={700}
         renderItem={({ index, style, tabIndex }) => (
