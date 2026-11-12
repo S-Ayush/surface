@@ -182,8 +182,8 @@ describe('AC-15: route guards in the router', () => {
         <RouterProvider router={router} />
       </AppContext>,
     );
-    // A screen session E hasn't registered yet shows the placeholder (features/screens.ts).
-    expect(html).toContain('Join the workspace isn&#x27;t available yet');
+    // The invite page (PLAN-001 S5), registered in features/screens.ts.
+    expect(html).toContain('>Join the workspace</h1>');
     expect(html).not.toContain('id="sidebar"');
   });
 });

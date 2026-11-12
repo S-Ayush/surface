@@ -79,6 +79,9 @@ export function createClientRefResolver(
           return status(value, options);
         case 'LabelRef':
           return label(value, options);
+        // Invites are never in the replica: the server resolves them (PLAN-001 S5).
+        case 'InviteRef':
+          return NOT_FOUND;
         // Their models arrive with later milestones; until then nothing matches.
         case 'IssueRef':
         case 'ProjectRef':

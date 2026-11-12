@@ -2,7 +2,8 @@
 // with role, teams and join date, filtered by role. Each row's ⋯ menu changes the role
 // (`user.setRole`, shown at once) and generates a reset link. The last Admin can't become a Member
 // (INV-01, E6): the menu disables it and says why. The settings page shows Members not-found
-// (SettingsPage, AC-14), so this screen assumes an Admin. Invites come with PLAN-001 S5.
+// (SettingsPage, AC-14), so this screen assumes an Admin. Below the people: pending invites, and
+// "Invite member" opens the invite modal (PLAN-001 S5; also from the command menu).
 import { LAST_ADMIN_MESSAGE, type UserRole } from '@surface/domain';
 import { Team, TeamMembership, User } from '@surface/domain/model';
 import {
@@ -19,9 +20,14 @@ import {
 } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
 import { Ellipsis } from 'lucide-react';
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { useApp, useObserved } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
+import { useInvitesApi } from '../invites/api.js';
+import { InviteDialog } from '../invites/InviteDialog.js';
+import { PendingInvitesList } from '../invites/PendingInvitesList.js';
+import { PENDING_LOADING, PendingInvites, type PendingView } from '../invites/pending.js';
+import { INVITE_REQUESTS } from '../invites/requests.js';
 import { toastIfFailed } from '../teams/submit.js';
 import { changeRole, demoteSelf, roleChoice } from './actions.js';
 import styles from './members.module.css';
@@ -77,6 +83,16 @@ export function MembersScreen(_props: ScreenProps) {
   const [resetOpen, setResetOpen] = useState(false);
   const [confirmSelf, setConfirmSelf] = useState(false);
   const reasonId = useId();
+  const invitesApi = useInvitesApi();
+  // Asked for from the command menu before this screen opened: open the modal at once.
+  const [inviteOpen, setInviteOpen] = useState(() => INVITE_REQUESTS.take());
+  const [pendingView, setPendingView] = useState<PendingView>(PENDING_LOADING);
+  const [pending] = useState(() => new PendingInvites(invitesApi, setPendingView));
+
+  useEffect(() => {
+    void pending.load();
+    return INVITE_REQUESTS.listen(() => setInviteOpen(true));
+  }, [pending]);
 
   const members = useObserved(
     useCallback(() => {
@@ -133,6 +149,9 @@ export function MembersScreen(_props: ScreenProps) {
           onValueChange={setFilter}
         />
         <p className={styles.note}>{memberCountText(members.length, filter)}</p>
+        <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
+          Invite member
+        </Button>
       </div>
       {onlyAdmin && (
         // Visible, not only a disabled menu option: why the last Admin can't become a Member.
@@ -182,6 +201,12 @@ export function MembersScreen(_props: ScreenProps) {
         ))}
       </ul>
       {members.length === 0 && <p className={styles.note}>Nobody has this role.</p>}
+      <PendingInvitesList view={pendingView} onRevoke={(id) => void pending.revoke(id)} />
+      <InviteDialog
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        onCreated={() => void pending.load()}
+      />
       <ResetLinkDialog target={resetTarget} open={resetOpen} onOpenChange={setResetOpen} />
       <Dialog
         open={confirmSelf}

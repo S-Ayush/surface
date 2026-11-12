@@ -64,7 +64,7 @@ export function refOutsideKeyTeams(
   return undefined;
 }
 
-/** The team a resolved row belongs to, or `null` for workspace-wide rows (users, workspace labels). */
+/** The team a resolved row belongs to, or `null` for workspace-wide rows (users, invites, workspace labels). */
 export function teamIdOf(type: RefType, row: RefEntity): string | null {
   switch (type) {
     case 'TeamRef':
@@ -75,6 +75,7 @@ export function teamIdOf(type: RefType, row: RefEntity): string | null {
     case 'IssueRef':
       return typeof row.teamId === 'string' ? row.teamId : null;
     case 'UserRef':
+    case 'InviteRef':
     case 'ProjectRef':
     case 'InitiativeRef':
     case 'DocumentRef':

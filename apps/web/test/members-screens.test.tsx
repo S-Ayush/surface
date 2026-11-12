@@ -549,6 +549,12 @@ describe('MembersScreen', () => {
     expect(html2).not.toContain(LAST_ADMIN_MESSAGE);
   });
 
+  it('offers Invite member and lists the pending invites (PLAN-001 S5)', async () => {
+    const html = await render(new FakeApp(ROWS, 'u-ada'), () => <MembersScreen params={{}} />);
+    expect(html).toContain('>Invite member</span></button>');
+    expect(html).toContain('Pending invites');
+  });
+
   it('waits while the store loads', async () => {
     const html = await render(new FakeApp(null, 'u-ada'), () => <MembersScreen params={{}} />);
     expect(html).not.toContain('More actions');

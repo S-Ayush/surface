@@ -89,6 +89,7 @@ Inputs accept **human-friendly references**. The executor resolves them to rows 
 | `LabelRef` | uuid · name (team label first, then workspace label) | Label |
 | `CycleRef` | uuid · number · `"current"` · `"next"` · `"previous"` (scoped to a team) | Cycle |
 | `ProjectRef`, `InitiativeRef`, `DocumentRef`, `ViewRef` | uuid · exact name (error if ambiguous) | entity |
+| `InviteRef` | uuid only (from `invite.list`) | Invite. Server-only (SPEC-001 §5): the client resolver answers `NOT_FOUND`, and `invite.*` are Admin-only (PLAN-001 S5) |
 
 Resolver rules:
 - **Ambiguous** names → `INVALID_INPUT` with candidates (`"2 projects named 'Launch': …"`).

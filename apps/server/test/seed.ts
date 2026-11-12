@@ -11,6 +11,9 @@
  *
  * PLAN-001 S7: the workspace (`workspace.get`, `workspace.update` renames it). The `user.setRole`
  * examples make Iris an Admin and then a Member again.
+ *
+ * PLAN-001 S5 (session E): a pending invite with a fixed id, which the `invite.revoke` example
+ * revokes. `invite.create`'s example invites new.person@example.com, who has no account.
  */
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
@@ -26,6 +29,9 @@ export interface SeedFixture {
   readonly users: { readonly me: string; readonly iris: string };
   readonly teams: { readonly eng: string };
 }
+
+/** The pending invite `invite.revoke`'s example names (`packages/operations/src/ops/invite.ts`). */
+export const SEED_INVITE_ID = '01930000-0000-7000-8000-000000000501';
 
 const seeded = new WeakMap<TestDatabase, Promise<SeedFixture>>();
 
@@ -77,6 +83,12 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
       syncGroups: [],
     });
     await repo.flush({});
+    // Server-only, so plain SQL. The id is the one `invite.revoke`'s example names.
+    await client.query(
+      `INSERT INTO invites (id, email, token_hash, role, invited_by_id, expires_at)
+       VALUES ($1, 'pending.person@example.com', $2, 'member', $3, now() + interval '7 days')`,
+      [SEED_INVITE_ID, randomUUID(), users.me],
+    );
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

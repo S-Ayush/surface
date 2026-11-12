@@ -24,6 +24,7 @@ export const REF_TYPES = [
   'InitiativeRef',
   'DocumentRef',
   'ViewRef',
+  'InviteRef',
 ] as const;
 
 export type RefType = (typeof REF_TYPES)[number];
@@ -38,6 +39,7 @@ export const AVAILABLE_REF_TYPES: ReadonlySet<RefType> = new Set([
   'UserRef',
   'StatusRef',
   'LabelRef',
+  'InviteRef',
 ]);
 
 /** First milestone where an unavailable reference type can be resolved. */
@@ -52,6 +54,7 @@ export const REF_AVAILABLE_FROM: Readonly<Record<RefType, string>> = {
   InitiativeRef: 'M3',
   DocumentRef: 'M3',
   ViewRef: 'M2',
+  InviteRef: 'M0',
 };
 
 /**
@@ -110,6 +113,12 @@ export function parseNamedRef(value: string): ParsedRef | undefined {
   if (v === '') return undefined;
   if (isUuid(v)) return { by: 'id', id: v.toLowerCase() };
   return { by: 'name', name: v };
+}
+
+/** `uuid` only: invites and sessions have no name to look up (PLAN-001 S5). */
+export function parseIdRef(value: string): ParsedRef | undefined {
+  const v = value.trim();
+  return isUuid(v) ? { by: 'id', id: v.toLowerCase() } : undefined;
 }
 
 /** `uuid` or an identifier like `ENG-123`. */
@@ -208,6 +217,18 @@ export const IssueRef = refString(
   'Issue identifier like ENG-123 (old identifiers work after a team move), or an issue id',
   parseIssueRef,
   'Use an issue identifier like ENG-123, or an issue id',
+);
+
+/**
+ * An invite, by id only (PLAN-001 S5): its email would let anyone who may call the operation
+ * probe which addresses have pending invites, since lookup runs before the permission check.
+ * Server-only, so the client never resolves one.
+ */
+export const InviteRef = refString(
+  'InviteRef',
+  'Invite id, from invite.list',
+  parseIdRef,
+  'Use an invite id from invite.list',
 );
 
 export const CycleRef = z

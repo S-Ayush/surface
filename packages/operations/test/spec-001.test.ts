@@ -39,9 +39,6 @@ const SPEC_001_OPERATIONS: readonly (readonly [string, Kind])[] = [
  * that registers the operation.
  */
 const PENDING: Readonly<Record<string, string>> = {
-  'invite.create': 'S5',
-  'invite.list': 'S5',
-  'invite.revoke': 'S5',
   'user.me': 'S6',
   'user.updateProfile': 'S6',
   'user.changePassword': 'S6',
@@ -60,9 +57,7 @@ const COMMANDS: readonly (readonly [string, string])[] = [
   ['team.update', 'Rename team…'],
   ['invite.create', 'Invite member…'],
 ];
-const COMMANDS_PENDING: Readonly<Record<string, string>> = {
-  'invite.create': 'S5',
-};
+const COMMANDS_PENDING: Readonly<Record<string, string>> = {};
 
 const registered = new Map(ALL_OPERATIONS.map((op) => [op.name, op]));
 const built = SPEC_001_OPERATIONS.filter(([name]) => PENDING[name] === undefined);

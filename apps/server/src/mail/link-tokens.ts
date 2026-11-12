@@ -14,7 +14,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { uuidv7 } from '../db/uuidv7.js';
-import { passwordResetUrl } from './links.js';
+import { inviteUrl, passwordResetUrl } from './links.js';
 
 export type LinkKind = 'magicLink' | 'passwordReset';
 
@@ -47,6 +47,12 @@ export interface IssuedLink {
 /** SHA-256 of a link token, as stored in `token_hash`. */
 export function hashLinkToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+/** A fresh random 256-bit link token and the hash to store for it. */
+export function newLinkToken(): { readonly token: string; readonly tokenHash: string } {
+  const token = randomBytes(32).toString('base64url');
+  return { token, tokenHash: hashLinkToken(token) };
 }
 
 /** Ours are 43 characters; anything far longer isn't worth hashing. */
@@ -83,12 +89,12 @@ export async function issueLink(
   }
   // Earlier links, used or not, are of no further use.
   await db.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
-  const token = randomBytes(32).toString('base64url');
+  const { token, tokenHash } = newLinkToken();
   const expiresAt = new Date(now.getTime() + LINK_TTL_MS[kind]);
   await db.query(
     `INSERT INTO ${table} (id, user_id, token_hash, created_at, expires_at)
      VALUES ($1, $2, $3, $4, $5)`,
-    [uuidv7(), userId, hashLinkToken(token), now, expiresAt],
+    [uuidv7(), userId, tokenHash, now, expiresAt],
   );
   return { token, expiresAt };
 }
@@ -155,15 +161,29 @@ export interface HandlerLinks {
    * earlier reset links stop working. `undefined` if the user doesn't exist.
    */
   passwordReset(userId: string): Promise<{ url: string; expiresAt: Date } | undefined>;
+  /**
+   * A new invite link, `/invite/<token>` on `SURFACE_URL` (PLAN-001 S5). Nothing is stored: the
+   * handler saves `tokenHash` with the invite's other fields.
+   */
+  invite(): { readonly url: string; readonly tokenHash: string };
 }
 
 export function handlerLinks(db: LinkDb, publicUrl: string | undefined, now: Date): HandlerLinks {
+  // Executors built without one (tests) can't issue links; a handler that needs one fails.
+  const origin = (): string => {
+    if (publicUrl === undefined) throw new Error('ctx.links needs the executor’s publicUrl');
+    return publicUrl;
+  };
   return {
     async passwordReset(userId) {
-      // Executors built without one (tests) can't issue links; a handler that needs one fails.
-      if (publicUrl === undefined) throw new Error('ctx.links needs the executor’s publicUrl');
+      const base = origin();
       const link = await issueLink(db, 'passwordReset', userId, { now });
-      return link && { url: passwordResetUrl(publicUrl, link.token), expiresAt: link.expiresAt };
+      return link && { url: passwordResetUrl(base, link.token), expiresAt: link.expiresAt };
+    },
+    invite() {
+      const base = origin();
+      const { token, tokenHash } = newLinkToken();
+      return { url: inviteUrl(base, token), tokenHash };
     },
   };
 }

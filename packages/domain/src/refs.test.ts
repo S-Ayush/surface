@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   CycleRef,
+  InviteRef,
   IssueRef,
   LabelRef,
   parseCycleRef,
+  parseIdRef,
   parseIssueRef,
   parseNamedRef,
   parseTeamRef,
@@ -51,6 +53,15 @@ describe('parsing reference formats (SPEC-003 §4)', () => {
     expect(parseIssueRef(ID)).toEqual({ by: 'id', id: ID });
     expect(parseIssueRef('ENG-0')).toBeUndefined();
     expect(parseIssueRef('ENG')).toBeUndefined();
+  });
+
+  it('reads an invite ref as an id only (PLAN-001 S5)', () => {
+    expect(parseIdRef(` ${ID.toUpperCase()} `)).toEqual({ by: 'id', id: ID });
+    expect(parseIdRef('ada@example.com')).toBeUndefined();
+    expect(InviteRef.safeParse(ID).success).toBe(true);
+    expect(InviteRef.safeParse('ada@example.com').error?.issues[0]?.message).toBe(
+      'Use an invite id from invite.list',
+    );
   });
 
   it('reads a cycle ref as an id, a number or a relative cycle', () => {

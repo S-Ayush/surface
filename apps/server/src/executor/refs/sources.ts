@@ -8,6 +8,7 @@
  * Candidates sort with `COLLATE "C"` so their order doesn't depend on the database locale.
  */
 import {
+  parseIdRef,
   parseNamedRef,
   parseTeamRef,
   parseUserRef,
@@ -48,6 +49,8 @@ export async function lookup(
       return lookupStatus(stringValue(value), ctx);
     case 'LabelRef':
       return lookupLabel(stringValue(value), ctx);
+    case 'InviteRef':
+      return lookupInvite(stringValue(value), ctx);
     case 'IssueRef':
     case 'CycleRef':
     case 'ProjectRef':
@@ -99,6 +102,8 @@ export function refNotFound(
         return `Status "${value}" not found in ${teamKey ?? 'the team'}. Use a status name of that team, or a status id.`;
       case 'LabelRef':
         return `Label "${value}" not found in ${teamKey ? `${teamKey} or the workspace labels` : 'the workspace labels'}. Use a label name or a label id.`;
+      case 'InviteRef':
+        return `Invite "${value}" not found. Use an invite id from invite.list.`;
       case 'IssueRef':
       case 'CycleRef':
       case 'ProjectRef':
@@ -252,6 +257,22 @@ interface StatusRow extends RefEntity {
   name: string;
   category: string;
   syncGroups: string[];
+}
+
+/**
+ * An invite by id (PLAN-001 S5, session E). Invites are server-only and workspace-wide, with no
+ * sync groups; who may act on one is the operation's permission (Admins). Accepted, revoked and
+ * expired invites resolve too: what an operation does with them is the handler's call.
+ */
+async function lookupInvite(value: string, ctx: LookupContext): Promise<RefEntity> {
+  const ref = parseIdRef(value);
+  const { rows } =
+    ref?.by === 'id'
+      ? await ctx.db.query<{ id: string }>('SELECT id FROM invites WHERE id = $1', [ref.id])
+      : { rows: [] };
+  const row = rows[0];
+  if (row === undefined) throw refNotFound('InviteRef', value, ctx.path);
+  return { id: row.id };
 }
 
 async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRow> {

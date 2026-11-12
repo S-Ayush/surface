@@ -19,6 +19,9 @@ import userList from './members/list.js';
 import userSetRole from './members/set-role.js';
 import workspaceGet from './workspace/get.js';
 import workspaceUpdate from './workspace/update.js';
+import inviteCreate from './invites/create.js';
+import inviteList from './invites/list.js';
+import inviteRevoke from './invites/revoke.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -42,4 +45,7 @@ export const HANDLERS: readonly Handler[] = [
   userList,
   userGet,
   userSetRole,
+  inviteCreate,
+  inviteList,
+  inviteRevoke,
 ];

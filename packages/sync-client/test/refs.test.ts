@@ -115,6 +115,11 @@ describe('client reference resolvers', () => {
     expect(bare.resolve('UserRef', 'me').status).toBe('notFound');
   });
 
+  it('never resolves an invite on the client: invites are never in the replica', () => {
+    const { resolver } = fixture();
+    expect(resolver.resolve('InviteRef', ENG).status).toBe('notFound');
+  });
+
   it('follows the replica as it changes', () => {
     const { pool, name } = fixture();
     pool.applyBase([{ kind: 'delete', model: 'Team', id: DES }]);

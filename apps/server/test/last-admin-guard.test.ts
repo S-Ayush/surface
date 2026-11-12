@@ -73,11 +73,8 @@ type Row = { id: string; role: UserRole };
 function fakeCtx(people: readonly Row[]) {
   const calls: string[] = [];
   const events: DomainEvent[] = [];
-  const logged: Record<string, unknown>[] = [];
-  const log = {
-    info: (fields: object, msg: string) => logged.push({ level: 'info', ...fields, msg }),
-    warn: (fields: object, msg: string) => logged.push({ level: 'warn', ...fields, msg }),
-  };
+  /** `ctx.audit` calls; the executor writes them once the attempt commits (its own tests). */
+  const audited: Record<string, unknown>[] = [];
   const at = new Date('2026-11-07T12:00:00Z');
   const full = (row: Row) => ({
     ...row,
@@ -130,10 +127,12 @@ function fakeCtx(people: readonly Row[]) {
       emit: (event: DomainEvent) => {
         events.push(event);
       },
-      log,
+      audit: (event: string, fields: object, msg: string) => {
+        audited.push({ event, ...fields, msg });
+      },
     }) as unknown as HandlerContext;
   const writes = () => calls.filter((call) => call.startsWith('write'));
-  const audits = () => logged.filter((line) => line['audit'] === true);
+  const audits = () => audited;
   return { ctx, calls, writes, events, audits };
 }
 
@@ -225,8 +224,6 @@ describe('user.setRole audit line (SPEC-001 §10)', () => {
     await setRole.run(ctx(ADA, IRIS), { user: ADA, role: 'member' });
     expect(audits()).toEqual([
       {
-        level: 'info',
-        audit: true,
         event: 'user.role_changed',
         actorId: IRIS,
         userId: ADA,

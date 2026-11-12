@@ -26,13 +26,12 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../../auth/audit.js';
-import { csrfCookie, csrfToken } from '../../auth/csrf.js';
 import { hashPassword } from '../../auth/password.js';
-import { createSession, sessionCookie, type NewSession } from '../../auth/session.js';
+import { createSession, type NewSession } from '../../auth/session.js';
 import type { SessionAuth } from '../../auth/sessions.js';
 import { deleteUserSessions, type SessionSelection } from '../../auth/store.js';
 import type { WithTransaction } from '../../executor/transaction.js';
-import { errorBody, ROUTE_ERROR_STATUS } from '../../http/errors.js';
+import { errorBody } from '../../http/errors.js';
 import type { EmailOutbox } from '../../jobs/email.js';
 import type { Lifecycle } from '../../lifecycle.js';
 import {
@@ -47,6 +46,9 @@ import {
   type LinkKind,
 } from '../../mail/link-tokens.js';
 import { magicLinkUrl, passwordResetUrl } from '../../mail/links.js';
+import { registerInviteRoutes } from '../invites/routes.js';
+import type { InviteStore } from '../invites/store.js';
+import { closeAfterResponse, newSession, sameOrigin, signedIn, unavailable } from './sign-in.js';
 
 export const MAGIC_LINK_REQUEST_PATH = '/auth/magic-link';
 export const MAGIC_LINK_PATH = '/auth/magic';
@@ -87,6 +89,8 @@ export interface AccountRouteDeps {
   readonly email: EmailOutbox;
   readonly withTransaction: WithTransaction;
   readonly store?: AccountStore;
+  /** Invite acceptance's reads and writes (PLAN-001 S5); tests pass a fake. */
+  readonly inviteStore?: InviteStore;
   /** Closes these sessions' sockets with `4001` on every replica. */
   readonly closeSessions?: (sessionIds: readonly string[]) => void;
   readonly now?: () => Date;
@@ -276,56 +280,21 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AccountRouteDe
     return signIn(reply, reset.session, reset.userId);
   });
 
+  // Accepting an invite signs in the same way (PLAN-001 S5), with the same dependencies.
+  registerInviteRoutes(app, {
+    auth: deps.auth,
+    lifecycle: deps.lifecycle,
+    secureCookies: deps.secureCookies,
+    sessionSecret: deps.sessionSecret,
+    allowedOrigin: deps.allowedOrigin,
+    withTransaction: deps.withTransaction,
+    ...(deps.inviteStore ? { store: deps.inviteStore } : {}),
+    ...(deps.closeSessions ? { closeSessions: deps.closeSessions } : {}),
+    now,
+    hashPassword: hash,
+  });
+
   function signIn(reply: FastifyReply, session: { id: string; token: string }, userId: string) {
-    return reply
-      .header('set-cookie', [
-        sessionCookie(session.token, { secure: deps.secureCookies }),
-        csrfCookie(csrfToken(deps.sessionSecret, session.id), { secure: deps.secureCookies }),
-      ])
-      .header('cache-control', 'no-store')
-      .send({ ok: true, result: { userId } });
+    return signedIn(reply, deps, session, userId);
   }
-}
-
-function newSession(request: FastifyRequest, userId: string, now: Date): NewSession {
-  return { userId, userAgent: request.headers['user-agent'], ip: request.ip, now };
-}
-
-/** Another site's page can't sign this browser in (login CSRF), as on `POST /auth/login`. */
-function sameOrigin(request: FastifyRequest, reply: FastifyReply, allowed: string): boolean {
-  const { origin } = request.headers;
-  if (origin === undefined || origin === allowed) return true;
-  request.log.warn({ origin }, 'sign-in from another origin refused');
-  void reply.code(403).send(errorBody(request, 'FORBIDDEN', `Sign in at ${allowed}.`));
-  return false;
-}
-
-/**
- * Closes the ended sessions' sockets once the response is on its way, as sign-in does: this
- * browser's other tabs recheck `GET /auth/session` on `4001`, and must find the new cookie.
- */
-function closeAfterResponse(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  ids: readonly string[],
-  closeSessions: ((ids: readonly string[]) => void) | undefined,
-): void {
-  if (ids.length === 0 || closeSessions === undefined) return;
-  const close = () => {
-    // An event listener: a throw here would end the process, not this request.
-    try {
-      closeSessions(ids);
-    } catch (error) {
-      request.log.error({ err: error }, 'could not close the ended sessions’ sockets');
-    }
-  };
-  if (reply.raw.destroyed || reply.raw.closed) close();
-  else reply.raw.once('close', close);
-}
-
-function unavailable(request: FastifyRequest, reply: FastifyReply): FastifyReply {
-  return reply
-    .code(ROUTE_ERROR_STATUS.UNAVAILABLE)
-    .header('retry-after', '5')
-    .send(errorBody(request, 'UNAVAILABLE', 'Surface is starting. Try again in a few seconds.'));
 }

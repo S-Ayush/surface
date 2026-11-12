@@ -1,7 +1,6 @@
 import { LAST_ADMIN_MESSAGE, leavesNoAdmin } from '@surface/domain';
 import { forbiddenReason, userSetRole } from '@surface/operations';
 import { and, eq } from 'drizzle-orm';
-import { audit } from '../../auth/audit.js';
 import { users } from '../../db/schema/index.js';
 import { handler } from '../../executor/context.js';
 import { SurfaceError } from '../../executor/errors.js';
@@ -47,10 +46,8 @@ export default handler(userSetRole, async (ctx, input) => {
     subject: { type: 'user', id: user.id },
     changes: { role: { from: user.role, to: input.role } },
   });
-  // SPEC-001 §10. Written before the commit (handlers have no after-commit hook), so an attempt
-  // the executor retries (E5) or rolls back logs too; the outbox event above is the exact record.
-  audit(
-    ctx.log,
+  // SPEC-001 §10, written once this attempt commits (a retried or rolled-back one logs nothing).
+  ctx.audit(
     'user.role_changed',
     {
       ...(actorId === undefined ? {} : { actorId }),

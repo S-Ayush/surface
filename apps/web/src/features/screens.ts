@@ -10,6 +10,7 @@ import {
   MagicLinkScreen,
   ResetScreen,
 } from './account/AccountScreens.js';
+import { InviteScreen } from './invites/InviteScreen.js';
 import { MembersScreen } from './members/MembersScreen.js';
 import { TeamGeneralScreen } from './teams/TeamGeneralScreen.js';
 import { TeamMembersScreen } from './teams/TeamMembersScreen.js';
@@ -27,4 +28,5 @@ export const SCREENS: ScreenRegistry = {
   'login/magic': MagicLinkScreen,
   'settings/members': MembersScreen,
   'settings/workspace': WorkspaceScreen,
+  invite: InviteScreen,
 };
