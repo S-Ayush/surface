@@ -51,7 +51,9 @@ sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/; s/^POSTGRE
 Then open `.env` and set `SURFACE_URL` to the address people will type into the browser:
 
 - with HTTPS (step 4b or your own proxy): `https://surface.example.com`;
-- without a proxy, on a trusted network: `http://<server address>:3000`.
+- without a proxy, on a trusted network: `http://<server address>:3000`. Over plain http, browsers
+  don't let the app reload while offline or while the server is down, and a few smaller things need
+  HTTPS too (SPEC-004 E9).
 
 Sign-in only works from exactly that origin. Every other setting is optional and documented in
 `.env.example`.

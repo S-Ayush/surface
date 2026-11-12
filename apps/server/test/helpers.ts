@@ -65,6 +65,7 @@ export function fakeWebDir(indexHtml = '<!doctype html><title>Surface</title>'):
   writeFileSync(path.join(dir, 'index.html'), indexHtml);
   writeFileSync(path.join(dir, 'assets', 'index-abc123.js'), 'console.log(1)');
   writeFileSync(path.join(dir, 'favicon.svg'), '<svg/>');
+  writeFileSync(path.join(dir, 'sw.js'), 'self.addEventListener("fetch", () => {})');
   return dir;
 }
 

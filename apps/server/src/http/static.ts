@@ -1,7 +1,8 @@
 /**
  * Serves the built web app (SPEC-004 §5):
  * - `/assets/*` (content-hashed by Vite): cached for a year, immutable.
- * - `index.html`: `no-cache`, so a new deploy is picked up on next load.
+ * - `index.html` and the offline worker `sw.js` (ADR-0019): `no-cache`, so a new deploy is picked
+ *   up on next load.
  * - Unknown paths that want HTML get `index.html` (client-side routing).
  * - Unknown paths under server prefixes get a JSON 404.
  */
@@ -44,7 +45,12 @@ export async function registerWebApp(
       setHeaders: (reply, filePath) => {
         const relative = path.relative(webDir, filePath).split(path.sep).join('/');
         if (relative.startsWith('assets/')) reply.header('cache-control', IMMUTABLE);
-        else if (relative === 'index.html') reply.header('cache-control', 'no-cache');
+        // The offline worker (ADR-0019) like the page. Browsers skip their HTTP cache when they check
+        // for a new worker; this keeps proxies from serving an old one, and `sw.js` from ever taking
+        // the assets' year-long policy.
+        else if (relative === 'index.html' || relative === 'sw.js') {
+          reply.header('cache-control', 'no-cache');
+        }
       },
     });
   } else {

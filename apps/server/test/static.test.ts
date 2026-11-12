@@ -26,6 +26,17 @@ describe('web app serving', () => {
     expect(favicon.headers['cache-control']).not.toContain('immutable');
   });
 
+  it('serves the offline worker /sw.js as JavaScript, no-cache, never with the assets’ year-long policy (ADR-0019)', async () => {
+    t = await testApp({ webDir: fakeWebDir() });
+    for (const method of ['GET', 'HEAD'] as const) {
+      const worker = await t.app.inject({ method, url: '/sw.js' });
+      expect(worker.statusCode).toBe(200);
+      expect(worker.headers['cache-control']).toBe('no-cache');
+      // Browsers refuse to register a worker served with any other type.
+      expect(worker.headers['content-type']).toMatch(/^(text|application)\/javascript/);
+    }
+  });
+
   it('answers client-side routes with the app shell', async () => {
     t = await testApp({ webDir: fakeWebDir() });
     const res = await t.app.inject({ url: '/team/ENG/issues?view=board', headers: html });
