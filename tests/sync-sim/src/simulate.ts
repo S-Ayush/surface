@@ -3,7 +3,7 @@
  * clock and seeded randomness, then hand the settled world to a check.
  */
 import { EPOCH, installClock, uninstallClock } from './clock.js';
-import { seedGlobals, seededRandom } from './random.js';
+import { SERVER_CODE, seedGlobals, seededRandom } from './random.js';
 import type { ItemState, SimServer } from './server.js';
 import { FakeHubServer } from './server.js';
 import type { Case, RunOptions } from './steps.js';
@@ -37,7 +37,11 @@ export async function simulate<T>(
   check: (outcome: Outcome) => T | Promise<T>,
 ): Promise<T> {
   installClock();
-  const restore = seedGlobals(seededRandom(simCase.seed ^ 0x5eed5eed));
+  // A real server's own draws stay out of the case's (`SERVER_CODE`); the fake hub draws none.
+  const restore = seedGlobals(
+    seededRandom(simCase.seed ^ 0x5eed5eed),
+    options.server === undefined ? {} : { realFor: SERVER_CODE },
+  );
   let world: World | undefined;
   try {
     const server = await (options.server ?? fakeHub)(simCase.users);

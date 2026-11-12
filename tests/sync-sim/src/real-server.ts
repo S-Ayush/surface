@@ -24,8 +24,9 @@
  * the simulation's fake ones: the server starts after `installClock`. So is
  * its shutdown drain timeout, which cannot fire while virtual time stands
  * still: every step has a real-time deadline instead (`REAL_WAIT_MS`). The
- * case's seeded `Math.random` is process-wide, so the server's retry jitter
- * (`executor/transaction.ts`) draws from it too, on the rare retry.
+ * case's seeded randomness is process-wide, but the server's own draws (its
+ * Postgres connections' SCRAM nonces, its retry jitter) get real randomness
+ * (`SERVER_CODE` in `random.ts`): how many it makes depends on real timing.
  *
  * A case fails on anything the server does wrong that the client would
  * survive by retrying: a 5xx, an error it logs, a step past its deadline.

@@ -6,7 +6,13 @@
  * tokens and fresh client ids, `sync-client/src/uuid.ts`) and `Math.random`
  * (replica generations); `crypto.randomUUID` is stubbed too, in case it is
  * ever used. `test/replay.test.ts` checks that runs replay exactly.
+ *
+ * The real server runs in the same process, and how often it draws depends on
+ * real timing: each new Postgres connection makes a SCRAM nonce, and its pools
+ * open more connections under load. Its draws get real randomness
+ * (`SERVER_CODE`), so they never shift the case's.
  */
+import { randomFillSync } from 'node:crypto';
 import { vi } from 'vitest';
 
 export type Random = () => number;
@@ -38,20 +44,58 @@ export function uuidFrom(random: Random): `${string}-${string}-${string}-${strin
 }
 
 /**
+ * The in-process real server, by file path: its own code and the libraries it
+ * draws through (the Postgres driver's SCRAM nonces, fastify's plugin loader).
+ * What they draw is theirs, not the case's (`SeedOptions.realFor`). The
+ * integration suite fails on any server draw this misses.
+ */
+export const SERVER_CODE =
+  /[/\\]apps[/\\]server[/\\]|[/\\]node_modules[/\\](?:pg|pg-[a-z]+|avvio|fastify|@fastify[/\\][a-z-]+)[/\\]/;
+
+export interface SeedOptions {
+  /** A draw whose call stack has a frame matching this gets real randomness, not `random`'s. */
+  readonly realFor?: RegExp;
+}
+
+/** Frames enough to reach the caller through the spies and a driver's helpers. */
+const STACK_FRAMES = 30;
+
+/**
  * Replace `Math.random`, `crypto.getRandomValues` and `crypto.randomUUID`
  * with draws from `random` until the returned function restores them.
  */
-export function seedGlobals(random: Random): () => void {
-  const math = vi.spyOn(Math, 'random').mockImplementation(random);
+export function seedGlobals(random: Random, options: SeedOptions = {}): () => void {
+  const { realFor } = options;
+  const realRandom = Math.random;
+  const realUuid = crypto.randomUUID.bind(crypto);
+  const unseeded = (): boolean => {
+    if (realFor === undefined) return false;
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = STACK_FRAMES;
+    try {
+      return realFor.test(new Error().stack ?? '');
+    } finally {
+      Error.stackTraceLimit = limit;
+    }
+  };
+  const math = vi
+    .spyOn(Math, 'random')
+    .mockImplementation(() => (unseeded() ? realRandom() : random()));
   const values = vi
     .spyOn(crypto, 'getRandomValues')
     .mockImplementation(<T extends ArrayBufferView | null>(array: T): T => {
       if (array === null) return array;
       const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+      if (unseeded()) {
+        randomFillSync(bytes);
+        return array;
+      }
       for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(random() * 256);
       return array;
     });
-  const uuid = vi.spyOn(crypto, 'randomUUID').mockImplementation(() => uuidFrom(random));
+  const uuid = vi
+    .spyOn(crypto, 'randomUUID')
+    .mockImplementation(() => (unseeded() ? realUuid() : uuidFrom(random)));
   return () => {
     math.mockRestore();
     values.mockRestore();

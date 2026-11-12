@@ -10,6 +10,7 @@ import fc from 'fast-check';
 import { describe, expect, inject, it } from 'vitest';
 import { simParameters } from '../src/context.js';
 import { convergence, exactlyOnce } from '../src/properties.js';
+import { SERVER_CODE, seedGlobals, seededRandom } from '../src/random.js';
 import type { RealServer } from '../src/real-server.js';
 import { startRealServer } from '../src/real-server.js';
 import type { SimServer } from '../src/server.js';
@@ -77,6 +78,33 @@ const faulty: Case = {
 };
 
 describe('against the real server', () => {
+  it("never draws from the case's seeded randomness, so its connections cannot shift a run", async () => {
+    // Each new Postgres connection makes a SCRAM nonce (pg's `startSession`), and how many the
+    // pools open depends on real timing. Drawn from the seeded stream, one more under load
+    // shifted every later draw: a reloaded tab got another client id (E's flake, 2026-11-12).
+    const seeded = seededRandom(1);
+    let draws = 0;
+    const restore = seedGlobals(
+      () => {
+        draws += 1;
+        return seeded();
+      },
+      { realFor: SERVER_CODE },
+    );
+    try {
+      // Starts the server, opens its pools and signs two users in.
+      const server = await startRealServer({
+        adminUrl: inject('pgAdminUrl'),
+        template: inject('pgTemplateDb'),
+        users: 2,
+      });
+      await server.dispose();
+    } finally {
+      restore();
+    }
+    expect(draws).toBe(0);
+  });
+
   it('confirms a no-op change and a burst cut short by the rate limit', async () => {
     const servers = realServers();
     const result = await simulate(
