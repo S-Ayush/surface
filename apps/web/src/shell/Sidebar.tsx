@@ -3,7 +3,7 @@
 import { IconButton, Kbd } from '@surface/ui';
 import { Link } from '@tanstack/react-router';
 import { ChevronRight, CircleDot, House, Plus, Search, Settings, Users } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useObserved } from '../app/context.js';
 import { useCommandRegistry } from '../shortcuts/ShortcutProvider.js';
 import { AvatarMenu } from './AvatarMenu.js';
@@ -14,11 +14,13 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
   const app = useApp();
   const shell = useShell();
   const commands = useCommandRegistry();
-  const { workspace, teams, expanded } = useObserved(
+  const { workspace, logo, online, teams, expanded } = useObserved(
     useCallback(() => {
       const teams = app.teams();
       return {
         workspace: app.workspaceName(),
+        logo: app.workspaceLogoSrc(),
+        online: app.online(),
         teams,
         expanded: teams.filter((team) => shell.isExpanded(team.id)).map((team) => team.id),
       };
@@ -47,7 +49,11 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
       }}
     >
       <div className={styles.workspace}>
-        <span className={styles.workspaceName}>{workspace}</span>
+        <span className={styles.workspaceTitle}>
+          {/* A reconnect remounts it, so a logo that failed offline loads again. */}
+          <WorkspaceLogo key={online ? 'online' : 'offline'} src={logo} />
+          <span className={styles.workspaceName}>{workspace}</span>
+        </span>
         <AvatarMenu />
       </div>
       <button
@@ -150,6 +156,26 @@ export function CreateTeamButton() {
       icon={<Plus />}
       onClick={() => {
         commands.run('form:create-team');
+      }}
+    />
+  );
+}
+
+/**
+ * The logo before the workspace name (SPEC-005 §7), decorative since the name follows. Hidden when
+ * it can't load (offline, where the worker doesn't keep /files/, or the server can't send it),
+ * rather than a broken image.
+ */
+function WorkspaceLogo({ src }: { readonly src: string | undefined }) {
+  const [failed, setFailed] = useState<string>();
+  if (src === undefined || src === failed) return null;
+  return (
+    <img
+      className={styles.workspaceLogo}
+      src={src}
+      alt=""
+      onError={() => {
+        setFailed(src);
       }}
     />
   );

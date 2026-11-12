@@ -12,6 +12,7 @@ import {
 import type { SyncStore } from '@surface/sync-client';
 import { observable, runInAction } from 'mobx';
 import type { TeamSummary } from '../command-menu/model.js';
+import { fileUrl } from '../features/files/url.js';
 import type { AuthState, Session } from './auth.js';
 import { StoreSequence } from './stores.js';
 import { actorOf, homePath, homeTeamOf, myTeams, teamByKey } from './workspace.js';
@@ -144,5 +145,25 @@ export class AppModel {
     const session = this.session;
     if (store === null || session === null) return undefined;
     return store.pool.get(User, session.userId)?.name;
+  };
+
+  /** Where the user's avatar is served (PLAN-001 S6); undefined without one. */
+  userAvatarSrc = (): string | undefined => {
+    const store = this.#ready();
+    const session = this.session;
+    if (store === null || session === null) return undefined;
+    return fileUrl(store.pool.get(User, session.userId)?.avatarFileId);
+  };
+
+  /**
+   * Whether the replica's socket is connected. The shell remounts the avatar and the logo when it
+   * changes: an image that failed (offline, or the server couldn't send it) isn't retried otherwise.
+   */
+  online = (): boolean => this.#ready()?.connection === 'online';
+
+  /** Where the workspace logo is served (PLAN-001 S6); undefined without one. */
+  workspaceLogoSrc = (): string | undefined => {
+    const store = this.#ready();
+    return store === null ? undefined : fileUrl(store.pool.all(Workspace)[0]?.logoFileId);
   };
 }

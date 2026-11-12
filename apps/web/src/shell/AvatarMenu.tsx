@@ -19,6 +19,10 @@ export function AvatarMenu() {
   const commands = useCommandRegistry();
   const navigate = useNavigate();
   const name = useObserved(useCallback(() => app.userName() ?? 'You', [app]));
+  // Initials until the image loads, and if it can't (offline, where the worker doesn't keep
+  // /files/, or the server can't send it). A reconnect remounts it, so it tries again.
+  const avatar = useObserved(useCallback(() => app.userAvatarSrc(), [app]));
+  const online = useObserved(useCallback(() => app.online(), [app]));
   // The synced preference once the replica is ready; before that, this device's (read when the
   // menu opens, so it shows a change made with Alt+Shift+T).
   const synced = useObserved(useCallback(() => app.preferences()?.theme, [app]));
@@ -34,7 +38,12 @@ export function AvatarMenu() {
         // Named by the avatar it shows, not an aria-label on the button: a button label that
         // leaves out the visible initials fails WCAG 2.5.3 (axe label-content-name-mismatch).
         <button type="button" className={styles.avatar}>
-          <Avatar name={name} aria-label={`Account menu for ${name}`} />
+          <Avatar
+            key={online ? 'online' : 'offline'}
+            name={name}
+            src={avatar}
+            aria-label={`Account menu for ${name}`}
+          />
         </button>
       }
       align="end"
