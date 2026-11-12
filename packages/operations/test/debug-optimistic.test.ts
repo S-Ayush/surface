@@ -4,7 +4,14 @@
 import { DebugItem } from '@surface/domain/model';
 import { describe, expect, it } from 'vitest';
 import type { OptimisticStore, StoreRow } from '../src/optimistic.js';
-import { debugCreate, debugDelete, debugRename, debugTouch } from '../src/ops/debug.js';
+import {
+  debugArchive,
+  debugCreate,
+  debugDelete,
+  debugRename,
+  debugTouch,
+  debugUnarchive,
+} from '../src/ops/debug.js';
 
 /** An in-memory store with the `OptimisticStore` contract, for one model. */
 function memoryStore(): OptimisticStore & { rows: Map<string, StoreRow> } {
@@ -40,7 +47,21 @@ describe('debug operations, optimistically', () => {
       title: 'New',
       counter: 0,
       groups: ['workspace'],
+      archivedAt: null,
     });
+  });
+
+  // PLAN-011 S2: the overlay archives through the store, so flag and `archivedAt` move together.
+  it('archive and unarchive go through store.archive and store.unarchive', () => {
+    const calls: string[] = [];
+    const store: OptimisticStore = {
+      ...memoryStore(),
+      archive: (model, id) => void calls.push(`archive ${model} ${id}`),
+      unarchive: (model, id) => void calls.push(`unarchive ${model} ${id}`),
+    };
+    debugArchive.optimistic?.(store, debugArchive.input.parse({ id: ID }));
+    debugUnarchive.optimistic?.(store, debugUnarchive.input.parse({ id: ID }));
+    expect(calls).toEqual([`archive DebugItem ${ID}`, `unarchive DebugItem ${ID}`]);
   });
 
   it('create puts the row in the groups it was given', () => {

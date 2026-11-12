@@ -5,7 +5,14 @@
  * sequence is valid and shrinking keeps it valid.
  */
 import fc from 'fast-check';
-import { debugCreate, debugDelete, debugRename, debugTouch } from '@surface/operations';
+import {
+  debugArchive,
+  debugCreate,
+  debugDelete,
+  debugRename,
+  debugTouch,
+  debugUnarchive,
+} from '@surface/operations';
 import type { Faults } from './network.js';
 import type { World } from './world.js';
 
@@ -16,6 +23,9 @@ export type Step =
   /** Many touches from one tab at once: past the rate limit, mid-batch (sync-protocol §4.4). */
   | { readonly t: 'burst'; readonly tab: number; readonly item: number; readonly count: number }
   | { readonly t: 'delete'; readonly tab: number; readonly item: number }
+  /** `debug.archive` and `debug.unarchive` (PLAN-011 S2, SPEC-011 §5.5). */
+  | { readonly t: 'archive'; readonly tab: number; readonly item: number }
+  | { readonly t: 'unarchive'; readonly tab: number; readonly item: number }
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -112,6 +122,25 @@ export function convergenceCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
   return caseOf(step);
 }
 
+/**
+ * Archive interleavings (SPEC-011 AC-18, sync-protocol §10 item 8): archive, unarchive, edits
+ * and deletes on colliding rows, in any order, with every fault (socket drops included).
+ */
+export function archiveCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
+  const change = (arbitrary: fc.Arbitrary<Step>) => ({ weight: 4, arbitrary });
+  const step = fc.oneof(
+    change(fc.record({ t: fc.constant('archive'), tab, item })),
+    change(fc.record({ t: fc.constant('unarchive'), tab, item })),
+    change(fc.record({ t: fc.constant('create'), tab, item, title })),
+    change(fc.record({ t: fc.constant('rename'), tab, item, title })),
+    change(fc.record({ t: fc.constant('touch'), tab, item })),
+    change(fc.record({ t: fc.constant('delete'), tab, item })),
+    ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
+    ...(options.bursts ? [{ weight: 1, arbitrary: burst }] : []),
+  );
+  return caseOf(step);
+}
+
 /** Property 2 (AC-3): only `debug.touch` on the user's own item, with every fault. */
 export function exactlyOnceCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
   const step = fc.oneof(
@@ -157,7 +186,9 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
     case 'create':
     case 'rename':
     case 'touch':
-    case 'delete': {
+    case 'delete':
+    case 'archive':
+    case 'unarchive': {
       const target = pick(live, step.tab);
       if (target === undefined) return;
       const n = options.itemFor ? options.itemFor(step.item, userIndex(target)) : step.item;
@@ -165,6 +196,8 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       if (step.t === 'create') world.dispatch(target, debugCreate, { id, title: step.title });
       else if (step.t === 'rename') world.dispatch(target, debugRename, { id, title: step.title });
       else if (step.t === 'touch') world.dispatch(target, debugTouch, { id });
+      else if (step.t === 'archive') world.dispatch(target, debugArchive, { id });
+      else if (step.t === 'unarchive') world.dispatch(target, debugUnarchive, { id });
       else world.dispatch(target, debugDelete, { id });
       return;
     }

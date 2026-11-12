@@ -274,7 +274,13 @@ export class FakeHub {
             title: String(get('title')),
             counter: 0,
             groups: ['workspace'],
+            archivedAt: null,
           });
+          break;
+        case 'debug.archive':
+        case 'debug.unarchive':
+          if (!existing) return notFound();
+          this.#archiveRow(itemId, op === 'debug.archive');
           break;
         case 'debug.rename':
         case 'debug.broken':
@@ -347,11 +353,21 @@ export class FakeHub {
     this.#commit({ id: this.head + 1, a: existing ? 'U' : 'I', m: 'DebugItem', d: { ...row } });
   }
 
+  /**
+   * Archive (or unarchive) as the repo does: set (or clear) `archivedAt`, also when it already
+   * is, and log an `A` (or `V`) with the full row (v0.7, SPEC-011 §5.5).
+   */
   archive(n: number, archived = true): void {
-    const existing = this.rows.get(id(n));
+    this.#archiveRow(id(n), archived);
+  }
+
+  #archiveRow(rowId: string, archived: boolean): void {
+    const existing = this.rows.get(rowId);
     if (existing === undefined) return;
-    existing.archived = archived;
-    this.#commit({ id: this.head + 1, a: archived ? 'A' : 'V', m: 'DebugItem', mid: id(n) });
+    const archivedAt = archived ? new Date(Date.now()).toISOString() : null;
+    const row = { ...existing.row, archivedAt };
+    this.rows.set(rowId, { row, archived });
+    this.#commit({ id: this.head + 1, a: archived ? 'A' : 'V', m: 'DebugItem', d: { ...row } });
   }
 
   remove(n: number): void {

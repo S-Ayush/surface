@@ -16,7 +16,11 @@ import { createAtom } from 'mobx';
 export interface InstanceMeta {
   /** The model name. */
   readonly $model: string;
-  /** True once the server archived the row (`A` packet) or an optimistic archive is pending. */
+  /**
+   * True once the server archived the row or an optimistic archive is pending. For a model that
+   * declares `archivedAt`, it is `archivedAt !== null` (SPEC-011 §5.5); otherwise the `A`/`V`
+   * packets and the bootstrap frame's flag set it.
+   */
   readonly $archived: boolean;
 }
 

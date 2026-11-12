@@ -9,7 +9,7 @@
 import fc from 'fast-check';
 import { describe, expect, inject, it } from 'vitest';
 import { simParameters } from '../src/context.js';
-import { convergence, exactlyOnce } from '../src/properties.js';
+import { archiveConvergence, convergence, exactlyOnce } from '../src/properties.js';
 import { SERVER_CODE, seedGlobals, seededRandom } from '../src/random.js';
 import type { RealServer } from '../src/real-server.js';
 import { startRealServer } from '../src/real-server.js';
@@ -17,7 +17,7 @@ import type { SimServer } from '../src/server.js';
 import type { Outcome } from '../src/simulate.js';
 import { simulate } from '../src/simulate.js';
 import type { Case } from '../src/steps.js';
-import { convergenceCase, exactlyOnceCase, itemId } from '../src/steps.js';
+import { archiveCase, convergenceCase, exactlyOnceCase, itemId } from '../src/steps.js';
 
 /** A factory for `simulate` that remembers the last server it started (and only that one). */
 function realServers() {
@@ -133,6 +133,17 @@ describe('against the real server', () => {
     await fc.assert(
       fc.asyncProperty(convergenceCase({ bursts: true }), (simCase) =>
         simulate(simCase, { ...convergence.options, server }, convergence.check),
+      ),
+      simParameters(),
+    );
+  });
+
+  // PLAN-011 S2 (SPEC-011 AC-18): the repo's A and V rows, through the real delta writer.
+  it('archive, unarchive, edits and deletes in any interleaving equal a fresh bootstrap (AC-18)', async () => {
+    const { server } = realServers();
+    await fc.assert(
+      fc.asyncProperty(archiveCase({ bursts: true }), (simCase) =>
+        simulate(simCase, { ...archiveConvergence.options, server }, archiveConvergence.check),
       ),
       simParameters(),
     );

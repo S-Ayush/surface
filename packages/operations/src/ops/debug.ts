@@ -82,6 +82,7 @@ export const debugCreate = defineOperation({
       title: input.title,
       counter: 0,
       groups: input.groups,
+      archivedAt: null,
     });
   },
 });
@@ -116,6 +117,42 @@ export const debugDelete = defineOperation({
   examples: [{ id: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e' }],
   internal: true,
   optimistic: (store, input) => store.remove('DebugItem', input.id),
+});
+
+// Archive state on the wire (PLAN-011 S2, SPEC-011 §5.5): the sync property suite archives and
+// unarchives debug items in any interleaving with edits and deletes.
+export const debugArchive = defineOperation({
+  name: 'debug.archive',
+  kind: 'mutation',
+  domain: 'debug',
+  summary: 'Archive a debug item',
+  description:
+    'Archives a debug item visible to you (sets archivedAt; again if it is already archived). For sync-engine tests.',
+  keywords: ['archive debug item', 'hide debug item'],
+  input: z.object({ id: z.uuid() }),
+  output: DebugItemSchema,
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ id: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e' }],
+  internal: true,
+  optimistic: (store, input) => store.archive('DebugItem', input.id),
+});
+
+export const debugUnarchive = defineOperation({
+  name: 'debug.unarchive',
+  kind: 'mutation',
+  domain: 'debug',
+  summary: 'Unarchive a debug item',
+  description:
+    'Clears the archived state of a debug item visible to you, archived or not. For sync-engine tests.',
+  keywords: ['unarchive debug item', 'restore debug item'],
+  input: z.object({ id: z.uuid() }),
+  output: DebugItemSchema,
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ id: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e' }],
+  internal: true,
+  optimistic: (store, input) => store.unarchive('DebugItem', input.id),
 });
 
 export const debugListItems = defineOperation({

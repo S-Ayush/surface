@@ -73,6 +73,8 @@ export interface DebugItemRow {
   readonly title: string;
   readonly counter: number;
   readonly archived: boolean;
+  /** ISO 8601 with milliseconds, as clients receive it (protocol v0.7), or null. */
+  readonly archivedAt: string | null;
   readonly syncGroups: readonly string[];
 }
 
@@ -120,6 +122,7 @@ const ItemRow = z.object({
   title: z.string(),
   counter: z.number(),
   archived: z.boolean(),
+  archived_at: z.date().nullable(),
   sync_groups: z.array(z.string()),
 });
 
@@ -183,7 +186,7 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
       },
       items: async () => {
         const { rows } = await db.query(
-          `SELECT id, title, counter, archived_at IS NOT NULL AS archived, sync_groups
+          `SELECT id, title, counter, archived_at IS NOT NULL AS archived, archived_at, sync_groups
              FROM debug_items ORDER BY id`,
         );
         return rows.map((row) => {
@@ -193,6 +196,7 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             title: item.title,
             counter: item.counter,
             archived: item.archived,
+            archivedAt: item.archived_at?.toISOString() ?? null,
             syncGroups: item.sync_groups,
           };
         });

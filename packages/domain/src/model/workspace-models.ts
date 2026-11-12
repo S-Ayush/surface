@@ -141,6 +141,11 @@ export const Label = defineModel('Label', {
     exclusive: bool(),
     groups: array(str()),
     ...audit,
+    /**
+     * Set while archived (SPEC-010). Synced since protocol v0.7 (SPEC-011 §5.5): the client derives
+     * `$archived` from it, and an archived label stays in the replica.
+     */
+    archivedAt: timestamp().nullable(),
   },
   refs: {
     team: ref('Team', 'teamId'),

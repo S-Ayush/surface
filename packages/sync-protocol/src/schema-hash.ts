@@ -13,8 +13,11 @@ import { DOC_SCHEMA_VERSION } from '@surface/domain';
 import { ProtocolError } from './errors.js';
 import { sha256Hex } from './sha256.js';
 
-/** Bump when the wire format changes incompatibly: it is part of every schema hash. */
-export const SYNC_PROTOCOL_VERSION = 1;
+/**
+ * Bump when the wire format changes incompatibly: it is part of every schema hash, so every
+ * client re-bootstraps once (SPEC-002 E7). 2: `A` and `V` carry the full row (v0.7, SPEC-011 §5.5).
+ */
+export const SYNC_PROTOCOL_VERSION = 2;
 
 export interface SchemaHashField {
   /** Canonical type name, including anything that narrows it (e.g. enum members). */

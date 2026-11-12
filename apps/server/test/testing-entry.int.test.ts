@@ -54,7 +54,14 @@ describe('the real server for the sync simulation', () => {
     const touched = await s.run(s.users[2] ?? expect.fail('user 2'), 'debug.touch', { id });
     expect(touched.ok).toBe(true);
     expect(await s.items()).toEqual([
-      { id, title: 'First item', counter: 1, archived: false, syncGroups: ['workspace'] },
+      {
+        id,
+        title: 'First item',
+        counter: 1,
+        archived: false,
+        archivedAt: null,
+        syncGroups: ['workspace'],
+      },
     ]);
     expect(await s.head()).toBeGreaterThan(before);
     for (const user of s.users) {

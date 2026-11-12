@@ -80,17 +80,21 @@ export function until(predicate: () => boolean, ms = 5000): Promise<void> {
 export interface ItemView {
   title: unknown;
   counter: unknown;
+  archivedAt: unknown;
   archived: boolean;
 }
 
 /** The client's visible DebugItems, by id. */
 export function clientItems(store: SyncStore): Record<string, ItemView> {
-  const entries = store.pool
-    .all(DebugItem)
-    .map((item): [string, ItemView] => [
-      item.id,
-      { title: item.title, counter: item.counter, archived: item.$archived },
-    ]);
+  const entries = store.pool.all(DebugItem).map((item): [string, ItemView] => [
+    item.id,
+    {
+      title: item.title,
+      counter: item.counter,
+      archivedAt: item.archivedAt,
+      archived: item.$archived,
+    },
+  ]);
   return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
 }
 
@@ -100,7 +104,15 @@ export function serverItems(hub: FakeHub): Record<string, ItemView> {
     [...hub.rows.values()]
       .map(
         ({ row, archived }) =>
-          [row.id, { title: row['title'], counter: row['counter'], archived }] as const,
+          [
+            row.id,
+            {
+              title: row['title'],
+              counter: row['counter'],
+              archivedAt: row['archivedAt'],
+              archived,
+            },
+          ] as const,
       )
       .sort(([a], [b]) => a.localeCompare(b)),
   );

@@ -698,7 +698,7 @@ export class SyncStore {
           const touched = plan.base.some((change) =>
             this.#overlay.dependsOn(
               change.model,
-              change.kind === 'upsert' ? change.row.id : change.id,
+              change.kind === 'delete' ? change.id : change.row.id,
             ),
           );
           this.#confirm(plan.lastSyncId, message.ack, touched);

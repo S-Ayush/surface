@@ -31,6 +31,7 @@ export const debugCreate = defineOperation({
       title: input.title,
       counter: 0,
       groups: ['workspace'],
+      archivedAt: null,
     });
   },
 });

@@ -35,16 +35,22 @@ const upsert = (
   version,
   row: debugRow(n, fields),
 });
+const AT = '2026-11-12T10:00:00.000Z';
+/** An archive carries the row with `archivedAt` set, an unarchive with it cleared (v0.7). */
 const change = (
   kind: 'archive' | 'unarchive' | 'delete',
   version: number,
   n: number,
-): StoredChange => ({
-  kind,
-  model: 'DebugItem',
-  version,
-  id: id(n),
-});
+  fields: Record<string, unknown> = {},
+): StoredChange =>
+  kind === 'delete'
+    ? { kind, model: 'DebugItem', version, id: id(n) }
+    : {
+        kind,
+        model: 'DebugItem',
+        version,
+        row: debugRow(n, { archivedAt: kind === 'archive' ? AT : null, ...fields }),
+      };
 
 afterAll(closePorts);
 
@@ -114,7 +120,7 @@ describe.each(BACKENDS)('$name storage', (backend) => {
     const stored = await readAll(storage);
     expect(stored).toEqual([
       { row: debugRow(1, { title: 'Renamed' }), archived: false },
-      { row: debugRow(2), archived: true },
+      { row: debugRow(2, { archivedAt: AT }), archived: true },
       { row: debugRow(3), archived: false },
     ]);
     expect((await storage.readMeta())?.lastSyncId).toBe(13);
@@ -142,15 +148,65 @@ describe.each(BACKENDS)('$name storage', (backend) => {
     await storage.close();
   });
 
-  it('ignores archive and unarchive for rows it never stored', async () => {
+  // SPEC-011 §5.5: archive and unarchive are an upsert plus the flag.
+  it('stores the row an archive or unarchive carries, even one it never stored', async () => {
     const storage = await open(uniqueName());
     const generation = await storage.beginBootstrap(start());
     await storage.applyChanges(
       generation,
-      [change('archive', 11, 7), change('unarchive', 12, 7)],
+      [change('unarchive', 11, 7, { title: 'Restored' }), change('archive', 12, 8)],
       12,
     );
-    expect(await readAll(storage)).toEqual([]);
+    expect(await readAll(storage)).toEqual([
+      { row: debugRow(7, { title: 'Restored' }), archived: false },
+      { row: debugRow(8, { archivedAt: AT }), archived: true },
+    ]);
+    await storage.close();
+  });
+
+  it('keeps an archived row archived through an update, and restores a deleted row from a newer unarchive', async () => {
+    const storage = await open(uniqueName());
+    const generation = await storage.beginBootstrap(start(10));
+    await storage.writeBootstrapRows(generation, rows(1, 2));
+    await storage.applyChanges(
+      generation,
+      [
+        change('archive', 11, 1),
+        upsert(12, 1, { title: 'Edited', archivedAt: AT }),
+        change('delete', 13, 2),
+        change('unarchive', 14, 2, { title: 'Back' }),
+      ],
+      14,
+    );
+    expect(await readAll(storage)).toEqual([
+      { row: debugRow(1, { title: 'Edited', archivedAt: AT }), archived: true },
+      { row: debugRow(2, { title: 'Back' }), archived: false },
+    ]);
+    await storage.close();
+  });
+
+  it('never lets an older archive or unarchive overwrite a newer update or delete', async () => {
+    const storage = await open(uniqueName());
+    const generation = await storage.beginBootstrap(start(10));
+    await storage.writeBootstrapRows(generation, rows(1, 2, 3));
+    // The fast tab is at 20: row 1 updated at 15, row 2 deleted at 16, row 3 archived at 17.
+    await storage.applyChanges(
+      generation,
+      [upsert(15, 1, { title: 'Newer' }), change('delete', 16, 2), change('archive', 17, 3)],
+      20,
+    );
+    // The slow tab replays 11–13: an older archive of row 1, an older unarchive of row 2 (the
+    // tombstone keeps it deleted) and an older unarchive of row 3.
+    await storage.applyChanges(
+      generation,
+      [change('archive', 11, 1), change('unarchive', 12, 2), change('unarchive', 13, 3)],
+      13,
+    );
+    expect(await readAll(storage)).toEqual([
+      { row: debugRow(1, { title: 'Newer' }), archived: false },
+      { row: debugRow(3, { archivedAt: AT }), archived: true },
+    ]);
+    expect((await storage.readMeta())?.lastSyncId).toBe(20);
     await storage.close();
   });
 

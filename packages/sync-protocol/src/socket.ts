@@ -91,10 +91,23 @@ export const upsertPacketSchema = z.object({
   d: rowSchema,
 });
 
-/** `A` archive, `V` unarchive, `D` hard delete (purge). */
-export const rowStatePacketSchema = z.object({
+/**
+ * `A` archive and `V` unarchive or restore carry the full row too (v0.7, SPEC-011 §5.5): the
+ * client applies them as an upsert plus the flag, so a `V` for a row it doesn't hold inserts it.
+ * Strict, like the delete packet, so a packet carrying both `d` and `mid` is refused rather than
+ * decoded with one silently dropped.
+ */
+export const archivePacketSchema = z.strictObject({
   id: syncIdSchema,
-  a: z.enum(['A', 'V', 'D']),
+  a: z.enum(['A', 'V']),
+  m: modelNameSchema,
+  d: rowSchema,
+});
+
+/** `D` hard delete (a purge, or the row left the connection's groups): the id only (SPEC-002 Q4). */
+export const deletePacketSchema = z.strictObject({
+  id: syncIdSchema,
+  a: z.literal('D'),
   m: modelNameSchema,
   mid: uuidSchema,
 });
@@ -109,12 +122,14 @@ export const groupChangePacketSchema = z.object({
 
 export const deltaPacketSchema = z.discriminatedUnion('a', [
   upsertPacketSchema,
-  rowStatePacketSchema,
+  archivePacketSchema,
+  deletePacketSchema,
   groupChangePacketSchema,
 ]);
 
 export type UpsertPacket = z.infer<typeof upsertPacketSchema>;
-export type RowStatePacket = z.infer<typeof rowStatePacketSchema>;
+export type ArchivePacket = z.infer<typeof archivePacketSchema>;
+export type DeletePacket = z.infer<typeof deletePacketSchema>;
 export type GroupChangePacket = z.infer<typeof groupChangePacketSchema>;
 export type DeltaPacket = z.infer<typeof deltaPacketSchema>;
 export type PacketAction = DeltaPacket['a'];

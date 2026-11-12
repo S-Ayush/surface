@@ -203,6 +203,9 @@ describe('debug operations through the executor', () => {
     for (const [op, input] of [
       ['debug.rename', { id, title: 'Leaked' }],
       ['debug.delete', { id }],
+      // PLAN-011 S2: archive and unarchive check visibility first too.
+      ['debug.archive', { id }],
+      ['debug.unarchive', { id }],
     ] as const) {
       const result = await executor.execute(op, input, who.engMember);
       expect(result.ok ? 'ok' : [result.error.code, result.error.message]).toEqual([

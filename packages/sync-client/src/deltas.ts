@@ -73,24 +73,25 @@ function toChange(
   const version = packet.id;
   switch (packet.a) {
     case 'I':
-    case 'U': {
+    case 'U':
+    case 'A':
+    case 'V': {
+      // A and V carry the full row (v0.7, SPEC-011 §5.5): an upsert plus the flag.
+      const kind = packet.a === 'A' ? 'archive' : packet.a === 'V' ? 'unarchive' : 'upsert';
       const row = decodeRow(pool, packet.m, packet.d);
       return {
-        base: { kind: 'upsert', model: packet.m, row },
-        stored: { kind: 'upsert', model: packet.m, version, row },
+        base: { kind, model: packet.m, row },
+        stored: { kind, model: packet.m, version, row },
         applied: { id: packet.id, action: packet.a, model: packet.m, rowId: row.id },
       };
     }
-    case 'A':
-    case 'V':
     case 'D': {
-      const kind = packet.a === 'A' ? 'archive' : packet.a === 'V' ? 'unarchive' : 'delete';
       if (!pool.models.some((def) => def.name === packet.m)) {
         throw new ProtocolError(`Invalid packet: unknown model ${packet.m}`);
       }
       return {
-        base: { kind, model: packet.m, id: packet.mid },
-        stored: { kind, model: packet.m, version, id: packet.mid },
+        base: { kind: 'delete', model: packet.m, id: packet.mid },
+        stored: { kind: 'delete', model: packet.m, version, id: packet.mid },
         applied: { id: packet.id, action: packet.a, model: packet.m, rowId: packet.mid },
       };
     }

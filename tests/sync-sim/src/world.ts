@@ -128,9 +128,9 @@ export class World {
     return [...this.#problems, ...errors, ...server];
   }
 
-  /** Open a new tab for `user` and start its store. */
-  open(user: User): Tab {
-    const name = `${user.name}/tab-${this.tabs.length + 1}`;
+  /** Open a new tab for `user` and start its store; `fresh`: on an empty replica of its own. */
+  open(user: User, options: { readonly fresh?: boolean } = {}): Tab {
+    const name = `${user.name}/${options.fresh ? 'fresh' : 'tab'}-${this.tabs.length + 1}`;
     const link = this.network.link(user.id);
     const timers = new TabTimers();
     const locks = this.#webLocks ? user.locks.forTab(name) : null;
@@ -157,7 +157,9 @@ export class World {
     };
     const store = new SyncStore({
       models: this.server.models,
-      workspaceId: 'sim',
+      // A fresh tab gets a replica of its own, which starts empty: it bootstraps from the
+      // server, so it shows what a cold start would (PLAN-011 S2's archive property).
+      workspaceId: options.fresh ? `sim-${name}` : 'sim',
       userId: user.id,
       fetch: link.fetch,
       baseUrl: 'http://surface.test',
@@ -349,12 +351,16 @@ export class World {
 
   /** What each live tab shows, by id: base plus overlay. */
   view(tab: Tab): Record<string, ItemState> {
-    const entries = tab.store.pool
-      .all(DebugItem)
-      .map((item): [string, ItemState] => [
-        item.id,
-        { title: item.title, counter: item.counter, groups: item.groups, archived: item.$archived },
-      ]);
+    const entries = tab.store.pool.all(DebugItem).map((item): [string, ItemState] => [
+      item.id,
+      {
+        title: item.title,
+        counter: item.counter,
+        groups: item.groups,
+        archivedAt: item.archivedAt,
+        archived: item.$archived,
+      },
+    ]);
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
   }
 

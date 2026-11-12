@@ -1,6 +1,8 @@
 import type { AnyOperation } from '../define.js';
 import { createRegistry } from '../registry.js';
 import {
+  debugArchive,
+  debugUnarchive,
   debugCreate,
   debugDelete,
   debugEcho,
@@ -49,6 +51,8 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   debugCreate,
   debugRename,
   debugDelete,
+  debugArchive,
+  debugUnarchive,
   teamSuggestKey,
   teamCreate,
   teamUpdate,

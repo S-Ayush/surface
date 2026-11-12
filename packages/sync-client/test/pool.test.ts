@@ -5,6 +5,7 @@ import { ObjectPool } from '../src/pool.js';
 import { Board, Card, DebugItem, TEST_MODELS, debugRow, id } from './support/models.js';
 
 const pool = () => new ObjectPool(TEST_MODELS);
+const AT = '2026-11-12T10:00:00.000Z';
 const upsert = (row: ReturnType<typeof debugRow>) => ({
   kind: 'upsert' as const,
   model: 'DebugItem',
@@ -89,19 +90,19 @@ describe('object pool', () => {
     runs.dispose();
   });
 
-  it('archives, unarchives and deletes base rows', () => {
+  it('archives, unarchives and deletes base rows, with the row each change carries', () => {
     const p = pool();
     p.applyBase([upsert(debugRow(1))]);
     const item = p.get('DebugItem', id(1));
     const archivedRuns = runsOf(() => item?.$archived);
 
-    p.applyBase([{ kind: 'archive', model: 'DebugItem', id: id(1) }]);
-    expect(item?.$archived).toBe(true);
+    p.applyBase([{ kind: 'archive', model: 'DebugItem', row: debugRow(1, { archivedAt: AT }) }]);
+    expect(item).toMatchObject({ $archived: true, archivedAt: AT });
     // An update to an archived row keeps it archived.
-    p.applyBase([upsert(debugRow(1, { counter: 9 }))]);
-    expect(item?.$archived).toBe(true);
-    p.applyBase([{ kind: 'unarchive', model: 'DebugItem', id: id(1) }]);
-    expect(item?.$archived).toBe(false);
+    p.applyBase([upsert(debugRow(1, { counter: 9, archivedAt: AT }))]);
+    expect(item).toMatchObject({ $archived: true, counter: 9 });
+    p.applyBase([{ kind: 'unarchive', model: 'DebugItem', row: debugRow(1, { counter: 10 }) }]);
+    expect(item).toMatchObject({ $archived: false, archivedAt: null, counter: 10 });
     expect(archivedRuns.count).toBe(2);
 
     p.applyBase([{ kind: 'delete', model: 'DebugItem', id: id(1) }]);
@@ -110,13 +111,61 @@ describe('object pool', () => {
     archivedRuns.dispose();
   });
 
-  it('ignores archive and delete for rows it does not hold', () => {
+  // SPEC-011 §5.5, AC-18: an archive or unarchive is an upsert plus the flag.
+  it('inserts a row it does not hold from an unarchive, or from an archive (archived)', () => {
     const p = pool();
     p.applyBase([
-      { kind: 'archive', model: 'DebugItem', id: id(9) },
-      { kind: 'delete', model: 'DebugItem', id: id(9) },
+      { kind: 'unarchive', model: 'DebugItem', row: debugRow(7) },
+      { kind: 'archive', model: 'DebugItem', row: debugRow(8, { archivedAt: AT }) },
     ]);
+    expect(p.get('DebugItem', id(7))).toMatchObject({ title: 'Item 7', $archived: false });
+    expect(p.get('DebugItem', id(8))).toMatchObject({ archivedAt: AT, $archived: true });
+    expect(p.count('DebugItem')).toBe(2);
+  });
+
+  it('ignores a delete for a row it does not hold', () => {
+    const p = pool();
+    p.applyBase([{ kind: 'delete', model: 'DebugItem', id: id(9) }]);
     expect(p.count('DebugItem')).toBe(0);
+  });
+
+  it('derives $archived from archivedAt for a model that declares it, whatever the change says', () => {
+    const p = pool();
+    p.applyBase([
+      // Inconsistent on purpose: the field wins, so a stream and a bootstrap always agree.
+      { kind: 'archive', model: 'DebugItem', row: debugRow(1) },
+      { kind: 'unarchive', model: 'DebugItem', row: debugRow(2, { archivedAt: AT }) },
+      upsert(debugRow(3, { archivedAt: AT })),
+    ]);
+    p.loadBase('DebugItem', [{ row: debugRow(4, { archivedAt: AT }), archived: false }]);
+    p.loadBase('DebugItem', [{ row: debugRow(5), archived: true }]);
+    const archived = p.all(DebugItem).map((item) => [item.id, item.$archived, item.archivedAt]);
+    expect(archived.sort()).toEqual([
+      [id(1), false, null],
+      [id(2), true, AT],
+      [id(3), true, AT],
+      [id(4), true, AT],
+      [id(5), false, null],
+    ]);
+  });
+
+  it('takes $archived from the change for a model without archivedAt, and an update keeps it', () => {
+    const p = pool();
+    const card = (rank: number) => ({
+      id: id(1),
+      boardId: id(2),
+      title: 'Card',
+      rank,
+      assignee: null,
+    });
+    p.applyBase([{ kind: 'archive', model: 'Card', row: card(1) }]);
+    expect(p.get(Card, id(1))?.$archived).toBe(true);
+    p.applyBase([{ kind: 'upsert', model: 'Card', row: card(2) }]);
+    expect(p.get(Card, id(1))).toMatchObject({ rank: 2, $archived: true });
+    p.applyBase([{ kind: 'unarchive', model: 'Card', row: card(3) }]);
+    expect(p.get(Card, id(1))).toMatchObject({ rank: 3, $archived: false });
+    p.loadBase('Card', [{ row: card(4), archived: true }]);
+    expect(p.get(Card, id(1))?.$archived).toBe(true);
   });
 
   it('tells a reaction when a row it waits for appears or disappears', () => {
@@ -154,6 +203,23 @@ describe('overlay', () => {
 
     p.setOverlay('DebugItem', id(1), undefined);
     expect(item?.title).toBe('Server');
+  });
+
+  // SPEC-011 §5.5: one rule for base and overlay, so an optimistic patch or insert that sets
+  // `archivedAt` can't show a row whose field and flag disagree.
+  it('derives an overlay’s $archived from archivedAt for a model that declares it', () => {
+    const p = pool();
+    p.applyBase([upsert(debugRow(1)), upsert(debugRow(2, { archivedAt: AT }))]);
+    p.setOverlay('DebugItem', id(1), { row: debugRow(1, { archivedAt: AT }), archived: false });
+    p.setOverlay('DebugItem', id(2), { row: debugRow(2), archived: true });
+    p.setOverlay('DebugItem', id(3), { row: debugRow(3, { archivedAt: AT }), archived: false });
+    expect(p.get(DebugItem, id(1))).toMatchObject({ archivedAt: AT, $archived: true });
+    expect(p.get(DebugItem, id(2))).toMatchObject({ archivedAt: null, $archived: false });
+    expect(p.get(DebugItem, id(3))).toMatchObject({ archivedAt: AT, $archived: true });
+    // A model without the field keeps the overlay's own flag.
+    const card = { id: id(4), boardId: id(5), title: 'Card', rank: 1, assignee: null };
+    p.setOverlay('Card', id(4), { row: card, archived: true });
+    expect(p.get(Card, id(4))?.$archived).toBe(true);
   });
 
   it('hides a row deleted optimistically, and shows a row inserted optimistically', () => {

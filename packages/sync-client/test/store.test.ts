@@ -62,7 +62,12 @@ describe('sync store start-up', () => {
 
   it('keeps archived rows archived through bootstrap and warm start', async () => {
     const workspace = uniqueName('ws');
-    const rows = [...items(1), { model: 'DebugItem', row: debugRow(2), archived: true }];
+    // As the server builds the frame: `archived` is `archivedAt IS NOT NULL` (SPEC-011 §5.5).
+    const archivedAt = '2026-11-12T10:00:00.000Z';
+    const rows = [
+      ...items(1),
+      { model: 'DebugItem', row: debugRow(2, { archivedAt }), archived: true },
+    ];
     const first = storeFor(
       workspace,
       fakeFetch(() => ndjsonResponse(bootstrapFrames(rows))),
@@ -74,7 +79,7 @@ describe('sync store start-up', () => {
     const second = storeFor(workspace, fakeFetch());
     expect(await second.start()).toBe('warm');
     expect(second.pool.get(DebugItem, id(1))?.$archived).toBe(false);
-    expect(second.pool.get(DebugItem, id(2))?.$archived).toBe(true);
+    expect(second.pool.get(DebugItem, id(2))).toMatchObject({ archivedAt, $archived: true });
     await second.close();
   });
 

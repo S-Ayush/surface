@@ -22,14 +22,29 @@ import type {
 } from './instance.js';
 import { deepFreeze, fieldOf, instanceClassFor, rowOf, updateInstance } from './instance.js';
 
-/** A change to base state, from bootstrap, warm start, or a delta packet. */
+/**
+ * A change to base state, from bootstrap, warm start, or a delta packet. `archive` and
+ * `unarchive` carry the row (protocol v0.7, SPEC-011 §5.5): an upsert plus the flag, so one for a
+ * row the pool doesn't hold inserts it.
+ */
 export type BaseChange =
-  | { readonly kind: 'upsert'; readonly model: string; readonly row: ModelRow }
   | {
-      readonly kind: 'archive' | 'unarchive' | 'delete';
+      readonly kind: 'upsert' | 'archive' | 'unarchive';
       readonly model: string;
-      readonly id: string;
-    };
+      readonly row: ModelRow;
+    }
+  | { readonly kind: 'delete'; readonly model: string; readonly id: string };
+
+/**
+ * Whether a row is archived (SPEC-011 §5.5): from `archivedAt` when the model declares it, so
+ * the flag and the field can't disagree; otherwise `fallback` (the packet, the bootstrap frame's
+ * flag, or the state the row had, since `U` keeps it).
+ */
+export function archivedOf(def: ModelDef, row: ModelRow, fallback: boolean): boolean {
+  if (def.fields['archivedAt'] === undefined) return fallback;
+  const archivedAt = row['archivedAt'];
+  return archivedAt !== null && archivedAt !== undefined;
+}
 
 /** A model by name, or its definition (which also types the result). */
 export type ModelKey = string | ModelDef;
@@ -228,17 +243,20 @@ export class ObjectPool implements ReadonlyPool {
     runInAction(() => {
       for (const change of changes) {
         const table = this.#table(change.model);
-        if (change.kind === 'upsert') {
-          const entry = this.#entry(table, change.row.id);
-          entry.base = { row: deepFreeze(change.row), archived: entry.base?.archived ?? false };
-          this.#refresh(table, change.row.id, entry);
+        if (change.kind === 'delete') {
+          const entry = table.entries.get(change.id);
+          if (entry?.base === undefined) continue;
+          entry.base = undefined;
+          this.#refresh(table, change.id, entry);
           continue;
         }
-        const entry = table.entries.get(change.id);
-        if (entry?.base === undefined) continue;
-        if (change.kind === 'delete') entry.base = undefined;
-        else entry.base = { row: entry.base.row, archived: change.kind === 'archive' };
-        this.#refresh(table, change.id, entry);
+        const entry = this.#entry(table, change.row.id);
+        // `U` keeps whether the row is archived; `A` and `V` set it (sync-protocol §4.3).
+        const flag =
+          change.kind === 'upsert' ? (entry.base?.archived ?? false) : change.kind === 'archive';
+        const archived = archivedOf(table.def, change.row, flag);
+        entry.base = { row: deepFreeze(change.row), archived };
+        this.#refresh(table, change.row.id, entry);
       }
     });
   }
@@ -249,7 +267,8 @@ export class ObjectPool implements ReadonlyPool {
     runInAction(() => {
       for (const state of rows) {
         const entry = this.#entry(table, state.row.id);
-        entry.base = { row: deepFreeze(state.row), archived: state.archived };
+        const archived = archivedOf(table.def, state.row, state.archived);
+        entry.base = { row: deepFreeze(state.row), archived };
         this.#refresh(table, state.row.id, entry);
       }
     });
@@ -276,7 +295,12 @@ export class ObjectPool implements ReadonlyPool {
     const table = this.#table(model);
     runInAction(() => {
       const entry = this.#entry(table, id);
-      entry.overlay = overlay && { row: deepFreeze(overlay.row), archived: overlay.archived };
+      // The same rule as base (SPEC-011 §5.5): an optimistic `patch` or `insert` that sets
+      // `archivedAt` archives the row, so the overlay can't show the two disagreeing.
+      entry.overlay = overlay && {
+        row: deepFreeze(overlay.row),
+        archived: archivedOf(table.def, overlay.row, overlay.archived),
+      };
       this.#refresh(table, id, entry);
     });
   }

@@ -66,7 +66,13 @@ describe('bootstrap', () => {
     );
     // Fields are prototype getters, so inspect the serialised row (toJSON).
     const serialised: unknown = JSON.parse(JSON.stringify(context.pool.get(DebugItem, id(1))));
-    expect(Object.keys(serialised ?? {}).sort()).toEqual(['counter', 'groups', 'id', 'title']);
+    expect(Object.keys(serialised ?? {}).sort()).toEqual([
+      'archivedAt',
+      'counter',
+      'groups',
+      'id',
+      'title',
+    ]);
   });
 
   it('asks for a reload when the server runs another schema (E7)', async () => {

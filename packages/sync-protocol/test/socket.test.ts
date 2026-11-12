@@ -43,8 +43,8 @@ describe('server messages', () => {
         packets: [
           { id: 18235, a: 'I', m: 'Issue', d: row() },
           { id: 18236, a: 'U', m: 'Issue', d: row() },
-          { id: 18237, a: 'A', m: 'Issue', mid: ID },
-          { id: 18238, a: 'V', m: 'Issue', mid: ID },
+          { id: 18237, a: 'A', m: 'Issue', d: row() },
+          { id: 18238, a: 'V', m: 'Issue', d: row() },
           { id: 18239, a: 'D', m: 'Comment', mid: ID },
           { id: 18240, a: 'G', added: [`team:${ID}`], removed: [] },
         ],
@@ -61,6 +61,50 @@ describe('server messages', () => {
     ]);
   });
 
+  // SPEC-011 §5.5, AC-18 (codec): v0.7 archive packets carry the full row; a delete only its id.
+  describe('archive state on the wire (v0.7)', () => {
+    const one = (packet: Record<string, unknown>) =>
+      JSON.stringify({
+        t: 'deltas',
+        prev: 0,
+        packets: [{ id: 1, m: 'Label', ...packet }],
+        ack: [],
+      });
+    const archivedRow = { id: ID, name: 'Bug', archivedAt: '2026-11-12T10:00:00.000Z' };
+
+    it.each(['A', 'V'])('decodes an %s packet with its full row', (a) => {
+      const message = decodeServerMessage(one({ a, d: archivedRow }));
+      expect(message).toEqual({
+        t: 'deltas',
+        prev: 0,
+        packets: [{ id: 1, a, m: 'Label', d: archivedRow }],
+        ack: [],
+      });
+    });
+
+    it.each([
+      ['an A packet without a row', { a: 'A', mid: ID }],
+      ['a V packet without a row', { a: 'V', mid: ID }],
+      ['an A packet whose row has no id', { a: 'A', d: { name: 'Bug' } }],
+      ['an A packet with both a row and mid', { a: 'A', d: archivedRow, mid: ID }],
+      ['a V packet with both a row and mid', { a: 'V', d: archivedRow, mid: ID }],
+      ['a D packet with a row', { a: 'D', d: archivedRow }],
+      ['a D packet with both mid and a row', { a: 'D', mid: ID, d: archivedRow }],
+    ])('refuses %s', (_case, packet) => {
+      expect(() => decodeServerMessage(one(packet))).toThrow(ProtocolError);
+    });
+
+    it('still decodes a D packet with only the id', () => {
+      const message = decodeServerMessage(one({ a: 'D', mid: ID }));
+      expect(message.t === 'deltas' && message.packets[0]).toEqual({
+        id: 1,
+        a: 'D',
+        m: 'Label',
+        mid: ID,
+      });
+    });
+  });
+
   it('accepts acks without packets, for mutations whose rows this client cannot see', () => {
     const message = decodeServerMessage(
       JSON.stringify({ t: 'deltas', prev: 7, packets: [], ack: [{ clientId: ID, seq: 1 }] }),
@@ -72,7 +116,7 @@ describe('server messages', () => {
     JSON.stringify({
       t: 'deltas',
       prev,
-      packets: ids.map((id) => ({ id, a: 'A', m: 'Issue', mid: ID })),
+      packets: ids.map((id) => ({ id, a: 'D', m: 'Issue', mid: ID })),
       ack,
     });
 
@@ -87,8 +131,8 @@ describe('server messages', () => {
       JSON.stringify({ t: 'deltas', prev: 0, packets: [{ id: 1, a: 'I', m: 'Issue' }], ack: [] }),
     ],
     [
-      'an A packet without mid',
-      JSON.stringify({ t: 'deltas', prev: 0, packets: [{ id: 1, a: 'A', m: 'Issue' }], ack: [] }),
+      'a D packet without mid',
+      JSON.stringify({ t: 'deltas', prev: 0, packets: [{ id: 1, a: 'D', m: 'Issue' }], ack: [] }),
     ],
     [
       'an unknown packet action',

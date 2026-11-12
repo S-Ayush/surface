@@ -14,6 +14,8 @@ export interface ItemState {
   readonly title: unknown;
   readonly counter: unknown;
   readonly groups: unknown;
+  /** The ISO instant it was archived, or null (protocol v0.7, SPEC-011 §5.5). */
+  readonly archivedAt: unknown;
   readonly archived: boolean;
 }
 
@@ -96,14 +98,26 @@ export class FakeHubServer implements SimServer {
   items(): Promise<Record<string, ItemState>> {
     const entries = [...this.#hub.rows.values()].map(({ row, archived }): [string, ItemState] => [
       row.id,
-      { title: row['title'], counter: row['counter'], groups: row['groups'], archived },
+      {
+        title: row['title'],
+        counter: row['counter'],
+        groups: row['groups'],
+        archivedAt: row['archivedAt'],
+        archived,
+      },
     ]);
     return Promise.resolve(Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b))));
   }
 
   seed(items: readonly { id: string; title: string }[]): Promise<void> {
     for (const item of items) {
-      const row = { id: item.id, title: item.title, counter: 0, groups: ['workspace'] };
+      const row = {
+        id: item.id,
+        title: item.title,
+        counter: 0,
+        groups: ['workspace'],
+        archivedAt: null,
+      };
       this.#hub.rows.set(item.id, { row, archived: false });
       this.#hub.head += 1;
       this.#hub.log.push({ id: this.#hub.head, a: 'I', m: 'DebugItem', d: { ...row } });

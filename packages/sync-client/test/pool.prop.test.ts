@@ -13,6 +13,7 @@ import { DebugItem, TEST_MODELS, debugRow, id } from './support/models.js';
 
 const IDS = [1, 2, 3, 4] as const;
 const TITLES = ['A', 'B', 'C'] as const;
+const ARCHIVED_AT = '2026-11-12T10:00:00.000Z';
 
 type Command =
   | { kind: 'upsert'; n: number; title: string }
@@ -68,20 +69,32 @@ it('pool, indexes and reactions always match a reference model', () => {
       for (const c of commands) {
         switch (c.kind) {
           case 'upsert': {
-            pool.applyBase([
-              { kind: 'upsert', model: 'DebugItem', row: debugRow(c.n, { title: c.title }) },
-            ]);
-            base.set(c.n, { title: c.title, archived: base.get(c.n)?.archived ?? false });
+            // As the server sends it: a `U` of an archived row still carries its `archivedAt`.
+            const archived = base.get(c.n)?.archived ?? false;
+            const row = debugRow(c.n, {
+              title: c.title,
+              archivedAt: archived ? ARCHIVED_AT : null,
+            });
+            pool.applyBase([{ kind: 'upsert', model: 'DebugItem', row }]);
+            base.set(c.n, { title: c.title, archived });
             break;
           }
           case 'archive':
-          case 'unarchive':
+          case 'unarchive': {
+            // The full row (v0.7): one the pool doesn't hold is inserted (SPEC-011 §5.5).
+            const archived = c.kind === 'archive';
+            const rowTitle = base.get(c.n)?.title ?? 'A';
+            const row = debugRow(c.n, {
+              title: rowTitle,
+              archivedAt: archived ? ARCHIVED_AT : null,
+            });
+            pool.applyBase([{ kind: c.kind, model: 'DebugItem', row }]);
+            base.set(c.n, { title: rowTitle, archived });
+            break;
+          }
           case 'delete': {
             pool.applyBase([{ kind: c.kind, model: 'DebugItem', id: id(c.n) }]);
-            const current = base.get(c.n);
-            if (current === undefined) break;
-            if (c.kind === 'delete') base.delete(c.n);
-            else base.set(c.n, { ...current, archived: c.kind === 'archive' });
+            base.delete(c.n);
             break;
           }
           case 'overlay': {

@@ -261,6 +261,7 @@ export class RealServer implements SimServer {
             title: row.title,
             counter: row.counter,
             groups: [...row.syncGroups],
+            archivedAt: row.archivedAt,
             archived: row.archived,
           },
         ]),

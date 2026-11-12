@@ -35,9 +35,10 @@ describe('computeSchemaHash', () => {
   it('is pinned, so an accidental change to the algorithm is caught', () => {
     // If this fails on purpose (protocol version bump, canonical form change), every
     // client re-bootstraps on deploy: update the value and say so in the change summary.
-    // Changed once in PLAN-013 S1, when DOC_SCHEMA_VERSION joined the input (SPEC-013 D6).
+    // Changed in PLAN-013 S1, when DOC_SCHEMA_VERSION joined the input (SPEC-013 D6), and in
+    // PLAN-011 S2, when SYNC_PROTOCOL_VERSION became 2 (v0.7: A and V packets carry the row).
     expect(computeSchemaHash([DEBUG_ITEM, TEAM])).toBe(
-      'cbd6c4484f7b72c513f9169a39806196e65527cc12482d3ad31e93ff9e545bf6',
+      '9c11eb17f22a2d35916eb92bc882758ef5a3765f676133b5f4d03dc4b74d2715',
     );
   });
 

@@ -5,6 +5,8 @@ import debugEcho from './debug/echo.js';
 import debugListItems from './debug/list-items.js';
 import debugRename from './debug/rename.js';
 import debugTouch from './debug/touch.js';
+import debugArchive from './debug/archive.js';
+import debugUnarchive from './debug/unarchive.js';
 import userUpdatePreferences from './users/update-preferences.js';
 import statusCreate from './statuses/create.js';
 import statusDelete from './statuses/delete.js';
@@ -42,6 +44,8 @@ export const HANDLERS: readonly Handler[] = [
   debugCreate,
   debugRename,
   debugDelete,
+  debugArchive,
+  debugUnarchive,
   teamSuggestKey,
   teamCreate,
   teamUpdate,

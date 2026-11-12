@@ -165,6 +165,84 @@ describe('applying deltas (§3.4)', () => {
     await store.close();
   });
 
+  // SPEC-011 §5.5, AC-18: A and V carry the row; the client applies them as an upsert plus the flag.
+  describe('archive state on the wire (v0.7)', () => {
+    it('inserts a row it does not hold from a V, with the row the packet carries', async () => {
+      const hub = seededHub();
+      hub.archive(2);
+      const { store } = liveStore(hub);
+      await store.start();
+      await until(() => store.connection === 'online');
+      // The client never held row 7: the server sends its V (a restore) with the full row.
+      hub.connections.at(-1)?.send({
+        t: 'deltas',
+        prev: hub.head,
+        packets: [
+          {
+            id: hub.head + 1,
+            a: 'V',
+            m: 'DebugItem',
+            d: debugRow(7, { title: 'Restored', counter: 70 }),
+          },
+        ],
+        ack: [],
+      });
+      await until(() => store.pool.get('DebugItem', id(7)) !== undefined);
+      expect(store.pool.get('DebugItem', id(7))).toMatchObject({
+        title: 'Restored',
+        counter: 70,
+        archivedAt: null,
+        $archived: false,
+      });
+      expect(store.position?.lastSyncId).toBe(hub.head + 1);
+      await store.close();
+    });
+
+    it('keeps an archived row archived through an update, and archivedAt and $archived agree', async () => {
+      const hub = seededHub();
+      const { store } = liveStore(hub);
+      await store.start();
+      await until(() => store.connection === 'online');
+
+      hub.archive(1);
+      const archivedAt = hub.rows.get(id(1))?.row['archivedAt'];
+      expect(typeof archivedAt).toBe('string');
+      expect(store.pool.get('DebugItem', id(1))).toMatchObject({ archivedAt, $archived: true });
+      hub.upsert(1, { title: 'Edited while archived' });
+      expect(store.pool.get('DebugItem', id(1))).toMatchObject({
+        title: 'Edited while archived',
+        archivedAt,
+        $archived: true,
+      });
+      hub.archive(1, false);
+      expect(store.pool.get('DebugItem', id(1))).toMatchObject({
+        archivedAt: null,
+        $archived: false,
+      });
+      for (const item of Object.values(clientItems(store))) {
+        expect(item.archived).toBe(item.archivedAt !== null);
+      }
+      expect(clientItems(store)).toEqual(serverItems(hub));
+      await store.close();
+    });
+
+    it('takes the fields an archive changed along with the flag', async () => {
+      const hub = seededHub();
+      const { store } = liveStore(hub);
+      await store.start();
+      await until(() => store.connection === 'online');
+      // The server's row moved on in the same transaction (an A carries the row as committed).
+      const row = { ...(hub.rows.get(id(2))?.row ?? debugRow(2)), title: 'Archived title' };
+      hub.rows.set(id(2), { row, archived: false });
+      hub.archive(2);
+      expect(store.pool.get('DebugItem', id(2))).toMatchObject({
+        title: 'Archived title',
+        $archived: true,
+      });
+      await store.close();
+    });
+  });
+
   it('persists each message, so the next start is warm and up to date', async () => {
     const workspaceId = uniqueName('ws');
     const hub = seededHub();

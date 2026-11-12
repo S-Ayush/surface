@@ -47,6 +47,8 @@ describe('the sync registry', () => {
       id: 'id',
       title: 'title',
       counter: 'counter',
+      // A synced field since protocol v0.7 (SPEC-011 §5.5).
+      archivedAt: 'archived_at',
     });
     expect(model?.archivable).toBe(true);
   });
@@ -87,6 +89,7 @@ describe('a client row', () => {
     counter: 3,
     syncGroups: ['workspace', 'team:0192f0c1-0000-7000-8000-00000000000a'],
     createdAt: new Date('2026-11-07T10:00:00.123Z'),
+    archivedAt: new Date('2026-11-12T10:00:00.456Z'),
     archived: false,
   };
 
@@ -97,6 +100,7 @@ describe('a client row', () => {
       title: 'Shared',
       counter: 3,
       groups: ['workspace'],
+      archivedAt: '2026-11-12T10:00:00.456Z',
     });
     expect(DebugItem.rowSchema.parse(d)).toEqual(d);
     expect(decodeBootstrapFrame({ t: 'row', m: 'DebugItem', d })).toMatchObject({ d });

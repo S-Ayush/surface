@@ -56,6 +56,7 @@ describe('defineModel', () => {
       readonly title: string;
       readonly counter: number;
       readonly groups: string[];
+      readonly archivedAt: string | null;
     }>();
     expectTypeOf<RowOfModel<typeof Team>['icon']>().toEqualTypeOf<string | null>();
     expectTypeOf<RowOfModel<typeof Team>['tier']>().toEqualTypeOf<'free' | 'pro'>();

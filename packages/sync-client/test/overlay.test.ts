@@ -3,7 +3,7 @@
  * reaches a row a pending mutation read or wrote, the overlay is recomputed
  * from the new base, so the screen shows their change with ours on top.
  */
-import { defineModel, str, timestamp } from '@surface/domain/model';
+import { array, defineModel, int, str, timestamp } from '@surface/domain/model';
 import { defineOperation } from '@surface/operations';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -97,6 +97,12 @@ const Shelf = defineModel('Shelf', {
   fields: { name: str(), archivedAt: timestamp().nullable() },
 });
 
+/** A model that archives through the flag only (no `archivedAt`), like Team. */
+const Crate = defineModel('Crate', {
+  load: 'eager',
+  fields: { title: str(), counter: int(), groups: array(str()) },
+});
+
 const archiveFixture = (verb: 'archive' | 'unarchive', summary: string) =>
   defineOperation({
     name: `debug.${verb}Fixture`,
@@ -128,7 +134,7 @@ describe('store.archive and store.unarchive (SPEC-011 §6.3)', () => {
   });
 
   function setup() {
-    const pool = new ObjectPool([Shelf, DebugItem]);
+    const pool = new ObjectPool([Shelf, Crate]);
     pool.loadBase('Shelf', [
       {
         row: { id: id(1), name: 'Live', archivedAt: null, groups: ['workspace'] },
@@ -144,7 +150,7 @@ describe('store.archive and store.unarchive (SPEC-011 §6.3)', () => {
         archived: true,
       },
     ]);
-    pool.loadBase('DebugItem', [
+    pool.loadBase('Crate', [
       { row: { id: id(3), title: 'Item', counter: 1, groups: ['workspace'] }, archived: true },
       { row: { id: id(4), title: 'Item', counter: 4, groups: ['workspace'] }, archived: false },
     ]);
@@ -174,20 +180,17 @@ describe('store.archive and store.unarchive (SPEC-011 §6.3)', () => {
   it('archive and unarchive change only the flag on a model without archivedAt', () => {
     const { pool, engine } = setup();
     const shown = vi.spyOn(pool, 'setOverlay');
-    engine.rebuild([
-      step('c:1', unarchiveRow, 'DebugItem', 3),
-      step('c:2', archiveRow, 'DebugItem', 4),
-    ]);
-    const unarchived = pool.get(DebugItem, id(3));
-    const archived = pool.get(DebugItem, id(4));
+    engine.rebuild([step('c:1', unarchiveRow, 'Crate', 3), step('c:2', archiveRow, 'Crate', 4)]);
+    const unarchived = pool.get(Crate, id(3));
+    const archived = pool.get(Crate, id(4));
     expect(unarchived?.$archived).toBe(false);
     expect(archived?.$archived).toBe(true);
     expect(unarchived).toMatchObject({ title: 'Item', counter: 1 });
     expect(archived).toMatchObject({ title: 'Item', counter: 4 });
     // The overlay rows are the base rows: nothing but the flag changed.
     expect(shown.mock.calls).toEqual([
-      ['DebugItem', id(3), { row: pool.baseOf('DebugItem', id(3))?.row, archived: false }],
-      ['DebugItem', id(4), { row: pool.baseOf('DebugItem', id(4))?.row, archived: true }],
+      ['Crate', id(3), { row: pool.baseOf('Crate', id(3))?.row, archived: false }],
+      ['Crate', id(4), { row: pool.baseOf('Crate', id(4))?.row, archived: true }],
     ]);
   });
 

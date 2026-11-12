@@ -75,32 +75,82 @@ describe('a connection’s deltas', () => {
     expect(JSON.stringify(sent)).not.toContain(team);
   });
 
-  it('send archive, unarchive and delete as ids only', () => {
+  // SPEC-011 §5.5, AC-18 (v0.7): A and V carry the row like I and U; D carries only the id.
+  it('send archive and unarchive with the full row, and delete as an id only', () => {
     const { w, sent } = writer();
     const id = randomUUID();
+    const at = new Date('2026-11-12T10:00:00.123Z');
+    const data = (archivedAt: Date | null) => ({
+      id,
+      title: 'Archived',
+      counter: 3,
+      archivedAt,
+      syncGroups: ['workspace'],
+    });
     w.add([
-      row({ modelId: id, action: 'A' }),
-      row({ modelId: id, action: 'V' }),
+      row({ modelId: id, action: 'A', data: data(at) }),
+      row({ modelId: id, action: 'V', data: data(null) }),
       row({ modelId: id, action: 'D', data: null }),
     ]);
     w.flush(true);
-    expect(sent[0]?.packets.map((p) => ('mid' in p ? [p.a, p.mid] : p.a))).toEqual([
-      ['A', id],
-      ['V', id],
-      ['D', id],
+    const client = (archivedAt: string | null) => ({
+      id,
+      title: 'Archived',
+      counter: 3,
+      groups: ['workspace'],
+      archivedAt,
+    });
+    expect(sent[0]?.packets.map(({ id: _syncId, ...packet }) => packet)).toEqual([
+      { a: 'A', m: 'DebugItem', d: client('2026-11-12T10:00:00.123Z') },
+      { a: 'V', m: 'DebugItem', d: client(null) },
+      { a: 'D', m: 'DebugItem', mid: id },
     ]);
   });
 
-  it('never end a message on a D whose row’s U follows (a groups change, Q5)', () => {
-    nextId = 0;
-    const { w, sent } = writer();
-    const moved = randomUUID();
-    w.add(Array.from({ length: 499 }, () => row()));
-    w.add([row({ modelId: moved, action: 'D', data: null }), row({ modelId: moved })]);
+  it('cut the groups of an archive and unarchive row to the connection’s, and leave out a hidden one', () => {
+    const { w, sent } = writer(0, ['workspace', `user:${me}`]);
+    const shared = randomUUID();
+    const secret = randomUUID();
+    const groups = ['workspace', team, `user:${other}`];
+    const data = (id: string, syncGroups: string[]) => ({
+      id,
+      title: 't',
+      counter: 0,
+      archivedAt: null,
+      syncGroups,
+    });
+    w.add([
+      row({ modelId: shared, action: 'A', groups, data: data(shared, groups) }),
+      row({ modelId: secret, action: 'A', groups: [team], data: data(secret, [team]) }),
+      row({ modelId: shared, action: 'V', groups, data: data(shared, groups) }),
+      row({ modelId: secret, action: 'V', groups: [team], data: data(secret, [team]) }),
+    ]);
     w.flush(true);
-    expect(sent.map((m) => m.packets.length)).toEqual([499, 2]);
-    expect(sent[1]?.packets.map((p) => p.a)).toEqual(['D', 'U']);
+    const packets = sent.flatMap((m) => m.packets);
+    expect(packets.map((p) => [p.a, 'd' in p ? p.d['groups'] : undefined])).toEqual([
+      ['A', ['workspace']],
+      ['V', ['workspace']],
+    ]);
+    expect(JSON.stringify(sent)).not.toContain(team);
+    expect(JSON.stringify(sent)).not.toContain(other);
+    expect(JSON.stringify(sent)).not.toContain(secret);
   });
+
+  // A groups change logs D then the change itself: U for an update, A or V when it archives or
+  // unarchives (repo `change()`); the A/V half names its row through `d` since v0.7.
+  it.each(['U', 'A', 'V'] as const)(
+    'never end a message on a D whose row’s %s follows (a groups change, Q5)',
+    (action) => {
+      nextId = 0;
+      const { w, sent } = writer();
+      const moved = randomUUID();
+      w.add(Array.from({ length: 499 }, () => row()));
+      w.add([row({ modelId: moved, action: 'D', data: null }), row({ modelId: moved, action })]);
+      w.flush(true);
+      expect(sent.map((m) => m.packets.length)).toEqual([499, 2]);
+      expect(sent[1]?.packets.map((p) => p.a)).toEqual(['D', action]);
+    },
+  );
 
   it('send a D on its own when it ends the stream of a user who lost the row', () => {
     const { w, sent } = writer(0, ['workspace']);

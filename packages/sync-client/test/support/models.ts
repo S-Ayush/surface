@@ -28,5 +28,12 @@ export function id(n: number): string {
 }
 
 export function debugRow(n: number, overrides: Partial<Record<string, unknown>> = {}): ModelRow {
-  return { id: id(n), title: `Item ${n}`, counter: n, groups: ['workspace'], ...overrides };
+  return {
+    id: id(n),
+    title: `Item ${n}`,
+    counter: n,
+    groups: ['workspace'],
+    archivedAt: null,
+    ...overrides,
+  };
 }

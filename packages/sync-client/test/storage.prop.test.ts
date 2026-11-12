@@ -37,9 +37,10 @@ const scenario = fc
     initial,
     changes: steps.map(({ kind, n, title }, i): StoredChange => {
       const version = BOOTSTRAP_ID + i + 1;
-      return kind === 'upsert'
-        ? { kind, model: 'DebugItem', version, row: debugRow(n, { title }) }
-        : { kind, model: 'DebugItem', version, id: id(n) };
+      // Archive and unarchive carry the row too (v0.7).
+      return kind === 'delete'
+        ? { kind, model: 'DebugItem', version, id: id(n) }
+        : { kind, model: 'DebugItem', version, row: debugRow(n, { title }) };
     }),
   }));
 

@@ -8,17 +8,43 @@ import { itemId } from './steps.js';
 
 export interface Property {
   readonly options: SimulateOptions;
-  readonly check: (outcome: Outcome) => void;
+  readonly check: (outcome: Outcome) => void | Promise<void>;
 }
 
 /** Property 1: each tab shows exactly the server's rows, with nothing pending. */
-export const convergence: Property = {
+export const convergence = {
   options: { seedItems: () => [0, 1, 2] },
-  check: ({ world, server }) => {
+  check: ({ world, server }: Outcome): void => {
     expect(world.problems).toEqual([]);
     for (const tab of world.live) {
       expect(tab.store.pending, tab.name).toEqual([]);
       expect(world.view(tab), tab.name).toEqual(server.items);
+    }
+  },
+} satisfies Property;
+
+/**
+ * Archive interleavings (SPEC-011 AC-18): property 1, then every user opens one more tab on an
+ * empty replica, which bootstraps; every tab, the ones that applied the stream of `A`, `V`, `U`
+ * and `D` packets and the ones that warm-started from it, equals that fresh bootstrap,
+ * `archivedAt` and `$archived` included, and the two agree on every row.
+ */
+export const archiveConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    convergence.check(outcome);
+    const { world } = outcome;
+    const streamed = world.live;
+    const fresh = world.users.map((user) => world.open(user, { fresh: true }));
+    await world.quiesce();
+    expect(world.problems).toEqual([]);
+    for (const tab of fresh) {
+      const bootstrapped = world.view(tab);
+      expect(bootstrapped, tab.name).toEqual(outcome.server.items);
+      for (const [id, item] of Object.entries(bootstrapped)) {
+        expect(item.archived, `${tab.name} ${id}`).toBe(item.archivedAt !== null);
+      }
+      for (const other of streamed) expect(world.view(other), other.name).toEqual(bootstrapped);
     }
   },
 };

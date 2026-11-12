@@ -49,20 +49,28 @@ export interface RowPage {
   readonly next: string | undefined;
 }
 
-/** One base change from a delta packet, tagged with the packet's sync id. */
+/**
+ * One base change from a delta packet, tagged with the packet's sync id. `archive` and
+ * `unarchive` carry the row (protocol v0.7, SPEC-011 §5.5).
+ */
 export type StoredChange =
   | {
-      readonly kind: 'upsert';
+      readonly kind: 'upsert' | 'archive' | 'unarchive';
       readonly model: string;
       readonly version: number;
       readonly row: ModelRow;
     }
   | {
-      readonly kind: 'archive' | 'unarchive' | 'delete';
+      readonly kind: 'delete';
       readonly model: string;
       readonly version: number;
       readonly id: string;
     };
+
+/** The id of the row a change writes. */
+export function changedId(change: StoredChange): string {
+  return change.kind === 'delete' ? change.id : change.row.id;
+}
 
 /** A row from the bootstrap stream. */
 export interface BootstrapRecord {
@@ -293,9 +301,15 @@ export function recordFor(
       };
     case 'archive':
     case 'unarchive':
-      // Archiving a row this replica never had changes nothing.
-      if (!existing?.row) return undefined;
-      return { ...existing, version: change.version, archived: change.kind === 'archive' };
+      // An upsert plus the flag: one for a row this replica doesn't hold (never had, or a
+      // tombstone with an older version) inserts it (SPEC-011 §5.5). The pool derives `$archived`
+      // from `archivedAt` again when it loads the row, for models that declare it.
+      return {
+        id: change.row.id,
+        version: change.version,
+        archived: change.kind === 'archive',
+        row: change.row,
+      };
     case 'delete':
       return { id: change.id, version: change.version, archived: false, row: null };
   }

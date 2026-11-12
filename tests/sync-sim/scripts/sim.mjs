@@ -1,4 +1,4 @@
-// `pnpm sim [--seed <n>] [--runs <k>] [--path <p>] [convergence|exactly-once]`
+// `pnpm sim [--seed <n>] [--runs <k>] [--path <p>] [convergence|exactly-once|archive]`
 // runs the sync property suite (PLAN-002 S9) with other fast-check
 // parameters than `pnpm test`: 1,000 cases on `main`, or one failing case.
 // fast-check prints `seed` and `path` when a property fails; pass both to

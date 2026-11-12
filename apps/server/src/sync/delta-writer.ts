@@ -3,7 +3,8 @@
  * messages out. Pure, so the batching rules are unit-tested without a socket or a database.
  *
  * - Only rows whose groups meet the connection's are sent, with their groups cut to the
- *   connection's (Q6). Rows of models the registry doesn't know are skipped.
+ *   connection's (Q6): I, U, A and V carry the row, D only the id. Rows of models the registry
+ *   doesn't know are skipped.
  * - `prev` is the id of the last packet sent on this connection (`since` at first).
  * - At most 500 packets per message, and a `D` is never the last packet of a message when the
  *   next packet is for the same row, so a groups change (Q5) arrives as one unit.
@@ -42,13 +43,15 @@ export function toPacket(
   if (!model || !row.groups.some((g) => visible.has(g))) return undefined;
   switch (row.action) {
     case 'I':
-    case 'U': {
+    case 'U':
+    case 'A':
+    case 'V': {
+      // A and V carry the full row since v0.7 (SPEC-011 §5.5), through `clientRow` like I and U,
+      // so their groups are cut to the connection's (Q6).
       if (row.data === null) return undefined;
       const d = clientRow(model, row.data, row.data['syncGroups'], visible);
       return { id: row.syncId, a: row.action, m: row.model, d };
     }
-    case 'A':
-    case 'V':
     case 'D':
       return { id: row.syncId, a: row.action, m: row.model, mid: row.modelId };
   }
@@ -151,9 +154,9 @@ function rowIdOf(packet: DeltaPacket): string | undefined {
   switch (packet.a) {
     case 'I':
     case 'U':
-      return packet.d.id;
     case 'A':
     case 'V':
+      return packet.d.id;
     case 'D':
       return packet.mid;
     case 'G':

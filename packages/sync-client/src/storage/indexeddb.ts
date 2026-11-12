@@ -30,6 +30,7 @@ import {
   QueueFencedError,
   StorageClosedError,
   StorageFencedError,
+  changedId,
   newGeneration,
   planClaim,
   recordFor,
@@ -167,7 +168,7 @@ export class IndexedDbStorage implements SyncStorage {
     const meta = await fence(tx, generation);
     for (const change of changes) {
       const store = tx.objectStore(rowStore(change.model));
-      const id = change.kind === 'upsert' ? change.row.id : change.id;
+      const id = changedId(change);
       const existing: unknown = await store.get(id);
       const record = recordFor(change, isStoredRecord(existing) ? existing : undefined);
       if (record) await store.put(record);

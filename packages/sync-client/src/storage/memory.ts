@@ -21,6 +21,7 @@ import type {
 import {
   QueueFencedError,
   StorageFencedError,
+  changedId,
   newGeneration,
   planClaim,
   recordFor,
@@ -96,7 +97,7 @@ export class MemoryStorage implements SyncStorage {
       for (const change of changes) this.#table(change.model);
       for (const change of changes) {
         const table = this.#table(change.model);
-        const id = change.kind === 'upsert' ? change.row.id : change.id;
+        const id = changedId(change);
         const record = recordFor(change, table.get(id));
         if (record) table.set(id, record);
       }

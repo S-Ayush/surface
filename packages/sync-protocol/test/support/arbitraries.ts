@@ -59,11 +59,8 @@ export const bootstrapFrame: fc.Arbitrary<BootstrapFrame> = fc.oneof(
 /** A packet without its id; ids are assigned in increasing order by `deltasMessage`. */
 const packetBody = fc.oneof(
   fc.record({ a: fc.constantFrom('I' as const, 'U' as const), m: modelName, d: row }),
-  fc.record({
-    a: fc.constantFrom('A' as const, 'V' as const, 'D' as const),
-    m: modelName,
-    mid: uuid,
-  }),
+  fc.record({ a: fc.constantFrom('A' as const, 'V' as const), m: modelName, d: row }),
+  fc.record({ a: fc.constant('D' as const), m: modelName, mid: uuid }),
   fc.record({
     a: fc.constant('G' as const),
     added: fc.array(syncGroup, { maxLength: 3 }),
