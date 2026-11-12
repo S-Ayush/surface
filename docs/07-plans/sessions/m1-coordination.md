@@ -40,9 +40,19 @@ O = Opus, S = Sonnet. The coordinator may move a slice to another track or model
 - **Ports** (dev servers only; tests use port 0): A 3100/5173, B 3200/5176, C 5174 and Storybook 6006, D 3400/5177.
 - **Testing hold** ([README §6](../README.md#6-testing-hold-e2e-smoke-and-integration)) applies: no new e2e, perf, smoke or integration tests, except leak tests, the sync property suite and the two granted exceptions.
 - **Questions only the user can answer:** stop and report them. Don't guess.
+- **Node in agent sandboxes:** if `source ~/.nvm/nvm.sh` is refused, put `~/.nvm/versions/node/v24.22.2/bin` first on `PATH`. `drizzle-kit generate` needs `pnpm build` first so it can resolve `@surface/domain`.
+- **Scratch files:** the scratchpad directory is shared by all tracks. Prefix every scratch file with your track and slice (e.g. `trackD-p014s1-check.log`).
+- **Load:** four tracks running `pnpm test:int` at once push the machine load past 20. A perf test that times out under that load is rerun alone before it counts as a failure; say so in the report.
 
 ## 4. Log (append-only)
 
 | Date | Track | Slice | Branch | Model | State | Notes |
 |---|---|---|---|---|---|---|
 | 2026-11-12 | coord | Acceptance gate | m1-gate | O ×3, S ×1 | started | Split by target doc: architecture + ADRs + SPEC-002/003/004 (O); domain docs + SPEC-001 (O); product + design + SPEC-005 (S); audit of SPEC-010–015 and PLAN-010–015 (O). |
+| 2026-11-12 | coord | Acceptance gate | main | — | merged | `db2a0d1`. ADR-0021–0024 written, ADR-0020 accepted, INV-23–26, specs Accepted, plans Ready. Rebased onto `bda997a` (another session's partial-issue-sync review fixes, already contained in the gate; tree identical). New dependency from that commit: 011·S4c before 015·S1. Not done, for the user: CLAUDE.md rule 2 doesn't mention the ADR-0022/0023 exceptions. |
+| 2026-11-12 | A | PLAN-010 S1 | p010-s1-domain | O | started | migration |
+| 2026-11-12 | B | PLAN-013 S1 | p013-s1-editor-schema | O | started | |
+| 2026-11-12 | C | PLAN-012 S1 | p012-s1-shortcuts | S | started | |
+| 2026-11-12 | C | PLAN-012 S1 | main | S | merged | `dc39e53`. Review: 0 blockers, 1 major (an unfalsifiable property test), 5 minor, 2 nits; all fixed, mutation-checked. `BUILD_MILESTONE` stays M0 until S7 raises it. For PLAN-010 S2/S3: settings-row keys go through the engine (`settings-row` scope) with `settings-row-keys.test.tsx`; for S4: the Esc step via `useCommand('ui:escape', …, { level: 'page', when })`; for S6: fill `PROPERTY_COMMANDS` (section and refs required). |
+| 2026-11-12 | C | PLAN-012 S2 | p012-s2-ui | S | started | |
+| 2026-11-12 | D | PLAN-014 S1 | p014-s1-files-schema | O | started | migration |
