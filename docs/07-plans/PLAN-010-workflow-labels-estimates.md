@@ -1,6 +1,6 @@
 # PLAN-010: Workflow statuses, labels & estimates
 
-Implements: [SPEC-010](../06-specs/SPEC-010-workflow-labels-estimates.md) · Status: **Draft** (waits for M1 acceptance, [README §7](README.md)) · Order: **S1–S4 start at once** (they need only M0); **S5 after PLAN-011 S4 and this plan's S2–S3**; **S6 after PLAN-011 S2** · Depends on: PLAN-011 S2 (archive on the wire) for S6, PLAN-011 S4 (issue operations) and S4b (`visibleGroups`, for `label.usage`) for S5, PLAN-011 S1 (`store.find`, repo `updateWhere`, chunked flush) for S5, PLAN-015 S1 (`teams.auto_close_status_id`) for the auto-close refusal, PLAN-012 S1 (shortcut engine, `settings-row` scope) for the key registrations, whichever merges first (see the keys note)
+Implements: [SPEC-010](../06-specs/SPEC-010-workflow-labels-estimates.md) · Status: **Ready** (M1 acceptance gate, 2026-11-12) · Order: **S1–S4 start at once** (they need only M0); **S5 after PLAN-011 S4 and this plan's S2–S3**; **S6 after PLAN-011 S2** · Depends on: PLAN-011 S2 (archive on the wire) for S6, PLAN-011 S4 (issue operations) and S4b (`visibleGroups`, for `label.usage`) for S5, PLAN-011 S1 (`store.find`, repo `updateWhere`, chunked flush) for S5, PLAN-015 S1 (`teams.auto_close_status_id`) for the auto-close refusal, PLAN-012 S1 (shortcut engine, `settings-row` scope) for the key registrations, whichever merges first (see the keys note)
 
 > **UI note:** screens use the `packages/ui` primitives that exist today: `Dialog`, `Menu`, `Toast`, `Switch`, `Input`, `Textarea`, `Badge`, `Tabs`, `EmptyState` and `ColorPicker` (the 12-hue swatch row for status and label colors). There is no `Select`, `List` or `Toggle` component: a choice among a few values (estimate scale, group type) is a native `<select>` styled with the design tokens, an on/off setting is a `Switch`, and the reorderable rows are a `role="listbox"` built in the feature (roving `tabindex`), not a shared component. The pickers in PLAN-012 S2 are not needed. Branches are `p010-sN-topic`, e.g. `p010-s2-statuses`.
 
@@ -57,7 +57,7 @@ Implements: [SPEC-010](../06-specs/SPEC-010-workflow-labels-estimates.md) · Sta
 
 ### S4: Estimates & default status · M (2 d)
 - **Operations** in `packages/operations/src/ops/team.ts` (existing file, two new operations): `team.setDefaultStatus` (`ui` "Set default status…", team context, `page` kind) and `team.setEstimates` (`ui` "Change estimate scale…", team context, `page` kind), as in SPEC-010 §6. `TeamSchema` already has the fields from S1. `team.update` stays unchanged.
-- **Handlers** `apps/server/src/handlers/teams/{set-default-status,set-estimates}.ts` (new). Both take the team row `FOR UPDATE`. `setDefaultStatus` re-reads the status `FOR KEY SHARE` and accepts only Backlog or Unstarted of the same team (E17). `setEstimates` requires at least one field and never reads an issue (Q8).
+- **Handlers** `apps/server/src/handlers/teams/{set-default-status,set-estimates}.ts` (new). Both take the team row `FOR UPDATE`. `setDefaultStatus` re-reads the status `FOR KEY SHARE` and accepts only Backlog or Unstarted of the same team (E17). `setEstimates` requires at least one field and never reads an issue (SPEC-010 D21).
 - **Optimistic:** `setDefaultStatus` patches `defaultStatusId` with the resolved id, never the ref text. `setEstimates` patches the given fields.
 - **Estimates page** `apps/web/src/features/estimates/` (new): `EstimatesScreen.tsx` (a native `<select>` for the scale and three `Switch`es, each change saves at once), `model.ts` (the scale labels with their value lists from `estimateValues`). Route `/settings/teams/:key/estimates`. Command entries in `features/estimates/commands.ts` (sub-pages listing the scales, and the team's Backlog and Unstarted statuses).
 - **Make default** menu item and the Default badge hookup added to the S2 row menu (`features/statuses/StatusRow.tsx`).
@@ -83,7 +83,7 @@ Implements: [SPEC-010](../06-specs/SPEC-010-workflow-labels-estimates.md) · Sta
   - the suite files above (AC-19, not held)
 
 ### S6: Label archive · S (1 d) · needs PLAN-011 S2
-- **Operations:** `label.archive` and `label.unarchive` in `ops/label.ts`; handlers `apps/server/src/handlers/labels/{archive,unarchive}.ts`. A group takes all its labels in one transaction, archived or not; unarchiving a group unarchives all (Q16). Archiving an archived label changes nothing.
+- **Operations:** `label.archive` and `label.unarchive` in `ops/label.ts`; handlers `apps/server/src/handlers/labels/{archive,unarchive}.ts`. A group takes all its labels in one transaction, archived or not; unarchiving a group unarchives all (SPEC-010 D26). Archiving an archived label changes nothing.
 - **Rules now enforced** in `label.create`, `label.update` and `label.moveToWorkspace`: no new label in, no move into, and no unarchive of a label in an archived group (E14, "The Size group is archived. Unarchive the group first."). An archived label can still be renamed and recolored. `label.list` returns archived labels with `includeArchived`.
 - **Add-path refusal** (E12, E13) is PLAN-011 S4's: `issue.create` and `issue.update` already refuse an archived label from `Label.archivedAt`. S6 adds no issue code; its tests archive a label through `label.archive` and check that the issue path refuses it.
 - **Optimistic:** archive and unarchive use `store.unarchive` and the readable `archivedAt` (PLAN-011 S1/S2), including `store.find('Label', { parentId })` for groups.
@@ -134,11 +134,15 @@ One migration (S1), adding three team columns, one label column and a collation 
 | AC-25 | `domain/src/label.test.ts` (`parseLabelInput`) (S1) + `web/test/labels-screen.test.tsx` (new group is single-select) (S3) |
 | AC-26 | `server/test/label-usage.test.ts` + `web/test/labels-usage.test.tsx` + `web/test/workflow-counts.test.tsx` (S5) + leak part in `label-leak.int.test.ts` (**not held**) + ⏸ held (integration) `server/test/label-usage.int.test.ts` (the SQL) |
 | E1 | `sync-client/test/status-label-delete-optimistic.test.ts` (S5) |
+| E2 | `server/test/status-handlers.test.ts` (S2: a new status takes a deleted one's name) + `server/test/label-handlers.test.ts` (S3: the same for a label) |
 | E3 | `server/test/status-handlers.test.ts` (lock order) (S2) + AC-19 run (S5) |
 | E4 | `server/test/status-handlers.test.ts` (S2) |
+| E5 | `domain/src/estimate.test.ts` (S1: off-scale values format as numbers) + `server/test/team-estimates-handlers.test.ts` (S4: no issue written) + `web/test/estimates-screen.test.tsx` (S4) |
+| E6 | `server/test/label-handlers.test.ts` (S3: moving into a group or switching to single reads no issue, as in AC-10) + `domain/src/label-write.test.ts` (S1: the next write removes the others) |
 | E7 | `server/test/label-leak.int.test.ts` (S5, **not held**) |
 | E8 | `server/test/status-delete-issues.test.ts` + `sync-client/test/status-label-delete-optimistic.test.ts` (S5) |
 | E9 | `server/test/label-handlers.test.ts` + `domain/src/refs.test.ts` (S3) |
+| E10 | Generic per-field last-writer-wins, covered by the sync property suite `tests/sync-sim/test/convergence.prop.test.ts` (M0); no new test |
 | E11 | `server/test/status-handlers.test.ts` (S2) |
 | E12, E13 | PLAN-011 S4 `server/test/issue-handlers.test.ts` (the refusal on the add path) + `server/test/label-archive-handlers.test.ts` (S6: archived through `label.archive`, then refused) |
 | E14, E15 | `server/test/label-archive-handlers.test.ts` (S6); E15 non-archive paths in S3 |

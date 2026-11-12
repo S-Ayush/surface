@@ -46,7 +46,7 @@ The command menu is Surface's **universal entry point**. Every action, navigatio
 
 ### 3.1 Query handling
 1. **Identifier fast path** (M1, with issues; noted 2026-11-07, PLAN-005 S6, see SPEC-005 §4.3): input that matches `^[A-Za-z]{2,5}-\d+$` (e.g. `eng-87`) puts **Open ENG-87** first. `Enter` opens it immediately.
-2. **Command matching:** fuzzy match on the title, keywords, and aliases (from the operation's `keywords`). Ranking = fuzzy score × context boost (×2 if the command applies to the current context) × frecency boost (recently and frequently used).
+2. **Command matching:** fuzzy match on the title, keywords, and aliases (from the operation's `keywords`). Ranking = fuzzy score × context boost (×2 if the command applies to the current context) × frecency boost (recently and frequently used). *Added (SPEC-012, SPEC-015):* a destructive command (Delete, and so on) never ranks first for a query it matches only by keyword, so typing a keyword and pressing `Enter` can't delete anything.
 3. **Search** (M2): runs in parallel against the local index, with debounced server full-text (150 ms, abortable). Results stream into their sections without reordering what the user is currently pointing at.
 
 ### 3.2 Nested pages
@@ -57,11 +57,16 @@ Commands that need a value open a **sub-page** in the same menu, using the share
 ### 3.3 Context rules
 | Context | Example suggested commands |
 |---|---|
-| One issue (focused or open) | Change status, priority, assignee, labels, estimate, project, cycle, copy ID or link, delete |
+| One issue (focused or open) | Change status, priority, assignee, labels, estimate, project, cycle, add reaction, copy ID or link, delete |
+| One archived or deleted issue | Restore issue, Copy ID, URL, title, title as link, issue as Markdown, git branch name. The editing commands are unavailable (`ui.available`, SPEC-012 §3.8, SPEC-015) |
+| One comment (focused) | Edit, Delete, Add reaction, Resolve or Reopen thread, Copy link, Copy as Markdown, New issue from comment (SPEC-013) |
+| One attachment (focused row) | Open, Download, Copy link, Rename attachment, Remove attachment (SPEC-014) |
 | Multiple selected issues | The same as above, applied in bulk ("Set priority for 3 issues…"), plus Clear selection |
 | Project page | Edit project, post update, add milestone, add issues |
 | Team page | Create issue in TEAM, go to cycles, team settings |
 | Nothing | Create issue, Create team, Go to…, Search |
+
+Navigation also gains **Go to archive** and **Go to recently deleted** (M1, SPEC-012 §3.8, SPEC-015). The context chip for an attachment reads "Attachment: design.pdf".
 
 ### 3.4 Execution
 - A selected command calls `dispatch(op, input)` (the same path as any UI control), then closes the menu and shows an Undo toast (M2) where an inverse exists.

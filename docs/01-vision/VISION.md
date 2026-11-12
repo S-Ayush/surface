@@ -6,7 +6,7 @@ Status: **Draft v0.3**  ·  Date: 2026-11-06  ·  Next: PRD (`02-product/PRD.md`
 
 ## 1. One-liner
 
-**Surface is a self-hosted issue and project tracker for small teams. It is faster than any SaaS tool because it is built for one organisation, on infrastructure that organisation owns, with the whole workspace held on every client.**
+**Surface is a self-hosted issue and project tracker for small teams. It is faster than any SaaS tool because it is built for one organisation, on infrastructure that organisation owns, with the workspace your work needs held on every client.**
 
 ## 2. The problem
 
@@ -30,7 +30,7 @@ Surface does not stop a team from growing. Our design choices simply assume a sm
 
 Speed is the product, and our constraints are what make it possible:
 
-1. **The whole workspace's metadata on every client.** A small team produces about 10⁴–10⁵ issues over years. Every client holds **all metadata** (issues, statuses, labels, cycles, projects, people…, roughly 6 MB compressed at 100k issues) in IndexedDB and memory. Every list, board, filter, and ID/title search is local, so there are **no network round-trips for those interactions**. Heavy content (descriptions, comments, history) is fetched once per issue, prefetched, and cached (ADR-0002).
+1. **Your workspace's metadata on every client.** A small team produces about 10⁴–10⁵ issues over years. Every client holds **all non-issue metadata** (statuses, labels, cycles, projects, people…) and **the live issues of your teams**, plus the issues assigned to you or created by you, in IndexedDB and memory. Other teams' issues load on demand, and archived and deleted issues are read from the server ([ADR-0020](../04-architecture/adr/0020-partial-issue-sync.md), like Linear). Every list, board, filter, and ID/title search over that replica is local, so there are **no network round-trips for those interactions**. Heavy content (descriptions, comments, history) is fetched once per issue, prefetched, and cached (ADR-0002).
 2. **One tenant, one server, close to the users.** No multi-tenant routing, sharding, or noisy neighbours.
 3. **Simple permissions.** Admin and Member roles, plus private teams. Fewer sync groups make sync cheaper and more predictable.
 4. **No commercial overhead in the hot path.** No billing checks, plan gating, usage metering, or third-party analytics scripts.
@@ -50,7 +50,7 @@ Speed is the product, and our constraints are what make it possible:
 
 - ❌ **No commercial version.** No billing, plans, seats, trials, licensing, or feature gating.
 - ❌ **No multi-tenancy.** One install = one workspace. No workspace switcher.
-- ❌ **No large-enterprise engineering.** We will not build partial *metadata* sync, sharding, or horizontal scaling ahead of a real need. (Lazy loading of heavy *content* is part of the design.)
+- ❌ **No large-enterprise engineering.** We will not build sharding or horizontal scaling ahead of a real need, and partial sync is limited to *issues* ([ADR-0020](../04-architecture/adr/0020-partial-issue-sync.md)): every other metadata model stays fully replicated. (Lazy loading of heavy *content* is part of the design.)
 - ❌ **No SSO, SAML, OIDC, or SCIM.** Login is email and password plus magic link.
 - ❌ **No guest accounts.** Everyone is a Member or an Admin.
 - ❌ **No sub-teams.** Teams are flat. **Private teams** are supported.
@@ -68,7 +68,7 @@ The conceptual model and the craft: **teams** (with their own key, workflow, cyc
 
 | # | Topic | Decision | Notes |
 |---|---|---|---|
-| D1 | **User cap** | None. Designed for small teams with no hard limit. | A full metadata replica is the design point (§4). |
+| D1 | **User cap** | None. Designed for small teams with no hard limit. | A metadata replica (with partial issue loading, ADR-0020) is the design point (§4). |
 | D2 | **Login** | **Email + password** and **magic link**, as in Linear. No SSO of any kind. | Magic link needs operator-configured SMTP (any free provider works). Without SMTP, Surface falls back to password-only login and admins share invite links. |
 | D3 | **Teams** | **Linear-style flat teams.** Each team has its own key (`ENG`), workflow statuses, cycles, labels, templates, triage, and members. Issues belong to exactly one team. | |
 | D4 | **Database** | **PostgreSQL**, bundled in `docker-compose.yml`. Any `DATABASE_URL` is accepted. | Free to self-host. It can also run on the free tier of a hosted Postgres service (e.g. Neon, Supabase). It provides transactions, `LISTEN/NOTIFY`, full-text search, and `pg_dump`. SQLite was considered and rejected for v1. |
@@ -106,7 +106,7 @@ The model sends **only JSON, never code**, so no sandbox is needed. Operations a
 
 These scope decisions update `METHODOLOGY.md`:
 
-- **ADR-0002 (sync):** a full *metadata* replica plus lazily loaded content. Sync groups = workspace + private team memberships.
+- **ADR-0002 (sync):** a *metadata* replica plus lazily loaded content. Sync groups = workspace + private team memberships. Its full-replica clause is superseded by **ADR-0020**: issues load partially (your teams up front, other issues on demand).
 - **ADR-0006 (database):** PostgreSQL.
 - **ADR-0007 (auth):** email + password (argon2id hashing) and magic link via SMTP. HTTP-only session cookie, rate limiting.
 - **ADR-0011 (operation registry):** every mutation and query is a typed operation (name, description, Zod/JSON schema, permission). This is designed in **M0** because the UI, the API, and MCP all depend on it.

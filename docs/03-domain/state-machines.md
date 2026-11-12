@@ -2,6 +2,8 @@
 
 Status: **Draft v0.1** · Date: 2026-11-06 · Related: [domain-model](domain-model.md), [events](events.md)
 
+*Changed 2026-11-12 (M1 acceptance gate, SPEC-011, SPEC-014 and SPEC-015 §12): §2 rewritten. Archive is automatic only, archived and deleted issues are read-only, restore is the one way back from both states, and "Trashed" is now "Deleted" (shown as Recently deleted).*
+
 Automated transitions (marked ⚙️) run **server-side** inside the same transaction as their trigger, or in the background job queue (pg-boss) for time-based rules. Every automated change is written to history with `actorKind = system`.
 
 ---
@@ -49,26 +51,33 @@ Cross-cutting rules ⚙️:
 
 ---
 
-## 2. Issue lifecycle (archive & trash)
+## 2. Issue lifecycle (archive & delete)
 
 ```mermaid
 stateDiagram-v2
   [*] --> Live
   Live --> Archived: ⚙️ closed for ≥ autoArchiveMonths
-  Archived --> Live: unarchive (manual) / any edit
-  Live --> Trashed: delete
-  Archived --> Trashed: delete
-  Trashed --> Live: restore (≤ 30 days)
-  Trashed --> Purged: ⚙️ 30 days elapsed / Admin purge now
+  Live --> Deleted: delete
+  Archived --> Deleted: delete
+  Archived --> Live: restore
+  Deleted --> Live: restore (now < deletedAt + 720 h)
+  Deleted --> Purged: ⚙️ 720 h elapsed / Admin purge
   Purged --> [*]
 ```
 
-- **Archived:** still in the replica and in search (flagged), hidden from default views. Its children (comments, attachments) are archived with it.
-- **Trashed:** hidden everywhere except Trash. Relations are kept so a restore is lossless. Sub-issues are **not** trashed with the parent; they lose their parent link on purge.
-- **Purged:** a hard delete. Comments, reactions, attachments, history, relations, labels, and subscriptions are cascade-deleted, file bytes are removed, and notifications pointing to it are deleted. A `delete` delta is broadcast. The issue number is **not** reused (INV-08).
-- **Auto-close** ⚙️ (optional): Live issues in Backlog, Unstarted, or Started that haven't been updated for ≥ `autoCloseMonths` move to Canceled, with a system comment.
+An issue is in exactly one state: **Live** (`archivedAt` and `deletedAt` null), **Archived** (`archivedAt` set, `deletedAt` null), **Deleted** (`deletedAt` set, whatever `archivedAt` is) or **Purged** (the row is gone). The rules are in SPEC-015 §4.
 
-Projects, documents, and initiatives follow the same Live → Trashed → Purged lifecycle. Projects and cycles also archive ⚙️ automatically after `autoArchiveMonths` once they are completed or canceled.
+- **Archived:** archive is **automatic only** ⚙️. A daily job archives Live issues in a Completed or Canceled category (Duplicate included) once `greatest(completedAt, canceledAt, updatedAt)` is `autoArchiveMonths` old (the team's setting: 1, 3, 6, 9 or 12 months, default 6). Nobody archives or unarchives an issue by hand, and no edit unarchives one. An archived issue is not held in the client replica ([ADR-0020](../04-architecture/adr/0020-partial-issue-sync.md)); it is shown on the team archive page, read from the server.
+- **Deleted** (shown as **Recently deleted**): hidden everywhere except the Recently deleted tab of the team archive page. `archivedAt` is kept until a restore. Relations are kept so a restore is lossless.
+- **Restore:** `Archived → Live` and `Deleted → Live` are both **restore** (`issue.restore`), which clears both states and sets `updatedAt` to now, so the archive job doesn't archive the issue again at once. A deleted issue can be restored while `now < deletedAt + 720 h` (30 × 24 h in UTC); from that moment it can only be purged, even if the purge job hasn't run yet.
+- **Read-only:** archived and deleted issues are read-only. Every direct edit by a person, an API key or MCP (fields, description, labels, comments, reactions, attachments) is `CONFLICT` until the issue is restored. Settings cascades (a label delete) and system jobs still write them and leave their state alone (SPEC-015 §4.3).
+- **Children follow their issue:** content, history, comments, reactions and attachments keep their own rows and states. They are not archived or deleted row by row; the client shows or hides them with their issue.
+- **Sub-issues:** deleting a parent deletes its sub-issues (M3; SPEC-015 §4.7).
+- **Purged:** a hard delete. Comments, reactions, attachments, history, content, relations and subscriptions are deleted, and notifications pointing to it are deleted. Every file row the issue owns is deleted, and its bytes are removed by `files-cleanup` after commit, only when no other file row uses them (SPEC-014 §4.5). The Issue and its Attachments each log a `D` delta; content rows log none (SPEC-015 §4.5). Purge writes no history entry. The issue number is **not** reused (INV-08).
+- **Auto-close** ⚙️ (optional, off by default): Live issues in Backlog, Unstarted, or Started that haven't been updated for ≥ `autoCloseMonths` move to the team's auto-close status (a Canceled status, `autoCloseStatusId`), with a history entry by the system actor ("Issue was automatically closed"), not a system comment. Comments, reactions and attachments don't move `updatedAt`, so they don't count as activity.
+- The three jobs (`auto-close`, `auto-archive`, `trash-purge`) run daily in UTC, as the system actor, one issue per transaction (SPEC-015 §6.3).
+
+Projects, documents, and initiatives follow the same Live → Deleted → Purged lifecycle. Projects and cycles also archive ⚙️ automatically after `autoArchiveMonths` once they are completed or canceled.
 
 ---
 

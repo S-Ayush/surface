@@ -62,7 +62,7 @@ export default handler(teamUpdate, async (ctx, input) => {
 |---|---|---|
 | `name` | ✓ | `^[a-z][a-zA-Z]*\.[a-z][a-zA-Z]*$`. Unique. Immutable once released (renaming = new op + deprecation). |
 | `kind` | ✓ | `query` must not write. Enforced by a read-only transaction. |
-| `domain` | ✓ | One of the domain list in [domain-model §7](../03-domain/domain-model.md#7-operations-catalogue-seed-for-the-operation-registry), or `debug` for internal test operations (`internal: true`, never callable in production) |
+| `domain` | ✓ | One of the domain list in [domain-model §7](../03-domain/domain-model.md#7-operations-catalogue-seed-for-the-operation-registry), or `debug` for internal test operations (`internal: true`, never callable in production). M1 adds `draft` (`draft.save`, `draft.discard`, SPEC-012 §4.3). |
 | `summary` | ✓ | ≤ 80 chars, imperative ("Update…", "List…") |
 | `description` | ✓ | ≤ 400 chars. Mentions accepted reference formats and side effects. |
 | `keywords` | ✓ | ≥ 2 natural-language phrasings a user or AI might use |
@@ -70,11 +70,13 @@ export default handler(teamUpdate, async (ctx, input) => {
 | `permission` | ✓ | A predicate over the resolved refs (§5) |
 | `destructive` | ✓ | `true` for deletes, purges, member removal, role changes, deactivation |
 | `examples` | ✓ (≥ 1) | Must validate against `input` and run against the seed fixture |
-| `ui` | mutations used in the UI | Title, icon, contexts, optional shortcut |
+| `ui` | mutations used in the UI | Title, icon, contexts, optional shortcut, and an optional `available(target, store)` predicate: the command applies only when it returns true for the command target and the client store (e.g. no edit command on an archived or deleted issue; "Restore issue" only on one). Added 2026-11-12 (SPEC-012, SPEC-015). Contexts are `UI_CONTEXTS` (`packages/operations/src/ui.ts`); M1 adds `comment` and `attachment` (SPEC-013, SPEC-014). An entry in any context other than `global` gives `refs` (for `comment`, `{ comment }`), as `checkOperationCommands` requires. |
 | `optimistic` | client-dispatched mutations | Pure function over the client store (§8) |
 | `inverse` | optional (M2) | Returns the op + input that undoes this call, given the pre-state |
 | `secretOutput` | optional | `{ replayMessage }` when the output holds a secret shown once, such as a link whose hash alone is stored (`invite.create`, `user.createResetLink`). The output is never stored for an idempotent replay; see "Idempotency" (§9) |
-| `internal` | optional | `true` hides the op from the API, the catalog, and MCP (e.g. `debug.touch`) |
+| `contentParent` | content mutations | `(input) => parentRef`: the content parent (an Issue) the mutation writes under. Client dispatch awaits that parent's hydration before running `optimistic` (sync-protocol §4.2 rule 7). Declared by `issue.updateDescription` and the comment and reaction operations (SPEC-013). Added 2026-11-12 (SPEC-011 §5.3). |
+| `internal` | optional | `true` hides the op from the API, the catalog, and MCP (e.g. `debug.touch`). Dev-only debug operations. |
+| `systemOnly` | optional | `true`: callable only by the system actor, in every environment. Hidden from the API, the catalog, OpenAPI, MCP and the command menu (no `ui`). Exempt from §11 rule 2's seed run and rule 4. Used by `attachment.setPreview`, `issue.autoArchive` and `issue.autoClose`, which jobs run. Added 2026-11-12 (SPEC-014, SPEC-015). |
 | `deprecated` | optional | `{ since, replacedBy }` |
 
 ## 4. Reference types & resolution
@@ -85,14 +87,16 @@ Inputs accept **human-friendly references**. The executor resolves them to rows 
 |---|---|---|
 | `TeamRef` | uuid · team key (`ENG`, case-insensitive) | Team |
 | `UserRef` | uuid · email · displayName · `"me"` | User (active only, unless `allowInactive`) |
-| `IssueRef` | uuid · identifier `ENG-123` (including **aliases** after team moves) | Issue |
+| `IssueRef` | uuid · identifier `ENG-123` (including **aliases** after team moves) | Issue. Narrowed by an API key's `teamIds` in SQL; an issue outside them is `NOT_FOUND` (2026-11-12, SPEC-011 §5.6) |
 | `StatusRef` | uuid · status name (scoped to the issue's or target team) | WorkflowStatus |
-| `LabelRef` | uuid · name (team label first, then workspace label) | Label |
+| `LabelRef` | uuid · name (team label first, then workspace label) · `Group/Label` (spaces around `/` ignored) | Label. A uuid resolves to any visible label, with or without a team scope. A team label's **name** needs the team; without it a name resolves among workspace labels only. A bare name that matches several labels is ambiguous, with candidates listed as `Group/Label` (2026-11-12, SPEC-010 §6) |
+| `CommentRef` | uuid only | Comment of an issue the actor can see; `NOT_FOUND` otherwise (2026-11-12, SPEC-013) |
+| `AttachmentRef` | uuid only | Attachment the actor can see (its issue is visible, after key narrowing) (2026-11-12, SPEC-014) |
 | `CycleRef` | uuid · number · `"current"` · `"next"` · `"previous"` (scoped to a team) | Cycle |
 | `ProjectRef`, `InitiativeRef`, `DocumentRef`, `ViewRef` | uuid · exact name (error if ambiguous) | entity |
 | `InviteRef` | uuid only (from `invite.list`) | Invite. Server-only (SPEC-001 §5): the client resolver answers `NOT_FOUND`, and `invite.*` are Admin-only (PLAN-001 S5) |
 | `SessionRef` | uuid only (from `session.list`) | Session: only the actor's own, unexpired. Server-only: the client resolver answers `NOT_FOUND` (PLAN-001 S6) |
-| `FileRef` | uuid only (from `POST /files/upload`) | File: one the actor uploaded, the actor's current avatar, or the workspace logo; anything else is `NOT_FOUND`. Server-only in M0 (SPEC-001 D12) |
+| `FileRef` | uuid only (from `POST /files/upload`) | File. Server-only. M0: one the actor uploaded, the actor's current avatar, or the workspace logo (SPEC-001 D12). From M1 (SPEC-014 §4.2): an unclaimed file resolves only for its uploader; a file owned by an issue resolves for whoever sees the issue, after key narrowing (no uploader exception); a detached file for nobody; avatars and logos as before. Anything else is `NOT_FOUND` |
 
 Resolver rules:
 - **Ambiguous** names → `INVALID_INPUT` with candidates (`"2 projects named 'Launch': …"`).
@@ -125,6 +129,7 @@ The executor enforces, in order: **key scope** (M6: read keys → queries only; 
 execute(opName, rawInput, actor, opts{fields?, clientMutationId?, clientId?, seq?})
  1. def = registry.get(opName)                     → UNKNOWN_OPERATION (+ nearest names)
  2. if def.internal && actor.kind ≠ "user"(dev)    → UNKNOWN_OPERATION
+    if def.systemOnly && actor.kind ≠ "system"     → UNKNOWN_OPERATION
  3. scope check (actor kind / key scope)           → FORBIDDEN
  4. rate limit (actor, kind)                       → RATE_LIMITED (+ retryAfter)
  5. input = def.input.parse(rawInput)              → INVALID_INPUT (+ issues[path,message,hint])
@@ -194,7 +199,7 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
   - `me` → the acting user's id. Without a user it is an error.
   - **Instants** take an ISO-8601 date-time with an explicit offset, or a signed duration from now using weeks, days, hours and minutes (`-P14D`, `-PT30M`, `P1W`). A day is exactly 24 hours. Months and years are rejected (their length varies). The result must fall within years 1–9999 (UTC).
   - **Days** take `YYYY-MM-DD`, or a whole-day duration from *today in the actor's time zone* (`-P7D` is a week ago, `P0D` today).
-  - Cycle-relative values (`current`, `next`, `previous`) arrive with cycles (M1).
+  - Cycle-relative values (`current`, `next`, `previous`) arrive with cycles (M3; corrected 2026-11-12, SPEC-011 §12).
 - **Instants compare at millisecond precision.** Synced tables store them as `timestamptz(3)`, so the replica holds exactly what the database compares.
 - Errors (unknown field, unsupported operator, bad value) are `INVALID_INPUT` with the path into the filter and the valid choices. A bad evaluation context (a malformed user id, an unknown time zone in settings) is an internal error, not the caller's.
 
@@ -202,8 +207,13 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
 
 - `optimistic(store, input)` runs in the client after local validation. It may read anything in the store (`store.get` by id or reference, `store.find(model, fields)` for the rows whose fields equal the given values, e.g. a membership by team and user) and write only through `store.patch / insert / archive / remove` on the overlay. Reads see base plus the pending mutations before this one.
 - *Changed 2026-11-12 (PLAN-001 S8 follow-up):* `store.find` added, so `team.leave` and `team.removeMember` can find the membership they end (SPEC-001 D6). Additive.
+- *Changed 2026-11-12 (M1 gate: SPEC-010, SPEC-011 §6.3, SPEC-015):*
+  - `store.find` returns its results **ordered by id**, so replays are deterministic. It matches fields by equality, so it can't select rows by array membership (such as the issues whose `labelIds` hold a label).
+  - `store.archive` also sets `archivedAt` to `store.now`; the new `store.unarchive(model, ref)` clears the archived flag and sets `archivedAt` to null. Archived state is readable: `store.get` and `store.find` return `archivedAt` like any field. No edit's `optimistic` predicts an unarchive; archived and deleted issues are read-only, and only restore unarchives.
+  - When a content parent's rows are paged into memory, the overlay is rebuilt, so pending mutations on those rows replay against them.
+  - An `optimistic` may **throw a refusal**: the operation is then not queued, and the user sees the message (e.g. `status.delete` while the store shows an issue on the status, SPEC-010 §6). When the store can't tell (it may not hold every issue), the prediction goes ahead and the server decides.
 - It must be **pure and deterministic** (no `Date.now()`; use `store.now`, which is fixed per mutation). It must not call the network.
-- Server-computed values (issue `number`, automation side effects) are not simulated. The UI shows placeholders until the delta arrives.
+- Server-computed values (issue `number`, `sortOrder`, automation side effects) are not simulated. The UI shows placeholders until the delta arrives. An optimistic `sortOrder` takes its jitter from the row id, never from `Math.random`, so every rebuild of the overlay gives the same key (SPEC-011 §6.2).
 - New entities use client-generated UUIDv7 IDs passed in `input.id`. The server accepts a client ID if it is unused and well-formed.
 
 ## 9. HTTP exposure
@@ -212,9 +222,9 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
 |---|---|---|
 | `POST /api/ops/:name` | Session cookie + CSRF header (M0). Bearer API key (M6). | Body: `{ input, fields?, clientMutationId? }`. Returns the executor result. |
 | `GET /api/ops` | Same | Catalog: name, kind, domain, summary, description, keywords, compact input/output schema, examples, destructive. Filtered by the actor's scope. |
-| `GET /api/openapi.json` | Public within the deployment (no data) | Generated OpenAPI 3.1, one path per non-internal operation |
+| `GET /api/openapi.json` | Public within the deployment (no data) | Generated OpenAPI 3.1, one path per operation that is neither internal nor `systemOnly` |
 
-**Error → HTTP status:** `INVALID_INPUT` 400 · `UNAUTHENTICATED` 401 (nobody signed in; SPEC-001 E14) · `UNKNOWN_OPERATION` 404 · `NOT_FOUND` 404 · `FORBIDDEN` 403 · `CONFLICT` 409 · `RATE_LIMITED` 429 (+ `Retry-After`) · `CLIENT_OUTDATED` 426 · `CSRF_INVALID` 403 (a cookie-authenticated request without its CSRF token; the client refreshes it and resends, SPEC-001 Q7) · `SETUP_REQUIRED` 503 (the workspace isn't set up yet; SPEC-001 Q5) · `INTERNAL` 500 (with a correlation ID; no stack traces).
+**Error → HTTP status:** `INVALID_INPUT` 400 · `UNAUTHENTICATED` 401 (nobody signed in; SPEC-001 E14) · `UNKNOWN_OPERATION` 404 · `NOT_FOUND` 404 · `FORBIDDEN` 403 · `CONFLICT` 409 · `RATE_LIMITED` 429 (+ `Retry-After`) · `CLIENT_OUTDATED` 426 · `CSRF_INVALID` 403 (a cookie-authenticated request without its CSRF token; the client refreshes it and resends, SPEC-001 Q7) · `SETUP_REQUIRED` 503 (the workspace isn't set up yet; SPEC-001 Q5) · `INSUFFICIENT_STORAGE` 507 (an upload would take the uploads volume below its free-space floor, SPEC-014 §4.6; added 2026-11-12, also in `ROUTE_ERROR_STATUS` and OpenAPI) · `INTERNAL` 500 (with a correlation ID; no stack traces).
 
 **Error body:**
 ```json
@@ -234,7 +244,7 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
 - M0 sets the limits in code (`tokenBucket()`); environment variables for them can follow when someone needs to change them.
 
 **Other HTTP behaviour:**
-- `GET /api/ops` returns `{ ok: true, result: { operations: [...] } }`: what the caller may run (no internal operations for API keys or in production; queries only for read keys; no destructive operations for keys without "allow destructive").
+- `GET /api/ops` returns `{ ok: true, result: { operations: [...] } }`: what the caller may run (no internal operations for API keys or in production; never `systemOnly` operations; queries only for read keys; no destructive operations for keys without "allow destructive").
 - While the server is starting (before `/readyz` is ready), the operation routes answer 503 `UNAVAILABLE` with `Retry-After: 5`, because migrations may still be running.
 - The request body is exactly `{ input, fields?, clientMutationId? }`; anything else is `INVALID_INPUT`.
 
@@ -256,10 +266,10 @@ Fails the build if any operation:
 8. has a *breaking* schema change versus the last released catalog snapshot (a removed field, a newly required field, or a narrowed type) without a `deprecated` replacement
 
 How the rules are applied (D2):
-- `pnpm registry:lint` prints the problems; a unit test runs the same lint, so `pnpm check` and CI fail on any. Rule 2's run against the seed fixture is a server contract test, and internal operations are exempt from it (their examples need test-only fixtures).
+- `pnpm registry:lint` prints the problems; a unit test runs the same lint, so `pnpm check` and CI fail on any. Rule 2's run against the seed fixture is a server contract test, and internal and `systemOnly` operations are exempt from it (their examples need test-only fixtures or the system actor).
 - Rules 1 and 7 also carry the definition-time checks of §3.1: a description over 400 characters is rule 1; the summary's capital letter, the domain and the kind are rule 7. The name's prefix need not equal `domain` (domain-model §7 files `reaction.toggle` under `comment`).
 - Rule 3: "used by the web client" means the mutation declares `ui` (§3.1).
-- Rule 4: any `uuid`-format string in an input outside a reference type. Exempt: the top-level `id` of a `create*` operation (a client-generated id, E7), and internal operations.
+- Rule 4: any `uuid`-format string in an input outside a reference type. Exempt: the top-level `id` of a `create*` operation (a client-generated id, E7), and internal and `systemOnly` operations.
 - Rule 5: verbs starting `delete`, `remove`, `purge` or `deactivate`. Role changes are flagged `destructive` by review, not by name.
 - Rule 6: verbs starting `list`. The operation is a query, its input carries every `listInput` field unchanged (same bounds and defaults, none required), and its output has the connection shape.
 - Rule 8: `packages/operations/catalog.snapshot.json` holds the public operations' compact schemas (type, required, enum, format) as last released; `pnpm registry:snapshot` rewrites it on release. Inputs break when a field is removed, newly required (unless under a new optional parent), or narrowed (a type, `null` or an enum value no longer accepted, or a format added). Outputs break when a field is removed, no longer always present, or widened (a new type or `null`, or an enum dropped); new enum values in outputs are additive. A changed `kind` breaks. A released operation may disappear only if the snapshot shows it deprecated and its replacement exists; a deprecation must point at a public operation.
@@ -307,3 +317,9 @@ How the rules are applied (D2):
 | Q7 | What is `OrderBy`? (added 2026-11-06, PLAN-003 S5) | One key, `{ field, direction }`, with id as the tie-break and nulls last. Views order by one field, with reverse (PRD FR-VIEW-04), and one key keeps cursors and indexes simple. A text sort key (such as a fractional manual order, M2) must compare bytewise (`COLLATE "C"`), so the client and the database agree. |
 | D1 | (2026-11-06, PLAN-003 S5) What do filters mean for missing values, case, time and sets? | §7.4: two-valued logic with negations including missing values; ICU full-Unicode case folding for `contains`; relative values resolved in shared code at millisecond precision; no text ordering. |
 | D2 | (2026-11-06, PLAN-003 S7) How are the §11 rules decided where the text leaves room? | As listed under §11: `ui` marks web mutations; raw uuids are allowed only as a create's own `id` and in internal ops; destructive and list rules go by verb prefix; rule 8 compares the public operations' schemas field by field (array items included, and input bounds, patterns and strictness), with new output enum values allowed. |
+
+### Changes after acceptance
+
+| Date | Change | Why |
+|---|---|---|
+| 2026-11-12 | **M1 acceptance gate.** §3.1: `ui.available(target, store)`; `UI_CONTEXTS` gain `comment` and `attachment`; new fields `contentParent` and `systemOnly`; the `draft` domain. §4: `IssueRef` narrows by key `teamIds`; `LabelRef` takes `Group/Label`, a uuid without a team, a team name only with its team; new `CommentRef` and `AttachmentRef`; `FileRef` follows issue ownership. §6: a `systemOnly` op called by anyone but the system actor is `UNKNOWN_OPERATION`. §7.4: cycle-relative values are M3. §8: `store.find` ordered by id, no array-membership lookup; `store.unarchive` and readable `archivedAt`; overlay rebuilt when content is paged in; `sortOrder` server-computed with id-based jitter; an `optimistic` may throw a refusal. §9: `INSUFFICIENT_STORAGE` → `507`; `systemOnly` ops are never listed. §11: `systemOnly` ops are exempt from rules 2 (seed run) and 4. | SPEC-010, SPEC-011, SPEC-012, SPEC-013, SPEC-014 and SPEC-015 §12, accepted at the M1 gate (2026-11-12). |

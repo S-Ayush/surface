@@ -135,12 +135,12 @@ Surface is a self-hosted, Docker-deployed, local-first issue and project tracker
 | FR-WF-01 | Fixed status **categories** in this order: Triage → Backlog → Unstarted → Started → Completed → Canceled, plus a system **Duplicate** status | v1 | Must | M1 |
 | FR-WF-02 | Default workflow for new teams: Backlog · Todo · In Progress · In Review · Done · Canceled (Duplicate is system-managed) | v1 | Must | M1 |
 | FR-WF-03 | Add, rename, recolor, describe, and reorder statuses *within* their category. Each category keeps at least one status. | v1 | Must | M1 |
-| FR-WF-04 | Deleting a status requires choosing a replacement for its issues | v1 | Must | M1 |
+| FR-WF-04 | A status can be deleted only when no issue uses it | v1 | Must | M1 |
 | FR-WF-05 | A default status for new issues (from Backlog or Unstarted) | v1 | Must | M1 |
-| FR-WF-06 | **Labels:** workspace-level and team-level, with name, color, and description. **Label groups** allow one label per group on an issue. | v1 | Must | M1 |
-| FR-WF-07 | Estimate scale per team: off / linear (1–5) / exponential (1, 2, 4, 8, 16) / fibonacci (1, 2, 3, 5, 8) / t-shirt (XS–XL). Defaults to off. | v1 | Must | M1 |
-| FR-WF-08 | Auto-close issues not updated in N months (optional, per team) | v1 | Could | M4 |
-| FR-WF-09 | Auto-archive completed and canceled issues after N months (default 6) | v1 | Should | M4 |
+| FR-WF-06 | **Labels:** workspace-level and team-level, with name, color, and description. **Label groups** are single-select by default (one label per group on an issue) and can be switched to multi-select. A team label can move to the workspace. | v1 | Must | M1 |
+| FR-WF-07 | Estimate scale per team: off / linear (1–5) / exponential (1, 2, 4, 8, 16) / fibonacci (1, 2, 3, 5, 8) / t-shirt (XS–XL). Defaults to off. Options: "Extended" (adds larger values), "Allow zero estimates", and "Count unestimated issues as 1 point". | v1 | Must | M1 |
+| FR-WF-08 | Auto-close issues not updated in N months (optional, per team) | v1 | Could | M1 |
+| FR-WF-09 | Auto-archive completed and canceled issues after N months (default 6) | v1 | Should | M1 |
 | FR-WF-10 | Parent/sub-issue status automation: the parent auto-completes when all its sub-issues are done (optional per team) | v1 | Should | M3 |
 
 ### 5.6 Issues: `FR-ISS` (M1)
@@ -149,16 +149,16 @@ Surface is a self-hosted, Docker-deployed, local-first issue and project tracker
 |---|---|---|---|---|
 | FR-ISS-01 | An issue belongs to exactly **one team**. Its ID is `KEY-N`, sequential per team and **never reused**. | v1 | Must | M1 |
 | FR-ISS-02 | Create from anywhere with `C` (modal composer). Title required. Description is rich text. Every property can be set inline. "Create more" keeps the composer open. | v1 | Must | M1 |
-| FR-ISS-03 | Properties: status, priority (None / Urgent / High / Medium / Low), assignee (one), labels, estimate, due date, project, project milestone, cycle, parent | v1 | Must | M1 |
-| FR-ISS-04 | Inline editing on the issue page and from list or board rows, with keyboard shortcuts for every property (`S` status, `P` priority, `A` assignee, `I` assign me, `L` labels, `E` estimate…) | v1 | Must | M1 |
+| FR-ISS-03 | Properties: status, priority (None / Urgent / High / Medium / Low), assignee (one), labels, estimate, due date, project, project milestone, cycle, parent. Project, milestone, cycle and parent arrive in M3. | v1 | Must | M1–M3 |
+| FR-ISS-04 | Inline editing on the issue page and from list or board rows, with keyboard shortcuts for every property (`S` status, `P` priority, `A` assignee, `I` assign me, `L` labels, `Shift+E` estimate…) | v1 | Must | M1 |
 | FR-ISS-05 | **Activity history**: every property change with actor and time. Changes made within 3 minutes of creation are folded into creation. | v1 | Must | M1 |
 | FR-ISS-06 | Attachments (upload, paste, drag) with a configurable size limit (default 25 MB). Image previews. | v1 | Must | M1 |
 | FR-ISS-07 | Links: paste a URL to attach it with a title | v1 | Should | M1 |
-| FR-ISS-08 | Copy issue ID, URL, or "ID + title" (`Cmd+.` and variants) | v1 | Must | M1 |
+| FR-ISS-08 | Copy issue ID, URL, title, title as link, or issue as Markdown (`Cmd+.` and variants) | v1 | Must | M1 |
 | FR-ISS-09 | Move an issue to another team: it gets a new ID, the old ID redirects, status maps to the closest status, and team labels are dropped (with a warning) | v1 | Should | M3 |
-| FR-ISS-10 | **Soft delete** to a Trash that can be restored for 30 days, then purged. Archived issues are searchable and can be restored. | v1 | Must | M1 |
-| FR-ISS-11 | Local unsaved draft that survives navigating away | v1 | Must | M1 |
-| FR-ISS-12 | Saved drafts synced across devices | v2 | — | — |
+| FR-ISS-10 | **Soft delete** to "Recently deleted": an issue can be restored for 30 days, then it is purged. Admins can delete permanently. Archive is automatic only (FR-WF-09). Archived issues are listed in the team's archive and can be restored; they become searchable with global search in M2. | v1 | Must | M1 |
+| FR-ISS-11 | Drafts saved on the server and synced to all devices, with a Drafts page | v1 | Must | M1 |
+| FR-ISS-12 | ~~Saved drafts synced across devices~~ Merged into FR-ISS-11 (M1, SPEC-012) | — | — | — |
 | FR-ISS-13 | Pre-filled create URL (`/new?team=ENG&title=…&priority=high&assignee=me`) | v1 | Could | M2 |
 | FR-ISS-14 | Description version history with restore | v2 | — | — |
 | FR-ISS-15 | Recurring issues | v2 | — | — |
@@ -168,7 +168,7 @@ Surface is a self-hosted, Docker-deployed, local-first issue and project tracker
 **Key acceptance criteria**
 - Creating an issue by keyboard (`C`, type a title, `Cmd+Enter`) takes under 2 s end to end, and the issue appears on teammates' screens within 150 ms on a LAN.
 - Issue IDs stay unique and gap-tolerant even when many clients create issues concurrently. The server assigns the number, and the client shows a temporary placeholder until it does.
-- Every property change can be undone with `Cmd+Z` (see FR-NAV-06).
+- Every property change can be undone with `Cmd+Z` (see FR-NAV-06). This arrives in M2 with FR-NAV-06. In M1, `Cmd+Z` restores only the last deleted issue.
 
 ### 5.7 Hierarchy & relations: `FR-REL` (M3)
 
@@ -205,7 +205,7 @@ Surface is a self-hosted, Docker-deployed, local-first issue and project tracker
 
 | ID | Requirement | Tier | Pri | M |
 |---|---|---|---|---|
-| FR-NAV-01 | **Sidebar**: Inbox, My Issues, Views, Projects, Initiatives, Favorites, Your teams (Triage / Issues / Cycles / Projects / Views), Trash | v1 | Must | M0–M2 |
+| FR-NAV-01 | **Sidebar**: Inbox, My Issues, Views, Projects, Initiatives, Favorites, Your teams (Triage / Issues / Cycles / Projects / Views / Archive, with Recently deleted inside it), Drafts | v1 | Must | M0–M2 |
 | FR-NAV-02 | **Command menu (`Cmd+K`)**: every action from the Operation Registry, aware of the current context (selected issues, current page) | v1 | Must | M0+ |
 | FR-NAV-03 | **Keyboard shortcuts** for navigation (`G I`, `G M`, `G T`, `G A`, `G B`, `J/K`…) and actions, plus a `?` help overlay listing all of them | v1 | Must | M1 |
 | FR-NAV-04 | **Global search** (`/` or `Cmd+K`) over issues (ID, title, description, comments), projects, documents, and people. Fuzzy and instant, run on the local replica. Can include archived items. | v1 | Must | M2 |
@@ -214,7 +214,7 @@ Surface is a self-hosted, Docker-deployed, local-first issue and project tracker
 | FR-NAV-07 | **Peek** an issue (`Space`) without leaving the list | v1 | Should | M2 |
 | FR-NAV-08 | **Favorites**: star issues, views, projects, cycles, and docs into the sidebar | v1 | Should | M2 |
 | FR-NAV-09 | Favorites folders | v2 | — | — |
-| FR-NAV-10 | **My Issues**: tabs for Assigned, Created, and Subscribed | v1 | Must | M2 |
+| FR-NAV-10 | **My Issues**: tabs for Assigned, Created, and Subscribed. Assigned and Created ship in M1. | v1 | Must | M1–M2 |
 | FR-NAV-11 | Context menu (right-click) on any item, mirroring the command menu | v1 | Should | M2 |
 
 ### 5.10 Cycles: `FR-CYC` (M3)
@@ -268,8 +268,8 @@ Surface is a self-hosted, Docker-deployed, local-first issue and project tracker
 
 | ID | Requirement | Tier | Pri | M |
 |---|---|---|---|---|
-| FR-COL-01 | **Comments** on issues: rich text, one level of threaded replies, edit and delete your own (marked as edited) | v1 | Must | M1 |
-| FR-COL-02 | **Reactions** (emoji) on comments | v1 | Should | M1 |
+| FR-COL-01 | **Comments** on issues: rich text, one level of threaded replies, edit and delete your own (marked as edited), and **resolvable threads** | v1 | Must | M1 |
+| FR-COL-02 | **Reactions** (emoji) on comments and on the issue | v1 | Should | M1 |
 | FR-COL-03 | **@mentions** of people. Inline references to issues (`ENG-123`), projects, and docs, rendered as live chips. | v1 | Must | M4 |
 | FR-COL-04 | **Rich editor** with Markdown shortcuts, slash commands, headings, lists, checklists, code blocks with syntax highlighting, quotes, images, and links | v1 | Must | M1 |
 | FR-COL-05 | Tables and collapsible sections in the editor | v2 | — | — |
@@ -339,7 +339,7 @@ Detailed design: [`04-architecture/mcp-design.md`](../04-architecture/mcp-design
 |---|---|---|---|---|
 | FR-ADM-01 | Workspace settings: name, logo, URL, signup policy, default team settings | v1 | Must | M7 |
 | FR-ADM-02 | **Audit log** (Admin): logins, failed logins, role changes, invites, member deactivation, team privacy changes, API key create/revoke, webhook changes, MCP mutations. Filterable, retained 1 year. | v1 | Must | M7 |
-| FR-ADM-03 | Trash: restore or permanently delete soft-deleted issues, projects, and docs (Admins can purge) | v1 | Must | M7 |
+| FR-ADM-03 | Recently deleted: restore or permanently delete soft-deleted issues (M1, SPEC-015), projects and docs (M7). Admins can purge | v1 | Must | M1, M7 |
 
 ### 5.19 Explicitly out of scope
 

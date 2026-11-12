@@ -2,6 +2,8 @@
 
 Status: **Draft v0.1** · Date: 2026-11-06 · Related: [domain-model](domain-model.md), [state-machines](state-machines.md)
 
+*Changed 2026-11-12 (M1 acceptance gate, SPEC-010, SPEC-013 and SPEC-015 §12): purge writes no history; `issue.archived` comes from the system job only and `issue.unarchived` is removed; comments write no history; new `comment.resolved` and `comment.reopened`; reactions come from `reaction.set`; settings cascades emit no `issue.updated`.*
+
 Every committed operation emits one or more **domain events**, inside the same DB transaction (an outbox table). One event stream feeds every consumer, so history, notifications, webhooks, and audit can never disagree.
 
 ```
@@ -35,13 +37,15 @@ Consumer legend: **H** History · **S** Subscriptions · **N** Notifications · 
 | ↳ priority → Urgent | priority change | ✓ | — | assignee | ✓ | — |
 | ↳ description mentions added | new @mention | ✓ | mentioned users | mentioned users | — | — |
 | `issue.moved_team` | Team move | ✓ | — | subscribers | ✓ | — |
-| `issue.deleted` / `issue.restored` / `issue.purged` | Trash lifecycle | ✓ | — | — | ✓ | purge only |
-| `issue.archived` / `issue.unarchived` | Archive lifecycle | ✓ | — | creator (on auto-archive) | ✓ | — |
+| `issue.deleted` / `issue.restored` | Delete (to Recently deleted) / restore from archived or deleted | ✓ | — | — | ✓ | — |
+| `issue.purged` | Permanent delete (Admin, or the `trash-purge` job) | — | — | — | ✓ | ✓ |
+| `issue.archived` | ⚙️ the auto-archive job only (`issue.autoArchive`) | ✓ | — | creator (M4) | ✓ | — |
 | `issue.triaged` | Accept / decline / duplicate | ✓ | — | creator | ✓ | — |
 | `relation.created` / `relation.deleted` | Relation change | ✓ (both issues) | — | assignee of the *blocked* issue (on `blocks`) | ✓ | — |
-| `comment.created` | New comment or reply | ✓ | commenter, mentioned | subscribers + mentioned (not the actor) | ✓ | — |
+| `comment.created` | New comment or reply | — | commenter, mentioned | subscribers + mentioned (not the actor) | ✓ | — |
 | `comment.updated` / `comment.deleted` | Edit / delete | — | newly mentioned | newly mentioned | ✓ | — |
-| `reaction.added` / `reaction.removed` | Reaction toggled | — | — | — (no notification in v1) | ✓ | — |
+| `comment.resolved` / `comment.reopened` | `comment.resolve` / `comment.reopen`, only when the thread's state changes | — | — | — | ✓ | — |
+| `reaction.added` / `reaction.removed` | `reaction.set`, only when the state changes. The payload names the issue and the comment, if any. | — | — | — (no notification in v1) | ✓ | — |
 | `attachment.created` / `attachment.deleted` | Attachment change | ✓ | — | — | ✓ | — |
 | `cycle.started` / `cycle.completed` | ⚙️ cycle job | — | — | — | ✓ | — |
 | `cycle.rolled_over` | ⚙️ an issue moved to the next cycle | ✓ | — | — | — | — |
@@ -64,3 +68,6 @@ Consumer legend: **H** History · **S** Subscriptions · **N** Notifications · 
 - **Visibility:** notifications and webhook payloads are filtered by the recipient's visibility ([permissions](permissions.md) §2).
 - **MCP / API mutations** are always audit-logged (`actorKind = mcp | api`) as well as written to history.
 - **Event names are a public contract** (webhooks), so renaming one requires a new ADR.
+- **Settings cascades emit no issue events.** A label delete that removes the label from issues emits no `issue.updated` and writes no history (SPEC-010 §4.2, SPEC-011 §4.9). Auto-close emits `issue.updated` like any status change.
+- **Comment and reaction payloads** carry ids and the actor, never the body. Comments write no history of their own (SPEC-013).
+- **No-ops emit nothing:** deleting a deleted issue, restoring a live one, resolving a resolved thread, or setting a reaction state that already holds.

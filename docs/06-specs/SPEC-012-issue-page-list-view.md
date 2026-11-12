@@ -1,6 +1,6 @@
 # SPEC-012: Issue page, composer & list view
 
-Status: **Draft** · Milestone: **M1** · Date: 2026-11-12 (revised after review, 2026-11-12)
+Status: **Accepted** (2026-11-12, M1 acceptance gate) · Milestone: **M1** · Date: 2026-11-12 (revised after review, 2026-11-12)
 Implements: FR-ISS-02 (composer), 04 (inline editing and property shortcuts), 08 (copy ID, URL, title, Markdown), 11 (drafts, now synced), 17 (git branch name) · FR-VIEW-02 (list layout; board is M2) · FR-NAV-01 (team Issues and Archive items, Drafts item), 02 (issue commands), 03 (M1 shortcuts) · the Assigned and Created tabs of FR-NAV-10 (brought forward, D5) · NFR-01, 04, 06, 08, 18, 19, 20
 Depends on: SPEC-011 (issues, content), SPEC-010 (statuses, labels, estimates), SPEC-005 (shell, command menu, shortcut engine), SPEC-013 (editor and comment area, hosted here), SPEC-014 (attachment area, hosted here), SPEC-015 (delete, restore, the team archive with Recently deleted, auto-archive: what the delete and restore controls do)
 Related: [design-system §3–§5](../05-design/design-system.md) · [shortcuts §2–§3](../05-design/shortcuts.md) · [command-menu §2–§3](../05-design/command-menu.md)
@@ -45,7 +45,7 @@ This spec also owns the **M1 shortcut map** (§3.6): every key that M1's specs b
 2. **Prefill from context:** the team of the current route (team list, team settings, an issue page), else the home team preference, else the first team the user is a member of, else the first team the user can see. A group header's `+` also sets that group's status. With a saved draft for that team, the draft is restored instead (§3.2).
 3. **No team to create in** (the user can see no team): the composer is not opened. A toast says "Create a team first. You can do it in Settings → Teams." with **Open settings**.
 4. The header shows the team as a chip ("ENG › New issue"). The chip opens a team picker; changing team keeps title and description, keeps workspace labels, and drops status, team labels, an estimate the new team's scale doesn't allow, and an assignee who isn't a member of the new team when it is private (SPEC-011: the assignee must be able to see the team), with an inline note naming what was dropped ("Dropped: status Todo, label Frontend, assignee Ada.").
-5. Fields: **title** (one line; `Enter` moves focus to the description), **description** (SPEC-013 editor), then a row of PropertyPills: status (shows the team's default), priority, assignee, labels, estimate (hidden while the team's scale is `off`), due date. Each pill opens its picker (§3.5). The composer has no single-letter property shortcuts, so typing never triggers one; pills are reached with `Tab` and opened with `Enter` or `Space` (Q5).
+5. Fields: **title** (one line; `Enter` moves focus to the description), **description** (SPEC-013 editor), then a row of PropertyPills: status (shows the team's default), priority, assignee, labels, estimate (hidden while the team's scale is `off`), due date. Each pill opens its picker (§3.5). The composer has no single-letter property shortcuts, so typing never triggers one; pills are reached with `Tab` and opened with `Enter` or `Space` (D13).
 6. `Mod+Enter` (the existing `dialog.submit` binding, shortcuts §3.8) or **Create issue** submits the form, which dispatches `issue.create` with a fresh UUIDv7. The composer closes (or stays, with "Create more"), focus returns to where it was, and a toast says "Created ENG-…" with **Open**; the toast text becomes "Created ENG-42" when the number arrives. A polite live region announces it.
 7. **Empty title:** the Create button is `aria-disabled` (not `disabled`, so it stays focusable and `dialog.submit` still reaches the form) with the tooltip "Add a title to create the issue". Submitting anyway shows the inline error "Title is required." on the title field and moves focus there.
 8. **Create more** (a Switch, remembered per device): after creating, the title and description clear, the properties stay, focus returns to the title.
@@ -66,10 +66,10 @@ Drafts are saved on the server and follow the user to every device (Linear does 
 
 ### 3.3 The issue list (`/team/:key/issues`)
 
-1. Reached from the sidebar (team ▸ **Issues**), `G` `E`, `Ctrl+Shift+1…9` (the n-th team in the sidebar, Q7), "Go to ENG issues" in `Mod+K`, and links.
+1. Reached from the sidebar (team ▸ **Issues**), `G` `E`, `Ctrl+Shift+1…9` (the n-th team in the sidebar, D15), "Go to ENG issues" in `Mod+K`, and links.
 2. The header shows the breadcrumb "ENG › Issues" and an issue count (the team's issues in the replica, which holds every live issue of a subscribed team). No view tabs, filter or display controls in M1.
-3. Issues are grouped by **status**, in workflow order (SPEC-010: category order, then position). Each GroupHeader shows the StatusIcon, name, count and a `+`. Groups with no issues are hidden. Completed and Canceled groups start collapsed (Q8). Collapse state is kept per team and device in `localStorage`.
-4. Within a group the order is fixed (Q9): priority (Urgent first, No priority last), then `updatedAt`, newest first, then identifier number, descending (a total order, so equal timestamps never swap). Live deltas re-sort without moving the focused row out from under the keyboard: a focused row that moves keeps focus and scrolls into view.
+3. Issues are grouped by **status**, in workflow order (SPEC-010: category order, then position). Each GroupHeader shows the StatusIcon, name, count and a `+`. Groups with no issues are hidden. Completed and Canceled groups start collapsed (D16). Collapse state is kept per team and device in `localStorage`.
+4. Within a group the order is fixed (D17): priority (Urgent first, No priority last), then `updatedAt`, newest first, then identifier number, descending (a total order, so equal timestamps never swap). Live deltas re-sort without moving the focused row out from under the keyboard: a focused row that moves keeps focus and scrolls into view.
 5. **Rows** (IssueRow, fixed columns in M1): priority · identifier · status · title · labels · estimate (when the team uses estimates) · due date · assignee · **created** (a short date, "Nov 6", with the year when it isn't this year; D2). Pills open their pickers on click. **Right-click** (or the row's context-menu key) opens the row menu, in this order: Status `S` · Priority `P` · Assignee `A` · Due date `Shift+D` · Labels `L` · Estimate `Shift+E` (when used) · Copy › (§3.7) · Delete `Mod+Backspace`. Later milestones add their items between Labels and Copy.
 6. Archived and deleted issues are not listed (SPEC-015); the replica doesn't hold them (SPEC-011 §5.7). When the team has archived issues, a footer line "N archived issues" links to the team archive (`/team/:key/archive`, SPEC-015). N comes from `issue.count` with `{team, includeArchived: true, filter: archivedAt is set}`, fetched when the list opens and on focus; the line is hidden offline and until the answer arrives. The sidebar has a team-level **Archive** item (`G` `X`) leading to SPEC-015's page, "Archived issues", whose second tab is "Recently deleted issues". Its rows are this spec's IssueRow; the date column shows the deletion day on that tab (§3.10). Pending issues (no number yet) show `ENG-…`.
 7. **Keys:** `J` / `↓` and `K` / `↑` move focus through rows and group headers. `Enter` opens the focused issue. `T` on a focused group header collapses or expands it (a click on the header does the same); `Alt+T` collapses or expands all groups. Property shortcuts (§3.6) act on the focused row.
@@ -81,11 +81,11 @@ Drafts are saved on the server and follow the user to every device (Linear does 
 
 Layout per [design-system §3](../05-design/design-system.md): a centred text column (max 760 px) and a 280 px properties panel.
 
-1. **Header:** breadcrumb "ENG › Issues › ENG-42 Title…" (team and Issues are links), buttons that copy the link, the ID and the git branch name (§3.7), the ⋯ menu (**Copy ›**, **Delete**, later milestones' items), and, when the page was opened from a list, the position "3 / 41" with ↓ and ↑ buttons (`J` / `K` on the page, Q6). Without a source list (a pasted link, `Mod+K`) the position is hidden (L15).
+1. **Header:** breadcrumb "ENG › Issues › ENG-42 Title…" (team and Issues are links), buttons that copy the link, the ID and the git branch name (§3.7), the ⋯ menu (**Copy ›**, **Delete**, later milestones' items), and, when the page was opened from a list, the position "3 / 41" with ↓ and ↑ buttons (`J` / `K` on the page, D14). Without a source list (a pasted link, `Mod+K`) the position is hidden (L15).
    **URL:** `/issue/ENG-42/<title-slug>`, built with SPEC-011's `issueSlug`. Any slug, or none, resolves to the issue, and the address is then replaced (`history.replaceState`) with the current slug. A title change replaces it again (D1).
 2. **Title:** EditableTitle. Click or `Shift+R` to edit; `Enter` or blur saves (`issue.update {title}`), `Esc` cancels.
 3. **Description:** SPEC-013's editor, editable in place. **Reactions** on the issue itself sit under the description (a row of reaction chips and an add button; SPEC-013 §3.4, D7). `Ctrl+Shift+I` focuses the description. It saves with `issue.updateDescription` on blur and after 2 s without typing, with the `baseVersion` it was loaded from. On `CONFLICT` (SPEC-011) the editor keeps the text and shows a banner: "Someone changed this description since you opened it. [Copy my text] [Discard and reload]". **Discard and reload** loads the replica's current description and version. Before the content is hydrated it shows a skeleton after 150 ms; offline and never hydrated, "Available when online".
-4. **Attachments** (SPEC-014) under the description, then **Activity**: history entries and comments (SPEC-013: reply, resolve, reactions, menu) in one chronological stream, oldest first, with the comment box at the end (SPEC-013 §7). History lines use SPEC-011's wording: "Ada moved from Todo to In Progress · 2h ago", "Ada self-assigned the issue", "Ada created the issue", "Ada deleted the issue", with the names stored in the entry and the full timestamp in a tooltip. An actor that is an API key or MCP shows "via API" or "via MCP". When there are more than 30 activity items, only the newest 30 show, below a "Show N earlier" button that reveals the rest from the cache (Q10).
+4. **Attachments** (SPEC-014) under the description, then **Activity**: history entries and comments (SPEC-013: reply, resolve, reactions, menu) in one chronological stream, oldest first, with the comment box at the end (SPEC-013 §7). History lines use SPEC-011's wording: "Ada moved from Todo to In Progress · 2h ago", "Ada self-assigned the issue", "Ada created the issue", "Ada deleted the issue", with the names stored in the entry and the full timestamp in a tooltip. An actor that is an API key or MCP shows "via API" or "via MCP". When there are more than 30 activity items, only the newest 30 show, below a "Show N earlier" button that reveals the rest from the cache (D18).
 5. **Properties panel:** status, priority, assignee, labels, estimate (shown while the team uses estimates or the issue has one; an off-scale value shows as its number with an "Off scale" hint), due date, then "Created by Ada · Nov 6" and "Updated 2h ago". Each row is a PropertyPill with its picker.
 6. **Pending issue:** opened at `/issue/<id>` (SPEC-011). When the number arrives the URL is replaced with `/issue/ENG-42/<title-slug>` (`history.replaceState`), focus and scroll unchanged.
 7. **Not found:** an identifier that the replica doesn't hold and that `issue.get` answers with `NOT_FOUND` (item 11) shows "ENG-99 doesn't exist, or you don't have access to it." with **Go to ENG issues** (or **Go home** for an unknown team key). The same wording for a private issue (no leak, SPEC-011). While the replica is still loading, the shell's progress shows instead (SPEC-005 §3).
@@ -148,9 +148,9 @@ Every M1 key of every M1 spec, in one table, so the conflict test (SPEC-005 AC-7
 | `#` | issue | Restore the focused issue; only on an archived or deleted issue | no | SPEC-015 |
 | `J` / `K` | issue-page | Next / previous issue of the source list | no | this spec |
 | `Mod+Enter` | issue-page | Save the description now | yes | this spec |
-| `Ctrl+M` | issue-page | Comment on issue: focus the comment box, saving the description first (macOS only, Q16) | yes | SPEC-013 |
-| `Ctrl+Shift+I` | issue-page | Focus the description (macOS only, Q16) | yes | this spec |
-| `Mod+Shift+U` | issue-page | Attach file | yes | SPEC-014 |
+| `Ctrl+M` | issue-page | Comment on issue: focus the comment box, saving the description first (macOS only, D21) | yes | SPEC-013 |
+| `Ctrl+Shift+I` | issue-page | Focus the description (macOS only, D21) | yes | this spec |
+| `Mod+Shift+U` | issue-page | Attach file. With focus in the description or a comment box, the chosen file is inserted inline at the cursor (SPEC-013 §3.5, SPEC-014 §3.3); anywhere else on the page it becomes an attachment (SPEC-014 §3.1). One binding, not an `editor` one | yes | SPEC-014 |
 | `Ctrl+L` | issue-page | Link any URL to the issue (macOS only: on Windows and Linux Ctrl+L is the address bar) | yes | SPEC-014 |
 | `R` | comment | Reply to the focused comment | no | SPEC-013 |
 | `Enter` · `Mod+Enter` | comment | Send the comment, reply or edit in this box (`Shift+Enter` is a new line; shadows `issue-page` `Mod+Enter`) | yes | SPEC-013 |
@@ -176,7 +176,7 @@ Existing keys that stay as they are (SPEC-005): `Mod+K`, `?`, `[`, `G` `S`, `Mod
 - `Enter` on a group header (`T` toggles it; design-system §5.3).
 - `Mod+Z` in a text field or the editor: it undoes text. Outside text, the global `Mod+Z` restores only the last issue you deleted, until M2's general undo takes the key over.
 - Permanent delete: no chord. It runs only from the row or page menu, in a confirm dialog (SPEC-015).
-- Linear's literal-Control keys on Windows and Linux (`Ctrl+L`, `Ctrl+M`, `Ctrl+Shift+I`), where the browser owns them (Q16). Their commands run from the ⋯ menu and `Mod+K`.
+- Linear's literal-Control keys on Windows and Linux (`Ctrl+L`, `Ctrl+M`, `Ctrl+Shift+I`), where the browser owns them (D21). Their commands run from the ⋯ menu and `Mod+K`.
 - Linear's `Mod+Shift+D` is also a browser key ("Bookmark all tabs"); the binding calls `preventDefault`, and "Remove due date" stays in `Mod+K` if the browser wins.
 - Keys Linear has for comments (`↑` / `↓` through comments, `E` to edit, `Mod+Backspace` to delete a comment): its panel doesn't list them, so Surface has none. Edit and delete run from the comment menu (SPEC-013).
 
@@ -203,7 +203,7 @@ The page header buttons copy the link, the ID and the git branch name. Everythin
 | Copy title | `Fix login redirect` | `Mod+Shift+'` | "Copied title" |
 | Copy title as link | `[Fix login redirect](<URL>)` (Markdown) | none | "Copied title as link" |
 | Copy issue as Markdown | `# ENG-42 Fix login redirect`, then the description as Markdown (SPEC-013), then the URL | `Mod+Alt+C` | "Copied ENG-42 as Markdown" |
-| Copy git branch name | `<displayName>/eng-42-<title-slug>` (Q11) | `Mod+Shift+.` | "Copied branch name" |
+| Copy git branch name | `<displayName>/eng-42-<title-slug>` (D19) | `Mod+Shift+.` | "Copied branch name" |
 
 The URL uses the page's own origin: the client never reads server configuration (CLAUDE.md rule 7), and the app is always served from its public URL. The slug is `issueSlug(title)` (§4.1); a title with no letters or digits gives no slug (`/issue/ENG-42`). For a pending issue (no number yet) the copy actions say "Wait a moment: ENG-… has no number yet." and copy nothing. The clipboard API needs a secure context; elsewhere a fallback copies through a hidden text area. Linear's "Copy ID and title" has no counterpart in its panel, so it is dropped (D3).
 
@@ -215,7 +215,7 @@ Commands come from SPEC-011's `ui` entries plus these client commands. Context r
 |---|---|
 | One issue (focused row or open page) | Change status…, Set priority…, Assign…, Assign to me, Labels…, Set estimate… (when used), Set due date…, Remove due date, Rename issue, Copy ID, Copy URL, Copy title, Copy title as link, Copy issue as Markdown, Copy git branch name, Delete issue |
 | One archived or deleted issue | Restore issue, Copy ID, Copy URL, Copy title, Copy title as link, Copy issue as Markdown, Copy git branch name (the editing commands are unavailable) |
-| Team page or team list | Create issue in ENG, Go to ENG issues, Go to ENG archive, Go to recently deleted issues, Team settings |
+| Team page or team list | Create issue in ENG, Go to ENG issues, Go to archived issues in ENG, Go to recently deleted issues in ENG, Team settings |
 | Nothing | Create issue…, Go to {team} issues (one per team), Go to My issues, Go to Drafts |
 
 - **Property commands.** Change status…, Set priority…, Assign…, Assign to me, Labels…, Set estimate…, Set due date… and Remove due date are **property commands**, a new command kind (SPEC-005 §4 change, §12). Each is defined in `apps/web/features/issues` next to its picker, dispatches `issue.update` with a partial input (e.g. `{issue, status}`), opens the §3.5 picker as a sub-page (Remove due date has none), and uses the same client permission pre-check as operation commands; `appliesTo` matches the target kinds `issue` and `issues`. They exist because a registry entry has one `ui` entry, and `issue.update` has none (SPEC-011 §6.1).
@@ -236,7 +236,7 @@ Commands come from SPEC-011's `ui` entries plus these client commands. Context r
 
 SPEC-015 owns what these pages do. This spec gives them the list machinery.
 
-1. `G` `X`, the sidebar's team **Archive** item and "Go to ENG archive" open `/team/:key/archive`, titled "Archived issues", with two tabs: **Issues** (archived) and **Recently deleted issues** (`/team/:key/archive/recently-deleted`, command "Go to recently deleted issues"). There is no workspace-level page of deleted issues (D6).
+1. `G` `X`, the sidebar's team **Archive** item and "Go to archived issues in ENG" open `/team/:key/archive`, titled "Archived issues", with two tabs: **Issues** (archived) and **Recently deleted issues** (`/team/:key/archive/recently-deleted`, command "Go to recently deleted issues in ENG"). The command titles are SPEC-015's (§7). There is no workspace-level page of deleted issues (D6).
 2. Rows are the IssueRow of §3.3, grouped by status, with the same focus model. They are read from the server, not the replica (SPEC-015 §3.3), so the page shows "Loading…" first and "Available when online" offline. On Recently deleted the date column shows the deletion day instead of the created date.
 3. The row menu has **Copy ›** and **Restore** (`#`). Nothing else edits these issues (§3.4 item 8). `Enter` opens the issue page.
 4. `#` restores the focused issue from either tab, or the open page. Restore is one command for both states (SPEC-015 decides the operation). After a restore the row leaves the list and focus moves to the next row (E2), with a toast "Restored ENG-42" and **Open**.
@@ -295,6 +295,7 @@ A synced model in the user's own sync group `user:<id>`, so only its owner ever 
 - **`draft.save`** `{kind, teamId | issueId, data}`: creates the draft or replaces the one with the same key (an upsert, so a retry is safe). When a user would then hold more than 50 comment drafts, the server deletes the oldest. Optimistic.
 - **`draft.discard`** `{kind, teamId | issueId}`: deletes it; deleting a missing draft succeeds.
 - Both are written only through the repo layer (rule 2) and respect no team permission: a draft is the owner's own data, and the owner needs no access to the team to hold or delete one. The server doesn't resolve `teamId` or `issueId` into anything visible, so a draft never reveals a private team's content to anyone else. The registry rules of SPEC-003 §11 apply (names, `optimistic`, input and output schemas).
+- **Table** `drafts`: partial unique indexes on `(user_id, team_id) where kind = 'composer'` and `(user_id, issue_id) where kind = 'comment'`, and a CHECK that a composer draft has `team_id` and no `issue_id`, and a comment draft the reverse. **No foreign keys** to `teams` or `issues`: a draft must not block a purge (SPEC-015 §4.5), and its insert must not reveal whether a team or issue exists. A draft whose issue is gone is hidden by the Drafts page (E18) and expires with the 30-day rule.
 - The client (`apps/web/src/features/issues/`, the draft adapter) reads `Draft` rows from the store and writes through `dispatch`. No new storage in `packages/sync-client`: there is no `drafts` object store.
 
 ### 4.4 Components (`packages/ui`) and features (`apps/web`)
@@ -458,19 +459,7 @@ Routes join the shell router (`apps/web/src/app/router.tsx`) under the session g
 
 ## 11. Open questions
 
-Each has a proposed default. Accepted ones move to the Decisions table with the date.
-
-| # | Question | Proposed default |
-|---|---|---|
-| Q5 | Property shortcuts inside the composer? | None as single letters (focus is usually in a text field). Pills are reachable with `Tab`; each picker opens with `Enter` or `Space`. |
-| Q6 | `J` / `K` on the issue page to step through the source list? | Yes, in the page scope `issue-page` (§3.6). |
-| Q7 | Where does `Ctrl+Shift+1…9` go (Linear: "go to team")? | To that team's issue list (its most-used page in M1). |
-| Q8 | Completed and Canceled groups collapsed by default? | Yes, per team and device; the user's toggle is remembered. |
-| Q9 | Fixed order within a group in M1? | Priority (Urgent → Low, then No priority), then most recently updated, then number. Manual order and other orders arrive with display options (M2). |
-| Q10 | Long activity streams? | Show the newest 30 items; "Show N earlier" reveals the rest from the cache. |
-| Q11 | Git branch name format? | `<displayName>/<identifier lowercased>-<title slug>`: ASCII-folded, lowercase, non-alphanumerics to `-`, collapsed, trimmed, at most 60 characters in total. No setting in M1. |
-| Q12 | Guard destructive commands in `Mod+K`? | Never rank them first for a query they match only by keyword; always run them from their own item; hide them where `ui.available` is false. Delete opens its confirm dialog (§3.11). |
-| Q16 | Linear binds `Ctrl+L`, `Ctrl+M`, `Ctrl+Shift+I` and `Ctrl+Shift+1…9` on every platform, but on Windows and Linux the first three belong to the browser (address bar, Firefox mute tab, DevTools). Bind them there? | No: macOS only (§3.6) for `Ctrl+L`, `Ctrl+M` and `Ctrl+Shift+I`; the commands stay in the ⋯ menu and `Mod+K`. Check by hand whether `preventDefault` wins on Windows and Linux; if it does, bind them there too. **`Ctrl+Shift+1…9` is the exception and is bound on every platform**: it is Linear's only key for going to a team, and no browser we know binds it (Chrome, Edge and Firefox use `Ctrl+1…9` for tabs, and Firefox on Linux uses `Alt+1…9`, which is why `Alt+1…9` was dropped). Not yet checked in each browser: verify by hand, and if a browser takes it, make it macOS only like the others. |
+None. The proposed defaults were accepted at the M1 gate on 2026-11-12 and moved to the Decisions table (D13–D21).
 
 ## Decisions
 
@@ -489,6 +478,15 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | D9 | Linear embeds YouTube, Loom and Figma links, shows external images and unfurls links. **Not copied**: they need outbound network calls (CLAUDE.md rule 5). | 2026-11-12 |
 | Q3 | Explicit sign-out deletes the user's local replica database (IndexedDB), scheduled in M1 (§3.12, PLAN-012 S7). Nothing deleted it before (no `deleteDatabase` in `apps/web` or `sync-client`), so issue data and drafts stayed on a shared device. A session expiry deletes nothing. User decision; changes SPEC-002 (§12). | 2026-11-12 |
 | D12 | Copy Linear, through partial issue loading (SPEC-011 §5.7, ADR-0020): member teams' lists and My issues stay local and offline; another public team's list subscribes on open ("Loading…", offline "Available when online"); an issue not held is read with `issue.get`, then its team is subscribed; archived and deleted issues and the archive tabs read from the server; "N archived issues" comes from `issue.count`; prefetch covers held issues only. | 2026-11-12 |
+| D13 (was Q5) | The composer has no single-letter property shortcuts (focus is usually in a text field). Pills are reachable with `Tab`; each picker opens with `Enter` or `Space`. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D14 (was Q6) | `J` / `K` on the issue page step through the source list, in the page scope `issue-page` (§3.6). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D15 (was Q7) | `Ctrl+Shift+1…9` goes to that team's issue list (Linear's "go to team"; the team's most-used page in M1). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D16 (was Q8) | Completed and Canceled groups start collapsed, per team and device; the user's toggle is remembered. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D17 (was Q9) | Fixed order within a group in M1: priority (Urgent → Low, then No priority), then most recently updated, then number. Manual order and other orders arrive with display options (M2). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D18 (was Q10) | Long activity streams show the newest 30 items; "Show N earlier" reveals the rest from the cache. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D19 (was Q11) | Git branch names are `<displayName>/<identifier lowercased>-<title slug>`: ASCII-folded, lowercase, non-alphanumerics to `-`, collapsed, trimmed, at most 60 characters in total. No setting in M1. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D20 (was Q12) | Destructive commands in `Mod+K` never rank first for a query they match only by keyword, always run from their own item, and are hidden where `ui.available` is false. Delete opens its confirm dialog (§3.11). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D21 (was Q16) | Linear binds `Ctrl+L`, `Ctrl+M`, `Ctrl+Shift+I` and `Ctrl+Shift+1…9` on every platform. Surface binds `Ctrl+L`, `Ctrl+M` and `Ctrl+Shift+I` on macOS only, because on Windows and Linux the browser owns them (address bar, Firefox mute tab, DevTools); the commands stay in the ⋯ menu and `Mod+K`. `Ctrl+Shift+1…9` is bound on every platform: it is Linear's only key for going to a team, and no browser we know binds it (Chrome, Edge and Firefox use `Ctrl+1…9` for tabs; Firefox on Linux uses `Alt+1…9`). PLAN-012 S7 checks all of these by hand in Chrome, Edge and Firefox and records the result in its "As built" note. If `preventDefault` wins for a macOS-only key, it may be bound everywhere; if a browser takes `Ctrl+Shift+1…9`, it becomes macOS only. Either outcome is a dated change to this row. Accepted as proposed at the M1 gate. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -501,17 +499,18 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | SPEC-005 | §4 | Commands get `ui.available(target, store)` for context-dependent availability (shared with SPEC-015; SPEC-003 change below). | No |
 | SPEC-005 | §4 | Add a third command kind, **property commands**: defined in the web app next to a picker, each dispatches one operation with a partial input and a picker sub-page, with the operation's permission pre-check and `appliesTo` by target kind (§3.8). | No |
 | SPEC-003 | §3.1 `ui` entry | Add the optional `available(target, store)` predicate. | No |
-| SPEC-003 | operation catalogue | Add `draft.save` and `draft.discard` (§4.3). | No |
+| SPEC-003 | §3.1 (operation domains) | Add the `draft` domain with `draft.save` and `draft.discard` (§4.3). domain-model §7 lists the same ops. | No |
 | domain-model.md | entities | Add `Draft` (§4.3): owner `userId`, `kind`, `teamId` or `issueId`, `data`, `updatedAt`; unique per user and team (composer) and per user and issue (comment). | No |
 | sync-protocol.md / permissions.md | sync groups, leak checklist | `Draft` rows sync only in `user:<id>`. Leak checklist: another user's drafts never reach a replica. | No |
+| sync-protocol.md | §10, §11 | The `Draft` model joins the sync property suite (concurrent saves and discards converge); it changes the `schemaHash` (a new eager model), so connected clients re-bootstrap once. No protocol version bump. | No |
 | glossary.md | terms | Add **Draft** (synced, per user). Add **Recently deleted** for deleted issues (SPEC-015). | No |
 | shortcuts.md | §1 rule 2 | Add: "except bindings marked `whileTyping: false`, which never fire while typing". Add the literal `Ctrl` modifier and platform-limited bindings. | No |
 | shortcuts.md | §2 | Add the scopes `issue-page`, `comment`, `settings-row` (§3.6) and the new order. No `trash` or `archive` scope. | No |
-| shortcuts.md | §3 (all keys) | Rebuild to Linear's panel as in §3.6 of this spec: new or changed keys are `G` `D`, `G` `X`, `Ctrl+Shift+1…9` (was `Alt+1…9`), `Shift+E`, `Shift+R`, `Mod+Shift+D`, `Mod+Shift+,` (URL), `Mod+Shift+.` (branch), `Mod+Shift+'`, `Mod+Alt+C`, `#`, `Mod+Z` (last delete), `Alt+T`, `Ctrl+M`, `Ctrl+Shift+I`, `Ctrl+L`, `Mod+/`. `G` `M` and `T` move M2 → M1. `O` is dropped from "Open the focused issue". The reserved keys of §3.6 are marked reserved. `Mod+Backspace`: add "not while typing". `Mod+Enter` row moves to the `issue-page` scope. | No |
+| shortcuts.md | §3 (all keys) | Rebuild to Linear's panel as in §3.6 of this spec: new or changed keys are `G` `D`, `G` `X`, `Ctrl+Shift+1…9` (was `Alt+1…9`), `Shift+E`, `Shift+R`, `Mod+Shift+D`, `Mod+Shift+,` (URL), `Mod+Shift+.` (branch), `Mod+Shift+'`, `Mod+Alt+C`, `#`, `Mod+Z` (last delete), `Alt+T`, `Ctrl+M`, `Ctrl+Shift+I`, `Ctrl+L`, `Mod+/`. `G` `M` (My issues) and the `list`-scope `T` (collapse or expand the focused group) move M2 → M1; `G` `T` (triage) stays reserved for M4. `O` is dropped from "Open the focused issue". The reserved keys of §3.6 are marked reserved. `Mod+Backspace`: add "not while typing". `Mod+Enter` row moves to the `issue-page` scope. | No |
 | shortcuts.md | §3.7 | `Mod+U` underline is kept (SPEC-013 adds the mark). Editor keys follow §3.6. `Mod+Shift+7/8/9` are matched on `event.code`. | No |
 | command-menu.md | §3.1 Ranking | Destructive commands never rank first for a keyword-only match. | No |
-| command-menu.md | §3.3 Contexts | Add the "one archived or deleted issue" context of §3.8 and the Go to archive and recently deleted commands. | No |
-| design-system.md | §4 principle 5 and Destructive actions | Reversible deletes no longer run at once with an Undo toast: Delete opens a confirm dialog (§3.11). Only the last delete can be undone, with `Mod+Z`, until M2. | No |
+| command-menu.md | §3.3 Contexts | Add the "one archived or deleted issue" context of §3.8 and the commands "Go to archived issues in {team}" and "Go to recently deleted issues in {team}" (SPEC-015 §7). | No |
+| design-system.md | §4 principle 5 and Destructive actions | Issue delete no longer runs at once with an Undo toast: it opens a confirm dialog (§3.11), as Linear does, and only the last issue delete can be undone, with `Mod+Z`, until M2. Settings deletes also confirm (SPEC-010). Removing an attachment keeps the Undo toast and no dialog (SPEC-014 §3.5, D8). | No |
 | design-system.md | §5.1 Toast | Replace "Actions are reachable with `Mod+Z` for undo" with "Actions are reachable with `F8`; `Mod+Z` is the app's undo (M2)". | No |
 | design-system.md | §5.3 GroupHeader | "collapse (`T` on hover)" → "collapse (`T` when focused or hovered; click)". Date column of IssueRow: created date. | No |
 | PRD | FR-ISS-08 | Copy ID, URL, title, title as link, issue as Markdown (no "ID + title"). | No |

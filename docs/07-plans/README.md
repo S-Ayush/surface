@@ -1,7 +1,7 @@
 # Implementation Plans: Overview
 
 M0 (§1–§5): Status **Ready** · Date: 2026-11-06 · Milestone **M0 Foundations** · Specs: [06-specs](../06-specs/README.md) (all Accepted).
-M1 (§7): Status **Draft** · Date: 2026-11-12 · Milestone **M1 Core issues** · Specs: SPEC-010 to SPEC-015 (Draft). The testing hold (§6) applies to both.
+M1 (§7): Status **Ready** · Date: 2026-11-12 · Milestone **M1 Core issues** · Specs: SPEC-010 to SPEC-015 (Accepted 2026-11-12). Built by parallel agents: [sessions/m1-coordination.md](sessions/m1-coordination.md). The testing hold (§6) applies to both.
 
 ---
 
@@ -101,7 +101,7 @@ Exit (METHODOLOGY M1): **start dogfooding.** Surface's own backlog lives in Surf
 
 ### 7.1 Acceptance gate (before any M1 code)
 
-The M1 specs are Draft. Building starts after one docs PR that:
+**Done 2026-11-12** (branch `m1-gate`; ADR-0021 to ADR-0024 written, ADR-0020 accepted). Building starts after one docs PR that:
 - applies every row of each spec's "§12. Changes to accepted docs on acceptance" (PRD, METHODOLOGY, domain docs, glossary, events, sync-protocol, SPEC-002/003/005, design docs);
 - writes the ADRs the §12 tables name: one superseding ADR-0014 (files), purge without a `D` per content row (SPEC-015 Q2), the one-off document migration as a rule-2 exception (SPEC-013 D6), and any other §12 row marked "ADR: yes"; and moves [ADR-0020](../04-architecture/adr/0020-partial-issue-sync.md) (partial issue sync) from Proposed to Accepted;
 - records the user's decisions. The open questions the user owned were **decided on 2026-11-12** and are in each spec's Decisions table:
@@ -214,7 +214,7 @@ As §4. Branches are `p0NN-sN-topic` (e.g. `p011-s5-content`). The testing hold 
 
 ### 7.6 M1 exit checklist
 
-- [ ] Acceptance gate merged (§7.1).
+- [x] Acceptance gate merged (§7.1). _2026-11-12._
 - [ ] All ACs of SPEC-010 to SPEC-015 have passing tests, except those held under §6.
 - [ ] Sync property suite green on main with issues, content models, archive and restore in the generator.
 - [ ] Private-team leak suite covers every new model, `/sync/content`, `GET /files/:id` and every new read operation.

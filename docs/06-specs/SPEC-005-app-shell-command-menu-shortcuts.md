@@ -35,11 +35,14 @@ Search sources and recent items in the command menu (M2) · Peek panel (M2) · l
 |---|---|
 | `/setup`, `/login`, `/login/check-email`, `/login/magic`, `/forgot`, `/reset`, `/invite/:token` | Public (SPEC-001). Rendered without the shell. |
 | `/` | Redirects to the user's home preference (default: My issues) |
-| `/my-issues` | My issues (empty state in M0) |
+| `/my-issues`, `/my-issues/created` | My issues, Assigned and Created tabs (empty state in M0; live in M1, SPEC-012) |
+| `/drafts` | Drafts (live in M1, SPEC-012) |
 | `/team/:key` | Team home (placeholder) |
-| `/team/:key/issues`, `/team/:key/active`, `/team/:key/backlog` | Reserved for M1/M2 |
-| `/issue/:identifier` | Reserved for M1. Old identifiers redirect. |
-| `/settings/...` | Settings (account, members, workspace, teams), with the sub-routes of SPEC-001 §7. `/settings` and `/settings/account` open `/settings/account/profile`. |
+| `/team/:key/issues` | The team's issue list (live in M1, SPEC-012) |
+| `/team/:key/active`, `/team/:key/backlog` | Reserved for M2 |
+| `/team/:key/archive`, `/team/:key/archive/recently-deleted` | Team archive and Recently deleted (live in M1, SPEC-015) |
+| `/issue/:identifier/:slug?` | The issue page (live in M1, SPEC-011, SPEC-012). The slug is optional and cosmetic: the app replaces it with the current one (SPEC-011 §4.1, D6). Old identifiers redirect. |
+| `/settings/...` | Settings (account, members, workspace, teams), with the sub-routes of SPEC-001 §7. `/settings` and `/settings/account` open `/settings/account/profile`. M1 adds `/settings/teams/:key/workflow`, `/settings/teams/:key/labels`, `/settings/teams/:key/estimates` and `/settings/labels` (SPEC-010), and `/settings/teams/:key/automations` (SPEC-015). |
 | `*` | Not found page with a "Go home" action |
 
 **Guards:** setup incomplete → `/setup`. Unauthenticated → `/login?next=…`. Store not ready → shell with a bootstrap progress bar (SPEC-002 §7). Admin-only routes for Members → not-found (don't reveal they exist).
@@ -69,8 +72,9 @@ type Command = {
 ```
 - **Operation commands** are generated from registry entries with `ui` metadata, except `internal` and `deprecated` ones. `when` combines the `ui.contexts` match with a client-side permission pre-check (the same predicate helpers, bound to the actor; a predicate that throws because it needs the operation's input does not hide the command, as the server decides). `appliesTo` is the `ui.contexts` match on the target.
 - **Navigation commands** are generated from the route table plus the live store (one "Go to {team}" per team).
-- `CommandContext` = `{ route, target, actor, store, navigate?, teams }`, maintained by the shell (§6). `target` merges the focused entity and the selection: `{ kind: "global" }` or `{ kind: "team" | "issue" | "issues" | "project", ids, label }`, where `label` is the context chip text ("ENG", "3 selected issues"). Navigation commands are hidden while `navigate` is absent.
+- `CommandContext` = `{ route, target, actor, store, navigate?, teams }`, maintained by the shell (§6). `target` merges the focused entity and the selection: `{ kind: "global" }` or `{ kind: "team" | "issue" | "issues" | "project" | "comment" | "attachment", ids, label }`, where `label` is the context chip text ("ENG", "3 selected issues"). Navigation commands are hidden while `navigate` is absent.
 - Titles that depend on the context ("Set priority for 3 issues…") arrive with the commands that need them (M1); until then `title` is a string.
+- *Changed (SPEC-012, SPEC-013, SPEC-014, SPEC-015, M1 gate 2026-11-12):* the target kinds `comment` (set by a focused comment) and `attachment` (set by a focused attachment row) are added. Commands get `ui.available(target, store)` for context-dependent availability (for example, editing commands are unavailable for an archived or deleted issue); the command menu filters by it, and a disabled command makes its shortcut a no-op with a hint. A third command kind, **property commands**, is defined in the web app next to a picker: each dispatches one operation with a partial input and opens a picker sub-page, with the operation's permission pre-check and `appliesTo` by target kind (SPEC-012 §3.8).
 
 ### 4.2 Ranking
 `score = fuzzy(query, title + keywords) × (appliesToContext ? 2 : 1) × frecencyBoost`. Frecency is stored per user in `localStorage` (a convenience only). With an empty query: Suggested (context) first, then Navigation. Suggested holds the commands whose `appliesTo` is true: on a team page the team commands, with no target the global ones (AC-3). Section placement takes precedence over the score, and every command in Suggested has the ×2, so in M0 the boost changes no order; it is kept for the M2 search sections, where context results compete with search results (noted 2026-11-07, PLAN-005 S6).
@@ -81,14 +85,15 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 ## 5. Shortcut engine
 
 - **One global `keydown` listener** at the document level resolves bindings in this order: active overlay scope, then focused component scope, then page scope, then `global`.
-- **Input suppression:** when `event.target` is an input, textarea, contenteditable, or inside `[data-shortcuts="off"]`, only `Mod+…` and `Esc` bindings are considered.
+- **Input suppression:** when `event.target` is an input, textarea, contenteditable, or inside `[data-shortcuts="off"]`, only `Mod+…` and `Esc` bindings are considered. *Changed (SPEC-012 §4.2, M1 gate 2026-11-12):* each binding has `whileTyping` (default: `Mod` chords fire while typing, plain keys don't). Text-editing chords (`Mod+Backspace`, `Mod+Delete`, `Mod+Z`, `Mod+Shift+Z`, `Mod+A`/`C`/`X`/`V`, `Mod+←`/`→`/`↑`/`↓`) must set `whileTyping: false`, checked when the registry loads, so ⌘⌫ in a title can't delete an issue.
+- **Chords:** *added (SPEC-012 §4.2):* a literal `Ctrl` modifier next to `Mod` (the Control key on every platform), and an optional `platform` on a binding (for example `platform: 'mac'`; the registry and the `?` overlay show it only there). `shortcuts.md` has the M1 key map.
 - **Overlay capture** (added 2026-11-07, PLAN-005 S5): while an overlay is open (modal or picker scope), page scopes are inactive and `global` bindings follow the input-suppression rule (only `Mod+…` and `Esc`), so letters typed into a menu's type-ahead never start `G S`. Suppression and overlay capture apply to every key of a sequence. Component scopes inside the overlay (the editor in a dialog) stay active.
 - **Sequences:** a pending-sequence state with a 1 s timeout and a hint toast listing the possible continuations.
 - **Registry → help:** the `?` overlay is generated from the registry, grouped by `group`, filtered to bindings available in the current milestone build, and searchable.
 - **Bindings are commands:** each binding references a command id. The same `when` guard applies, and a disabled command makes its shortcut a no-op (with a subtle "not available here" hint).
 - **Platform display:** `Kbd` renders ⌘ ⌥ ⇧ on macOS, and Ctrl / Alt / Shift elsewhere.
 
-**M0 bindings:** `Mod+K`, `?`, `[`, `Mod+,`, `Alt+Shift+T`, `Esc`, `G S`, `O T`, plus picker and modal keys.
+**M0 bindings** (M1 adds its own in [shortcuts.md](../05-design/shortcuts.md) §3): `Mod+K`, `?`, `[`, `Mod+,`, `Alt+Shift+T`, `Esc`, `G S`, `O T`, plus picker and modal keys.
 
 ## 6. Shell state & focus management
 
@@ -121,8 +126,8 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
   Settings
 ```
 - Teams the user belongs to are listed in **live** sidebar order (reorderable by drag in M2). "Browse teams" is at the end of the section.
-- Each team expands to its pages. M0 shows only "Home"; more items appear as their milestones land.
-- **The avatar menu** offers Profile, Theme ▸, Keyboard shortcuts, and Log out.
+- Each team expands to its pages. M0 shows only "Home"; more items appear as their milestones land. *Changed (SPEC-012, SPEC-015, M1 gate 2026-11-12):* M1 adds the team items **Issues** and **Archive** (Recently deleted is inside Archive), and the workspace items **My issues** and **Drafts**. There is no workspace-level deleted-issues item.
+- **The avatar menu** offers Profile, Theme ▸, Keyboard shortcuts, and Log out. *Changed (SPEC-012 §3.12, M1 gate 2026-11-12):* Log out deletes the local replica and warns about unsent changes.
 - *As built (PLAN-005 S4, 2026-11-07):* the M0 sidebar has no logo, no `✎ New` button (issues arrive in M1) and a `[+]` that shows only while a feature implements `form:create-team` (the teams feature's dialog, PLAN-001 S8). Teams are sorted by name until drag reordering (M2). Search opens the command menu. Features plug in through `apps/web/src/features/hosts.ts`: `SHELL_HOSTS` (dialogs and their commands, mounted once while the shell is open) and `TEAM_MENU` (the team ⋯ menu, SPEC-001 §3.7, in the team page header). *Changed 2026-11-12 (PLAN-001 S6, session E's handoff):* the header shows the workspace logo before its name once one is uploaded (decorative, since the name follows; hidden if it can't load, as offline, where the app cache doesn't keep `/files/`), and the avatar menu shows the user's avatar (initials until it loads, and when it can't). Both try again when the app reconnects.
 
 ## 8. System banners
@@ -145,7 +150,7 @@ As specified in [command-menu.md](../05-design/command-menu.md) §3–4. The ide
 |---|---|---|
 | E1 | `Mod+K` pressed inside the editor with a text selection | The editor's "insert link" wins (editor scope, M1). Without a selection, the command menu opens. |
 | E2 | A single-letter shortcut while an IME composition is active | Ignored (`event.isComposing`) |
-| E3 | Non-US keyboard layouts (e.g. `?` needs Shift, AZERTY) | Bindings match on `event.key` (the produced character) for printable keys, and on `event.code` for `Mod+` letter combinations. Tested with AZERTY and QWERTZ. **Refined 2026-11-07 (PLAN-005 S5):** letters combined with `Ctrl` or `Alt` also match on `event.code` (Option changes `event.key` on macOS: `Alt+Shift+T` types "ˇ"); a plain letter falls back to `event.code` when the layout types a letter outside A–Z (Russian, or `é` from a dead key); for other characters Shift, Option and AltGr are part of typing them and are not compared, so a symbol binding is written as the character (`?`, never `Shift+/` or `Alt+[`), and `Mod+<symbol>` must be pressed without Option or AltGr. Also tested with a Russian layout. |
+| E3 | Non-US keyboard layouts (e.g. `?` needs Shift, AZERTY) | Bindings match on `event.key` (the produced character) for printable keys, and on `event.code` for `Mod+` letter combinations. Tested with AZERTY and QWERTZ. **Refined 2026-11-07 (PLAN-005 S5):** letters combined with `Ctrl` or `Alt` also match on `event.code` (Option changes `event.key` on macOS: `Alt+Shift+T` types "ˇ"); a plain letter falls back to `event.code` when the layout types a letter outside A–Z (Russian, or `é` from a dead key); for other characters Shift, Option and AltGr are part of typing them and are not compared, so a symbol binding is written as the character (`?`, never `Shift+/` or `Alt+[`), and `Mod+<symbol>` must be pressed without Option or AltGr. Also tested with a Russian layout. **Changed 2026-11-12 (SPEC-012 §4.2, M1 gate):** digits, every chord with `Alt`, and chords with `Shift` and a non-letter match on `event.code`; everything else, including `Mod+,` and `Mod+.`, keeps matching on `event.key`, and `event.key` matches are tried before `event.code` matches. Plain symbols (`#`, `?`, `[`) match on `event.key`. The AZERTY test for `Mod+,` stays. |
 | E4 | A command's permission changes while the menu is open (role change via delta) | `when` re-evaluates reactively, and the item disappears |
 | E5 | A team is deleted or the user leaves it while viewing it | Redirect to home with a toast "You no longer have access to ENG". *As built (S4):* this happens when the team disappears from the replica while its page is open: it was archived or deleted, or it is private and the user left. A public team the user leaves stays readable, so its page stays. A team key never visible to the user shows not-found. |
 | E6 | Very narrow viewport (< 768 px) | The sidebar becomes a drawer. The command menu is full-width. Shortcuts still work with a hardware keyboard. |

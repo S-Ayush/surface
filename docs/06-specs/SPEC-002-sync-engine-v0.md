@@ -28,11 +28,11 @@ Every Surface feature assumes data is **local, live, and offline-tolerant**. v0 
 **Out of scope (later)**
 | Item | Arrives in |
 |---|---|
-| Lazy **content** models (`/sync/content`, prefetch) | M1 (SPEC-011/013) |
+| Lazy **content** models (`/sync/content`, prefetch) | M1: delivered by SPEC-011 (IssueContent, IssueHistory, the `/sync/content` contract, hydration, cache) and SPEC-013 (Comment, Reaction) |
 | Undo / redo | M2 |
 | Presence messages | M4 |
-| `G` packets and partial bootstrap on group change | M7 (private teams) |
-| BroadcastChannel cross-tab notifications | M1 (an optimisation; each tab has its own socket in v0) |
+| `G` packets on a group change | M7 (private teams). The partial bootstrap itself arrives in M1, for team subscriptions (SPEC-011 §5.7, ADR-0020, sync-protocol v0.8) |
+| BroadcastChannel cross-tab notifications | Later (an optimisation, if measured; SPEC-011 Q16). Each tab keeps its own socket; the shared IDB with per-row versions keeps tabs consistent |
 
 ## 3. Flows
 
@@ -65,6 +65,14 @@ The mutation result has `status = error`. Remove it from the queue, recompute th
 - The socket closes or pings fail, so the state becomes `offline`. Mutations keep queueing (state `queued`).
 - Reconnect uses backoff from 0.5 s to 30 s with jitter, and retries immediately on the `online` event.
 - On reconnect: `since = lastSyncId` → catch-up, and the queue flushes as soon as the socket is open. A mutation is confirmed only once the replica reaches its commit (or its `ack` arrives), so sending during catch-up is safe.
+
+### 3.7 Sign-out
+*Changed 2026-11-12 (SPEC-012 Q3, §3.12).*
+- An **explicit sign-out** (Log out in the avatar menu) deletes the replica database `surface-<workspaceId>-<userId>`: its rows, hydration marks, team subscriptions and the mutation queue. The client calls `POST /auth/logout`, closes its socket, deletes the database and goes to the sign-in page.
+- When the queue isn't empty, Log out first warns: "N changes haven't been sent yet. Signing out discards them." (Cancel / Log out). Offline, that is the only way the queue can be non-empty, and Log out still deletes the database after the warning.
+- Other tabs close their database connection when they see the session end, so the delete isn't blocked.
+- A session that **expires or is revoked** deletes nothing: the next sign-in of the same user reuses the replica and sends the queue (E14 still keeps it from another user).
+- The next sign-in finds no database and cold-starts (§3.1).
 
 ## 4. Server design
 
@@ -163,6 +171,8 @@ packages/sync-client/
 packages/sync-react/    React hooks (useConnectionState, usePendingCount, …) and the inspector panel (ADR-0017)
 ```
 
+*Changed 2026-11-12 (SPEC-012 Q3):* the replica database is deleted on an explicit sign-out (§3.7); nothing else deletes it.
+
 ### 5.2 Base vs overlay
 - `base: Map<id, Row>` holds only server data. It is persisted to IDB.
 - `overlay` is computed by running the pending mutations' `optimistic()` against a **draft** of the touched rows.
@@ -259,6 +269,9 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | Q13 | (2026-11-07, PLAN-001 S9 security review M1 and its review; the fix chosen by the user) What does a connection do when its user's groups change, before `G` packets (M7)? | It gets `resync(groups)`, then nothing more, and the client bootstraps again with its current groups, which also drops the rows of a team it left. A connection's groups are read once, before the upgrade, so without this a member removed from a private team went on receiving its rows, and one removed while away kept them. The hub resyncs: **(a)** a connection whose user is named by a new membership row of a private team, live or in catch-up, whatever its groups (catching up across its own join, the replica lacks the team's earlier rows); **(b)** every connection in a private team's group when one of its memberships is deleted (a deleted row has no data, Q4, so the hub can't tell whose it was); **(c)** at connect, a connection for which a private team outside its groups lost a member after its `since`, up to the head (it may be the user, removed while the socket was closed: asleep, in backoff, during a deploy; the removal is invisible to their new groups). Membership changes are rare, so the cost is an occasional extra bootstrap for people who weren't affected; it grows with bootstrap size and is worth revisiting when issues make bootstraps heavy. |
 | D1 | (2026-11-06) Write e2e (Playwright), smoke and integration tests now? | No, by decision of the user, for faster development; they are added later. Tests that need a browser, a running stack or Postgres (`e2e`, `e2e perf`, `perf`, `smoke`, `manual / e2e`, `integration`) are **held**: no test is written for them yet, and the slice notes in "As built" whether the behaviour was checked by hand. Not held: unit and property tests (including the unit parts listed for held criteria), the sync property suite (SPEC-002 AC-2/AC-3) and private-team leak tests (SPEC-002 AC-11, `permissions.md` §5), which may use Postgres. Existing integration tests are kept. See [plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration). |
 | D2 | (2026-11-07, by decision of the user) Keep the test that asserts the sync-lock budget (`sync-lock.perf.int.test.ts`)? | No, it was removed. It failed in a full `pnpm test:int` while several sessions shared the machine (0–55 % of holds under 2 ms) and passed when run alone. The budget in §10 stands and is read from the server metric. |
+| D3 | (2026-11-12, M1 gate, SPEC-011 §5.5) How does archive state reach the client? | `archivedAt` is a synced field on models that archive, and the client derives `$archived` from it. `A` and `V` packets carry the full row (already in `sync_log.data`, Q4), sent through `clientRow` so groups are cut as in Q6; a `V` for a row the client doesn't hold inserts it. Restore emits `V`; no edit changes archived state. Sync-protocol v0.7. |
+| D4 | (2026-11-12, M1 gate, SPEC-015 Q2, the user's decision) Does purging an issue log a `D` for each content row? | No. Its eager rows (the Issue, its Attachments) log a `D` each; its content rows log none, and the client drops content whose Issue is absent after a batch (sync-protocol §4.2). A stated exception to architecture rule 2 ([ADR-0022](../04-architecture/adr/0022-purge-content-unlogged.md)); the per-row path stays in the code, off by default. |
+| D5 | (2026-11-12, M1 gate, SPEC-012 Q3, the user's decision) Is the local replica deleted on sign-out? | Yes, on an explicit sign-out, after a warning when changes are unsent; a session expiry or revoke keeps it (§3.7). |
 
 ### Changes after acceptance
 
@@ -280,3 +293,4 @@ Minimal: an **offline indicator** (top bar pill "Offline · N changes pending"),
 | 2026-11-12 | **E14** added: the client names its user on bootstrap, mutate and the socket, and the server refuses another session's user (`401`, or `4001` on the socket) before doing anything, and before the `clientId`-owner check; no `userId` gets `426`, or `resync(schema)` on the socket (§4.3, §4.4, §4.5). | A real-server repro (session D2): a tab's queue and socket carried on under whoever signed in next on the browser. With a `clientId` nobody had registered, the next user's cookie committed the first user's offline changes as the next user and opened a socket with the next user's deltas into the first user's replica (a leak, permissions.md §5). A registered `clientId` got `403` forever instead. Protocol side: [sync-protocol.md](../04-architecture/sync-protocol.md) v0.5. Approved by the user (2026-11-12), the `426` for old clients included. |
 | 2026-11-12 | **§3.5:** a rejection carries the server's `error.issues` when it sends them (sync-protocol v0.6), in the dispatch's outcome and in `onRejected`. | E's handoff (PLAN-001 S6 review finding 8): a form couldn't show a server refusal on the field it names, though `/api/ops` returns the issues. Additive; the server part is A's (built 2026-11-12, PLAN-001 S6 follow-up). |
 | 2026-11-12 | **§3.3, §3.5:** `dispatch` takes `options.reportRejection`; when it answers `false` at the rejection, the app's handler (the shell's toast) isn't called. The inspector still lists the rejection. | Approved by the user. PLAN-001 S8 known issue (C's handoff to D, PLAN-005 S7 follow-up): a refused "Create team" showed the shell's toast and the dialog's inline error. Forms that show the refusal themselves (create team, team General, profile, workspace name, avatar and logo) pass it while they wait. Additive. |
+| 2026-11-12 | **M1 acceptance gate.** **§2:** content models are delivered by SPEC-011 and SPEC-013; BroadcastChannel moves to "Later"; the partial bootstrap arrives in M1 for team subscriptions (ADR-0020), `G` packets stay M7. **§3.7** (new) and **§5.1:** an explicit sign-out deletes the replica database (D5). Decisions **D3** (archive state on the wire, full `A`/`V` rows) and **D4** (a purge logs no `D` for content rows). | SPEC-011 §12 (Q16, §5.5), SPEC-012 §12 (Q3), SPEC-015 §12 (Q2). Protocol side: [sync-protocol.md](../04-architecture/sync-protocol.md) v0.7 and v0.8. Decided by the user (2026-11-12). |

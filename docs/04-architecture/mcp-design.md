@@ -180,7 +180,7 @@ Because the model cannot chain or filter in code, **operations must be task-size
 
 - **Auth:** a personal API key (`Authorization: Bearer sfc_…`), created in Settings → API. The scope is **read** or **read-write**, and optionally limited to certain teams. (MCP OAuth may come *later*.)
 - **Same authorisation as the UI:** private-team data is invisible unless the key owner is a member. `search_operations` hides operations the key can never call; for example, a read key sees no mutations.
-- **Destructive operations** (`*.delete`, `team.archive`…) are blocked unless the key has the `allow-destructive` flag. Deletes are soft deletes that can be restored for 30 days.
+- **Destructive operations** (`*.delete`, `team.archive`…) are blocked unless the key has the `allow-destructive` flag. Deletes are soft deletes that can be restored for 30 days; `issue.purge` deletes permanently (Admin only, SPEC-015) and is destructive.
 - **Attribution:** every change made through MCP appears in issue history and the audit log as *"<user> via MCP (key name)"*.
 - **Rate limits** apply per key, on calls per minute and mutations per minute.
 - **Size limit:** responses are capped at about 24 KB, and a truncated response says how to narrow it (`fields`, `limit`, filters).

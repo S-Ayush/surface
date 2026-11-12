@@ -1,6 +1,6 @@
 # Surface: System Architecture
 
-Status: **Draft v0.1** · Date: 2026-11-06 · Inputs: [VISION](../01-vision/VISION.md), [PRD](../02-product/PRD.md), [domain](../03-domain/domain-model.md)
+Status: **Draft v0.2** · Date: 2026-11-12 (changes in §11) · Inputs: [VISION](../01-vision/VISION.md), [PRD](../02-product/PRD.md), [domain](../03-domain/domain-model.md)
 Companion docs: [`sync-protocol.md`](sync-protocol.md) · [`mcp-design.md`](mcp-design.md) · [`adr/`](adr/)
 
 ---
@@ -9,7 +9,7 @@ Companion docs: [`sync-protocol.md`](sync-protocol.md) · [`mcp-design.md`](mcp-
 
 Surface is a **local-first web app** with one **authoritative server**:
 
-- **The client** holds a replica of everything the user can see: all **metadata** eagerly, and heavy **content** (descriptions, comments, history, document bodies) loaded on demand and cached. The UI reads only from the in-memory store, so interactions never wait on the network.
+- **The client** holds a replica of what the user works on: all **metadata** eagerly, except issues, which load per team (the user's teams up front, other teams on demand, never archived or deleted ones; [ADR-0020](adr/0020-partial-issue-sync.md)), and heavy **content** (descriptions, comments, history, document bodies) loaded on demand and cached. The UI reads only from the in-memory store, so interactions never wait on the network.
 - **Every change is an operation** from the Operation Registry. The client applies it optimistically and sends it to the server. The server runs it authoritatively, commits it to Postgres with a global `lastSyncId`, and broadcasts the resulting row changes (**deltas**) over WebSocket to every client that can see them.
 - **One container plus Postgres** on a Linux VM. No other services are required.
 
@@ -62,9 +62,9 @@ flowchart LR
 | Web app | React 19 + Vite, TanStack Router, TanStack Virtual, Radix primitives, CSS Modules + CSS-variable tokens | [0004](adr/0004-web-stack.md) |
 | Rich text | TipTap (ProseMirror), stored as JSON | [0009](adr/0009-editor-tiptap.md) |
 | Search | Client: FlexSearch in a Web Worker. Server: Postgres FTS + `pg_trgm`. MCP operations: MiniSearch. | [0008](adr/0008-search.md) |
-| Background jobs | pg-boss (runs on Postgres) | [0010](adr/0010-jobs-pg-boss.md) |
+| Background jobs | pg-boss (runs on Postgres), hyphenated queue names | [0010](adr/0010-jobs-pg-boss.md), [0024](adr/0024-job-queues.md) |
 | Auth | Sessions in Postgres, argon2id, HTTP-only cookies, SMTP via Nodemailer | [0007](adr/0007-auth.md) |
-| Files | Local volume behind a `BlobStore` interface | [0014](adr/0014-file-storage.md) |
+| Files | Local volume behind a `BlobStore` interface, streaming, issue-owned, previews by a job | [0021](adr/0021-issue-files.md) (supersedes 0014) |
 | MCP | Two structured tools on the official MCP TypeScript SDK | [0012](adr/0012-mcp-shape.md) |
 | Packaging | One Docker image, `docker-compose.yml` (app + db), optional Caddy | [0013](adr/0013-deployment-docker.md) |
 | Logs / metrics | pino (JSON to stdout), optional Prometheus `/metrics` | 0013 |
@@ -105,7 +105,7 @@ surface/
 | **Operation executor** | Authenticate → scope check → resolve references → permission check → run handler in a DB transaction → append sync log and event outbox → commit |
 | **Sync hub** | One WebSocket per tab. Sends catch-up deltas, then live deltas filtered by the user's sync groups. Also relays ephemeral presence messages. |
 | **MCP endpoint** | `/mcp`: `search_operations` (MiniSearch over the registry) and `execute_operation` (calls the operation executor) |
-| **Job worker** | pg-boss queues: cycle transitions, rollover, notification fan-out, emails, webhooks, auto-archive and auto-close, trash purge, update reminders, backups, sync-log pruning |
+| **Job worker** | pg-boss queues ([ADR-0024](adr/0024-job-queues.md)): cycle transitions, rollover, notification fan-out, emails, webhooks, auto-archive and auto-close, trash purge, file previews, file clean-up and sweep, update reminders, backups, sync-log and idempotency pruning |
 | **Outbox consumers** | Turn domain events into history, notifications, webhooks, and audit entries ([events.md](../03-domain/events.md)) |
 
 `SURFACE_ROLE` = `all` (default) | `web` | `worker` allows the components to be split into separate containers later. A single process is the default.
@@ -117,7 +117,7 @@ surface/
 ### 5.1 Startup of a client
 1. The SPA loads (static, cacheable) and reads the IndexedDB metadata (`schemaHash`, `lastSyncId`). Pages come from the server first; when it can't answer, the service worker answers with the cached build ([ADR-0019](adr/0019-offline-app-cache.md), secure contexts only). The app then asks the server who is signed in, and opens the last session's replica if it can't answer ([ADR-0018](adr/0018-offline-start.md)).
 2. **Warm start:** the in-memory store hydrates from IndexedDB, the UI is interactive, and the WebSocket connects with `since=lastSyncId` to receive catch-up deltas.
-3. **Cold start** (no local data, or a schema mismatch): `GET /sync/bootstrap` streams all visible metadata as NDJSON into IndexedDB and memory progressively, then the WebSocket connects.
+3. **Cold start** (no local data, or a schema mismatch): `GET /sync/bootstrap` streams the metadata of the user's home groups (with the issues of the teams they are a member of) as NDJSON into IndexedDB and memory progressively, then the WebSocket connects and subscribes the client's other teams ([sync-protocol §6.1](sync-protocol.md#61-team-subscriptions-v08)).
 
 ### 5.2 A user changes an issue's priority
 ```mermaid
@@ -150,7 +150,10 @@ The cycle job runs hourly: complete, roll over, activate, generate (idempotent s
 
 ## 6. Data architecture
 
-- **Postgres tables** mirror the [domain model](../03-domain/domain-model.md). Every synced table has a `sync_groups text[]` column (GIN-indexed), maintained by the handlers.
+- **Postgres tables** mirror the [domain model](../03-domain/domain-model.md). Every synced table has a `sync_groups text[]` column (GIN-indexed), computed by the repo layer. Server-only tables (`files`, `blob_release`, `client_mutations`, search text) are never synced.
+- **Repo layer (architecture rule 2).** Only `apps/server/src/sync/repo.ts` writes synced tables, and it records a `sync_log` row for every row it writes, in the same transaction. Bulk writes use `repo.updateWhere` (with `touchUpdatedAt`) and `repo.deleteWhere`, which log one row per changed row, inserted in chunks of at most 5,000. The groups of an Issue and of its children come from the issue row the handler locked, not from a team-row read ([sync-protocol §7](sync-protocol.md#7-server-algorithm-executor), SPEC-011 §4.8). **Two stated exceptions**, and only these, write synced rows without a `sync_log` row each:
+  - purging an issue deletes its content rows with no `D`; the Issue's own `D` and the client's "content of an absent Issue is dropped" rule remove them ([ADR-0022](adr/0022-purge-content-unlogged.md));
+  - a document schema migration rewrites stored documents (`issue_content`, `comments`) in the migration, which is safe only because the same release changes `schemaHash` and every client resyncs ([ADR-0023](adr/0023-document-migration-unlogged.md)).
 - **`sync_log`** holds `sync_id bigint PK`, `model`, `model_id`, `action`, `data jsonb`, `groups text[]`, `client_id`, `client_seq`, and `created_at`. It is the source of deltas. Its ordering guarantee is described in [sync-protocol §3](sync-protocol.md#3-server-ordering-lastsyncid).
 - **`event_outbox`** stores domain events consumed by pg-boss jobs.
 - **Server-side full-text:** `tsvector` columns on issues, comments, and documents, plus `pg_trgm` on identifiers and titles.
@@ -175,9 +178,9 @@ React components ──observe──► MobX object pool (models by id, computed
 
 - **Object pool:** typed model classes with observable fields and computed back-references (e.g. `team.issues`, `issue.children`).
 - **Secondary indexes** are maintained incrementally: by team, status, assignee, cycle, project, and label. Views evaluate filters against these indexes instead of scanning all issues.
-- **Lazy content** (descriptions, comments, history, doc bodies) is fetched per parent with `GET /sync/content` and cached in IDB. It is **prefetched** for issues the user is likely to open: assigned to them, in the current cycle, or hovered or visible in a list.
+- **Lazy content** (descriptions, comments, history, doc bodies) is fetched per parent with `GET /sync/content` and cached in IDB. It is **prefetched** for issues the user is likely to open, in subscribed teams only: assigned to them, hovered, or visible in a list (the current cycle joins in M3). Limits are in [sync-protocol §9](sync-protocol.md#9-limits--tuning-initial-values).
 - **Workers:** a dedicated worker writes to IndexedDB and another runs the search index, keeping the main thread free.
-- **Multiple tabs:** each tab has its own WebSocket and memory store, and all tabs share IndexedDB. A `BroadcastChannel` tells other tabs to reload changed rows. (A SharedWorker-based single connection is a possible later optimisation.)
+- **Multiple tabs:** each tab has its own WebSocket and memory store, and all tabs share IndexedDB; per-row versions keep them consistent. Content eviction uses Web Locks, so no tab loses an issue it has open. A `BroadcastChannel` that tells other tabs to reload changed rows, and a SharedWorker-based single connection, are later optimisations, if measured (SPEC-011 Q16).
 
 ---
 
@@ -188,7 +191,7 @@ React components ──observe──► MobX object pool (models by id, computed
 | **Authorisation** | Sync groups for visibility, plus the permission matrix in the executor ([permissions.md](../03-domain/permissions.md)) |
 | **Validation** | Zod at the edge, plus invariants inside DB transactions (FK, unique, check constraints, and handler checks) |
 | **Idempotency** | `(clientId, seq)` dedupe on `/sync/mutate`. `clientMutationId` on the API and MCP. Job steps keyed by entity and step. |
-| **Errors** | Typed codes: `INVALID_INPUT`, `NOT_FOUND`, `FORBIDDEN`, `CONFLICT`, `RATE_LIMITED`, `CLIENT_OUTDATED`, `INTERNAL` |
+| **Errors** | Typed codes: `INVALID_INPUT`, `NOT_FOUND`, `FORBIDDEN`, `CONFLICT`, `RATE_LIMITED`, `CLIENT_OUTDATED`, `INSUFFICIENT_STORAGE` (uploads, M1), `INTERNAL` (full list: SPEC-003 §9) |
 | **Rate limits** | Per IP on auth. Per session and per API key on mutations. |
 | **Security headers** | Strict CSP (no inline scripts except the theme bootstrap, allowed by its hash: SPEC-004 §15), HSTS behind the proxy, `X-Content-Type-Options: nosniff` on every response, SameSite=Lax cookies, CSRF token on cookie-auth POSTs |
 | **Observability** | Request and operation logs with duration and actor. Metrics: op latency, sync lag (commit → broadcast), WS connections, job queue depth, bootstrap size and time. |
@@ -224,3 +227,11 @@ React components ──observe──► MobX object pool (models by id, computed
 - **Upgrade:** bump the image tag, then `docker compose up -d`. Migrations run on start, guarded by an advisory lock.
 - **Backup:** a nightly job runs `pg_dump` plus a tar of the uploads into the `backups` volume (14 kept by default). **Restore:** `docker compose run app surface restore <file>`.
 - **Minimum VM:** 2 vCPU, 2 GB RAM, 20 GB disk (NFR-12).
+
+---
+
+## 11. Change log
+
+| Date | Change |
+|---|---|
+| 2026-11-12 | M1 acceptance gate. §1, §5.1, §7: issues load per subscribed team, and archived and deleted issues are not stored on the client ([ADR-0020](adr/0020-partial-issue-sync.md)); prefetch is per subscribed team, with no current cycle until M3. §6: the repo layer's rule (rule 2), its bulk writes, groups from the locked issue row, and its two stated exceptions ([ADR-0022](adr/0022-purge-content-unlogged.md) purge, [ADR-0023](adr/0023-document-migration-unlogged.md) document migrations). §7: BroadcastChannel is a later optimisation; content eviction uses Web Locks (SPEC-011 Q16). §2, §4: files follow [ADR-0021](adr/0021-issue-files.md), and queues [ADR-0024](adr/0024-job-queues.md). §8: `INSUFFICIENT_STORAGE`. |

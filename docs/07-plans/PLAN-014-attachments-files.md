@@ -1,6 +1,6 @@
 # PLAN-014: Attachments & files
 
-Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **Draft** (waits for M1 acceptance, [README §7](README.md)) · Order: **M1, parallel track** (S1–S3 start at once, S4a, S4b and S5 wait on the issue and editor plans) · Depends on: M0 (PLAN-001 S6 files, PLAN-003 executor, PLAN-004 jobs); S4a needs PLAN-011 S1, S3, S4b/S4c (child groups `team:<teamId>`, `visibleGroups`, the client's removal of an absent issue's children) and S6; S4b needs S4a and PLAN-013 S1; S5 needs PLAN-012 S4, PLAN-012 S1 and PLAN-013 S2. PLAN-015 S2 (purge) needs S3 of this plan.
+Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **Ready** (M1 acceptance gate, 2026-11-12) · Order: **M1, parallel track** (S1–S3 start at once, S4a, S4b and S5 wait on the issue and editor plans) · Depends on: M0 (PLAN-001 S6 files, PLAN-003 executor, PLAN-004 jobs); S4a needs PLAN-011 S1, S3, S4b/S4c (child groups `team:<teamId>`, `visibleGroups`, the client's removal of an absent issue's children) and S6; S4b needs S4a and PLAN-013 S1; S5 needs PLAN-012 S4, PLAN-012 S1 and PLAN-013 S2. PLAN-015 S2 (purge) needs S3 of this plan.
 
 > **Owns:** the file byte protocol, the `files` table changes, the file jobs and the `attachments` model. Branch per slice: `p014-sN-topic` (e.g. `p014-s3-byte-protocol`).
 >
@@ -48,7 +48,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
   - `apps/server/test/files-sniff.test.ts` (table): AC-2, E4.
   - `apps/server/test/files-names.test.ts` (table incl. U+202E, zero-width, path parts, 255 bytes with extension, undecodable): AC-4.
   - `apps/server/test/files-download.test.ts` (unit): headers, `sandbox` CSP, `nosniff`, RFC 6266 fallback, `?download=1`: AC-3.
-  - `apps/server/test/files-strip-location.test.ts` (unit, fixtures with GPS EXIF and XMP; decoded pixels compared; JPEG orientation kept): AC-13, E20.
+  - `apps/server/test/files-strip-location.test.ts` (unit, fixtures with GPS EXIF and XMP; decoded pixels compared; JPEG orientation kept; a truncated or malformed PNG, JPEG, GIF or WebP is refused with M0's `IMAGE_UNREADABLE_MESSAGE` and nothing is stored): AC-13, E20, E25.
 
 ### S3: Byte protocol, `files-cleanup`, `files-sweep` · M
 - **What:** the one protocol for every insert and delete of a `files` row (SPEC-014 §4.5), and the two jobs. Purge (PLAN-015 S2) calls the delete helper from here.
@@ -85,7 +85,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
   - Seed fixture: one uploaded file for `attachment.createFile`'s example (`FileRef` examples resolve against it).
   - `packages/sync-client`: the `Attachment` model in the store (generic; check `packages/sync-client/test` model registration tests). S4a calls PLAN-011 S4c's `registerIssueChild('Attachment', 'issueId')`, so the client drops an issue's Attachment rows once a batch leaves the Issue absent (archived, deleted, purged) or its team is unsubscribed (on the ack); `issue.restore` logs them again (PLAN-015 S1); optimistic functions from `packages/operations/src/ops/attachment.ts` using `lifecycleOf` (PLAN-015 S1 supplies the shared function; until then the guard uses the PLAN-011 `archivedAt` and `deletedAt` fields).
 - **Operations:** `attachment.createFile`, `.createLink`, `.update`, `.delete`, `.setPreview` (system).
-- **Client / optimistic:** per §6.2 "Optimistic": refuse an archived or deleted issue at once with the §6.4 message; `createFile` inserts from the upload answer; `createLink` uses `defaultLinkTitle`; `update` patches the title; `delete` removes the row.
+- **Client / optimistic:** per §6.2 "Optimistic": refuse at once, with the §6.4 message, an issue the store shows archived or deleted (only a change still in the overlay, since the store holds no archived or deleted issue); when the issue is absent from the store, predict no row and let the server's `CONFLICT` roll back; `createFile` inserts from the upload answer; `createLink` uses `defaultLinkTitle`; `update` patches the title; `delete` removes the row.
 - **UI:** none (S5). The command menu gets the `attachment` context entries in S5.
 - **Tests:**
   - `packages/domain/src/model/attachment.test.ts` (unit): title and URL rules, default titles, credentials and scheme refusals: AC-7 (link half), E11, E12.
@@ -93,7 +93,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
   - `apps/server/test/attachment-history.test.ts` (unit): added and removed entries, the 3-minute fold: AC-11.
   - `apps/server/test/files-visibility.test.ts` (extend): the issue branch, one case per remaining matrix row (AC-5 builder side).
   - `apps/server/test/attachment-purge-step.test.ts` (unit, fake repo): attachments get one `D` each, the issue's files go through `deleteFiles` and reach `blob_release` (SPEC-015 AC-4 and AC-5 for attachments).
-  - `packages/operations/src/ops/attachment.test.ts` (unit): `optimistic` equals the server row apart from server fields; `pnpm registry:lint` passes; `setPreview` absent from catalog, OpenAPI, MCP and menu, refused to non-system actors: AC-17, AC-18.
+  - `packages/operations/src/ops/attachment.test.ts` (unit): `optimistic` equals the server row apart from server fields; refuses an issue the store shows archived or deleted and predicts nothing for an issue absent from the store; `pnpm registry:lint` passes; `setPreview` absent from catalog, OpenAPI, MCP and menu, refused to non-system actors: AC-17, AC-18.
   - `sync-client/test/attachment-removal.test.ts` (unit): an `A`, a delete's `U`, a purge and an unsubscribe remove the issue's Attachment rows; a restore's `V` or `U` brings the issue back and the Attachment `U`s that `issue.restore` logs after it (PLAN-015 S1) bring the attachments back, with no refetch (SPEC-014 §4.1); the children go after the whole batch, so a `D`+`U` group-change pair keeps them.
   - `apps/server/test/attachment-leak.int.test.ts` (leak suite, Postgres): non-member gets no Attachment rows (bootstrap, catch-up, deltas); an assignee of a public team's issue who doesn't subscribe to the team gets none either, because Attachment rows are in `team:<teamId>` only; `NOT_FOUND` for every attachment operation like an unknown id, key `teamIds` narrowing: AC-6, E5, E17. Also extends the S1 matrix in `files-leak.int.test.ts` with the issue cells (private team, archived, deleted, preview of an invisible source).
   - The sync property suite gains `Attachment` (create, update, delete, preview update) in its generators: required, not held.
@@ -121,7 +121,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
   - `apps/web/src/features/attachments/` (new): `AttachmentsSection.tsx` (rows: thumbnail or type icon, title, size or host, creator, time; row menu Open, Download, Copy link, Rename, Remove), `useUpload.ts` (`XMLHttpRequest` or `fetch` with progress, Cancel, Retry; progress rows are page state, not store state; offline check shows "Uploads need a connection. Try again when you're back online."), `DropZone.tsx`, `LinkForm.tsx` (URL and optional title, client-side `parseAttachmentUrl`), `ImageViewer.tsx` (overlay, Esc closes, ←/→ between the issue's image attachments, focus trap and restore), `UndoToast.tsx` usage (8 seconds; Undo re-dispatches `attachment.createFile` on the same file or `attachment.createLink`).
   - `apps/web/src/features/attachments/paste.ts` (new): a page-level paste handler for a lone URL when focus is not in a text field (uses the engine's `isTypingTarget`, `apps/web/src/shortcuts/engine.ts`); files pasted outside the editor upload.
   - `apps/web/src/features/attachments/editor-upload.ts` (new): the function handed to the SPEC-013 editor: uploads with `purpose=inline`, returns `/files/<id>`; refuses offline.
-  - `apps/web/src/shortcuts/registry.ts` and `help.ts`: `Mod+Shift+U` "Attach file" (all platforms) and `Ctrl+L` "Link any URL to issue…" (literal Control, macOS only; no binding on Windows and Linux). If PLAN-012 S1 owns the key map, this slice adds the two entries to its table.
+  - `apps/web/src/shortcuts/registry.ts` and `help.ts`: `Mod+Shift+U` "Attach file" (all platforms, `issue-page` scope, fires while typing; with focus in the description or a comment box it hands the chosen file to that editor for an inline insert, SPEC-012 §3.6, SPEC-014 §3.1) and `Ctrl+L` "Link any URL to issue…" (literal Control, macOS only; no binding on Windows and Linux). If PLAN-012 S1 owns the key map, this slice adds the two entries to its table.
   - `apps/web/src/command-menu/context.ts`, `sources/operations.ts`: the `attachment` command target `{ kind: 'attachment', ids: [id], label: <title> }`, set when an attachment row has focus; entries from the operations' `ui` ("Attach file…", "Link any URL to issue…", "Rename attachment…", "Remove attachment"), with `refs` (`{ attachment }`) so `checkOperationCommands` passes. The `attachment` context chip text ("Attachment: design.pdf").
   - Docs updates in this slice (not code): the §12 rows for SPEC-005 §4.1, command-menu §3.3 and shortcuts §3.4 are done in the M1 acceptance PR; this slice only checks them.
   - A link is never fetched: no code path requests the URL; links open with `rel="noopener noreferrer"`.
@@ -131,7 +131,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
 - **Tests:**
   - `apps/web/test/attachments-section.test.tsx` (jsdom): rows, progress with Cancel and Retry, offline refusal toast, Undo toast re-creating a file and a link, rollback on rejection: AC-19 (unit parts), E1, E8.
   - `apps/web/test/attachments-paste.test.tsx` (jsdom paste handler): a lone URL outside text fields opens the filled form; inside the title, a comment or any input it goes into that field: AC-22, E23.
-  - `apps/web/test/attachments-shortcuts.test.ts` (engine with a platform flag): `Ctrl+L` on macOS only, `Mod+Shift+U` everywhere; a fake network that fails on any request proves a link is never fetched or unfurled: AC-23, D9, D10.
+  - `apps/web/test/attachments-shortcuts.test.ts` (engine with a platform flag): `Ctrl+L` on macOS only, `Mod+Shift+U` everywhere, inline insert when an editor has focus and an attachment otherwise; a fake network that fails on any request proves a link is never fetched or unfurled: AC-23, D9, D10.
   - `apps/web/test/command-operations.test.ts` extended: the `attachment` target and entries pass `checkOperationCommands`: AC-22.
   - `apps/web/test/image-viewer.test.tsx` (jsdom): Esc, arrows, focus trap and restore: AC-19 (unit part).
   - E2E (pick, paste, drop, preview, open, download, rename, remove, undo, by keyboard) ⏸ held: checked by hand at the end of the slice and at the M1 demo (PLAN-012 S7).
@@ -211,6 +211,7 @@ No data is moved. M0 file rows keep working: their `issue_id` is null and their 
 | E22 | `server/test/files-cleanup.test.ts` (S3) |
 | E23 | `web/test/attachments-paste.test.tsx` (S5) |
 | E24 | `server/test/attachment-claim.test.ts` (S4b) |
+| E25 | `server/test/files-strip-location.test.ts` (S2) |
 | Leak checklist (permissions §5) | `files-leak.int.test.ts` and `attachment-leak.int.test.ts`: bootstrap, catch-up, delta, operation inputs (`AttachmentRef`, `FileRef`), file download, `HEAD`, `If-None-Match`, a document reference, error bodies equal to unknown ids |
 
 ## 5. Risks & mitigations

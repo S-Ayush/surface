@@ -1,6 +1,6 @@
 # SPEC-013: Comments, reactions & rich editor
 
-Status: **Draft** · Milestone: **M1** · Date: 2026-11-12 (revised after review, 2026-11-12)
+Status: **Accepted** (2026-11-12, M1 acceptance gate) · Milestone: **M1** · Date: 2026-11-12 (revised after review, 2026-11-12)
 Implements: FR-COL-01, FR-COL-02, FR-COL-04 (resolve thread and issue reactions follow Linear, D7, D8) · ADR-0009 · NFR-06, 07, 08, 14, 16, 18, 19
 Depends on: SPEC-011 (issues, content models, `/sync/content`, description saves), SPEC-015 (lifecycle rules for archived and deleted issues), SPEC-014 (inline files, claiming), SPEC-012 (issue page, the `comment` shortcut scope, synced `Draft` rows), SPEC-003 (registry, optimistic store), SPEC-005 (shell, overlays, shortcut engine)
 Related: [domain-model §4.8](../03-domain/domain-model.md) · [events](../03-domain/events.md) · [permissions §3.3, §5](../03-domain/permissions.md) · [sync-protocol §2, §4.2](../04-architecture/sync-protocol.md) · [ADR-0009](../04-architecture/adr/0009-editor-tiptap.md) · [shortcuts §3.4, §3.7](../05-design/shortcuts.md) · Linear's key map (SPEC-012 §3.6)
@@ -28,7 +28,7 @@ An issue is where a team talks about the work, and today it has no conversation.
 - @mentions and issue, project or document chips (FR-COL-03, M4). The schema reserves no node for them; adding one is a schema change (§4.4).
 - Notifications, subscriptions and the Inbox (M4). Description merge UI and presence (FR-COL-10, M4). Documents (M4). Comments on project updates (M5).
 - System comments. Auto-close writes a history entry by the system actor, not a comment (SPEC-015 §4.8), so no M1 job posts one. `actorKind` gains `system`, with a nullable `userId`, in the spec that first posts one.
-- Comment edit history (Q3). Custom emoji (Linear has them; later). Tables (`|--`) and collapsible sections (`>>>`, `Mod+Shift+6`) in the editor: later, with FR-COL-05.
+- Comment edit history (D13). Custom emoji (Linear has them; later). Tables (`|--`) and collapsible sections (`>>>`, `Mod+Shift+6`) in the editor: later, with FR-COL-05.
 - Linear's embeds on paste (YouTube, Loom, Figma) and link unfurling: not copied, because they make the browser or server call a third party (rule 5, D9). "New sub-issue from comment" and "Unsubscribe from thread": M3 and M4.
 - Real-time co-editing (FR-COL-09, v2), link previews (never: rule 5, no outbound calls).
 
@@ -38,7 +38,7 @@ The issue page layout is SPEC-012's. This spec owns the comment parts of the act
 
 ### 3.1 Comment
 
-1. Below the activity timeline sits a "Leave a comment…" box. `Ctrl+M` on the issue page focuses it (macOS only; SPEC-012 §3.6 and Q16). `Enter` sends the comment and `Shift+Enter` starts a new line (§3.5 lists the exceptions). `Mod+Enter` also sends, anywhere in the box. A send button does the same.
+1. Below the activity timeline sits a "Leave a comment…" box. `Ctrl+M` on the issue page focuses it (macOS only; SPEC-012 §3.6 and D21). `Enter` sends the comment and `Shift+Enter` starts a new line (§3.5 lists the exceptions). `Mod+Enter` also sends, anywhere in the box. A send button does the same.
 2. The comment appears at once in the timeline with a pending marker until the server confirms. The box empties at once, and the issue's comment draft is discarded (`draft.discard`, SPEC-012). The sent text lives on in the queued `comment.create` until the server confirms. If the server rejects it, the pending comment is removed and a toast says why (NFR-08). The rejected text is saved back as the issue's comment draft (`draft.save`) if that draft is empty or gone (and shows in the box, if the issue is open). If the user has typed something new meanwhile, that draft is kept and the toast offers **Copy text** instead, so nothing typed is overwritten or lost, even if the user left the page (E21).
 3. An empty comment (no text, no image and no file after trimming) can't be sent: the send button is disabled.
 4. The comment box is shown only once the issue's content is hydrated (SPEC-011 §5.3). On the issue page that happens on open. Offline, on an issue whose content was never fetched, the activity area says "Comments are available when you're back online." and shows no box.
@@ -62,7 +62,7 @@ Hovering or focusing a comment shows **Reply**, **Add reaction** and an **option
 
 1. **Resolve thread** is in the root comment's options menu. In a reply's menu the same entry reads **Resolve thread** and resolves the whole thread, not the reply (the reply's menu has it so a reply that answers the question can close it). Anyone who can see the issue can resolve or reopen.
 2. A resolved thread collapses to one line: the first line of the root's text, "Resolved by Ada · 2h ago" and a **Reopen** button. A chevron expands it. An expanded resolved thread shows its replies and, under the last one, the reply box. Replying to a resolved thread leaves it resolved.
-3. **Reopen thread** clears the state. Resolving writes no history entry (Q16).
+3. **Reopen thread** clears the state. Resolving writes no history entry (D24).
 4. A deleted root with replies (placeholder) can still be resolved and reopened.
 
 ### 3.4 React
@@ -84,7 +84,7 @@ The same editor serves descriptions (SPEC-011 `issue.updateDescription`) and com
 | `Mod+Alt+1` … `4` | Heading 1–4 |
 | `Mod+Shift+7` · `Mod+Shift+8` · `Mod+Shift+9` | Checklist · bulleted list · numbered list (matched on `Digit7`…`9`) |
 | `Mod+Shift+\` | Code block |
-| `Mod+Shift+U` | Attach: opens the file chooser and inserts an inline file (SPEC-014) |
+| `Mod+Shift+U` | Attach: opens the file chooser and inserts the file inline at the cursor (SPEC-014 §3.3). This is the `issue-page` binding "Attach file" (SPEC-012 §3.6), not an editor binding: with focus in the description or a comment box it inserts inline, elsewhere on the page it adds an attachment. On the issue page only |
 | `Alt+↑` / `Alt+↓` | Move the current block up or down |
 | `Mod+Z` / `Mod+Shift+Z` | Undo / redo |
 | `Mod+Enter` | In a checklist item: toggles it. Anywhere else: not consumed, so it submits or saves (below) |
@@ -127,8 +127,8 @@ The same editor serves descriptions (SPEC-011 `issue.updateDescription`) and com
 | teamId | Team | The issue's team, copied at creation. Always equals the issue's `teamId`; moving an issue to another team (M3) rewrites it. Used for sync groups and API key `teamIds` filtering. |
 | parentCommentId | Comment? | A top-level comment of the same issue (INV-19). A reply's parent never has a parent. |
 | userId | User | The author. For `api` and `mcp`, the key's owner. |
-| actorKind | `user` \| `api` \| `mcp` | Shown as "via API" or "via MCP" next to the author (Q7) |
-| body | editor JSON | Valid against the schema (§4.4), at most 50 KB of JSON (Q4), not empty |
+| actorKind | `user` \| `api` \| `mcp` | Shown as "via API" or "via MCP" next to the author (D16) |
+| body | editor JSON | Valid against the schema (§4.4), at most 50 KB of JSON (D14), not empty |
 | version | int | Starts at 1, +1 on each body change. Used for conflict detection (§4.3, NFR-07). Resolving never changes it. |
 | editedAt | timestamptz? | Set by `comment.update` when the body changes |
 | deletedAt | timestamptz? | Set when a comment with replies is deleted (§4.3) |
@@ -154,7 +154,7 @@ A reaction is on a comment, or on the issue itself when `commentId` is empty (D8
 | emoji | string | Exactly one RGI emoji (§4.4 "Emoji") |
 | createdAt | timestamptz | |
 
-The id makes reactions unique per (subject, user, emoji). A comment, and the issue, each carry at most 20 distinct emoji (Q6).
+The id makes reactions unique per (subject, user, emoji). A comment, and the issue, each carry at most 20 distinct emoji (D15).
 
 ### 4.3 Writing comments and reactions
 
@@ -173,7 +173,7 @@ This serializes every write to one thread. Two last replies deleted at the same 
 |---|---|---|
 | `comment.create`, `comment.update`, `comment.delete`, `comment.resolve`, `comment.reopen`, `reaction.set` (on a comment or on the issue) | `CONFLICT`: "ENG-42 is archived. Restore it to edit it." | `CONFLICT`: "ENG-42 was deleted. Restore it to edit it." |
 
-Restoring the issue (SPEC-015) is the only way back. Comments write no history of their own (Q16).
+Restoring the issue (SPEC-015) is the only way back. Comments write no history of their own (D24).
 
 **Deleting a comment**
 
@@ -188,19 +188,19 @@ Restoring the issue (SPEC-015) is the only way back. Comments write no history o
 
 Foreign keys never cascade (`ON DELETE RESTRICT`): the handler deletes reactions and replies through the repo, so each deletion gets its `D` delta. A database cascade would skip `sync_log` and break sync (architecture rule 2).
 
-**What a deleted comment leaves behind** (Q8). The comment row and its text are gone from the `comments` table at once. Copies remain for a bounded time, and none is reachable through the app, the API or MCP:
+**What a deleted comment leaves behind** (D17). The comment row and its text are gone from the `comments` table at once. Copies remain for a bounded time, and none is reachable through the app, the API or MCP:
 
 - `sync_log.data` keeps each written row, including earlier bodies, for the `sync_log` retention of 30 days (sync-protocol §9). Clients that catch up within that window replay them and then apply the delete.
 - Database backups keep whatever they captured, for the operator's backup retention.
 - Inline files referenced only by the deleted comment stay owned by the issue (SPEC-014 §4.3) until the issue is purged. Only people who can see the issue can read them, and only by their `/files/<id>` URL.
 
-Comment and reaction events in the outbox carry ids and the actor, never the body, so the outbox adds no copy. Deleting an issue's comments when the issue is purged is SPEC-015's (permissions §6).
+Comment and reaction events in the outbox carry ids and the actor, never the body, so the outbox adds no copy. Deleting an issue's comments when the issue is purged is SPEC-015's (permissions §6). This spec registers its steps in SPEC-015's purge-step registry (SPEC-015 §4.5): reactions, then comments (replies before roots), then `comment_search_text`. Comment and Reaction are content models, so their steps use `repo.deleteWhere` with `log: false` (SPEC-011 §5.1); `comment_search_text` is server-only and is a plain delete.
 
 **Editing with conflict detection** (NFR-07). `comment.update` sends the `baseVersion` it was edited from. If the stored `version` differs, the answer is `CONFLICT` and the client keeps the user's text in the editor (§6.3). A checklist toggle is a `comment.update` like any other, so a toggle in one tab can't silently overwrite text saved from another tab. Within one client, queued edits chain: each optimistic update raises `version`, so the next queued edit carries the right base.
 
 **Every update bumps the version.** `comment.update` always raises `version` and sets `editedAt`, even when the stored body comes out the same. The client can't predict "same" (SPEC-014 §4.3 may rewrite `src` for copied files), and a server-side no-op would leave a queued follow-up edit carrying `baseVersion` = stored + 1, so it would get a spurious `CONFLICT`. The edit UI doesn't send an unchanged body: Save is disabled until the text differs from what was loaded. A same-body update still writes no `comment.updated` event when the stored body is unchanged.
 
-**Resolve and reopen.** `comment.resolve` on a thread that is resolved, and `comment.reopen` on one that isn't, change nothing: no write, no event (as `reaction.set`). Both lock as above, take the thread's root from a reply ref, and leave `version` and `editedAt` alone. They set or clear `resolvedAt` and `resolvedById` and bump `updatedAt`.
+**Resolve and reopen.** `comment.resolve` on a thread that is resolved, and `comment.reopen` on one that isn't, change nothing: no write, no event (as `reaction.set`). Both lock as above, take the thread's root from a reply ref, and leave `version` and `editedAt` alone. They set or clear `resolvedAt` and `resolvedById` and bump `updatedAt`. On a change they write `comment.resolved` or `comment.reopened` to the outbox (ids and actor only). These events notify no one (Linear sends no notification on resolve) and reach webhooks when M6 adds them (events.md).
 
 ### 4.4 Editor schema (`packages/editor`)
 
@@ -208,8 +208,8 @@ Comment and reaction events in the outbox carry ids and the actor, never the bod
 
 - The schema is built from an **explicit list of extensions**. If StarterKit is used, every extension the list doesn't name is disabled (StarterKit v3 also adds Link, which must follow the link rule below; Underline is named in the list on purpose). A unit test asserts that the schema's node and mark names, and their attributes, equal the list above.
 - **Links:** `href` is parsed with `new URL(href)`. The protocol must be `http:`, `https:` or `mailto:`. Relative, protocol-relative (`//host`) and unparseable links are invalid, as are any containing control characters. Mixed case is handled by the parser. Rendered with `rel="noopener noreferrer nofollow"` and `target="_blank"`.
-- **Images and files** (SPEC-014 §4.3): `src` is exactly `/files/<uuid>`. Absolute URLs, `data:` and `blob:` URIs and other paths are invalid (Q9). An `image` is a raster image shown inline; a `file` is a chip with the file's name. At most 50 file references per document. Saving a document (`issue.create`, `issue.updateDescription`, `comment.create`, `comment.update`) claims the inline files it references, in the same transaction, per SPEC-014 §4.3. A reference the author can't use is `INVALID_INPUT` ("A file in this text can't be used here. Upload it again.", SPEC-014's message) and nothing is saved.
-- **Code blocks:** the schema's `codeBlock` is TipTap's plain CodeBlock. The web entry extends it with lowlight highlighting under the same node name and attributes. A unit test asserts that both entries produce the same schema. Unknown languages render as plain code (Q10).
+- **Images and files** (SPEC-014 §4.3): `src` is exactly `/files/<uuid>`. Absolute URLs, `data:` and `blob:` URIs and other paths are invalid (D18). An `image` is a raster image shown inline; a `file` is a chip with the file's name. At most 50 file references per document. Saving a document (`issue.create`, `issue.updateDescription`, `comment.create`, `comment.update`) claims the inline files it references, in the same transaction, per SPEC-014 §4.3. A reference the author can't use is `INVALID_INPUT` ("A file in this text can't be used here. Upload it again.", SPEC-014's message) and nothing is saved.
+- **Code blocks:** the schema's `codeBlock` is TipTap's plain CodeBlock. The web entry extends it with lowlight highlighting under the same node name and attributes. A unit test asserts that both entries produce the same schema. Unknown languages render as plain code (D19).
 - **Checklists:** toggling a checkbox is an edit. In a description it is an `issue.updateDescription` (with `baseVersion`). In a comment, only the author can toggle (a `comment.update` with `baseVersion`). For everyone else the checkboxes are read-only.
 
 **Underline and Markdown.** CommonMark has no underline. `docToMarkdown` drops the underline mark and keeps the text, so Copy as Markdown and the API's Markdown lose it. JSON keeps it.
@@ -220,7 +220,7 @@ Comment and reaction events in the outbox carry ids and the actor, never the bod
 - `DOC_SCHEMA_VERSION`: an integer, starting at 1. It feeds `computeSchemaHash`, so a schema change gives clients a new `schemaHash` and a resync. The editor has a snapshot test pairing `DOC_SCHEMA_VERSION` with a hash of the schema's spec; changing the schema without bumping the version fails it.
 - `reactionId(subjectId, userId, emoji)`.
 
-**Headless entry `@surface/editor/schema`** (no DOM, no React, no lowlight). It exports `schema`, `validateDoc(json)` (the doc, or problems with paths), `normalize(doc)`, `docToText(doc)`, `docToMarkdown(doc)`, `markdownToDoc(md)` and `docFileIds(doc)`. It uses `getSchema` and `Node.fromJSON`; it never creates an Editor instance.
+**Headless entry `@surface/editor/schema`** (no DOM, no React, no lowlight). It exports `schema`, `validateDoc(json)` (the doc, or problems with paths), `normalize(doc)`, `docToText(doc)`, `docToMarkdown(doc)`, `markdownToDoc(md)`, `docFileIds(doc)` and `isSingleEmoji(text)` (the emoji check below, one definition for the client and the server). It uses `getSchema` and `Node.fromJSON`; it never creates an Editor instance.
 
 **Packaging** (the server image runs built JavaScript, so the schema entry must build):
 
@@ -276,6 +276,7 @@ One migration adds:
 - `reactions`: the §4.2 columns (`comment_id` nullable).
 - `sync_groups` on both, with GIN indexes. Rows get `team:<teamId>` at insert, never the issue's `user:` groups (SPEC-011 §5.7), and are rewritten when the issue's team or the team's privacy changes (M3, M7; SPEC-014 has the same rule for Attachments).
 - Foreign keys to `issues`, `comments`, `teams` and `users` (`resolved_by_id` too), all `ON DELETE RESTRICT` (§4.3).
+- CHECK constraints: `resolved_at` and `resolved_by_id` are null together; a reply (`parent_comment_id` set) has no `resolved_at`; `actor_kind` is `user`, `api` or `mcp`. "A reply's parent is top-level" is checked in the handler under the thread lock, not by a trigger.
 - Indexes on `comments (issue_id, created_at)`, `comments (parent_comment_id)`, `reactions (comment_id)` and `reactions (issue_id)`.
 - `timestamptz(3)` timestamps.
 
@@ -314,7 +315,7 @@ Private team comments and reactions are invisible to non-members. A `CommentRef`
 
 | Operation | Kind | Input → output, notes |
 |---|---|---|
-| `comment.create` | m | `{id?, issue: IssueRef, parent?: CommentRef, body}` → `CommentOutput`. `body` is editor JSON or a Markdown string (Q12). `parent` must be a live top-level comment of the same issue. `ui`: **Comment…** (focuses the comment box, context `issue`). |
+| `comment.create` | m | `{id?, issue: IssueRef, parent?: CommentRef, body}` → `CommentOutput`. `body` is editor JSON or a Markdown string (D20). `parent` must be a live top-level comment of the same issue. `ui`: **Comment…** (focuses the comment box, context `issue`). |
 | `comment.update` | m | `{comment: CommentRef, baseVersion, body}` → `CommentOutput`. Author only. `CONFLICT` when `baseVersion` isn't the stored version. Every update raises `version` (§4.3). `ui`: **Edit comment** (context `comment`). |
 | `comment.delete` | m, destructive | `{comment}` → `{comment, mode: "hard" \| "soft"}` (§4.3). `ui`: **Delete comment** (context `comment`). |
 | `comment.resolve` | m | `{comment: CommentRef}` → `CommentOutput` of the thread's root. A reply ref resolves its thread. Idempotent (§4.3). `ui`: **Resolve thread** (context `comment`). |
@@ -369,7 +370,7 @@ Optimistic code runs in `packages/operations` and never parses or builds documen
 | Reply box | Per thread, collapsed to one line until focused or until **Reply** or `R`. Placeholder "Leave a reply…". |
 | Issue reactions | Chips and **Add reaction** under the description. SPEC-012 places the row; this spec owns the components. |
 | Comment link | `/issue/ENG-42#comment-<id>` scrolls to the comment and highlights it for 2 s. A link to a hard-deleted comment just opens the issue. |
-| Editor | `RichTextEditor`, the same component for the description and comments (Q13). Placeholder text. No toolbar: formatting is by Markdown, the slash menu, the keys of §3.5 and a bubble menu on selection. Created with `injectCSS: false`; its CSS is bundled with the app, because the CSP is `style-src 'self'`. |
+| Editor | `RichTextEditor`, the same component for the description and comments (D21). Placeholder text. No toolbar: formatting is by Markdown, the slash menu, the keys of §3.5 and a bubble menu on selection. Created with `injectCSS: false`; its CSS is bundled with the app, because the CSP is `style-src 'self'`. |
 | Command menu | Context `issue`: "Comment…". Context `comment` (a focused comment): "Edit comment", "Delete comment", "Add reaction…", "Resolve thread" or "Reopen thread", "Copy link to comment", "Copy content as Markdown", "New issue from comment…". Context `issue` also lists "Add reaction…" (command-menu §3.3 gains the context, §12). |
 
 **Keyboard.** `Mod+Enter` submits (shortcuts §3.4) and, in comment mode, so does `Enter` (§3.5). The editor consumes `Mod+Enter` only inside a checklist item, where it toggles the item. Everywhere else it overrides the `Mod-Enter` handlers of TipTap's HardBreak extension and its core keymap (`exitCode`) to return false, so the event reaches the shortcut engine without `defaultPrevented` (the engine ignores prevented events, `apps/web/src/shortcuts/engine.ts:129-131`), in both editor modes (AC-19). A hard break is `Shift+Enter`. `Esc` leaves the editor (shortcuts §4). Comments are reached with `Tab` like any other control. A focused comment activates the `comment` scope, which SPEC-012 owns (§3.6): it defines the scope and its keys. Linear's panel has only two comment keys, so that is all Surface binds: reply (`R`) and, in a comment box, reply box or comment being edited, send or save (`Mod+Enter`; `Enter` in comment mode, §3.5). There are no keys for moving between comments, for edit, for delete, or for resolve and reopen: those run from the comment's options menu and the command menu (§3.3). `Ctrl+M` (comment on the issue) is the `issue-page` scope's.
@@ -452,23 +453,7 @@ Optimistic code runs in `packages/operations` and never parses or builds documen
 
 ## 11. Open questions
 
-Each has a proposed default. Accepted ones move to the Decisions table with the date.
-
-| # | Question | Proposed default |
-|---|---|---|
-| Q3 | Keep comment edit history? | No. "edited" with the time only, like description history (FR-ISS-14, v2). Earlier bodies stay in `sync_log` for 30 days but are never shown (§4.3). |
-| Q4 | Size limits? | Comment body 50 KB of JSON; description 200 KB (SPEC-011 Q9). No limit on the number of comments. |
-| Q6 | Distinct emoji per comment? | At most 20. |
-| Q7 | Show "via API" / "via MCP" on comments? | Yes: a stored `actorKind`, so readers know when an AI client or a script wrote it. |
-| Q8 | How long does a deleted comment's text survive? | Accept and document §4.3: the row goes at once; copies stay in `sync_log` for its 30-day retention and in backups; inline files stay until the issue is purged. Scrubbing `sync_log` would need data-less log rows, a protocol change; revisit only if someone needs it. |
-| Q9 | External image URLs in descriptions and comments? | Not allowed. Loading them makes every reader's browser call a third party (the spirit of rule 5), and the CSP blocks them anyway. Images are uploaded files. |
-| Q10 | Which code languages are highlighted? | A bundled set of about 20: bash, c, cpp, csharp, css, diff, go, html/xml, java, javascript, json, kotlin, markdown, php, python, ruby, rust, sql, swift, typescript, yaml. Others render as plain code. |
-| Q12 | Body format for the API and MCP? | JSON or Markdown on write; both on read (as SPEC-011 Q12). |
-| Q13 | One editor component for descriptions and comments? | Yes, with two modes. `comment` submits on `Enter` or `Mod+Enter` and has the send button (§3.5). `description` saves on blur and after 2 s idle, with `baseVersion` (SPEC-011). |
-| Q14 | Which emoji data, and from where? | A pinned `emojibase-data` (English, compact) bundled into the web build and loaded lazily; rendered with the system emoji font. No sprites, no CDN, no remote font. The server needs no data: it checks with `\p{RGI_Emoji}` (§4.4). |
-| Q17 | Behaviour Linear doesn't show without changing data | Linear's behaviour not observable; kept: who can delete others' comments (Admins any); `Enter` in lists and code blocks of a comment (§3.5); whether a reply reopens a resolved thread (here it doesn't). | 
-| Q15 | New dependencies? | `@tiptap/core`, `@tiptap/pm` (including `@tiptap/pm/markdown`), `@tiptap/react`, `@tiptap/starter-kit` (with unlisted extensions disabled), the task-list, link, image, placeholder and code-block-lowlight extensions, `lowlight`, `markdown-it` (already a dependency of prosemirror-markdown) and `emojibase-data`. Each justified in the plan slice that adds it; TipTap is ADR-0009's decision. |
-| Q16 | Do comments, resolves and reactions write IssueHistory entries? (events.md marks `comment.created` for the History consumer.) | No. The timeline shows the comment itself; a history entry would duplicate it. There are no exceptions now that comments never unarchive an issue (D10). events.md's H column for `comment.created` becomes "—" on acceptance. |
+None. The proposed defaults were accepted at the M1 gate on 2026-11-12 and moved to the Decisions table (D13–D25).
 
 ### Decisions
 
@@ -486,6 +471,19 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | D10 | Copy Linear: an archived issue is read-only. Every comment, reply, resolve and reaction on it is `CONFLICT` ("ENG-42 is archived. Restore it to edit it."); a deleted issue is the same with "was deleted". No comment unarchives an issue, so the extra history entry for it, the optimistic code's predicted unarchive and the extra lock mode that comment writes once had are gone. Replaces the unarchive-on-comment rule. | 2026-11-12 |
 | D11 | Copy Linear: comment drafts are synced `Draft` rows owned by SPEC-012, so an unsent comment follows the user across devices. The draft is one text, with no separate field for sent text: sending discards the draft, and a rejection puts the text back into an empty draft, else offers Copy text (§3.1). | 2026-11-12 |
 | D12 | Partial issue loading (SPEC-011 §5.7, ADR-0020): Comment and Reaction rows are in `team:<teamId>` only, never in the issue's `user:` groups. Opening an issue subscribes its team, so open issues stay live; an issue leaving the replica takes its comments with it (E27). | 2026-11-12 |
+| D13 (was Q3) | Comments keep no edit history: "edited" with the time only, like description history (FR-ISS-14, v2). Earlier bodies stay in `sync_log` for 30 days but are never shown (§4.3). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D14 (was Q4) | Size limits: comment body 50 KB of JSON; description 200 KB (SPEC-011 Q9). No limit on the number of comments. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D15 (was Q6) | At most 20 distinct emoji per subject (comment or issue). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D16 (was Q7) | Comments show "via API" or "via MCP" from a stored `actorKind`, so readers know when an AI client or a script wrote one. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D17 (was Q8) | A deleted comment's text: the row goes at once; copies stay in `sync_log` for its 30-day retention and in backups; inline files stay until the issue is purged (§4.3). Scrubbing `sync_log` would need data-less log rows, a protocol change; revisit only if someone needs it. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D18 (was Q9) | External image URLs are not allowed in descriptions and comments. Loading them makes every reader's browser call a third party (the spirit of rule 5), and the CSP blocks them anyway. Images are uploaded files. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D19 (was Q10) | Code highlighting covers a bundled set of about 20 languages: bash, c, cpp, csharp, css, diff, go, html/xml, java, javascript, json, kotlin, markdown, php, python, ruby, rust, sql, swift, typescript, yaml. Others render as plain code. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D20 (was Q12) | The API and MCP take a body as JSON or Markdown on write and return both on read (as SPEC-011 Q12). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D21 (was Q13) | One editor component serves descriptions and comments, with two modes. `comment` submits on `Enter` or `Mod+Enter` and has the send button (§3.5). `description` saves on blur and after 2 s idle, with `baseVersion` (SPEC-011). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D22 (was Q14) | Emoji data is a pinned `emojibase-data` (English, compact) bundled into the web build and loaded lazily, rendered with the system emoji font. No sprites, no CDN, no remote font. The server needs no data: it checks with `\p{RGI_Emoji}` (§4.4). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D23 (was Q15) | New dependencies: `@tiptap/core`, `@tiptap/pm` (including `@tiptap/pm/markdown`), `@tiptap/react`, `@tiptap/starter-kit` (unlisted extensions disabled), the task-list, link, image, placeholder and code-block-lowlight extensions, `lowlight`, `markdown-it` (already a dependency of prosemirror-markdown) and `emojibase-data`. Each is justified in the plan slice that adds it; TipTap is ADR-0009's decision. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D24 (was Q16) | Comments, resolves and reactions write no IssueHistory entries. The timeline shows the comment itself; a history entry would duplicate it. events.md's H column for `comment.created` becomes "—" (§12). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D25 (was Q17) | Where Linear's behaviour isn't observable without changing data, the proposal is kept: Admins may delete anyone's comment; `Enter` in lists and code blocks of a comment keeps its editing meaning (§3.5); a reply doesn't reopen a resolved thread. Accepted as proposed at the M1 gate. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -494,11 +492,11 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | domain-model | §4.8 Comment | Add `teamId`, `actorKind`, `version`, `resolvedAt`, `resolvedById` (top-level comments only); `bodyText` is a server-only column. The `system` actor kind is deferred. | No |
 | domain-model | §4.8 Reaction | Add `issueId`, `teamId`; `commentId` is optional (empty: a reaction on the issue); id derived from (comment or issue, user, emoji). | No |
 | domain-model | §4.8, §7 | Replace `reaction.toggle` with `reaction.set`; `comment.update` takes `baseVersion`; add `comment.resolve` and `comment.reopen`. | No |
-| domain-model | invariants | New invariant: only a top-level comment is resolved, `resolvedAt` and `resolvedById` set together. | No |
+| domain-model | §6 invariants | New invariants, from §4.5: only a top-level comment is resolved, with `resolvedAt` and `resolvedById` set together (INV-23); reactions are unique per (subject, user, emoji), where the subject is a comment or the issue; every child row of an issue (IssueContent, IssueHistory, Comment, Reaction, Attachment) carries its issue's `teamId` (SPEC-011 D4, shared with SPEC-014); a reply's `issueId` equals its parent comment's, and a comment reaction's `issueId` equals its comment's. INV-19 (one level of replies) stands. | No |
 | permissions | §3.3 | Resolve or reopen a thread: any member or Admin who can see the issue. Reactions on the issue: any member or Admin who can see it. | No |
 | PRD | FR-COL-01, FR-COL-02 | Add resolvable threads and reactions on the issue (Linear parity). | No |
 | design-system | §5.3 | EmojiPicker is also used for issue reactions; the editor gains the `:name:` emoji autocomplete. | No |
-| events | lines 42–44 | `comment.created` History column becomes "—". New rows `comment.resolved` and `comment.reopened`, written by `comment.resolve` and `comment.reopen` on a change. `reaction.added`/`removed` are written by `reaction.set` when the state changes, and their payload names the issue and the comment, if any. Payloads carry ids and the actor, never the body. | No |
+| events | lines 42–44 | `comment.created` History column becomes "—". New rows `comment.resolved` and `comment.reopened`, written by `comment.resolve` and `comment.reopen` on a change. Like the other comment events they notify no one (N "—"; Linear sends no notification on resolve) and reach webhooks (W ✓, M6). `reaction.added`/`removed` are written by `reaction.set` when the state changes, and their payload names the issue and the comment, if any. Payloads carry ids and the actor, never the body. | No |
 | SPEC-003 | §4 | New `CommentRef`: a UUID, resolved to a comment of a visible issue; `NOT_FOUND` otherwise. | No |
 | SPEC-003 | §8 | Relies on `store.find` ordered by id, as listed in SPEC-011 §12. | No |
 | shortcuts | §2 | New `comment` scope (component), owned and specified by SPEC-012. | No |
@@ -508,7 +506,7 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | SPEC-003 | §3 | Comment and reaction operations declare `contentParent` (SPEC-011 §12 adds the field). | No |
 | SPEC-005 | §4.1 command target | Add the target kind `comment` (`{ kind, ids, label }`), set by a focused comment. | No |
 | sync-protocol | §8 | The schema hash input gains `DOC_SCHEMA_VERSION` (with SPEC-011's `parent` declarations). | No |
-| architecture | rule 2 | Exception for D6: a schema data migration rewrites stored documents in synced tables (`issue_content`, `comments`) in a migration, not through the repo, so it logs no `sync_log` rows. It is safe only because the same release changes `schemaHash` and every client resyncs. State this exception in architecture.md. | **Yes**: a short ADR, because it is a stated exception to an architecture rule |
+| architecture | rule 2 | Exception for D6: a schema data migration rewrites stored documents in synced tables (`issue_content`, `comments`) in a migration, not through the repo, so it logs no `sync_log` rows. It is safe only because the same release changes `schemaHash` and every client resyncs. State this exception in architecture.md. | **Yes**: [ADR-0023](../04-architecture/adr/0023-document-migration-unlogged.md), because it is a stated exception to an architecture rule |
 | sync-protocol | §2, §4.2 | Comment and Reaction are content models with parent `Issue`, in `/sync/content` frames (with SPEC-011's §4.2 change). | No |
 | `.dependency-cruiser.cjs` | rules | Add `editor-schema-headless` and `server-editor-schema-only` (§4.4). Not a doc, but a boundary change reviewers should see. | No |
 | ADR-0009 | — | No change: TipTap stands; this spec adds the headless schema entry within it. | No |

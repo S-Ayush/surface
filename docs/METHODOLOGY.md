@@ -177,13 +177,13 @@ M0 Foundations ─► M1 Core issues ─► M2 Views & nav ─► M3 Planning �
 | Milestone | Contents | Demo / exit |
 |---|---|---|
 | **M0 Foundations** | Monorepo, CI, Postgres, auth (email + password, magic link), **Docker packaging (image + compose + backups on a Linux VM)**, Workspace / User / Team / Membership, **sync engine v0** (full bootstrap + transactions + deltas + IndexedDB), **Operation Registry** (ADR-0011), app shell, `Cmd+K` skeleton, shortcut registry | Two browser tabs: rename a team in one and it updates in the other in under 100ms; works after an offline reload |
-| **M1 Core issues** ⭐ | Issues (team key IDs), workflow statuses and categories, priority, assignee, labels, estimates, comments, reactions, activity history, issue composer, issue detail, list view, keyboard actions, drafts | **Start dogfooding:** Surface's backlog lives in Surface |
+| **M1 Core issues** ⭐ | Issues (team key IDs), workflow statuses and categories, priority, assignee, labels, estimates, comments, reactions, activity history, issue composer, issue detail, list view, keyboard actions, drafts, attachments, recently deleted and archive, the basic rich editor | **Start dogfooding:** Surface's backlog lives in Surface |
 | **M2 Views & navigation** | Board layout, filters, display options (group, sub-group, order, properties), custom views, favorites, My Issues, global search, multi-select and bulk edit, undo/redo | Saved "Active" view per team; drag across board columns changes status |
 | **M3 Planning** | Sub-issues and relations, cycles (schedule, rollover, auto-add, capacity, graph), projects (lead, members, teams, milestones, status, dates), project overview | Run a real 2-week cycle on Surface itself |
-| **M4 Collaboration** | Subscriptions, inbox and notifications (snooze, reminders), @mentions, rich editor, documents, triage (accept / decline / duplicate / snooze, rules, rotation), templates, recurring issues | Issues from outside the team land in Triage; mentions reach the Inbox |
+| **M4 Collaboration** | Subscriptions, inbox and notifications (snooze, reminders), @mentions and the description merge UI, documents, triage (accept / decline / duplicate / snooze, rules, rotation), templates, recurring issues | Issues from outside the team land in Triage; mentions reach the Inbox |
 | **M5 Strategy & insights** | Initiatives and sub-initiatives, project and initiative updates with health and reminders, timeline view, insights and dashboards, Pulse | Weekly project update flow end to end |
 | **M6 Platform: API + MCP** | Internal API generated from the Operation Registry (`/api/ops/:name`), personal API keys (read / read-write / team-scoped), outgoing webhooks (signed, retried), **MCP server with two tools: `search_operations` + `execute_operation`** ([design](04-architecture/mcp-design.md)), CSV import/export | Claude Code connected via MCP creates an issue and moves it into the current cycle; the change appears live in the web app |
-| **M7 Admin & ops** | Roles (Admin / Member), **private teams** (sync-group boundary), archive / delete / restore, basic audit log, backup/restore, upgrade path. *No billing, SSO, guests, or sub-teams: see VISION §6* | A non-member never receives a private team's data; restore from backup on a fresh VM |
+| **M7 Admin & ops** | Roles (Admin / Member), **private teams** (sync-group boundary), basic audit log, backup/restore, upgrade path. *No billing, SSO, guests, or sub-teams: see VISION §6* | A non-member never receives a private team's data; restore from backup on a fresh VM |
 | *Later* | Integrations: GitHub, Slack, Microsoft Teams; importers (Jira, GitHub Issues); email intake | — |
 
 ---
@@ -194,7 +194,8 @@ M0 Foundations ─► M1 Core issues ─► M2 Views & nav ─► M3 Planning �
 |---|---|---|
 | Workspace & identity | Workspaces, users, teams, invites, login | M0 |
 | Sync & client core | Bootstrap, transactions, deltas, offline, undo | M0–M2 |
-| Issues | CRUD, IDs, statuses, priority, estimate, labels, assignee, due date, comments, reactions, history, drafts, move team | M1 |
+| Issues | CRUD, IDs, statuses, priority, estimate, labels, assignee, due date, comments, reactions, history, drafts, attachments, recently deleted, archive | M1 |
+| Issues: move team | Move an issue to another team (PRD FR-ISS-09) | M3 |
 | Hierarchy & relations | Sub-issues, blocks / related / duplicate, convert to project | M3 |
 | Views | List, board, timeline, filters, display options, custom views, favorites, My Issues | M2 / M5 |
 | Search & commands | `Cmd+K`, global search, shortcut registry | M0–M2 |
@@ -213,7 +214,7 @@ M0 Foundations ─► M1 Core issues ─► M2 Views & nav ─► M3 Planning �
 
 ## 5. Working rhythm
 
-- **Cadence:** 2-week cycles (run inside Surface from M1). Each milestone takes roughly 1–3 cycles.
+- **Cadence:** 2-week cycles (run inside Surface from M3; M1 runs the backlog only). Each milestone takes roughly 1–3 cycles.
 - **Definition of Ready (spec):** acceptance criteria are testable, domain changes are listed, sync groups are identified, open questions are resolved.
 - **Definition of Done (slice):** acceptance criteria have passing tests (held criteria excepted: since 2026-11-06, tests that need a browser, a running stack or Postgres are on hold, see [plans README §6](07-plans/README.md#6-testing-hold-e2e-smoke-and-integration)), sync tests are green, perf budget is met (measured once perf tests resume), shortcut and `Cmd+K` entries exist, the docs are updated.
 - **Change control:** if a decision changes, write a new ADR that supersedes the old one. Never silently edit an accepted ADR.

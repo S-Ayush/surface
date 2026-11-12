@@ -1,6 +1,6 @@
 # SPEC-015: Recently deleted & archive
 
-Status: **Draft** · Milestone: **M1** · Date: 2026-11-12 (revised after review and Linear parity, 2026-11-12)
+Status: **Accepted** (2026-11-12, M1 acceptance gate) · Milestone: **M1** · Date: 2026-11-12 (revised after review and Linear parity, 2026-11-12)
 Implements: FR-ISS-10 · FR-NAV-01 (archive entry) · FR-WF-08, FR-WF-09 (pulled into M1) · NFR-06, 08, 09, 14 · INV-08, INV-21 · ADR-0010 (`trash-purge`)
 Depends on: SPEC-011 (issues, lifecycle columns, content models), SPEC-012 (issue page, list), SPEC-013 (comments, reactions), SPEC-014 (attachments, files, byte protocol), SPEC-010 (statuses), SPEC-002 (sync), SPEC-003 (registry), SPEC-005 (shortcuts, command menu)
 Related: [state-machines §2](../03-domain/state-machines.md) · [permissions §3.3, §3.5, §5, §6](../03-domain/permissions.md) · [events](../03-domain/events.md) · [sync-protocol §4.1, §4.3](../04-architecture/sync-protocol.md) · [ADR-0010](../04-architecture/adr/0010-jobs-pg-boss.md) · [ADR-0014](../04-architecture/adr/0014-file-storage.md)
@@ -54,7 +54,7 @@ This spec is also the **single source of the lifecycle rules** that every other 
 
 ### 3.2 Automatic archive and auto-close
 
-Both are team settings on **Settings → Teams → ENG → Automations** (`/settings/teams/:key/automations`). Team members and Admins can change them (permissions §3.5). Nobody archives an issue by hand: there is no archive command, button or key.
+Both are team settings on **Settings → Teams → ENG → Automations** (`/settings/teams/:key/automations`). Team members and Admins can change them (permissions §3.2). Nobody archives an issue by hand: there is no archive command, button or key.
 
 **Auto-archive.** The section "Auto-archive" says: "Automatically archive closed issues (completed, canceled, or duplicate) after the selected period. Changes apply within a day." A select, "Auto-archive closed items after", offers 1, 3, 6, 9 or 12 months. The default is 6.
 
@@ -188,7 +188,7 @@ The helper lives in `apps/server/src/issues/lifecycle.ts`. Every handler named i
 Purging an issue runs in **one transaction**, through the repo layer:
 
 1. `lockIssueForWrite(…, 'lifecycle')`. The issue must be deleted (else `CONFLICT`, §4.2).
-2. Delete its children, in this order. Eager children go through `repo.deleteWhere(model, 'issueId', [issueId])`, which logs a `D` per row; content children follow Q2 (below):
+2. Delete its children, in this order, through the **purge-step registry** (`apps/server/src/issues/purge-steps.ts`): each spec that adds a child table of `issues` registers a step for it in the same change, and a unit test fails when a table with a foreign key to `issues` has no step (every such key is `ON DELETE RESTRICT`, so a missing step would also make purge fail loudly). Eager children go through `repo.deleteWhere(model, 'issueId', [issueId])`, which logs a `D` per row; content children use `log: false` (Q2, below):
    1. Reactions, then comments (SPEC-013).
    2. Attachments (SPEC-014).
    3. IssueHistory and IssueContent (SPEC-011).
@@ -204,7 +204,7 @@ Purging an issue runs in **one transaction**, through the repo layer:
 - **Eager rows** (the Issue and its Attachments) each log a `D` delta.
 - **Content rows** (IssueContent, IssueHistory, Comment, Reaction) log **no** `D` (Q2). The client already drops them: after a delta batch is applied, the content rows and hydration mark of any parent whose Issue row is absent are removed (SPEC-011 §5.3). A group change's `D`+`U` pair leaves the Issue present after the batch, so it keeps content; only a real delete removes it.
 
-This keeps a purge to a handful of `sync_log` rows instead of thousands, so it holds the global sync lock only briefly and doesn't flood every client with deletes for rows they never loaded. It relaxes "every synced write is logged" for content rows whose parent is deleted, so it needs a new ADR (§12). The decision is taken (Q2, 2026-11-12); the ADR is written at the M1 acceptance gate. If that ADR were rejected, the fallback is to log one `D` per content row through `repo.deleteWhere`'s chunked insert; nothing else in this spec changes.
+This keeps a purge to a handful of `sync_log` rows instead of thousands, so it holds the global sync lock only briefly and doesn't flood every client with deletes for rows they never loaded. It relaxes "every synced write is logged" for content rows whose parent is deleted, which [ADR-0022](../04-architecture/adr/0022-purge-content-unlogged.md) records (§12; the decision is Q2, 2026-11-12). The per-row fallback stays in the code: a constant `LOG_CONTENT_DELETES` in `purge-steps.ts`, `false` by default and not a setting, is passed as `log` to every content step; set to `true`, content rows log one `D` each through `repo.deleteWhere`'s chunked insert, and nothing else in this spec changes.
 
 `files` rows are server-only and produce no delta.
 
@@ -242,7 +242,7 @@ One migration adds:
 
 - a partial index on `issues (deleted_at) WHERE deleted_at IS NOT NULL`, for the purge job and the Recently deleted tab;
 - a nullable `teams.auto_close_status_id` (FK to `workflow_statuses`, `ON DELETE RESTRICT`: `teams` is a synced table, so a database cascade would change it without a `sync_log` row, rule 2) for §3.2. It is null only while auto-close is off;
-- a check that `auto_archive_months` is one of 1, 3, 6, 9, 12 (not null, default 6) and `auto_close_months` is null or one of those (§12).
+- tighter checks on the existing team columns (`auto_archive_months` integer default 6, nullable, and `auto_close_months` integer, nullable, both today checked only `>= 1` by `teams_auto_archive_check` and `teams_auto_close_check`): the migration backfills null `auto_archive_months` to 6, sets it not null, and replaces the two checks with "one of 1, 3, 6, 9, 12" (`auto_close_months` may stay null, meaning off) (§12).
 
 The `archived_at`, `deleted_at` and `deleted_by_id` columns come with SPEC-011's migration. The `blob_release` table comes with SPEC-014's.
 
@@ -262,7 +262,7 @@ A restore of an archived issue logs `V`. A restore of an issue that is both dele
 
 The archive page, the Recently deleted tab and the pages of archived and deleted issues read from the server (§3.3, §3.4), so they need the network.
 
-**What a restore sends.** The Issue row arrives with the restore's `V` or `U`, but the client dropped the issue's Attachment rows with it, and they are not part of that packet. So `issue.restore` logs them again, in the same transaction and after the Issue's `V` or `U`: one `U` per Attachment row through `repo.updateWhere` with an empty patch and `touchUpdatedAt: false` (SPEC-011 §5.1), at most 100 (SPEC-014 Q7). A subscribed client gets the issue and its attachments from the packets alone, with no refetch. Content (description, activity, comments) is read when the issue is opened (SPEC-011 §5.3). A client that doesn't subscribe to the issue's team receives none of these packets (they are in `team:<id>`; the issue row alone may also reach `user:` groups), so the UI never waits for them (§3.1, §3.3).
+**What a restore sends.** The Issue row arrives with the restore's `V` or `U`, but the client dropped the issue's Attachment rows with it, and they are not part of that packet. So `issue.restore` logs them again, in the same transaction and after the Issue's `V` or `U`: one `U` per Attachment row through `repo.updateWhere` with an empty patch and `touchUpdatedAt: false` (SPEC-011 §5.1), at most 100 (SPEC-014 D20). A subscribed client gets the issue and its attachments from the packets alone, with no refetch. Content (description, activity, comments) is read when the issue is opened (SPEC-011 §5.3). A client that doesn't subscribe to the issue's team receives none of these packets (they are in `team:<id>`; the issue row alone may also reach `user:` groups), so the UI never waits for them (§3.1, §3.3).
 
 ### 5.2 What hides them
 
@@ -348,7 +348,7 @@ All three run as the system actor through the executor, one issue per transactio
 
 **`auto-close`**, cron `'17 3 * * *'`, same catch-up and `singletonKey` rule
 
-- **Selection:** live issues in the Backlog, Unstarted or Started category, in teams with `autoCloseMonths` set, where `updatedAt + autoCloseMonths months <= now()`. Comments, reactions and attachments don't move `updatedAt` (SPEC-011), so they don't count as activity (Q3).
+- **Selection:** live issues in the Backlog, Unstarted or Started category, in teams with `autoCloseMonths` set, where `updatedAt + autoCloseMonths months <= now()`. Comments, reactions and attachments don't move `updatedAt` (SPEC-011), so they don't count as activity (D18).
 - **Per issue:** `issue.autoClose` moves the issue to the team's `autoCloseStatusId`, with the category side effects of SPEC-011 §4.6 and the history entry of §4.8. Same batch and cap as above.
 - **Metrics:** `surface_auto_closed_total`, `surface_auto_close_failures_total`.
 
@@ -455,11 +455,7 @@ Job metrics as in §6.3. An audit line per purge.
 
 ## 11. Open questions
 
-Each has a proposed default.
-
-| # | Question | Proposed default |
-|---|---|---|
-| Q3 | Does a comment or reaction count as activity for auto-close? | No: staleness follows `updatedAt` (SPEC-011). Linear's behaviour not observable; kept. |
+None. Q3 was accepted as proposed at the M1 gate on 2026-11-12 and moved to the Decisions table (D18).
 
 ### Decisions
 
@@ -483,13 +479,14 @@ Each has a proposed default.
 | D16 | Linear's Recently deleted tab is per team; Surface's is too. The old workspace-wide Trash and the sidebar Trash entry are gone. | 2026-11-12 |
 | Q2 | Accepted: purge deletes content rows without logging a `D` per row (§4.5). The ADR is written at the M1 acceptance gate; the per-row fallback stays in the code, off by default. User decision. | 2026-11-12 |
 | D17 | Copy Linear, through partial issue loading (SPEC-011 §5.7, ADR-0020): archived and deleted issues are never stored on the client. An `A` or a delete's `U` removes the issue; restore's `V` or `U` inserts it again, and `issue.restore` re-logs the issue's attachments. The archive page, the Recently deleted tab and their issue pages read from the server, online only, read-only, refreshed on focus, on the user's own confirmations and (debounced, subscribed teams only) on packets; the restore toast ends on the mutation's confirmation. Delete's optimistic removes the row; restore's and purge's predict nothing. Replaces D1. | 2026-11-12 |
+| D18 (was Q3) | Comments and reactions don't count as activity for auto-close: staleness follows the issue's `updatedAt` (SPEC-011), which comments and reactions don't change. Linear's behaviour is not observable. Accepted as proposed at the M1 gate. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
 | Doc | Section | Exact change | Superseding ADR? |
 |---|---|---|---|
 | sync-protocol | §4.3, §11 | `A` and `V` packets carry the full row `d`, applied as upsert plus flag; `V` for a missing row re-inserts it. `archivedAt` is a synced field and the client derives `$archived` from it. Changelog v0.7, `schemaHash` bump. (Shared with SPEC-010 and SPEC-011.) | No |
-| sync-protocol | §4.2, §11 | Content rows deleted with their issue log no `D` (Q2). The client side needs no new wire rule: content is dropped when its Issue is absent after a batch (SPEC-011 §5.3 and its §12 row for sync-protocol §4.2, §6). | **Yes**: a new ADR, because skipping the `D`s relaxes "every synced write is logged" (architecture rule 2) |
+| sync-protocol | §4.2, §11 | Content rows deleted with their issue log no `D` (Q2). The client side needs no new wire rule: content is dropped when its Issue is absent after a batch (SPEC-011 §5.3 and its §12 row for sync-protocol §4.2, §6). | **Yes**: [ADR-0022](../04-architecture/adr/0022-purge-content-unlogged.md), because skipping the `D`s relaxes "every synced write is logged" (architecture rule 2) |
 | SPEC-002 | Decisions | Record the two sync changes above (A/V full rows; content rows of a purged issue log no `D`, Q2 accepted 2026-11-12). | — |
 | sync-protocol | §4.1, §4.3 | Relies on SPEC-011's v0.8 row: archived and deleted issues are not bootstrapped, and an `A` or a delete's `U` removes the Issue on the client; restore's `V` or `U` inserts it (D17). | ADR-0020 |
 | SPEC-003 | §8 | Relies on SPEC-011's §12 change: `store.unarchive`, readable `archivedAt`, `store.find` ordered by id. No optimistic code predicts an unarchive. | No |
@@ -499,15 +496,16 @@ Each has a proposed default.
 | SPEC-005 | §4, §5 | The command menu filters by `ui.available`. The shortcut engine gets a per-binding `whileTyping` flag (false for `Mod+Backspace`, `#` and `Mod+Z`). No new page scopes. | No |
 | command-menu | §3.1 | Ranking penalty: a destructive command never ranks first for a query it matches only by keyword. | No |
 | shortcuts | §2, §3 | `#` (restore) and `Mod+Backspace` (delete) in `issue`, not while typing; `Mod+Z` restores the last delete (until M2's undo stack); `G` `X` goes to the team archive page; no archive, unarchive or purge binding. Listed once with the full key map in SPEC-012 §12. | No |
-| design-system | §4 | Reversible deletes no longer run at once with an Undo toast: deleting an issue asks for confirmation (D3). | No |
+| design-system | §4 | Deleting an issue asks for confirmation (D3) instead of running at once with an Undo toast. Removing an attachment keeps the Undo toast (SPEC-014 D8). Same row as SPEC-012 §12. | No |
 | PRD | FR-WF-08, FR-WF-09 | Move from M4 to M1. FR-ISS-10 wording: "Recently deleted" for 30 days, restore, Admin permanent delete; archive is automatic only. | No |
 | state-machines | §2 | Remove the `Archived → Live: unarchive (manual) / any edit` edge; archive is automatic only (`autoArchiveMonths`). `Archived → Live` and `Deleted → Live` are both **restore**, which clears both states. "Trashed" becomes "Deleted" (shown as Recently deleted). Archived and deleted issues are read-only. Children "follow their issue" instead of "are archived with it". Restore allowed while `now < deletedAt + 720 h`. "File bytes are removed" becomes "by `files-cleanup` after commit". Parent deletion deletes sub-issues (M3). Auto-close adds a history entry, not a system comment. | No |
-| domain-model | §3 (Team) | `autoArchiveMonths` is one of 1, 3, 6, 9, 12, default 6, never null. `autoCloseMonths` is null (off) or one of those. Add `autoCloseStatusId` (a Canceled status of the team; set whenever auto-close is on; a status it names can't be deleted). | No |
-| domain-model | §1 | `archivedAt` is set only by the automatic job. | No |
+| domain-model | §4.3 Team | `autoArchiveMonths` is one of 1, 3, 6, 9, 12, default 6, never null. `autoCloseMonths` is null (off) or one of those. Add `autoCloseStatusId` (a Canceled status of the team; set whenever auto-close is on; a status it names can't be deleted). | No |
+| domain-model | §1 | An issue's `archivedAt` is set only by the automatic job (`issue.autoArchive`); labels are the exception, archived by hand (SPEC-010). | No |
 | domain-model | §7 | Add `issue.restore`, `issue.purge`, `issue.listDeleted`, `team.updateAutomations`, and the system-only `issue.autoArchive` and `issue.autoClose`. No `issue.archive` or `issue.unarchive`. | No |
 | permissions | §3.3 | Add `issue.listDeleted` (Member ✅, Admin ✅) and the restore row. | No |
-| permissions | §3.5 | Team members and Admins edit team Automations. | No |
+| permissions | §3.2 | Team members and Admins edit team Automations. | No |
 | permissions | §6 | Issue purge also deletes inline files and previews; bytes go through `blob_release`. | No |
+| ADR-0010 jobs | Queue list | ADR-0010 names `archive.sweep` and `trash.purge`. [ADR-0024](../04-architecture/adr/0024-job-queues.md) (job queue names and the M1 queues, superseding ADR-0010's queue list) names them `auto-archive`, `auto-close` and `trash-purge`, hyphenated like the code's queue names (§6.3), with SPEC-014's file queues. | Yes: ADR-0024 |
 | events | `issue.purged` row | H becomes "—" (purge writes no history). | No |
 | events | `issue.archived`, `issue.unarchived` | `issue.archived` is emitted by the system job only; remove `issue.unarchived`. | No |
 | glossary | Archive, Recently deleted | Deleted issues are called "Recently deleted". Archive is automatic and read-only. | No |

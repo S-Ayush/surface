@@ -1,6 +1,6 @@
 # ADR-0010: Background jobs
 
-Status: **Accepted (draft)** · Date: 2026-11-06
+Status: **Accepted (draft)** · Superseded in part by [ADR-0024](0024-job-queues.md) (the queue list, and which jobs run operations) · Date: 2026-11-06
 
 ## Decision
 **pg-boss**, a job queue stored in Postgres. No Redis, and no extra container.

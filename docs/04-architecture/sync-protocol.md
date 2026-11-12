@@ -1,6 +1,6 @@
 # Surface: Sync Protocol (v1)
 
-Status: **Draft v0.6** · Date: 2026-11-12 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
+Status: **Draft v0.8** · Date: 2026-11-12 · Decisions: [ADR-0002](adr/0002-sync-strategy.md), [ADR-0020](adr/0020-partial-issue-sync.md) (partial issue sync), [ADR-0022](adr/0022-purge-content-unlogged.md) (purge), [ADR-0023](adr/0023-document-migration-unlogged.md) (document migrations)
 
 This is the contract between `packages/sync-client` and `apps/server`. Every wire type here lives in `packages/sync-protocol`, as a Zod codec. Decoders strip unknown keys instead of rejecting them, so additive changes stay compatible. Changes are listed in §11.
 
@@ -23,12 +23,18 @@ Mutations are sent as **operations (intent)**, not row diffs. The server re-exec
 
 | Strategy | Models | Loaded |
 |---|---|---|
-| **eager** | Workspace, User, Team, TeamMembership, WorkflowStatus, Label, Issue (*without* description), IssueLabel, IssueRelation, Attachment (metadata), Cycle (without snapshot), Project (without description), ProjectTeam, ProjectMember, ProjectMilestone, Initiative, InitiativeProject, Document (title and metadata only), Template, CustomView, ViewDefault, plus user-scoped: ViewPreference, Favorite, Subscription, Notification, ApiKey (metadata), Preferences | At bootstrap, kept live by deltas |
-| **content** | IssueContent (`description`), Comment, Reaction, IssueHistory, ProjectContent (`description`), ProjectUpdate, DocumentContent, CycleSnapshot | On demand, **per parent**. Cached in IDB, and kept live by deltas *once the parent is hydrated* |
+| **eager** | Workspace, User, Team, TeamMembership, WorkflowStatus, Label, Issue (*without* description; **per subscribed team**, below), IssueRelation, Attachment (metadata), Cycle (without snapshot), Project (without description), ProjectTeam, ProjectMember, ProjectMilestone, Initiative, InitiativeProject, Document (title and metadata only), Template, CustomView, ViewDefault, plus user-scoped: ViewPreference, Favorite, Subscription, Notification, ApiKey (metadata), Draft, Preferences | At bootstrap, kept live by deltas |
+| **content** | IssueContent (`description`), Comment, Reaction, IssueHistory, ProjectContent (`description`), ProjectUpdate, DocumentContent, CycleSnapshot | On demand, **per parent** (§4.2). Cached in IDB, and kept live by deltas *once the parent is hydrated* |
 
 Content is split into separate tables or models on the server (e.g. `issue_content`), so eager rows stay small.
 
-**Size budget at the reference scale** (100k issues, NFR-10): about 35 MB of eager rows uncompressed (≈ 6 MB gzipped). This must be measured and asserted in the perf suite.
+- **Content models declare their parent** (v0.7): `parent: { model, field }` in `defineModel`. IssueContent, IssueHistory, Comment and Reaction have the parent `Issue` by `issueId` (SPEC-011, SPEC-013). The declaration is part of the schema hash (§8).
+- **Labels on an issue** are the Issue's `labelIds` array; there is no IssueLabel model (SPEC-011 Q17).
+- **Draft** (SPEC-012) is a user's composer and comment drafts, synced only in `user:<id>` (§6).
+
+**Partial issue loading** (v0.8, [ADR-0020](adr/0020-partial-issue-sync.md), SPEC-011 §5.7). Issue is the one eager model that is not fully replicated. A replica holds the live issues of the teams the client subscribes to (§6.1) and the public-team issues assigned to or created by the user. Archived and deleted issues are never stored: bootstrap leaves them out, and a packet that archives or deletes an issue removes it (§4.3). An Issue's eager children (Attachment) are in its team's group only and leave the replica with it. Every other eager model stays fully replicated.
+
+**Size budget at the reference scale** (100k issues, NFR-10): about 35 MB of eager rows uncompressed (≈ 6 MB gzipped) **per replica**, measured at the reference scale with the seed's team split (SPEC-011 §10, Q15). All 100k issue rows would be about 61 MB on their own, which is why issues load per team. This must be measured and asserted in the perf suite.
 
 ---
 
@@ -53,21 +59,50 @@ Content is split into separate tables or models on the server (e.g. `issue_conte
 ```
 - `schemaHash` is 64 lowercase hex characters (§8). `serverTime` is an ISO 8601 timestamp. `groups` are the connection's sync groups (§6).
 - Every row `d` is a JSON object with a UUID `id`. Its other fields are checked by the client store against the model definition, not by the wire codec. Columns the model does not declare are dropped.
-- Archived rows are sent with `"archived":true` on the frame. For live rows the server may omit the field or send `false`. Clients keep archived rows, because a later `V` packet carries only the id.
+- **Archive state** (v0.7): a model that archives declares `archivedAt` as a synced field, and the frame's `"archived"` flag is derived from it (`true` when it is set; for live rows the server may omit the field or send `false`). The client derives its `$archived` flag from `archivedAt`. Archived rows of models other than Issue (Label) are sent and kept.
+- **Issues** (v0.8): Issue rows with `archivedAt` or `deletedAt` set, and their children, are never sent. The full bootstrap (no `groups`) covers the user's home groups: `workspace`, `user:<id>`, and the groups of the teams the user is a member of, public and private. The client then subscribes its on-demand teams again (§6.1).
 - `meta.rows` is the exact number of `row` frames that follow (counted in the same snapshot), so the client can show bootstrap progress. `end.rows` repeats it, so the client can detect a truncated stream.
 - Rows are read inside one `REPEATABLE READ` snapshot, which includes `max(sync_id)`. That makes the snapshot consistent with `lastSyncId`.
 - `userId` is the user the client's replica belongs to. The server compares it with the session's user before streaming anything: another user → `401`, so a replica never receives another user's rows (SPEC-002 E14). No `userId` (a client from before v0.5) → `426 CLIENT_OUTDATED`; a `userId` that is not a UUID → `400`. A v0.5 client treats `426` as "outdated" and shows the reload banner. An older client takes it for a failed load: on a cold start it shows the load-failure page, whose reload loads the new app; a running old tab learns it is outdated from the socket first (`resync(schema)`, §4.3).
-- Optional `?groups=team:<id>` gives a **partial bootstrap** for groups added later (see §6). Until M7 the server answers it with `400`.
+- **Partial bootstrap** (v0.8): `GET /sync/bootstrap?groups=team:<id>&userId=<uuid>&schemaHash=<hash>` streams the rows of one team's group (its Issues and their eager children) from one snapshot, in the same frames, with `lastSyncId` = that snapshot's. The client calls it after the server accepts a subscription (§6.1). An unknown team, or a private team the user isn't a member of, gives an empty stream (`meta`, then `end`, with 0 rows), never an error, so the answer reveals nothing. A `schemaHash` that differs from the server's is `426 CLIENT_OUTDATED`, as for `/sync/content` (§4.2). No buffering is needed: packets after the subscription are full rows, applied as they arrive, and the answer's rows are stored at version `lastSyncId` through the per-row version and tombstone rules, so whichever is newer wins. (Until v0.8 the server answered `?groups=` with `400`.)
 - A model's `groups` field, if it declares one, holds the row's sync groups cut to the receiving connection's groups (SPEC-002 Q6, Q8).
 - The body is gzip-encoded when `Accept-Encoding` allows it. Errors before the first frame use the SPEC-003 body: `401` (not signed in, or signed in as a user other than `userId`), `403` (an API key), `426` (no `userId`), `400`, `503` (starting).
 - The client writes rows to IDB in chunks (worker) and becomes interactive once the `end` frame arrives.
 - The client abandons a bootstrap whose response has not started within 30 s, like a mutate request (§4.4): a cold start fails (the app offers to try again) and a resync retries once the socket reconnects. The rows that follow have no deadline, since a large workspace streams for seconds.
 
-### 4.2 Content: `GET /sync/content?parent=issue:<id>[,issue:<id>…]`
-Returns the content rows for the given parents (max 50 per request) plus the `lastSyncId` they are consistent with. The client marks those parents **hydrated**.
+### 4.2 Content: `GET /sync/content?parents=issue:<id>[,issue:<id>…]&userId=<uuid>&schemaHash=<hash>`
+The contract since v0.7 (SPEC-011 §5.2, §5.3). Authenticated by the session cookie, like bootstrap.
 
-### 4.3 WebSocket: `GET /sync/ws?since=<lastSyncId>&clientId=<uuid>&userId=<uuid>&schemaHash=<hash>`
-Authenticated by the session cookie. `since` is a non-negative decimal integer without leading zeros. `schemaHash` lets the hub answer `resync(schema)` before catch-up. `userId` is the user the client's replica belongs to (SPEC-002 E14). The hub checks, in this order: the session (none → `4001`, below); the connect parameters (a missing `userId` → `resync(schema)`, below; any other invalid parameter → `400`); `userId` against the session's user (another user → `4001`, as for no session); then the `clientId`'s owner (`403`). The `userId` check comes before the owner check, so a tab whose `clientId` its own user registered, opened under another user's cookie, gets `4001` and re-checks the session instead of a `403` it can't read. A socket closed or refused at any of these steps is never registered with the hub.
+**Request:** 1–50 distinct parents, each `issue:<uuid>`. Unknown or invisible parents are left out of the answer, never an error. Content of an archived or deleted issue the user can see is returned too (its read-only page, SPEC-015 §3.4).
+
+**Response:** `application/x-ndjson`, gzip when accepted:
+```jsonc
+{"t":"meta","lastSyncId":18234,"parents":["issue:0193…"],"rows":57}
+{"t":"row","m":"IssueContent","d":{"id":"0193…","issueId":"0193…","teamId":"…","description":{…},"version":3}}
+{"t":"row","m":"IssueHistory","d":{…}}
+…
+{"t":"end","rows":57}
+```
+- `parents` lists the requested parents that were found and are visible. Every one of them is hydrated by this answer, even one with no rows.
+- Rows are IssueContent, IssueHistory, Comment and Reaction. The client store checks each `d` against its model, as for bootstrap.
+- Everything is read in one `REPEATABLE READ` snapshot that includes `max(sync_id)`: that is `lastSyncId`, called `C` below.
+- `meta.rows` and `end.rows` count the row frames, so a truncated stream is detected.
+- Errors before the first frame use the SPEC-003 body: `400` (no parents, more than 50, a malformed or duplicate parent, or a `userId` that isn't a UUID), `401` (not signed in, or signed in as someone other than `userId`), `403` (an API key: API callers use `issue.get`), `426 CLIENT_OUTDATED` (no `userId`, or a different `schemaHash`; the client reloads), `503` (starting).
+
+**Hydration.** A parent is **hydrated** when the client holds all of its content and keeps it live.
+1. When a tab sends a content request, it marks each requested parent **hydrating**, in memory in that tab, and **buffers** the content packets for it instead of dropping them.
+2. **Applying the answer:** the tab stores the rows with version `C`, through the per-row version and tombstone rule. It **skips every parent whose Issue row is missing or tombstoned** in the replica (for example, purged while the request was in flight): those rows aren't stored and the parent isn't hydrated. It marks the found parents hydrated, then replays its buffered packets with id > `C`. Requested parents that weren't found go back to not hydrated, and their buffer is dropped. A failed request drops the buffer and the mark.
+3. **Live:** `I` and `U` content packets for a hydrated parent apply like any delta. Those for a parent that is neither hydrated nor hydrating are dropped: they would be partial.
+4. **Content `D` packets always apply, as tombstones**, hydrated or not. A `D` carries only `mid`, so a tab can't tell its parent; a tombstone for a row it never held costs one small record and stops a later answer at a lower `C` from bringing the row back.
+5. **Content is dropped when its Issue is absent after a batch.** After a whole delta batch is applied, the content rows and hydration mark of any parent whose Issue row is now absent are removed. A group change's `D`+`U` pair leaves the Issue present after the batch (§6), so it keeps its content. A delete, an archive (an Issue leaves the replica, §4.3) or a purge leaves it absent. A purge logs no `D` for content rows ([ADR-0022](adr/0022-purge-content-unlogged.md)); this rule removes them.
+6. **An `I` packet for an Issue hydrates it**, for every client that receives it: every content row is written in the creating transaction or later, and the repo logs the Issue row first.
+7. **A content mutation hydrates its parent first.** An operation that writes content declares `contentParent(input)` (SPEC-003 §3), and dispatch awaits that parent's hydration, and its rows being paged into memory, before it runs the `optimistic`. Offline, with a parent never hydrated, the UI offers no content edit.
+8. **Resync** clears every hydration mark with the rest of the replica.
+
+The hydrated set is stored in IDB in the same transaction as the rows it covers, so tabs share it. A warm start doesn't page content into memory: rows are read per parent when an issue is opened or prefetched, or before a content mutation. Paging rows in rebuilds the overlay, so pending mutations on them replay. Content is hydrated and prefetched only for issues of subscribed teams, because child rows travel only in `team:<id>` (§6). An archived or deleted issue's page reads one answer and holds it in memory only, never stored or hydrated. Cache size and prefetch are in §9.
+
+### 4.3 WebSocket: `GET /sync/ws?since=<lastSyncId>&clientId=<uuid>&userId=<uuid>&schemaHash=<hash>&teams=<id>,<id>`
+Authenticated by the session cookie. `since` is a non-negative decimal integer without leading zeros. `schemaHash` lets the hub answer `resync(schema)` before catch-up. `userId` is the user the client's replica belongs to (SPEC-002 E14). `teams` (v0.8, optional) lists the public teams the client subscribes to from the start, member teams and on-demand ones (§6.1); catch-up uses the accepted set. The hub checks, in this order: the session (none → `4001`, below); the connect parameters (a missing `userId` → `resync(schema)`, below; any other invalid parameter → `400`); `userId` against the session's user (another user → `4001`, as for no session); then the `clientId`'s owner (`403`). The `userId` check comes before the owner check, so a tab whose `clientId` its own user registered, opened under another user's cookie, gets `4001` and re-checks the session instead of a `403` it can't read. A socket closed or refused at any of these steps is never registered with the hub.
 
 **No `userId`** (a client from before v0.5): the hub accepts the upgrade, sends `resync(schema)`, then only pings, as after a `schemaHash` mismatch. It keeps the socket as an idle connection with no user, groups or `clientId` (so it is pinged and closed on shutdown), never catches it up and never sends it a delta, and the `clientId` is neither checked nor registered. It still belongs to its session: a sign-out closes it with `4001` like any socket of that session. Old clients already turn `resync(schema)` into the reload banner (SPEC-002 E7); a refused upgrade would only be a `1006`, so an idle old tab would never learn it is outdated.
 
@@ -76,16 +111,17 @@ Server → client messages:
 {"t":"deltas","prev":18234,"packets":[
   {"id":18235,"a":"I","m":"Issue","d":{…}},          // insert (full row)
   {"id":18236,"a":"U","m":"Issue","d":{…}},          // update (full row → idempotent upsert)
-  {"id":18237,"a":"A","m":"Issue","mid":"…"},        // archive
-  {"id":18238,"a":"V","m":"Issue","mid":"…"},        // unarchive
+  {"id":18237,"a":"A","m":"Issue","d":{…}},          // archive (full row, v0.7)
+  {"id":18238,"a":"V","m":"Issue","d":{…}},          // unarchive or restore (full row, v0.7)
   {"id":18239,"a":"D","m":"Comment","mid":"…"},      // hard delete (purge)
   {"id":18240,"a":"G","added":["team:…"],"removed":[]} // sync-group change for this user
 ], "ack":[{"clientId":"…","seq":57}]}               // mutations confirmed in these packets
 {"t":"resync","reason":"schema|too_old|groups"}     // client must re-bootstrap
+{"t":"subscribed","teams":["…"],"at":18240}        // v0.8: the accepted teams; their deltas follow from the packet after `at`
 {"t":"presence","subject":"issue:…","users":["…"]}  // ephemeral, not in sync_log (M4, not in v0)
 {"t":"ping"}
 ```
-Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subject":"issue:…","state":"viewing|editing"}`.
+Client → server messages: `{"t":"pong"}`, from v0.8 `{"t":"subscribe","teams":["…"]}` and `{"t":"unsubscribe","teams":["…"]}` (§6.1), and from M4 `{"t":"presence","subject":"issue:…","state":"viewing|editing"}`.
 
 **`deltas` rules** (checked by the decoder):
 - `prev` is the id of the last packet the server sent **on this connection** before this message, or `since` for the first one. If `prev` is greater than the client's `lastSyncId`, the client has missed packets: it applies nothing from the message, closes the socket and reconnects with `since = lastSyncId` (SPEC-002 E1). If `prev` is less than or equal to `lastSyncId`, the message is contiguous with what the client has: it skips packets with `id ≤ lastSyncId` as duplicates (E2) and applies the rest. The server never needs to rely on the second case; it only makes a re-delivery harmless.
@@ -93,9 +129,11 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 - `ack` lists this connection's own mutations that committed in the `sync_log` range the message covers. `packets` may be **empty only when `ack` is not**: a mutation can write rows this client cannot see, and its pending entry must still be confirmed. A message with neither is invalid.
 - **Catch-up carries acks too.** The catch-up from `since` includes the acks for every mutation of the connection's `clientId` that committed in `(since, head]`, in an ack-only message where none of its packets are visible. A client whose live ack was lost (the socket dropped) relies on this, because a change it cannot see is confirmed only by its ack: the client's `lastSyncId` never reaches it.
 - `G` packets are decoded in v0 because they take part in the ordering. Until M7, the client handles one with a full re-bootstrap.
-- **Archived state changes only through `A` and `V`.** `I` inserts a live row, and `U` replaces the row's fields but keeps whether it is archived. An edit that also unarchives a row ("any edit" in state-machines.md §2) emits both `U` and `V` in the same transaction. This keeps a client that applied the stream identical to one that cold-started from a bootstrap (whose `row.archived` reflects the same state).
+- **Archived state changes only through `A` and `V`.** `I` inserts a live row, and `U` replaces the row's fields but keeps whether it is archived. No edit changes the archived state: archived issues are read-only, and **restore** emits `V` (SPEC-015). This keeps a client that applied the stream identical to one that cold-started from a bootstrap (whose `row.archived` reflects the same state).
+- **`A` and `V` carry the full row `d`** (v0.7), sent through `clientRow` like `I` and `U`, so its groups are cut to the connection's (SPEC-002 Q6). The client applies them as an upsert plus the flag, and a `V` for a row it doesn't hold inserts it. `D` still carries only `mid`.
+- **Issues leave the replica when archived or deleted** (v0.8). A packet whose Issue row has `archivedAt` or `deletedAt` set (an `A`, or the `U` of a delete) removes the Issue, with a tombstone at the packet's id, together with its eager children, its content and its hydration mark, in one IDB transaction. A later `V` or `U` of the live row (restore) inserts it again. An archived Label stays in the replica with its flag.
 
-**Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10). The server may also close with `1003` (a binary frame), `1008` (a message other than `pong`), `1009` (a client message over 4 KiB), `1011` (catch-up failed) or `1013` (try again later: the hub is not running yet, or the client fell too far behind). The client treats these like any other close: it reconnects with backoff and catches up from its `lastSyncId`.
+**Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10). The server may also close with `1003` (a binary frame), `1008` (a message other than `pong`, `subscribe` or `unsubscribe`), `1009` (a client message over 4 KiB), `1011` (catch-up failed) or `1013` (try again later: the hub is not running yet, or the client fell too far behind). The client treats these like any other close: it reconnects with backoff and catches up from its `lastSyncId`.
 
 **Refused before the upgrade** (SPEC-003 error body): `503` with `Retry-After` while the server starts or stops, `403` for an `Origin` other than `SURFACE_URL`'s, for an API key (SPEC-002 §4.3, Q9) or for a `clientId` another user registered through `POST /sync/mutate` (SPEC-002 §4.4), `400` for invalid connect parameters (except a missing `userId`, above). A browser sees each of these as an abnormal close (`1006`) and retries with backoff. **Live updates unavailable** (SPEC-005 §8): the client cannot tell a proxy that strips the upgrade from these refusals or from a server that is down, so it asks the server over plain HTTP. After **three attempts in a row that close, or go silent, before opening**, it requests `GET /auth/session`; any status below `500` (a `401` included) means the server answers. It then dials at once, and if that attempt also fails before opening, live updates are unavailable: the app shows the banner and the client keeps retrying with backoff. A network error, `502`, `503` or `504`, or no answer within 10 s, means the server may be down or restarting: no banner, and it asks again after the next failed attempt. A server back from a restart opens on the attempt its answer starts, so a restart never shows the banner. The count and the answer reset when an attempt opens, when the browser's `online` event fires, and when the client stops.
 
@@ -103,7 +141,7 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 
 **Revoked on any replica:** a session that ends (sign-out, and later revoke and password reset) closes its sockets with `4001` on every replica. The server sends `NOTIFY session_revoked` with the session ids, and every hub's listen connection hears it next to `sync`. A replica whose listen connection is down at that moment misses it, and those sockets stay open until they disconnect; their next connect is closed with `4001` as above.
 
-**Catch-up:** on connect, the server streams `sync_log` rows with `sync_id > since` filtered by the user's groups, then switches to live mode. If `since` is older than the retention window (30 days) or ahead of the server's head (a database restored from a backup, SPEC-002 Q10), it sends `resync(too_old)`; if `schemaHash` differs, `resync(schema)`. A connection's groups are read once, before the upgrade; when a private team's membership may change them, the hub sends `resync(groups)` (§6). After a `resync` the server sends nothing more on that connection but pings, and the client closes it.
+**Catch-up:** on connect, the server streams `sync_log` rows with `sync_id > since` filtered by the user's groups, then switches to live mode. If `since` is older than the retention window (30 days) or ahead of the server's head (a database restored from a backup, SPEC-002 Q10), it sends `resync(too_old)`; if `schemaHash` differs, `resync(schema)`. A connection's groups are read once, before the upgrade, plus the public teams it subscribes to (§6.1); when a private team's membership may change them, the hub sends `resync(groups)` (§6). After a `resync` the server sends nothing more on that connection but pings, and the client closes it.
 
 ### 4.4 Mutations: `POST /sync/mutate`
 ```jsonc
@@ -162,7 +200,7 @@ A mutation is sent only once it is persisted. If the replica has already reached
 ### 5.3 Offline
 - Offline is detected by WebSocket close plus failed pings. The UI shows an offline badge, and all eager data remains usable.
 - Mutations queue in IDB and survive reloads. On reconnect the queue flushes in seq order as soon as the socket is open, while catch-up runs. Confirmation waits for the replica to reach each commit (or its `ack`), so the order of catch-up and flush does not matter.
-- Content that was never hydrated shows "Available when online".
+- Content that was never hydrated shows "Available when online". So do issues the replica doesn't hold (another team never subscribed, archived and deleted issues, §2): they come from server queries.
 
 ### 5.4 Conflicts
 | Case | Resolution |
@@ -170,8 +208,9 @@ A mutation is sent only once it is persisted. If the replica has already reached
 | Two users change *different* fields | Both apply, because operations are field-level |
 | Two users change the *same* scalar field | Server order wins (last write wins), and both changes are visible in history |
 | Edit to a deleted or invisible record | Rejected with `NOT_FOUND` / `FORBIDDEN`. The overlay is dropped and the user sees a toast. |
+| Edit to an archived or deleted (not yet purged) issue, or its comments, reactions and attachments | Rejected with `CONFLICT` ("ENG-42 is archived. Restore it to edit it."): they are read-only (SPEC-011 §6.1, SPEC-015) |
 | Invariant violated by concurrent change (e.g. a status deleted meanwhile) | Rejected with `CONFLICT` plus a message |
-| **Rich text** (description, document) | `issue.updateDescription({id, baseVersion, doc})`. The server rejects it with `CONFLICT` if `baseVersion ≠ current`, and the client opens the merge UI (FR-COL-10). Real-time CRDT editing is v2. |
+| **Rich text** (description, comment, document) | `issue.updateDescription({issue, baseVersion, description})`, and `comment.update` the same way (SPEC-013). The server rejects it with `CONFLICT` if `baseVersion ≠ current`; the error carries no `currentVersion`, since the client has it in its replica (SPEC-011 D3). Until the merge UI (FR-COL-10, M4), the client keeps the user's text and offers "Copy my text" and "Discard and reload" (SPEC-011 Q4). Real-time CRDT editing is v2. |
 
 ### 5.5 Undo / redo
 At dispatch time the runner records the **inverse operation**, computed from the view state (e.g. `issue.update({id, priority: <old>})`). Undo dispatches the inverse as a *new* mutation, so it goes through the same pipeline. The stack is per tab, in memory only, holds 100 entries, and is cleared on `resync`.
@@ -180,13 +219,28 @@ At dispatch time the runner records the **inverse operation**, computed from the
 
 ## 6. Sync groups at runtime
 
-- A user's groups = `workspace` + `user:<id>` + `team:<id>` for each private team they belong to.
+- A connection's groups = `workspace` + `user:<id>` + `team:<id>` for each private team the user belongs to + `team:<id>` for each **public team the client subscribes to** (v0.8, §6.1).
+- **Issue rows** (v0.8, SPEC-011 §5.7) are in `team:<teamId>` for every team. An issue of a **public** team is also in `user:<creatorId>` and `user:<assigneeId>` (when assigned), so "My issues" is local for everyone. A private team's issue is in its team group only, so leaving the team can't leak it. **Child rows** (IssueContent, IssueHistory, Comment, Reaction, Attachment) carry the issue's `teamId` and are in `team:<teamId>` only. The Issue model declares a `groups` field.
+- **Draft** rows (SPEC-012) are in `user:<id>` only, so another user's drafts never reach a replica.
 - When membership changes, the server emits a `G` packet **to that user only**:
   - **added:** the client calls `GET /sync/bootstrap?groups=<added>`, then continues with deltas.
   - **removed:** the client deletes every row whose groups are now all invisible, from memory and from IDB.
-- **Until `G` packets (M7)** the hub sends `resync(groups)` instead, and the client bootstraps again with its new groups, which also drops the team's rows (PLAN-001 S9, SPEC-002 Q13). It goes to a connection whose user is named by a new membership row of a private team (live or in catch-up); to every connection in a private team's group when one of its memberships is deleted, since a deleted row carries no data (SPEC-002 Q4) and the hub can't tell whose it was; and, at connect, to a connection for which a private team outside its groups lost a member after its `since` (its user may have been removed while the socket was closed). Public teams' memberships change no groups.
-- A row's `groups` can change (e.g. a project loses its last public team). The repo logs `D` with the old groups, then `U` (the full row) with the new ones, under consecutive ids: users who lose visibility get only the `D`, users who gain it only the `U` (an upsert), and users who keep it get both in one batch, because the hub never splits that pair across batches or pages (SPEC-002 Q5).
+- **Until `G` packets (M7)** the hub sends `resync(groups)` instead, and the client bootstraps again with its new groups, which also drops the team's rows (PLAN-001 S9, SPEC-002 Q13). It goes to a connection whose user is named by a new membership row of a private team (live or in catch-up); to every connection in a private team's group when one of its memberships is deleted, since a deleted row carries no data (SPEC-002 Q4) and the hub can't tell whose it was; and, at connect, to a connection for which a private team outside its groups lost a member after its `since` (its user may have been removed while the socket was closed). Public teams' memberships change no server-side groups: the client subscribes to a public team it joins and unsubscribes from one it leaves (§6.1).
+- A row's `groups` can change (e.g. a project loses its last public team, a public team's issue gets a new assignee, a team label moves to the workspace with `label.moveToWorkspace`). The repo logs `D` with the old groups, then `U` (the full row) with the new ones, under consecutive ids: users who lose visibility get only the `D`, users who gain it only the `U` (an upsert, so it arrives as an insert), and users who keep it get both in one batch, because the hub never splits that pair across batches or pages (SPEC-002 Q5). Clients that keep the row keep its content too, because content is dropped only when the Issue is absent after the whole batch (§4.2 rule 5).
 - A row reaches a client with its `sync_groups` cut down to the groups that client is in, so it never learns the id of a private team it isn't a member of (SPEC-002 Q6). The client receives them in the model's `groups` field, if the model declares one; other models carry no groups (SPEC-002 Q8).
+
+### 6.1 Team subscriptions (v0.8)
+
+Partial issue loading ([ADR-0020](adr/0020-partial-issue-sync.md), SPEC-011 §5.7). The client subscribes to:
+- every public team the user is a member of (read from its TeamMembership rows), and
+- up to **5 other public teams, on demand**: when the user opens that team's issue list or one of its issues, including an issue held only through a `user:` group. The least recently opened is dropped first. The set is stored in IDB, per replica.
+
+Private teams the user is a member of are home groups, as before.
+
+- **Subscribing:** `teams` on the socket URL (§4.3), or `{"t":"subscribe","teams":[…]}` on an open socket. The server accepts a public team (any active user may subscribe to it) or a private team the user is a member of. Anything else (an unknown id, a private team the user isn't in) is **ignored the same way**, so the answer reveals nothing. It answers `{"t":"subscribed","teams":[…accepted],"at":<id>}`: the connection receives the team's deltas from the packet after `at`. The client then loads the team with the partial bootstrap (§4.1).
+- **Unsubscribing** (an on-demand team dropped, or the user leaves a public team): the client sends `{"t":"unsubscribe","teams":[…]}`, then removes every Issue row, with its children and hydration mark, whose `groups` no longer meet the connection's groups. A row also in `user:<id>` stays. Leaving a **private** team keeps the `resync(groups)` path below.
+- **Content needs the subscription:** child rows travel only in `team:<id>`, so the client hydrates and prefetches content only for issues of subscribed teams (§4.2).
+- **Eager children leave with their issue.** When an Issue leaves the replica (unsubscribe, archive, delete, a group change), its eager children (Attachment), its content and its hydration mark are removed in the same IDB transaction. Each child model registers its parent field for this.
 
 ---
 
@@ -211,14 +265,18 @@ handle(op, input, actor):
 
 The repo layer is the **only** code allowed to write synced tables. It computes the changed rows and their `groups`, so handlers cannot forget to log a change.
 
+- **Bulk writes** (v0.7, SPEC-011 §5.1): `repo.updateWhere(model, ids, patch, { touchUpdatedAt })` locks the rows in ascending id and logs one `U` per row; `repo.deleteWhere(model, column, ids)` logs one `D` per row. Settings cascades (a label delete rewriting `labelIds`) use `updateWhere` with `touchUpdatedAt: false`. Every flush inserts `sync_log` rows in chunks of at most 5,000 per statement, under Postgres's limit of 65,535 bind parameters.
+- **Groups of an Issue and its children** come from the issue row the handler already locked (SPEC-011 §4.8), not from a read of the team row, so the team lock is never taken after an issue lock.
+- **Two stated exceptions** write synced rows without a `sync_log` row each: purge deletes an issue's content rows with no `D` ([ADR-0022](adr/0022-purge-content-unlogged.md)), and a document schema migration rewrites stored documents in the migration ([ADR-0023](adr/0023-document-migration-unlogged.md)). Nothing else may.
+
 ---
 
 ## 8. Schema evolution
 
-- `schemaHash` = `computeSchemaHash(models)` from `packages/sync-protocol`: the lowercase hex SHA-256 of a canonical JSON form of `[SYNC_PROTOCOL_VERSION, models]`. For each model it covers the name, the load strategy, and each field's name, type and nullability. Models and fields are sorted by name, so declaration order doesn't matter. Client-only metadata (refs, indexes) is not hashed. Bumping `SYNC_PROTOCOL_VERSION` changes every hash. When it changes, clients receive `resync` and do a full bootstrap.
+- `schemaHash` = `computeSchemaHash(models)` from `packages/sync-protocol`: the lowercase hex SHA-256 of a canonical JSON form of `[SYNC_PROTOCOL_VERSION, models]`. For each model it covers the name, the load strategy, each field's name, type and nullability, and a content model's `parent` declaration (v0.7). The input also carries `DOC_SCHEMA_VERSION` (SPEC-013 §4.4), the version of the stored rich-text documents, so an editor schema change resyncs every client. Models and fields are sorted by name, so declaration order doesn't matter. Client-only metadata (refs, indexes) is not hashed. Bumping `SYNC_PROTOCOL_VERSION` changes every hash. When it changes, clients receive `resync` and do a full bootstrap.
 - The hash is computed in pure TypeScript rather than with `crypto.subtle`, which is async and missing on plain-HTTP origins (common for a self-hosted LAN install).
 - Operation inputs evolve **additively** (optional fields only). A removed or renamed operation makes the server reply `CLIENT_OUTDATED`, and the client reloads.
-- DB migrations run at server start, guarded by an advisory lock, before the server accepts connections.
+- DB migrations run at server start, guarded by an advisory lock, before the server accepts connections. A migration that rewrites stored documents logs no `sync_log` rows; it is allowed only in a release that bumps `DOC_SCHEMA_VERSION`, so every client resyncs ([ADR-0023](adr/0023-document-migration-unlogged.md)).
 
 ---
 
@@ -228,8 +286,11 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 |---|---|
 | Mutation batch size | ≤ 100 mutations or 1 MB |
 | Delta packet batch | ≤ 500 packets per message |
-| Content fetch | ≤ 50 parents per request |
-| Prefetch | Issues assigned to me, issues in the current cycle, and the first 50 visible rows of the active list |
+| Content fetch | ≤ 50 parents per request, ≤ 4 requests in flight |
+| Content cache | 2,000 hydrated issues per replica, least recently opened evicted first; never one open in a tab (a shared Web Lock per open issue; without Web Locks nothing is evicted) |
+| Prefetch | Open issues assigned to me in subscribed teams (the 100 most recently updated), the first 50 visible rows of the active list (debounced 200 ms), and an issue hovered for 150 ms. No "current cycle" until M3. |
+| On-demand team subscriptions | Up to 5 public teams beyond the user's own, least recently opened dropped first |
+| `sync_log` insert chunk | ≤ 5,000 rows per statement |
 | `sync_log` retention | 30 days |
 | Ping interval / timeout | 25 s / 10 s |
 | Reconnect backoff | 0.5 s → 30 s with jitter |
@@ -241,9 +302,11 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 1. **Convergence property:** with random operations from N clients and random network faults, all clients equal the server state once the system is quiescent.
 2. **Exactly-once:** a mutation is never lost and never applied twice across crashes, reloads, and resends.
 3. **Ordering:** deltas are applied strictly in `sync_id` order with no gaps. A gap triggers a reconnect.
-4. **Group change:** visibility is gained and lost correctly, with purging on removal.
+4. **Group change:** visibility is gained and lost correctly, with purging on removal. Subscribing to and unsubscribing from a team equals a fresh bootstrap of the new set.
 5. **Rejection:** the overlay rolls back cleanly and the UI state matches the base state.
 6. **Performance:** bootstrap, warm start, and delta apply stay within the NFR budgets at the reference scale.
+7. **Content models** (v0.7): with hydration, buffering, tombstones and eviction in the generator, every client's hydrated content equals the server's for its hydrated parents.
+8. **Archive interleavings** (v0.7): archive, restore, delete, purge and label cascades, in any interleaving, leave every client equal to a fresh bootstrap.
 
 ---
 
@@ -251,6 +314,8 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-12 | v0.8 | Partial issue loading ([ADR-0020](adr/0020-partial-issue-sync.md), SPEC-011 §5.7), accepted at the M1 gate. Issue is eager **per subscribed team** (§2), and the 35 MB budget is per replica. Issue rows of public teams are also in `user:<creatorId>` and `user:<assigneeId>`; child rows are in `team:<id>` only (§6). Codec changes: `teams` on the socket URL; `subscribe` and `unsubscribe` (client → server) and `subscribed` (server → client) messages (§4.3, §6.1). The partial bootstrap `?groups=team:<id>` is enabled, with an empty answer for an unknown or invisible team (§4.1). Bootstrap leaves out archived and deleted issues, and an `A` or a delete's `U` removes an Issue, with its children and content, on the client; restore's `V` or `U` inserts it (§4.3). `schemaHash` changes. | PLAN-011 S4b (server), S4c (client) |
+| 2026-11-12 | v0.7 | Accepted at the M1 gate (SPEC-010, SPEC-011, SPEC-013, SPEC-015). **Archive on the wire:** `archivedAt` is a synced field on models that archive, the frame's `archived` flag is derived from it, `A` and `V` carry the full row through `clientRow`, and a `V` for a missing row inserts it (§4.1, §4.3). **Content:** the `/sync/content` contract and hydration rules (§4.2; the parameter is `parents`); content models declare `parent`; Comment and Reaction are content models with parent Issue; content `D`s always apply as tombstones, and content is dropped when its Issue is absent after a batch. A purge logs no `D` for content rows ([ADR-0022](adr/0022-purge-content-unlogged.md)). **Server:** `repo.updateWhere` and `repo.deleteWhere`, `sync_log` inserts in chunks of 5,000, groups from the locked issue row (§7). **Schema hash** gains each model's `parent` and `DOC_SCHEMA_VERSION` (§8); document migrations are unlogged ([ADR-0023](adr/0023-document-migration-unlogged.md)). The description conflict carries no `currentVersion` (§5.4). Prefetch and cache limits (§9) and property-suite obligations (§10). Draft rows sync in `user:<id>` only (§6). IssueLabel is gone: labels are `labelIds` on Issue (§2). `schemaHash` changes. | PLAN-011 S1–S2 (archive, repo), S5a–S5b (content); PLAN-012 (Draft); PLAN-013 (comments); PLAN-015 S2 (purge) |
 | 2026-11-12 | v0.6 | Additive. §4.4: a mutation's `error` may carry `issues` (`[{path, message, hint?}]`, `path` of strings and non-negative integers), the operations API's issues for the same error, also in the stored result a replay returns. The client passes them on in `MutationOutcome` and `Rejection` (`RejectionError`), so a form can show a server refusal on its field. A client reading a server without them sees none. | Session A (the executor's issues in the mutate result and in the stored `client_mutations` result; a leak test that a hidden row's rejection, issues included, matches a missing row's): built 2026-11-12 (`sync-mutate-leak.int.test.ts`) |
 | 2026-11-12 | v0.5 | Text only, no wire change. §4.4 `401`: the web app now keeps the store when the same session answers after a mutate `401`, so the client's backoff applies in the app (C's fix of D2's handoff, `30cbb7d`, SPEC-005 §3). | — |
 | 2026-11-12 | v0.5 | No wire change. The package also holds the paths the server answers itself: `SERVER_PREFIXES` and `isServerPath(pathname)` (`src/server-paths.ts`, no imports), exported from the root and alone as `@surface/sync-protocol/server-paths`, so the offline worker (ADR-0019) can import them without the package's schemas. The server's app-page fallback uses them; a new top-level server prefix is added there. | Session C (switch `apps/web/src/offline/app-cache.ts` to it; C's PLAN-005 S9 handoff, item 3, agreed with D2) |

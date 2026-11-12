@@ -2,13 +2,15 @@
 
 Status: **Draft v0.1** · Date: 2026-11-06
 
+*Changed 2026-11-12 (M1 acceptance gate, SPEC-010, SPEC-012 and SPEC-015 §12): "Trash" becomes **Recently deleted**; archive is automatic for issues and read-only, labels are archived by hand; new terms **Draft** and **Restore**. Label group, Reaction, Sync group and Replica follow SPEC-010 D10, SPEC-013 D8 and ADR-0020.*
+
 One definition per term. Docs, code, UI copy, and MCP operation names all use these terms exactly.
 
 | Term | Definition |
 |---|---|
 | **Workspace** | The single top-level container of one Surface install (one company). There is exactly one per install. |
 | **User** | A person with an account. Role is **Admin** or **Member**. A user is either **active** or **deactivated**. |
-| **Admin** | A user who can manage workspace settings, members, API/MCP settings, webhooks, the audit log, and the trash. |
+| **Admin** | A user who can manage workspace settings, members, API/MCP settings, webhooks and the audit log, and who can permanently delete issues from Recently deleted. |
 | **Member** | A regular user. Can do everything except Admin functions. |
 | **Team** | A group of users that owns issues, a workflow, labels, cycles, triage, and templates. Identified by a **team key**. |
 | **Team key** | 2–5 uppercase letters (e.g. `ENG`), unique in the workspace, used as the prefix of issue identifiers. |
@@ -25,11 +27,11 @@ One definition per term. Docs, code, UI copy, and MCP operation names all use th
 | **Priority** | One of No priority (0), Urgent (1), High (2), Medium (3), Low (4). |
 | **Estimate** | An integer number of points on the team's estimate scale (off, linear, exponential, fibonacci, or t-shirt). |
 | **Label** | A tag on issues. It is a **workspace label** (usable by every team) or a **team label** (usable only on that team's issues). |
-| **Label group** | A label that contains child labels. An issue can carry at most one label from each group. |
+| **Label group** | A label that contains child labels. A group is **single-select** by default (an issue carries at most one of its labels; adding one replaces the other) or **multi-select**. |
 | **Sub-issue / Parent** | An issue can have one parent issue. The children of a parent are its sub-issues. |
 | **Relation** | A typed link between two issues: **blocks** (with its inverse, *blocked by*), **related**, or **duplicate of**. |
 | **Comment** | A rich-text message on an issue or a project update. It can have one level of replies. |
-| **Reaction** | An emoji a user adds to a comment or project update. |
+| **Reaction** | An emoji a user adds to a comment, an issue, or a project update. |
 | **Attachment** | A file or link attached to an issue. |
 | **History** (activity) | The record of every change to an issue: who (or which API key / MCP), what, and when. |
 | **Cycle** | A team's time box (1–8 weeks), created automatically on a repeating schedule. Its state is **upcoming**, **active**, or **completed**. |
@@ -55,15 +57,17 @@ One definition per term. Docs, code, UI copy, and MCP operation names all use th
 | **Snooze** | Hiding a notification (or a triage issue) until a given time. |
 | **Triage** | A team's intake queue for issues created by non-members. Issues are reviewed there before entering the workflow. |
 | **Accept / Decline** | Triage actions. Accept moves the issue to the team's default status. Decline moves it to Canceled. |
-| **Archive** | Automatic hiding of long-closed issues, projects, and cycles. Archived items stay searchable and can be restored. |
-| **Trash** (soft delete) | The state of a deleted item. It can be restored for 30 days, after which it is **purged** (permanently removed). |
+| **Archive** | Automatic hiding of long-closed issues, projects, and cycles, after the team's period. Nobody archives an issue by hand. An archived issue is read-only, is listed on the team's archive page, and comes back only by **restore**. Labels are the exception: they are archived and unarchived by hand, and an archived label stays on its issues but can't be newly added. |
+| **Recently deleted** | Where deleted issues go (soft delete), shown as a tab of the team's archive page. A deleted issue is read-only and can be restored for 30 days. After that it is **purged** (permanently deleted) by a job, or earlier by an Admin. The UI never says "trash". |
+| **Restore** | Returning an archived or recently deleted issue to live. It is the only way back from either state. |
+| **Draft** | A user's unsaved issue (one per team, from the composer) or unsent comment (one per issue). Saved on the server and synced only to its owner's devices, listed on the Drafts page. |
 | **Operation** | A named, typed action in the Operation Registry (e.g. `issue.update`). It is the only way data changes, whether from the UI, the API, or MCP. |
 | **Operation Registry** | The single catalog of all operations, with their schemas, permissions, keywords, and examples. |
 | **Transaction** | A client-side batch of one or more operations, applied optimistically and then confirmed or rejected by the server. |
-| **Sync group** | A visibility scope that decides which clients receive a record: `workspace`, `team:<id>` (private teams), or `user:<id>`. |
+| **Sync group** | A visibility scope that decides which clients receive a record: `workspace`, `team:<id>` (every team's issues and their children, and all of a private team's data), or `user:<id>` (a user's own data, and the public-team issues they created or are assigned). A connection receives a public team's `team:<id>` when its client subscribes to the team. |
 | **lastSyncId** | The global, monotonically increasing number the server assigns to every committed change. It orders all changes. |
 | **Delta** | A change broadcast from the server to clients: insert, update, archive, unarchive, delete, or sync-group change. |
-| **Replica** | The full copy of a client's visible workspace data, kept in IndexedDB and in memory. |
+| **Replica** | A client's copy of workspace data, kept in IndexedDB and in memory: every eager model other than Issue in full, the live issues of the teams it subscribes to and the user's own issues, and the content of issues it has opened. Archived and deleted issues are never in it ([ADR-0020](../04-architecture/adr/0020-partial-issue-sync.md)). |
 | **API key** | A personal secret token used for the API and MCP. Its scope is read or read-write, optionally limited to certain teams, with an optional `allow-destructive` flag. |
 | **Webhook** | An Admin-configured HTTPS endpoint that receives signed event payloads. |
 | **Audit log** | An Admin-only record of security-relevant events. |

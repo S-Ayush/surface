@@ -1,6 +1,6 @@
 # ADR-0002: Sync strategy
 
-Status: **Accepted (draft)** · Date: 2026-11-06
+Status: **Accepted (draft)** · Superseded in part by [ADR-0020](0020-partial-issue-sync.md) (the full metadata replica clause) · Date: 2026-11-06
 
 ## Context
 Speed is the product (VISION §4). The UI must read from local memory and never wait on the network. We need offline tolerance, real-time updates, private-team isolation, and one write path for the UI, API, and MCP.

@@ -1,7 +1,7 @@
 # SPEC-011: Issues core: create, properties, history, IDs
 
-Status: **Draft** · Milestone: **M1** · Date: 2026-11-12 (review round 1 applied 2026-11-12)
-Implements: FR-ISS-01, 02 (domain and operation; the composer UI is SPEC-012), 03 (the M1 properties, §2), 04 (operations), 05, 08 (identifier and URL forms) · NFR-01, 02, 06, 07, 08, 10, 14 · sync-protocol §2 and §4.2 (content models, first use) · the issue half of SPEC-010 AC-10, AC-11
+Status: **Accepted** (2026-11-12, M1 acceptance gate) · Milestone: **M1** · Date: 2026-11-12 (review round 1 applied 2026-11-12)
+Implements: FR-ISS-01, 02 (domain and operation; the composer UI is SPEC-012), 03 (the M1 properties, §2), 04 (operations), 05, 08 (identifier and URL forms) · NFR-01, 02, 06, 07, 08, 10, 14 · sync-protocol §2 and §4.2 (content models, first use) · the issue half of SPEC-010 AC-10, AC-12
 Depends on: SPEC-010 (statuses, labels, estimates), SPEC-002 (sync), SPEC-003 (registry, filter engine, lists)
 Related: [domain-model §4.6, §4.10, §6](../03-domain/domain-model.md) · [state-machines §1](../03-domain/state-machines.md) · [events](../03-domain/events.md) · [sync-protocol §2, §4.2, §4.3, §5.4](../04-architecture/sync-protocol.md) · SPEC-012 (UI) · SPEC-013 (comments, editor) · SPEC-014 (attachments) · SPEC-015 (recently deleted, archive)
 
@@ -58,7 +58,7 @@ The screens are SPEC-012's. The flows here describe what the system does.
 
 ### 3.3 Edit the description
 
-`issue.updateDescription` sends the whole document with the `baseVersion` it was edited from. If someone saved in between, the server answers `CONFLICT` and the client keeps the user's text (Q4). Otherwise the version goes up by one. Saving the description (and creating an issue with one) also claims the inline files it references, in the same transaction (SPEC-014).
+`issue.updateDescription` sends the whole document with the `baseVersion` it was edited from. If someone saved in between, the server answers `CONFLICT` and the client keeps the user's text (Q4). Otherwise the version goes up by one. Saving the description (and creating an issue with one) also claims the inline files it references, in the same transaction, through one server function `claimInlineFiles(tx, doc, issue, actor)` that SPEC-013 (comments) and SPEC-014 (files) share (SPEC-014 §4.3).
 
 ### 3.4 Open an issue
 
@@ -96,7 +96,7 @@ The issue row is already in the replica. It opens at `/issue/ENG-42/<slug>` (§4
 Labels are a `labelIds` array on the Issue row, not a separate model (Q17). This keeps the eager size within budget (§10), makes optimistic writes deterministic, and leaves no join-table unique index to collide on.
 
 - A label on an issue is a label of the issue's team or a workspace label (INV-06), never a group, and not archived **when added** (SPEC-010 §4.2). An archived label already on an issue stays.
-- **One label per exclusive group (INV-07) is enforced when labels are written.** A group is single-select by default (`exclusive`, SPEC-010 §4.2). An operation that adds a label of an exclusive group G removes the issue's other labels of G in the same write (Q6). A multi-select group (`exclusive` false) has no such rule. An operation that adds no label of G leaves G's labels alone. So an issue that carries two labels of an exclusive G, because a label was moved into G after both were applied, or G was switched to single-select (SPEC-010 Q6), keeps both until someone adds a label of G. The picker shows the clash (SPEC-012). Linear's behaviour for this case isn't observable; kept.
+- **One label per exclusive group (INV-07) is enforced when labels are written.** A group is single-select by default (`exclusive`, SPEC-010 §4.2). An operation that adds a label of an exclusive group G removes the issue's other labels of G in the same write (Q6). A multi-select group (`exclusive` false) has no such rule. An operation that adds no label of G leaves G's labels alone. So an issue that carries two labels of an exclusive G, because a label was moved into G after both were applied, or G was switched to single-select (SPEC-010 D20), keeps both until someone adds a label of G. The picker shows the clash (SPEC-012). Linear's behaviour for this case isn't observable; kept.
 - At most 20 labels per issue (Q8).
 - **Merging:** `addLabels` and `removeLabels` are applied on the server, under the issue row lock (§4.8), to the stored array. Adding a label the issue already has, or removing one it doesn't have, is a no-op for that label, not an error.
 
@@ -161,7 +161,7 @@ SPEC-012 words the other fields in the same style. When the actor kind is `api` 
 
 ### 4.5 Numbering and order
 
-- `team_issue_counters` (server-only, SPEC-001) is incremented with `UPDATE … RETURNING` in the creating transaction. The row lock orders concurrent creates in one team.
+- `team_issue_counters` (server-only, SPEC-001) is incremented in the creating transaction with one upsert, `INSERT … ON CONFLICT (team_id) DO UPDATE SET last_number = last_number + 1 RETURNING`, so a team without a counter row gets one. The row lock it takes orders concurrent creates in one team.
 - Numbers are **gap-free in commit order**. A create that rolls back also rolls back its counter update, so its number goes to the next create. No number is visible before its create commits, so nothing visible is reused.
 - INV-08 is about committed numbers: a committed number is never reused, including after the issue is purged (the counter never goes down). A unique index on `(team_id, number)` backs it.
 - **Sort key.** `sortOrder` is global (domain-model §4.6). A new issue goes first: the server computes a key before the lowest key of the team's issues **after** taking the counter row lock, so two creates in one team never get the same key. Keys carry a random suffix (jitter), so creates in two teams at once differ too. Reads order by `(sortOrder, id)`, so even an equal pair has a stable order. The key functions (`keyBefore`, `keyBetween`) are new code in `packages/domain`, with property tests. No dependency is added.
@@ -243,7 +243,8 @@ One migration adds:
 - `issue_search_text` (server-only, §4.3);
 - foreign keys:
   - to `teams`, `users`, and `workflow_statuses` (`ON DELETE RESTRICT`, so a status can't vanish under an issue);
-  - from `issue_content` and `issue_history` to `issues` (`ON DELETE RESTRICT`). Purge deletes these rows explicitly before the issue (SPEC-015 §4.5): without `D` rows if SPEC-015 Q2 is accepted, through `repo.deleteWhere` otherwise. A cascade would hide that choice;
+  - from `issue_content` and `issue_history` to `issues` (`ON DELETE RESTRICT`). Purge deletes these rows explicitly before the issue, through `repo.deleteWhere` with `log: false` (SPEC-015 §4.5, its Q2 decision). A cascade would hide that choice;
+- no foreign key from `issue_history.api_key_id` to API keys until M6 adds the keys table; the column is a plain uuid until then;
 - no foreign key for `labelIds` (Postgres has no array foreign keys): the handler checks them, and the `label.delete` cascade keeps them clean;
 - indexes:
   - the `(team_id, number)` unique index;
@@ -273,8 +274,8 @@ SPEC-012 adds the `Draft` model (a user's composer and comment drafts, synced in
 - **`defineModel` gains `parent`.** Content models declare `parent: { model: 'Issue', field: 'issueId' }`. It is part of the schema hash.
 - **Repo bulk writes.**
   - `repo.flush` inserts `sync_log` rows in chunks of at most 5,000 per statement, to stay under Postgres's limit of 65,535 bind parameters.
-  - A new `repo.updateWhere(model, ids, patch, { touchUpdatedAt })` locks the rows in ascending id, runs one `UPDATE` per chunk, and logs one `U` per row in chunked inserts. `repo.update` always sets `updatedAt` and does a per-row lock and group read (`repo.ts:98-101`), about three queries per issue, so cascades can't use it. Cascades (§4.9) pass `touchUpdatedAt: false`. An **empty patch** is accepted and means "log each row again": it writes no column and logs one `U` with the stored row. `issue.restore` uses it to send an issue's Attachment rows again (§5.7, SPEC-015 §5.1).
-  - A new `repo.deleteWhere(model, column, ids)` deletes in bulk and logs one `D` per row, in the same chunks. Purge (SPEC-015) uses it.
+  - A new `repo.updateWhere(model, ids, patch, { touchUpdatedAt })` refuses a patch that touches `teamId` (a team change rewrites groups, M3), locks the rows in ascending id, runs one `UPDATE` per chunk, and logs one `U` per row in chunked inserts. `repo.update` always sets `updatedAt` and does a per-row lock and group read (`repo.ts:98-101`), about three queries per issue, so cascades can't use it. Cascades (§4.9) pass `touchUpdatedAt: false`. An **empty patch** is accepted and means "log each row again": it writes no column and logs one `U` with the stored row. `issue.restore` uses it to send an issue's Attachment rows again (§5.7, SPEC-015 §5.1).
+  - A new `repo.deleteWhere(model, column, ids, { log })` deletes in bulk and logs one `D` per row, in the same chunks. Purge (SPEC-015) uses it. `log: false` writes no `sync_log` rows. The repo accepts it only for a content model whose parent row is deleted, with a logged `D`, in the same transaction (an assertion in `flush`); clients drop the content of an absent parent (§5.3). It is the one unlogged repo write, for purge (SPEC-015 §4.5, its Q2 decision and the ADR it needs).
   - Budget: at most 2 s for 10,000 rows while holding the global sync lock. This is an accepted rare stall, measured once perf tests resume (⏸).
 - Every write goes through the repo layer (`sync/repo.ts`), which logs `sync_log` rows in the same transaction (architecture rule 2).
 - In the creating transaction, the repo logs an Issue row **before** its content rows (§5.3).
@@ -330,7 +331,7 @@ A parent is **hydrated** when the client holds all of its content and keeps it l
    - **`D` packets for content are always applied, as tombstones**, hydrated or not. An `A`, `V` or `D` packet carries only `mid` (`socket.ts:97-99`, `delta-writer.ts:50-53`), so a tab can't tell a `D`'s parent. Applying it everywhere is safe: a tombstone for a row the tab never held costs one small IDB record, and it makes a later answer at a lower `C` unable to resurrect the row.
    - **Content is dropped when its parent is gone.** After a whole delta batch is applied, the content rows and hydration mark of any parent whose Issue row is now absent are removed. A group change logs `D` then `U` for the same Issue in one batch (sync-protocol §6; the hub never splits the pair), so an issue that stays visible keeps its content. A purge (SPEC-015) leaves the Issue absent, so its content goes.
 5. **A created issue is hydrated by its `I` packet.** Every content row of an issue is written in the creating transaction or later, and the repo logs the Issue row first (§5.1). So the `I` packet for an Issue marks it hydrated, for every client that receives it **and whose tab subscribes to the issue's team**. A connection that holds the Issue only through a `user:` group receives the `I` but none of the content rows (§5.7), so it must not mark the issue hydrated. This is a delta rule; optimistic code never touches hydration.
-6. **Mutating content hydrates first.** Each content operation declares its parent with `contentParent(input)` in `defineOperation` (a new optional field; SPEC-003 §3 change, §12). Dispatch **awaits hydration** of that parent, and the parent's rows being paged into memory, before it runs the `optimistic`. So the `I` delta of the confirmed row is never dropped, and the overlay's `find` and `patch` see the parent's rows (§5.4). Offline, with a parent that was never hydrated, the UI offers no content edit: the description is read-only and the comment box is hidden (SPEC-013 E20). So no hydration-gated confirmation is needed, and the queue's confirmation rule (sync-protocol §5.1) is unchanged.
+6. **Mutating content hydrates first.** Each content operation declares its parent with `contentParent(input)` in `defineOperation` (a new optional field; SPEC-003 §3 change, §12). Dispatch **awaits hydration** of that parent, and the parent's rows being paged into memory, before it runs the `optimistic`. So the `I` delta of the confirmed row is never dropped, and the overlay's `find` and `patch` see the parent's rows (§5.4). The seq is taken after the wait, and later dispatches wait behind it in a first-in, first-out chain, so mutations keep the order they were called in. Offline, with a parent that was never hydrated, the UI offers no content edit: the description is read-only and the comment box is hidden (SPEC-013 E20); a dispatch that still arrives (an API or a race) is refused at once with "Available when online" instead of waiting. So no hydration-gated confirmation is needed, and the queue's confirmation rule (sync-protocol §5.1) is unchanged.
 7. **Resync** clears every hydration mark with the rest of the replica.
 
 The old rule "skip deltas at or below the answer's `lastSyncId`" is removed. The per-row versions already make an older packet a no-op.
@@ -373,11 +374,12 @@ Today the repo logs `archivedAt` as bookkeeping, so the client never sees it. Th
 | API key / MCP | Mutations need `read_write`; nothing here is `destructive` (permissions §3.5) |
 
 - Private team issues are invisible to non-members. Every `IssueRef` to one is `NOT_FOUND`, worded as for an issue that doesn't exist. Lists, counts and groups leave them out. Bootstrap, catch-up, live deltas and `/sync/content` never carry them or their content (permissions §5).
+- **One visibility set for reads.** Every server read path (queries, `IssueRef` resolution, `/sync/content`, `GET /files/:id`) filters with `visibleGroups(actor)`: every group the actor may see, including every public team's `team:<id>`. It never uses a socket's groups, which hold only the subscribed teams (§5.7), so an unsubscribed public team stays readable.
 - **API key `teamIds`** narrow in SQL on every read path, because any user may subscribe to a public team's group and a public team's issues also reach `user:` groups (PLAN-003 As built; permissions §3.5).
-- **Subscriptions** (§5.7): a subscription to an unknown team and to a private team the user isn't in are ignored identically, and the partial bootstrap answers both with an empty stream. No `user:` group ever carries a private team's issue or any child row.
   - The read paths are `issue.list`, `count`, `groupBy` and `get`, and the resolution of `IssueRef`, `StatusRef` and `LabelRef`.
   - An issue of a team outside the key's teams is `NOT_FOUND`, worded as for one that doesn't exist.
   - Mutations check the same.
+- **Subscriptions** (§5.7): a subscription to an unknown team and to a private team the user isn't in are ignored identically, and the partial bootstrap answers both with an empty stream. No `user:` group ever carries a private team's issue or any child row.
 
 ### 5.7 Partial issue loading (ADR-0020)
 
@@ -405,7 +407,7 @@ The server accepts a subscription to a public team, or to a private team the use
 - `GET /sync/ws?…&teams=<id>,<id>`: the public teams to subscribe from the start (members and on-demand). Catch-up uses the accepted set.
 - Client → server `{"t":"subscribe","teams":["…"]}` and `{"t":"unsubscribe","teams":["…"]}`. Server → client `{"t":"subscribed","teams":["…accepted"],"at":<id>}`: from the packet after `at`, the connection receives the team's deltas. An ignored team is left out of `teams`, exactly as an unknown one is.
 - Server → client `{"t":"unsubscribed","teams":["…"],"at":<id>}`: no packet of those teams follows `at`. Socket messages are ordered, so every earlier packet of those teams has already reached the client.
-- After `subscribed`, the client loads the team with the **partial bootstrap** `GET /sync/bootstrap?groups=team:<id>&userId=…&schemaHash=…` (reserved by sync-protocol §4.1, enabled now). It streams the rows in that group (Issues and their eager children) from one snapshot, with `lastSyncId` = `C`. For a team that is unknown or invisible to the user (including a private team the user isn't in) the answer is **byte-identical** to the one for an unknown id: the same `meta` apart from `lastSyncId` and `serverTime`, and `rows: 0`. It is never an error.
+- After `subscribed`, the client loads the team with the **partial bootstrap** `GET /sync/bootstrap?groups=team:<id>&userId=…&schemaHash=…` (reserved by sync-protocol §4.1, enabled now). It streams the rows in that group (Issues and their eager children) from one snapshot, with `lastSyncId` = `C`. For a team that is unknown or invisible to the user (including a private team the user isn't in) the answer is **byte-identical** to the one for an unknown id: the same `meta` apart from `lastSyncId` and `serverTime`, and `rows: 0`. It is never an error. The only errors are the full bootstrap's, checked before the first frame: no `userId` or a `schemaHash` that differs from the server's is `426 CLIENT_OUTDATED`, and the client reloads (as for `/sync/content`, §5.2).
 - **Writing the answer (`writePartialRows`).** Eager packets carry full rows, so nothing is buffered (unlike content, §5.3). But the in-memory pool keeps no per-row versions, so a plain write of the answer could undo a packet above `C` that arrived during the load. The tab therefore writes the answer through a version-aware storage call, `writePartialRows(rows, C)`:
   - a row is skipped when storage holds a newer version of it, or a tombstone at or above `C`;
   - it starts no new generation, and never moves `meta.lastSyncId` or the tab's `lastSyncId`;
@@ -428,7 +430,7 @@ The server accepts a subscription to a public team, or to a private team the use
 **Archived and deleted issues are not stored in the replica:**
 - Bootstrap (full and partial) leaves out Issue rows with `archivedAt` or `deletedAt` set, and their children.
 - Any `I`, `U`, `A` or `V` packet whose row has `archivedAt` or `deletedAt` set **removes** the Issue from the replica with a tombstone at the packet's id, with its children and hydration mark. (This covers a label-cascade `U` on an archived or deleted issue, which carries the row with its state, §4.9.) A later `V` or `U` of the live row (restore) inserts it again.
-- **Restore brings the attachments back.** A restore's `V` or `U` carries only the Issue row, and the client dropped the Attachment rows with the issue. So `issue.restore` logs the issue's Attachment rows again, after the Issue's `V`/`U` and in the same transaction: one `U` each through `repo.updateWhere` with an empty patch and `touchUpdatedAt: false` (§5.1), at most 100 (SPEC-014 Q7). Content comes back by hydration when the issue is opened.
+- **Restore brings the attachments back.** A restore's `V` or `U` carries only the Issue row, and the client dropped the Attachment rows with the issue. So `issue.restore` logs the issue's Attachment rows again, after the Issue's `V`/`U` and in the same transaction: one `U` each through `repo.updateWhere` with an empty patch and `touchUpdatedAt: false` (§5.1), at most 100 (SPEC-014 D20). Content comes back by hydration when the issue is opened.
 - The archive page, the recently deleted tab and an archived or deleted issue's page read from the server: `issue.list` with `includeArchived` and the filter "`archivedAt` is set", `issue.listDeleted` and `issue.get` (SPEC-015). They are read-only (D7), need the network, and show "Available when online" offline. An archived or deleted issue's activity and comments come from one `/sync/content` read held in memory for that page (never stored, not hydrated): the endpoint already returns content of archived and deleted parents the actor can see (SPEC-015 §4.3). They refresh as SPEC-015 §3.3 says: on focus, after the user's own delete and restore confirmations, and on packets of the team when it is subscribed (debounced). Opening them does not subscribe the team.
 
 **What stays local, what asks the server:**
@@ -439,7 +441,7 @@ The server accepts a subscription to a public team, or to a private team the use
 | List of another public team | Replica after an on-demand subscription; "Loading…" until the partial bootstrap is applied; offline and never subscribed: "Available when online" |
 | An issue opened by link or ID that the replica doesn't hold | `issue.get`, then a subscription to its team if public and live; the page renders as soon as the row is local |
 | Archive page, recently deleted, an archived or deleted issue | Server queries (above) |
-| Counts over issues the client may not hold: label usage, issues per status, "N archived issues" | Server queries (`issue.count`, SPEC-010 §6) |
+| Counts over issues the client may not hold: label usage, issues per status, "N archived issues" | Server queries: `label.usage` (SPEC-010 §6), `issue.groupBy` and `issue.count` (§6.1) |
 | Title and ID search in `Mod+K` | The local index (ADR-0008) over held issues; an exact identifier not held falls back to `issue.get` |
 | Content prefetch (§5.4) | Issues of subscribed teams only |
 
@@ -573,11 +575,11 @@ None in this spec (SPEC-012). The command-menu identifier fast path (`eng-87` �
 | AC-14 | The average JSON size of an Issue row over the seed distribution (titles, label counts and nullable fields as in §10) is at most 650 bytes. A replica's eager total at the reference scale fits the per-replica 35 MB budget (§10, Q15), measured for the **worst case** (the member teams plus the 5 largest on-demand teams), not only the seed's team split. | unit (row size, worst-case total from the seed distribution) + perf ⏸ (total) |
 | AC-15 | No issue ever points at a missing status. `issues.status_id` is `ON DELETE RESTRICT`, and an `issue.update` into a status deleted meanwhile is `CONFLICT` (E19). Status delete itself is SPEC-010's (refused while any issue uses the status). | unit (re-read handler) + integration ⏸ (foreign key) |
 | AC-16 | Moving a label into a group touches no issue. The next add of a label of that exclusive group removes the issue's other labels of it (§4.2). This is the issue half of SPEC-010 AC-10, as SPEC-010 decides it. | unit |
-| AC-17 | `label.delete` removes the label from `labelIds` of every issue that has it (live, archived, deleted), with no history, event, `updatedAt` or lifecycle change. This is the issue half of SPEC-010 AC-11. | integration ⏸ + unit (cascade function) |
+| AC-17 | `label.delete` removes the label from `labelIds` of every issue that has it (live, archived, deleted), with no history, event, `updatedAt` or lifecycle change. This is the issue half of SPEC-010 AC-12. | integration ⏸ + unit (cascade function) |
 | AC-18 | Archive on the wire (§5.5): `A` and `V` carry the full row; a `V` for a missing row inserts it; archive, restore, delete and label cascades in any interleaving equal a fresh bootstrap. | unit (codec, pool) + sync property suite |
 | AC-19 | A child row's `teamId` always equals its issue's `teamId`; the repo sets it from the locked issue row. | unit |
 | AC-20 | Lock order (§4.8): issue edits, comment writes and label cascades never deadlock. An edit racing a `label.delete` either is rewritten by the cascade or answers `CONFLICT`; no issue is left pointing at a deleted label (E22). | sync property suite (real server: concurrent edits and cascades) |
-| AC-21 | `repo.updateWhere` locks rows in ascending id, leaves `updatedAt` alone when `touchUpdatedAt` is false, logs one `U` per row in chunks of at most 5,000, and accepts an empty patch as "log the row again"; `repo.deleteWhere` logs one `D` per row the same way. | unit (statement builder) + integration ⏸ |
+| AC-21 | `repo.updateWhere` locks rows in ascending id, leaves `updatedAt` alone when `touchUpdatedAt` is false, logs one `U` per row in chunks of at most 5,000, and accepts an empty patch as "log the row again", and refuses a patch that touches `teamId`; `repo.deleteWhere` logs one `D` per row the same way, and accepts `log: false` only for a content model whose parent is deleted with a logged `D` in the same transaction. | unit (statement builder) + integration ⏸ |
 | AC-22 | Dispatching a content mutation awaits hydration of its `contentParent` and pages its rows into memory, and the overlay rebuild then replays pending mutations on them. Offline with an unhydrated parent, the UI offers no content edit. | unit (fake server, fake-indexeddb) |
 | AC-23 | Archived and deleted issues are read-only: `issue.update`, `issue.updateDescription` and the child writes of SPEC-013 and SPEC-014 answer `CONFLICT` with the §6.4 message, even for a no-op, and change no lifecycle state. `cascade` and `system` writes still succeed. | unit (lock helper) + integration ⏸ |
 | AC-24 | `issueSlug` gives lowercase hyphenated words, at most 60 characters, on a word boundary, and an empty slug for a title with no letters or digits. `/issue/ENG-42` with any slug resolves to the same issue (E27). | unit (property) |
@@ -602,23 +604,7 @@ None in this spec (SPEC-012). The command-menu identifier fast path (`eng-87` �
 
 ## 11. Open questions
 
-Each has a proposed default. Accepted ones move to the Decisions table with the date.
-
-| # | Question | Proposed default |
-|---|---|---|
-| Q1 | Add the M3/M4 columns (project, milestone, cycle, parent, triage, snooze) now or with their features? | With their features. Each milestone adds its columns and model fields in its migration, so M1 doesn't ship fields nothing can set. The `schemaHash` changes then; that is a reload, not a migration problem. PRD FR-ISS-03 is updated to match (§12). |
-| Q4 | Description conflicts before the merge UI (FR-COL-10, M4)? | Version check from day one. On `CONFLICT` the editor keeps the user's text and offers "Copy my text" and "Discard and reload". No silent overwrite. |
-| Q5 | Allow line breaks in titles? | No: they are replaced by spaces. |
-| Q6 | What happens when you add a label from an exclusive group the issue already has a label of? | The new one replaces the old one in the same operation, as Linear does. A multi-select group keeps both. |
-| Q7 | Where does a new issue go in manual order? | First (a key before the team's lowest), until M2 adds manual ordering controls. Linear's behaviour not observable; kept. |
-| Q8 | How many labels per issue? | At most 20. Linear's behaviour not observable; kept. |
-| Q9 | Description size? | 200 KB of editor JSON. Images are files (SPEC-014), not inline data. |
-| Q10 | History folding window and who it applies to? | Creator changes within 3 minutes fold into `created` (FR-ISS-05). Description-only changes fold per actor within 10 minutes (§4.4). Other rapid edits are separate entries. Linear's behaviour not observable; kept. |
-| Q11 | Content cache size per replica? | 2,000 hydrated issues, least recently opened evicted first, never one that is open in a tab. |
-| Q12 | What description format do API and MCP callers get and send? | Both Markdown and editor JSON on read; either on write (`description` as a Markdown string or a JSON object), converted by the shared editor schema (SPEC-013). MCP clients work in Markdown. The web client always sends JSON. |
-| Q14 | Route for a pending issue (no number yet)? | `/issue/<id>` until the number arrives. Then the URL is replaced with `/issue/ENG-42/<slug>` (§4.1), without a new browser history entry. |
-| Q16 | BroadcastChannel (SPEC-002 §2 says M1)? | Defer it to "later, if measured". Each tab keeps its own socket; the shared IDB with per-row versions keeps tabs consistent, and content eviction uses Web Locks. A channel would only save duplicate work. SPEC-002 §2 and architecture.md change (§12). |
-| Q17 | Labels as `labelIds` on Issue instead of an IssueLabel model (domain-model lists IssueLabel)? | `labelIds`, for three reasons: the size budget (an IssueLabel row is ≈ 200 bytes, so ~40 MB at 100k issues with 2 labels each), deterministic optimistic writes, and no unique-index races. Filters, grouping and the history entry don't change. domain-model changes (§12). |
+None. Every question has been decided; see the Decisions table below.
 
 ### Decisions
 
@@ -629,7 +615,7 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | D1 | Issue numbers are gap-free in commit order, and INV-08 covers committed numbers (§4.5). In Postgres, a rolled-back counter update can't leave a gap, so the earlier "gaps on rollback" wording was wrong. | 2026-11-12 |
 | D3 | A description `CONFLICT` carries no `currentVersion`. SPEC-003 §9 error bodies have no details field, and the client has the current version in its replica. | 2026-11-12 |
 | D4 | Child rows of an issue carry a denormalised `teamId` (§5.1), so sync groups and API key team filters reuse the team-row path. | 2026-11-12 |
-| D5 | Lock orders (§4.8): issue edits take `FOR KEY SHARE` on the status and labels they newly set, then lock the issue; label cascades lock the team (or workspace) row, then the label `FOR UPDATE`, then issues in id order. One global order: workspace → team → status/label → issue → thread root. Groups come from the locked issue row. This has no cycle, so it replaces the earlier exception that relied on deadlock retries (review round 2: `repo.update` reads the team row after the issue lock today). | 2026-11-12 | 
+| D5 | Lock orders (§4.8): issue edits take `FOR KEY SHARE` on the status and labels they newly set, then lock the issue; label cascades lock the team (or workspace) row, then the label `FOR UPDATE`, then issues in id order. One global order: workspace → team → status/label → issue → thread root. Groups come from the locked issue row. This has no cycle, so it replaces the earlier exception that relied on deadlock retries (review round 2: `repo.update` reads the team row after the issue lock today). | 2026-11-12 |
 | D6 | Copy Linear: the issue URL carries a title slug, `/issue/ENG-42/<slug>`. Any slug resolves, and the client replaces it with the current one (§4.1). | 2026-11-12 |
 | D7 | Copy Linear: archived and deleted issues are read-only. Every edit, comment, reaction and attachment write is `CONFLICT` ("ENG-42 is archived. Restore it to edit it."). Nothing unarchives on edit, so the optimistic code's predicted unarchive, the `archived: {from,to}` history field and the `unarchived` entry are gone. Restore is the only way back. Reverses D2. Label cascades and system jobs still write these issues (§4.8, §4.9). | 2026-11-12 |
 | D8 | Copy Linear: a status can't be deleted while any issue uses it, so there is no `status.delete` cascade, replacement or lock-order exception here. SPEC-010 owns the refusal. Reverses the status half of D5. | 2026-11-12 |
@@ -638,6 +624,19 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | Q13 | The filter conformance run for Issue (Postgres) is allowed under the testing hold, as an exception the user granted at the M1 gate. | 2026-11-12 |
 | Q15 | Copy Linear: partial issue loading (§5.7, ADR-0020) instead of raising the budget. The 35 MB eager budget stays, per replica. VISION §6 changes with it (§12). | 2026-11-12 |
 | Q18 | Description history stays v2 (PRD FR-ISS-14); M1 shows only the "updated the description" activity line. | 2026-11-12 |
+| Q1 | The M3/M4 columns (project, milestone, cycle, parent, triage, snooze) come with their features. Each milestone adds its columns and model fields in its migration, so M1 doesn't ship fields nothing can set. The `schemaHash` change then is a reload, not a migration problem. PRD FR-ISS-03 is updated to match (§12). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q4 | Description conflicts use a version check from day one, before the merge UI (FR-COL-10, M4). On `CONFLICT` the editor keeps the user's text and offers "Copy my text" and "Discard and reload". No silent overwrite. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q5 | Titles have no line breaks: they are replaced by spaces. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q6 | Copy Linear: adding a label from an exclusive group the issue already has a label of replaces the old one in the same operation. A multi-select group keeps both. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q7 | A new issue goes first in manual order (a key before the team's lowest), until M2 adds manual ordering controls. Linear's behaviour is not observable. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q8 | An issue has at most 20 labels. Linear's behaviour is not observable. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q9 | A description is at most 200 KB of editor JSON. Images are files (SPEC-014), not inline data. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q10 | History folding: creator changes within 3 minutes fold into `created` (FR-ISS-05); description-only changes fold per actor within 10 minutes (§4.4); other rapid edits are separate entries. Linear's behaviour is not observable. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q11 | The content cache holds 2,000 hydrated issues per replica, least recently opened evicted first, never one that is open in a tab. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q12 | API and MCP callers get the description as both Markdown and editor JSON, and may send either (`description` as a Markdown string or a JSON object), converted by the shared editor schema (SPEC-013). MCP clients work in Markdown. The web client always sends JSON. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q14 | A pending issue (no number yet) has the route `/issue/<id>` until the number arrives. Then the URL is replaced with `/issue/ENG-42/<slug>` (§4.1), without a new browser history entry. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q16 | BroadcastChannel (SPEC-002 §2 says M1) is deferred to "later, if measured". Each tab keeps its own socket; the shared IDB with per-row versions keeps tabs consistent, and eviction uses Web Locks (§5.4, §5.7). A channel would only save duplicate work. SPEC-002 §2 and architecture.md change (§12). Accepted as proposed at the M1 gate. | 2026-11-12 |
+| Q17 | Issues hold labels as `labelIds`, not an IssueLabel model (domain-model lists IssueLabel), for three reasons: the size budget (an IssueLabel row is ≈ 200 bytes, so ~40 MB at 100k issues with 2 labels each), deterministic optimistic writes, and no unique-index races. Filters, grouping and the history entry don't change. domain-model changes (§12). Accepted as proposed at the M1 gate. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -660,7 +659,7 @@ These are not edited until this spec is accepted. Each needs a dated "what chang
 | sync-protocol | §8 | The schema hash input gains each model's `parent` declaration (and SPEC-013's `DOC_SCHEMA_VERSION`). | No |
 | sync-protocol | §5.4 | The description conflict carries no `currentVersion`. The client keeps the user's text (Q4) until the M4 merge UI. A status deleted meanwhile is `CONFLICT` (already the example). | No |
 | sync-protocol | §9 | Prefetch: open issues assigned to me (100 most recent), the first 50 visible rows, hover after 150 ms; no "current cycle" until M3. Content cache: 2,000 issues. At most 4 content requests in flight. | No |
-| sync-protocol | §10, §11 | Content models and archive interleavings join the property suite. Change log: v0.7 (A/V full rows, the `/sync/content` contract, a `schemaHash` change). | No |
+| sync-protocol | §10, §11 | Content models and archive interleavings join the property suite. Change log: v0.7 (A/V full rows, a `schemaHash` change; PLAN-011 S2); v0.8 (partial issue loading, the row above; PLAN-011 S4b); then the `/sync/content` contract and content models, whose `parent` field changes the `schemaHash` without a version bump of its own (PLAN-011 S5a). | No |
 | SPEC-002 | §2 | Content models: delivered by SPEC-011/013. BroadcastChannel: "Later (optimisation)", per Q16. Add a decision row for archive state on the wire (§5.5). | No |
 | SPEC-003 | §4 | `IssueRef` (UUID or identifier) narrows by API key `teamIds`. | No |
 | SPEC-003 | §7.1 (line 197) | "Cycle-relative values arrive with cycles (M3)", not M1. | No |

@@ -14,12 +14,12 @@ Template: [METHODOLOGY §2, Phase 5](../METHODOLOGY.md#phase-5-feature-specs). S
 ## M1: Core issues
 | Spec | Title | Implements | Status |
 |---|---|---|---|
-| [SPEC-010](SPEC-010-workflow-labels-estimates.md) | Workflow statuses, labels & estimates | FR-WF-01–07 · FR-TEAM-04 | Draft |
-| [SPEC-011](SPEC-011-issues-core.md) | Issues core: create, properties, history, IDs | FR-ISS-01–05, 08 · content models (sync-protocol §4.2) | Draft |
-| [SPEC-012](SPEC-012-issue-page-list-view.md) | Issue page, composer & list view | FR-ISS-02, 04, 08, 11, 17 · FR-VIEW-02 (list) · FR-NAV-01 (Issues, Archive, Drafts items), 02, 03 · FR-NAV-10 (Assigned, Created tabs) | Draft |
-| [SPEC-013](SPEC-013-comments-reactions-editor.md) | Comments, reactions & rich editor | FR-COL-01, 02, 04 · ADR-0009 | Draft |
-| [SPEC-014](SPEC-014-attachments-files.md) | Attachments & files | FR-ISS-06, 07 · FR-OPS-10 · NFR-15 · ADR-0014 | Draft |
-| [SPEC-015](SPEC-015-trash-archive.md) | Recently deleted & archive | FR-ISS-10 · FR-WF-08, 09 (pulled into M1) · FR-NAV-01 (archive entry) · INV-21 | Draft |
+| [SPEC-010](SPEC-010-workflow-labels-estimates.md) | Workflow statuses, labels & estimates | FR-WF-01–07 · FR-TEAM-04 | Accepted |
+| [SPEC-011](SPEC-011-issues-core.md) | Issues core: create, properties, history, IDs | FR-ISS-01–05, 08 · content models (sync-protocol §4.2) | Accepted |
+| [SPEC-012](SPEC-012-issue-page-list-view.md) | Issue page, composer & list view | FR-ISS-02, 04, 08, 11, 17 · FR-VIEW-02 (list) · FR-NAV-01 (Issues, Archive, Drafts items), 02, 03 · FR-NAV-10 (Assigned, Created tabs) | Accepted |
+| [SPEC-013](SPEC-013-comments-reactions-editor.md) | Comments, reactions & rich editor | FR-COL-01, 02, 04 · ADR-0009 | Accepted |
+| [SPEC-014](SPEC-014-attachments-files.md) | Attachments & files | FR-ISS-06, 07 · FR-OPS-10 · NFR-15 · ADR-0014 | Accepted |
+| [SPEC-015](SPEC-015-trash-archive.md) | Recently deleted & archive | FR-ISS-10 · FR-WF-08, 09 (pulled into M1) · FR-NAV-01 (archive entry) · INV-21 | Accepted |
 
 ## Build order inside M1
 `SPEC-010 (workflow)` → `SPEC-011 (issues, content models)` → `SPEC-013 (editor, comments)` and `SPEC-014 (files)` → `SPEC-012 (issue UI)` → `SPEC-015 (recently deleted, archive)`. SPEC-012 can start on SPEC-011 alone, with the editor and comment areas added as SPEC-013 lands.

@@ -12,7 +12,7 @@ Status: **Draft v0.1** · Date: 2026-11-06 · Package: `packages/ui` · Related:
 2. **Keyboard first, mouse friendly.** Every interactive element can be reached by keyboard, shows a visible focus ring, and advertises its shortcut in a tooltip or menu.
 3. **Quiet chrome, loud content.** Neutral surfaces with one accent colour. Colour is reserved for meaning: status, priority, labels, health.
 4. **Dense but calm.** Work tools show a lot of rows. A 13 px base, a 4 px grid, and generous line height keep density readable.
-5. **Undo over confirm.** Reversible actions happen immediately and show an "Undo" toast. Only irreversible actions (purge, revoke) ask for confirmation.
+5. **Undo over confirm.** Reversible actions (property changes, removing an attachment) happen immediately and show an "Undo" toast. Deleting an issue or a settings item, and irreversible actions (purge, revoke), ask for confirmation. *Changed (SPEC-012 §3.11, SPEC-015 D3): deleting an issue used to run at once with an Undo toast. Now Delete opens a confirm dialog. Only the last delete can be undone, with `Mod+Z`, until M2's undo stack.*
 6. **One pattern per job.** One picker component for every property, one menu for every list of actions, one modal for every create flow.
 7. **Accessible by default.** WCAG 2.1 AA (NFR-19). Colour is never the only signal; icons and text accompany it.
 
@@ -156,7 +156,7 @@ Rules: animation **never delays input**. Exit animations are shorter than enter 
 | **Property editing** | Click a pill or press its shortcut to open the **Property picker** anchored to the pill (or to the row or command menu when invoked by keyboard). |
 | **Inline text editing** | Titles are click-to-edit. `Enter` saves, `Esc` cancels, and blur saves. |
 | **Create** | `C` opens the **create modal** with the current context prefilled (team, project, cycle, status of the column). `Mod+Enter` creates. "Create more" keeps the modal open. |
-| **Destructive actions** | Reversible deletes (trash) run immediately with an Undo toast (8 s). Irreversible actions use a confirm dialog that requires typing or a second press. |
+| **Destructive actions** | Deleting an issue and deleting a settings item (status, label, and so on) open a confirm dialog. Other reversible removals (an attachment) run at once with an Undo toast (8 s). Deleting an issue is reversible (Recently deleted, 30 days; the last delete can be undone with `Mod+Z` until M2's undo stack). Irreversible actions (permanent delete, revoke) use a confirm dialog that requires typing or a second press. *Changed (SPEC-010, SPEC-012 §3.11, SPEC-015 D3): reversible deletes no longer run at once with an Undo toast.* |
 | **Empty states** | An icon, one sentence, a primary action, and its shortcut (e.g. "No issues yet. Create one with `C`"). |
 | **Loading** | Eager data is never shown as loading. Lazy content shows a skeleton after 150 ms (no flash for fast loads). |
 | **Errors** | Inline for fields, a toast for actions (rejections include the server message), and a banner for system state (offline, outdated, live updates unavailable). |
@@ -182,7 +182,7 @@ Built on **Radix primitives** wherever a primitive exists (ADR-0004). Every comp
 | **Avatar · AvatarGroup** | 16/20/24/32 px. Initials fallback with a hashed palette colour. Optional presence dot. | `alt` = name |
 | **Badge / Count** | Neutral or accent. For sidebar counts and tab counts. | |
 | **Banner** | info · warning · danger, dismissible or persistent | `role="status"` or `role="alert"` |
-| **Toast** | Message, optional action (Undo), auto-dismiss 5 s (8 s with an action). Max 3 stacked. | `aria-live="polite"`. Actions are reachable with `Mod+Z` for undo. |
+| **Toast** | Message, optional action (Undo), auto-dismiss 5 s (8 s with an action). Max 3 stacked. | `aria-live="polite"`. Actions are reachable with `F8`; `Mod+Z` is the app's undo (M2). |
 | **Skeleton · Spinner · ProgressBar · ProgressRing** | | `aria-busy`, and `role="progressbar"` with values |
 
 ### 5.2 Overlays
@@ -203,14 +203,14 @@ Built on **Radix primitives** wherever a primitive exists (ADR-0004). Every comp
 | **PropertyPill** | Compact button showing a property value (icon + text). Variants by property: status, priority, assignee, labels, estimate, cycle, project, milestone, due date. An empty value shows a muted placeholder on hover only. |
 | **Property picker** | The **single** picker for every property: search field, filtered list with icons, keyboard numbers for quick choice where it makes sense (priority `0–4`), multi-select for labels (`Space` toggles, `Enter` applies), and a "No X" option. Opens anchored, or as a sub-page of the command menu. |
 | **LabelChip** | Colour dot plus name, removable in edit mode |
-| **IssueRow** | Grid: [select] · priority · identifier · status · title (flex) · labels · project · cycle · estimate · due · assignee · updated. Columns follow the display properties. Hover reveals quick pills. Heights per §2.5. |
-| **GroupHeader** | Group icon, name, count or estimate sum (click toggles), collapse (`T` on hover), add (+). Sticky. |
+| **IssueRow** | Grid: [select] · priority · identifier · status · title (flex) · labels · project · cycle · estimate · due · assignee · created. Columns follow the display properties. Hover reveals quick pills. Heights per §2.5. |
+| **GroupHeader** | Group icon, name, count or estimate sum (click toggles), collapse (`T` when focused or hovered; click), add (+). Sticky. |
 | **BoardColumn · BoardCard** | Column = group. The card shows identifier, title (2 lines), and the chosen properties. Drag and drop with keyboard alternatives (`Mod+Shift+←/→` moves the focused card between columns). |
 | **EditableTitle** | `text-2xl` inline title editor |
 | **EmptyState** | §4 |
 | **DatePicker** | Calendar plus natural-language input ("tomorrow", "next friday", "in 2 weeks") |
 | **ColorPicker** | 12-hue palette grid (§2.2) |
-| **EmojiPicker** | Reactions and icons (M1) |
+| **EmojiPicker** | Reactions (on comments and on the issue) and icons (M1). The editor's `:name:` emoji autocomplete uses the same emoji list (SPEC-013). |
 | **SidebarNavItem · SidebarSection** | Icon, label, count, active state, drag to reorder (favorites), collapsible sections |
 | **ViewToolbar** | Filter button plus active filter chips, Display options popover, and save-view affordance |
 

@@ -1,6 +1,6 @@
 # ADR-0020: Partial issue sync (your teams up front, other issues on demand)
 
-Status: **Proposed** (direction chosen by the user, 2026-11-12: "keep it like Linear"; accepted with SPEC-011 at the M1 acceptance gate) · Date: 2026-11-12 · Supersedes the "Full metadata replica" clause of [ADR-0002](0002-sync-strategy.md); the rest of ADR-0002 stands.
+Status: **Accepted** (direction chosen by the user, 2026-11-12: "keep it like Linear"; accepted with SPEC-011 at the M1 acceptance gate, 2026-11-12) · Date: 2026-11-12 · Supersedes the "Full metadata replica" clause of [ADR-0002](0002-sync-strategy.md); the rest of ADR-0002 stands.
 
 ## Context
 ADR-0002 replicates **all metadata** to every client: every issue row the user can see is loaded at bootstrap and kept live, and only heavy content is loaded per parent. VISION §6 backs it: "no partial *metadata* sync … ahead of a real need".
@@ -30,6 +30,6 @@ The user asked why every client should hold every issue, and chose to copy Linea
 − **VISION §6 changes:** "no partial metadata sync" becomes "partial *issue* sync only; other metadata stays fully replicated". VISION is edited at the M1 acceptance gate, with the rest of SPEC-011 §12, not in the docs PR of this ADR.
 − Lists of a team you're not a member of, the archive page and the recently deleted tab need the network the first time (offline: "Available when online").
 − Counts that span issues the client doesn't hold (label usage, issues per status, "N archived issues") come from server queries, not the replica.
-− Client title and ID search (ADR-0008) covers the issues the client holds; other issues are found through the server, as full-text search already is.
+− Client title and ID search (ADR-0008) covers the issues the client holds; an exact identifier it doesn't hold falls back to `issue.get`, and other issues are found through the server, as full-text search already is. ADR-0008 itself is unchanged.
 − An assignee change is a sync-group change (`D` then `U`, sync-protocol §6), so reassigning an issue to someone outside its team reaches them like a team join.
 − About 10 more ideal days in M1 (PLAN-011 S4b, S4c).

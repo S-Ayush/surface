@@ -1,7 +1,7 @@
 # SPEC-014: Attachments & files
 
-Status: **Draft** · Milestone: **M1** · Date: 2026-11-12 (revised after review and for Linear parity, 2026-11-12)
-Implements: FR-ISS-06, FR-ISS-07 · FR-OPS-10 · NFR-14, 15, 16 · supersedes the thumbnail part of ADR-0014 (new ADR on acceptance, §12)
+Status: **Accepted** (2026-11-12, M1 acceptance gate) · Milestone: **M1** · Date: 2026-11-12 (revised after review and for Linear parity, 2026-11-12)
+Implements: FR-ISS-06, FR-ISS-07 · FR-OPS-10 · NFR-14, 15, 16 · supersedes ADR-0014 entirely, through [ADR-0021](../04-architecture/adr/0021-issue-files.md) (§12)
 Depends on: SPEC-011 (issues, history, the issue write lock and lifecycle rule), SPEC-013 (editor image and file nodes), SPEC-015 (the lifecycle rule table, purge), SPEC-001 D12 and PLAN-001 S6 (the `files` table, `BlobStore`, `POST /files/upload`, `GET /files/:id`), SPEC-004 §7 (`UPLOAD_MAX_MB`), E6 (disk), E10 (image memory)
 Related: [domain-model §4.9](../03-domain/domain-model.md) · [permissions §2, §3.3, §3.5, §4, §5](../03-domain/permissions.md) · [events](../03-domain/events.md) · [ADR-0010](../04-architecture/adr/0010-jobs-pg-boss.md) · [ADR-0014](../04-architecture/adr/0014-file-storage.md)
 
@@ -27,9 +27,9 @@ An issue often needs a screenshot, a log file or a link to a design. M0 can stor
 **Out of scope**
 
 - The purge job itself: the rule is here (§4.7), the job is SPEC-015's.
-- Video or audio playback, PDF previews, `Range` requests (Q6). These files download.
+- Video or audio playback, PDF previews, `Range` requests (D19). These files download.
 - An S3-compatible store (FR-OPS-11, v2), configurable quotas, and the storage-usage System page (FR-OPS-08, M7). M1 has fixed per-user caps (§4.6).
-- Attachments on projects, documents or project updates (M3–M5). The `files.issue_id` owner becomes a general owner then (Q10).
+- Attachments on projects, documents or project updates (M3–M5). The `files.issue_id` owner becomes a general owner then (D22).
 - Fetching link titles, favicons or previews from the URL. This is never done: no outbound calls.
 
 ## 3. User flows
@@ -38,7 +38,7 @@ The screens belong to SPEC-012 (issue page) and SPEC-013 (editor). The flows her
 
 ### 3.1 Attach a file
 
-1. On the issue page, the person picks files with "Attach file" (`Mod+Shift+U`), pastes a file outside the editor, or drops files on the page.
+1. On the issue page, the person picks files with "Attach file" (`Mod+Shift+U`), pastes a file outside the editor, or drops files on the page. With focus in the description or a comment box, `Mod+Shift+U` inserts the chosen file inline instead (§3.3, SPEC-012 §3.6): one binding, and focus decides.
 2. For each file the client calls `POST /files/upload?purpose=attachment` with the bytes. A progress row shows the file name and percentage. It lives only in the page and is not in the store.
 3. The answer carries the file's id, sniffed type, size and, for images, width and height. The client then dispatches `attachment.createFile {id, issue, file, title?}`. The optimistic row replaces the progress row.
 4. For an image, claiming the file queues a preview (§4.4). The row shows a thumbnail once the preview exists, and a type icon until then.
@@ -49,7 +49,7 @@ On the issue page, "Link any URL to issue…" opens a small form with a URL and 
 
 ### 3.3 Images and files in the editor
 
-Pasting or dropping a file into the description or a comment uploads it with `purpose=inline`. The editor inserts an image node (raster images) or a file chip (anything else) whose `src` is `/files/<id>` (SPEC-013). When the description or comment is saved, the server checks every such reference and claims the file for the issue (§4.3). Inline files are not listed as attachments (Q2).
+Pasting or dropping a file into the description or a comment uploads it with `purpose=inline`. The editor inserts an image node (raster images) or a file chip (anything else) whose `src` is `/files/<id>` (SPEC-013). When the description or comment is saved, the server checks every such reference and claims the file for the issue (§4.3). Inline files are not listed as attachments (D16).
 
 ### 3.4 Open or download
 
@@ -57,7 +57,7 @@ A click on an image attachment opens it in a viewer overlay. A click on any othe
 
 ### 3.5 Remove
 
-The row menu has **Rename** (`attachment.update`) and **Remove** (`attachment.delete`). Remove runs at once, with an **Undo** toast for 8 seconds (design-system §4: a reversible delete needs no dialog). The Undo button, and nothing else (there is no `Mod+Z` until M2), re-creates the attachment: for a file, `attachment.createFile` on the same file, which is detached but kept for 24 hours (§4.2); for a link, `attachment.createLink` with the same URL and title. After 24 hours the clean-up job deletes a detached file (§4.5).
+The row menu has **Rename** (`attachment.update`) and **Remove** (`attachment.delete`). Remove runs at once, with an **Undo** toast for 8 seconds (design-system §4: a reversible delete needs no dialog). The Undo button, and nothing else, re-creates the attachment (the global `Mod+Z` restores only the last deleted issue, SPEC-012 §3.11, until M2's general undo): for a file, `attachment.createFile` on the same file, which is detached but kept for 24 hours (§4.2); for a link, `attachment.createLink` with the same URL and title. After 24 hours the clean-up job deletes a detached file (§4.5).
 
 ### 3.6 Offline
 
@@ -80,7 +80,7 @@ The SPEC-015 lifecycle rule applies: archived issues are read-only, and so are d
 | title | string | 1–255 characters, trimmed. Files: defaults to the file name. Links: defaults to the URL without the scheme, cut to 255. |
 | url | string? | `link` only. Absolute `http:` or `https:` URL, at most 2,048 characters, no credentials (`user:pass@`). Stored as typed after URL parsing. |
 | fileId | uuid? | `file` only. The `files` row (server-only, §4.2). |
-| fileName, mimeType | string? | `file` only. Copied from the file row, so the client never needs the file row (Q1) |
+| fileName, mimeType | string? | `file` only. Copied from the file row, so the client never needs the file row (D15) |
 | size | number? | `file` only. Bytes; `bigint` in Postgres, a JSON number on the wire (exact below 2⁵³). |
 | imageWidth, imageHeight | int? | Raster images only, read at upload (§4.8) |
 | previewFileId | uuid? | Set by `attachment.setPreview` (§4.4); null until then, and for non-images |
@@ -89,7 +89,7 @@ The SPEC-015 lifecycle rule applies: archived issues are read-only, and so are d
 
 - **Sync groups** are `team:<teamId>` only (SPEC-011 §5.7): never the issue's `user:` groups, so an assignee who doesn't subscribe to the team holds the Issue row but not its attachments until they open it (opening subscribes the team). **Invariant:** any operation that changes an issue's team or the team's privacy (move-team in M3, a privacy change in M7) rewrites its Attachment rows' groups and `teamId` in the same transaction, through the repo. The leak suite covers it when those operations land.
 - Attachments of an archived or deleted issue stay with it on the server. The client doesn't hold them (SPEC-011 §5.7): bootstrap leaves them out with their issue, and once a delta batch leaves an Issue absent (archived, deleted, purged), or its team is unsubscribed (on the ack), the client drops that issue's Attachment rows too, as it does content, after the whole batch (SPEC-011 §5.3, §5.7). **A restore sends them again:** `issue.restore` logs each of the issue's Attachment rows again after the Issue's `V` or `U`, in the same transaction (one `U` each, empty patch, at most 100, SPEC-011 §5.7, SPEC-015 §5.1), so a subscribed client has them as soon as it has the issue. The read-only page of an archived or deleted issue shows its attachments from `issue.get` (SPEC-015 §3.4).
-- At most 100 attachments per issue (Q7), counted under the issue row lock.
+- At most 100 attachments per issue (D20), counted under the issue row lock.
 - Rows are hard-deleted (`D` delta).
 
 ### 4.2 File (server-only, extended)
@@ -142,13 +142,13 @@ A preview of an unclaimed file is visible to nobody (previews are only made afte
 
 ### 4.3 Claiming inline files
 
-The SPEC-013 schema has an `image(src, alt)` node and a `file(src, name)` node, each with `src` = `/files/<uuid>`. Absolute URLs, `data:` URIs and other paths are refused by the schema: images never come from another host (CSP `img-src 'self' data: blob:` in the app, rule 5; `blob:` is for local previews before upload). When `issue.create`, `issue.updateDescription`, `comment.create` or `comment.update` saves a document, the handler checks each distinct referenced file, in the same transaction, after taking the issue row lock:
+The SPEC-013 schema has an `image(src, alt)` node and a `file(src, name)` node, each with `src` = `/files/<uuid>`. Absolute URLs, `data:` URIs and other paths are refused by the schema: images never come from another host (CSP `img-src 'self' data: blob:` in the app, rule 5; `blob:` is for local previews before upload). When `issue.create`, `issue.updateDescription`, `comment.create` or `comment.update` saves a document, the handler calls the one server function `claimInlineFiles(tx, doc, issue, actor)` (`apps/server/src/files/claim.ts`), which checks each distinct referenced file, in the same transaction, after taking the issue row lock:
 
 | The referenced file is… | Then |
 |---|---|
 | unclaimed, uploaded by the actor, purpose `inline` | Claimed: `issue_id` = this issue (for a comment, the comment's issue). The claim is `UPDATE files SET issue_id = $issue WHERE id = $id AND issue_id IS NULL AND uploader_id = $actor AND purpose = 'inline' RETURNING id`; a row count of 0 (clean-up deleted it, or another save claimed it meanwhile) is treated as "not visible" below. |
 | purpose `inline`, already owned by this issue | Kept as is |
-| visible to the actor (§4.2 rule, after key narrowing) and any other case: an `inline` file of another issue, or an `attachment` or `preview` file of any issue | A new `inline` file row is made for this issue with the same `storage_key` (no new bytes, dedup), under the byte protocol (§4.5), and the `src` in the saved document is rewritten to the new id (Q3). So removing an attachment never breaks an image in a document. |
+| visible to the actor (§4.2 rule, after key narrowing) and any other case: an `inline` file of another issue, or an `attachment` or `preview` file of any issue | A new `inline` file row is made for this issue with the same `storage_key` (no new bytes, dedup), under the byte protocol (§4.5), and the `src` in the saved document is rewritten to the new id (D1). So removing an attachment never breaks an image in a document. |
 | not visible to the actor (unknown, someone else's unclaimed upload, a detached file, an issue outside the actor's groups or key `teamIds`, an avatar or logo) | `INVALID_INPUT` on the document: "A file in this text can't be used here. Upload it again." Nothing is saved. The same answer for every case, so it never confirms that a file id exists. |
 
 - **Claims race clean-up safely.** The check and the claim are one statement per file (above), and the copy branch locks its source row (`SELECT … FOR SHARE`) before inserting. Clean-up deletes with `FOR UPDATE SKIP LOCKED`. So either the claim commits first and clean-up no longer sees an unclaimed row, or clean-up deletes first and the claim matches 0 rows and refuses the document with `INVALID_INPUT`. A saved document never points at a deleted file (E24).
@@ -165,6 +165,7 @@ The SPEC-013 schema has an `image(src, alt)` node and a `file(src, name)` node, 
 - **Decode limits:** the same as avatars (SPEC-004 E10): 25 MP from the header, one libvips thread, no cache, and at most 2 decodes at once **per process, shared** with avatar uploads. `files/image.ts` exposes one limiter per process instead of one per `imageProcessor()` call. An image over 25 MP, or one that can't be decoded, gets no preview and shows its type icon. That is not an error.
 - **Inline images get no preview.** The editor shows the original scaled down, and the viewer opens the original.
 - The upload itself never decodes the image beyond its header, so uploading isn't limited by the decode queue (unlike avatars). Only previews wait.
+- **pg-boss produces in every role.** Its producer side (queues created, `send` available) starts in every `SURFACE_ROLE`, `web` included, because `attachment.createFile` enqueues in its own transaction. Only `all` and `worker` run jobs. A `web` role with no worker leaves previews waiting, and images show their type icon until a worker runs.
 - With `SURFACE_ROLE=worker` (architecture.md), the worker mounts the same uploads volume as the web process.
 
 ### 4.5 Byte protocol
@@ -191,7 +192,7 @@ The pg-boss job `files-cleanup` runs hourly (`singletonKey`, so replicas don't r
 | Free space floor | An upload is refused when free space on the uploads volume minus the declared length (or the limit, without a declared length) would drop below 1 GB, checked before reading and again before the rename | `507 INSUFFICIENT_STORAGE`: "The server is almost out of disk space. Ask an Admin to free some." |
 | Unclaimed bytes per user | 1 GB across `attachment` and `inline` uploads not yet claimed | `429 RATE_LIMITED`: "You have too many unsaved uploads. Attach or save them, or wait a day." |
 | Unclaimed files per user | 100 | the same |
-| Uploads per minute per user | 30 for `attachment` and `inline`; avatars and logos keep 10 (Q5) | `429 RATE_LIMITED`, M0 message |
+| Uploads per minute per user | 30 for `attachment` and `inline`; avatars and logos keep 10 (D18) | `429 RATE_LIMITED`, M0 message |
 
 ### 4.7 Purge (SPEC-015)
 
@@ -199,9 +200,9 @@ An Admin purges an issue with "Permanently delete…" on its page in "Recently d
 
 ### 4.8 Types, names, metadata and headers (NFR-15)
 
-- **Type** comes from the bytes, never from the browser: the M0 sniffer extended with PDF, ZIP (and the Office formats inside it, reported as ZIP), GZIP, and text (valid UTF-8 with no NUL bytes in the first 8 KB → `text/plain`). Everything else is `application/octet-stream`. SVG, HTML and XML count as text and are served as `text/plain` (Q4). Only PNG, JPEG, GIF and WebP are images.
+- **Type** comes from the bytes, never from the browser: the M0 sniffer extended with PDF, ZIP (and the Office formats inside it, reported as ZIP), GZIP, and text (valid UTF-8 with no NUL bytes in the first 8 KB → `text/plain`). Everything else is `application/octet-stream`. SVG, HTML and XML count as text and are served as `text/plain` (D17). Only PNG, JPEG, GIF and WebP are images.
 - **Dimensions** come from `sharp(tempPath).metadata()` after the body is on disk (a JPEG's size can sit beyond its first 64 KB). It reads headers only, no decode.
-- **Location metadata is stripped** from `attachment` and `inline` images while streaming, with no decode and no loss of image data (Q12): JPEG keeps its EXIF segment (orientation) with the GPS IFD overwritten in place, and drops XMP segments; PNG drops `eXIf` chunks and XMP `iTXt` chunks; WebP drops its `EXIF` and `XMP ` chunks and fixes the RIFF size. The hash is of the stored (stripped) bytes. Other files are stored as uploaded.
+- **Location metadata is stripped** from `attachment` and `inline` images while streaming, with no decode and no loss of image data (D3): JPEG keeps its EXIF segment (orientation) with the GPS IFD overwritten in place, and drops XMP segments; PNG drops `eXIf` chunks and XMP `iTXt` chunks; WebP drops its `EXIF` and `XMP ` chunks and fixes the RIFF size. The hash is of the stored (stripped) bytes. Other files are stored as uploaded. A file sniffed as PNG, JPEG, GIF or WebP whose structure the stripper can't parse is refused (`400 INVALID_INPUT`, the M0 "unreadable image" message), never stored with its metadata (E25).
 - **Names:** the uploader's file name, from the `X-File-Name` header (percent-encoded UTF-8). Cleaning:
   1. A name that fails to percent-decode or isn't valid UTF-8 becomes `file`.
   2. Normalise to NFC.
@@ -235,7 +236,7 @@ One migration:
 - `attachments` with `team_id`, `sync_groups` and a GIN index, foreign keys to `issues`, `teams` and `users`, `size bigint`, and `timestamptz(3)`.
 - Foreign keys from `users.avatar_file_id` and `workspace.logo_file_id` to `files(id)`, `ON DELETE RESTRICT`. `users` and `workspace` are synced tables, so a `SET NULL` cascade would change synced rows without a `sync_log` row (architecture rule 2). Clean-up skips a row whose delete fails the foreign key (§4.6). There are no deployed users or rows yet, so the migration adds these keys with no clean-up step; a dev database whose ids fail them is recreated (D13).
 
-`domain-model §7` names the operation `attachment.uploadFile`; this spec renames it `attachment.createFile` (Q8, §12).
+`domain-model §7` names the operation `attachment.uploadFile`; this spec renames it `attachment.createFile` (D2, §12).
 
 ## 5. Sync & permissions
 
@@ -254,7 +255,7 @@ One migration:
 | Download | §4.2 visibility, checked on every request |
 
 - API keys and MCP: `attachment.delete` is `destructive`. A key's `teamIds` narrow every check above, including `AttachmentRef`, `FileRef` and the §4.3 copy (permissions §3.5).
-- Uploading needs a session in M1; API-key uploads come with M6 (Q9).
+- Uploading needs a session in M1; API-key uploads come with M6 (D21).
 - A private team's attachments, files and previews never reach non-members: bootstrap, deltas, downloads and refs all filter by sync groups. A non-member asking for one of its files gets the same `404` as for a missing file.
 
 ## 6. API
@@ -284,7 +285,7 @@ One migration:
 - Every handler except `setPreview` first takes `lockIssueForWrite(…, 'edit')` and so applies the lifecycle rule (SPEC-011 §4.8, SPEC-015 §4.3, §4.4). `setPreview` is a system write and uses mode `cascade`.
 - Each public operation has a summary, a description, ≥ 2 keywords, examples that run against the seed fixture, a `permission` and an `optimistic`, and passes `pnpm registry:lint`. The seed fixture gains one uploaded file for `attachment.createFile`'s example (`FileRef` examples resolve against it).
 
-**Optimistic:** every mutation first checks the issue's lifecycle in the store with the shared `lifecycleOf` (SPEC-015 §4.1) and refuses at once, with the §6.4 message, if the issue is archived or deleted. `createFile` inserts the Attachment from the upload answer (name, type, size, dimensions; `teamId` from the issue in the store; `previewFileId` null). `createLink` inserts it with the default title computed by the same shared function the server uses (`packages/domain`). `update` patches the title. `delete` removes the row.
+**Optimistic:** every mutation first checks the issue's lifecycle in the store with the shared `lifecycleOf` (SPEC-015 §4.1) and refuses at once, with the §6.4 message, if the store shows the issue archived or deleted. The store holds no archived or deleted issue (SPEC-011 §5.7), so this fires only for a change still in the overlay (for example a delete queued in this tab). When the issue is absent from the store, the optimistic predicts no Attachment row and the server decides; its `CONFLICT` rolls the dispatch back with the §6.4 message. `createFile` inserts the Attachment from the upload answer (name, type, size, dimensions; `teamId` from the issue in the store; `previewFileId` null). `createLink` inserts it with the default title computed by the same shared function the server uses (`packages/domain`). `update` patches the title. `delete` removes the row.
 
 ### 6.3 History and events
 
@@ -305,6 +306,7 @@ One migration:
 | Deleted issue | "ENG-42 was deleted. Restore it to edit it." |
 | Disk floor | "The server is almost out of disk space. Ask an Admin to free some." |
 | Per-user unclaimed caps | "You have too many unsaved uploads. Attach or save them, or wait a day." |
+| Image the stripper can't parse (§4.8) | "That image could not be read. Try saving it again as a PNG or JPEG." (M0's `IMAGE_UNREADABLE_MESSAGE`, reused) |
 | Offline (client-side, §3.6) | "Uploads need a connection. Try again when you're back online." |
 
 ## 7. UI
@@ -346,6 +348,7 @@ Defined in SPEC-012 (issue page) and SPEC-013 (editor). This spec only requires:
 | E22 | A user sets an avatar while clean-up deletes that file row as unreferenced | The delete fails the `RESTRICT` foreign key; clean-up skips it and retries next run, when the row is referenced and kept. No synced row is changed without `sync_log`. |
 | E23 | A URL is pasted into the title field, a comment or another input on the issue page | It goes into that field; the "Link any URL to issue" form doesn't open (§3.2). |
 | E24 | A description is saved, referencing an inline upload that clean-up deletes at the same moment | Either the claim commits first (clean-up no longer sees it as unclaimed) or the delete commits first and the claim matches 0 rows: `INVALID_INPUT`, "A file in this text can't be used here. Upload it again." The editor keeps the text (§4.3). |
+| E25 | A PNG, JPEG, GIF or WebP upload whose chunks or segments the location stripper can't parse (truncated, malformed) | `400 INVALID_INPUT` with the unreadable-image message (§6.4); nothing is stored, so no location metadata can slip through (§4.8). |
 
 ## 9. Acceptance criteria
 
@@ -369,7 +372,7 @@ Defined in SPEC-012 (issue page) and SPEC-013 (editor). This spec only requires:
 | AC-14 | The byte protocol holds: under any interleaving of upload, copy, preview insert, detach, clean-up, purge, drain and sweep, no `files` row ever names missing bytes, and after a final drain and sweep no bytes remain without a row. | property (fast-check) against a model of the lock and store **plus** a run against real Postgres advisory locks (`files-bytes-pg.int.test.ts`, allowed under the hold: Q15) |
 | AC-15 | The clean-up job removes unclaimed files and detached files after 24 h, unreferenced avatars and logos after 24 h, and drains `blob_release`. Two runs at once don't fail or double-delete. Previews are deleted explicitly before their source, with their keys in `blob_release`; an avatar or logo delete that fails the foreign key is skipped (E21, E22). | unit (fake clock and store) |
 | AC-16 | Uploads are refused with `507` below the free-space floor, and with `429` beyond the per-user unclaimed caps or rate. | unit (fake disk-space probe, fake store) |
-| AC-17 | Each mutation's `optimistic` produces the Attachment the server commits, apart from server fields (`createdAt`, `updatedAt`, `previewFileId`), and refuses an archived or deleted issue like the server does. | unit |
+| AC-17 | Each mutation's `optimistic` produces the Attachment the server commits, apart from server fields (`createdAt`, `updatedAt`, `previewFileId`), and refuses an issue the store shows archived or deleted like the server does; with the issue absent from the store it predicts nothing and the server's answer decides. | unit |
 | AC-18 | Every operation passes `pnpm registry:lint`, with examples run against the seed fixture; `setPreview` is absent from the catalog, OpenAPI, MCP and the command menu, and refused to any non-system actor. | unit |
 | AC-19 | Attach by picking, pasting and dropping; see the preview; open, download, rename, remove and undo; by keyboard as well. Offline, attaching a file shows the "needs a connection" toast and adding a link queues. | e2e ⏸ (checked by hand) |
 | AC-20 | A 25 MB upload and download in a 512 MB container keeps the process under its E10 budget (D10 measurement repeated). | perf ⏸ (by hand) |
@@ -387,20 +390,7 @@ Defined in SPEC-012 (issue page) and SPEC-013 (editor). This spec only requires:
 
 ## 11. Open questions and decisions
 
-Each open question has a proposed default.
-
-| # | Question | Proposed default |
-|---|---|---|
-| Q1 | Should File rows become synced, or stay server-only behind Attachment? | Server-only (SPEC-001 D12 stands). Attachment carries the file's name, type, size and dimensions, so clients need nothing else, and no new synced model has to pass the leak checklist. |
-| Q2 | Is an image pasted into the description an Attachment row? | No. It is an `inline` file owned by the issue and referenced only from the document, as in Linear. Attachments are the files someone attached on purpose. |
-| Q4 | Serve SVG, HTML or PDF inline? | No. Only PNG, JPEG, GIF and WebP render inline. Everything else downloads, under a `sandbox` CSP. PDF and SVG previews can come later as images made on the server. |
-| Q5 | Rate limit for attachment uploads? | 30 a minute per user for `attachment` and `inline` (dropping 10 screenshots is normal). Avatars and logos keep their 10. |
-| Q6 | `Range` requests, video and audio playback? | Not in M1. Such files download. |
-| Q7 | Attachments per issue? | 100. |
-| Q9 | Uploads with an API key or through MCP? | M6. The upload route takes sessions only in M1. MCP clients can add links. |
-| Q10 | A single `issue_id` owner on files, or a general owner? | `issue_id` in M1. M3–M5 replace it with `owner_type` and `owner_id` when projects and documents get files. |
-| Q14 | Fixed per-user caps (1 GB, 100 unclaimed files) and a 1 GB free-space floor, or settings? | Fixed constants in M1. Configurable quotas come with FR-OPS-08 (M7) and then follow architecture rule 7. |
-| Q16 | Strip only location, or all camera metadata, from uploaded images? | Only location (GPS in EXIF, and XMP, which can hold it). Orientation and colour profiles stay, so photos display correctly. An "as uploaded" workspace setting can come later. |
+No open questions. The proposed defaults were accepted at the M1 gate on 2026-11-12 and moved to the Decisions table (D15–D24).
 
 **Decisions**
 
@@ -421,13 +411,23 @@ Each open question has a proposed default.
 | Q15 | The Postgres half of the byte-protocol test (`files-bytes-pg.int.test.ts`, AC-14) is allowed under the testing hold, as an exception the user granted at the M1 gate: a lost-bytes bug is silent data loss that a fake lock can't show. | 2026-11-12 |
 | D13 | There are no existing users or rows, so the migration adds the `users.avatar_file_id` and `workspace.logo_file_id` foreign keys with no clean-up step (§4.10). The earlier step that nulled ids naming no file "through the repo" is dropped: a migration can't call the repo. Dev databases that fail the keys are recreated. User decision. | 2026-11-12 |
 | D14 | Partial issue loading (SPEC-011 §5.7, ADR-0020): Attachment rows are in `team:<teamId>` only, and the client holds none for an archived, deleted or unheld issue (§4.1, §5). File visibility checks every group the actor may see, not a socket's subscriptions (§4.2). | 2026-11-12 |
+| D15 (was Q1) | File rows stay server-only behind Attachment (SPEC-001 D12 stands). Attachment carries the file's name, type, size and dimensions, so clients need nothing else, and no new synced model has to pass the leak checklist. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D16 (was Q2) | Copy Linear: an image pasted into the description is not an Attachment row. It is an `inline` file owned by the issue and referenced only from the document. Attachments are the files someone attached on purpose. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D17 (was Q4) | Only PNG, JPEG, GIF and WebP render inline. SVG, HTML, PDF and everything else download, under a `sandbox` CSP. PDF and SVG previews can come later as images made on the server. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D18 (was Q5) | Attachment and inline uploads are limited to 30 a minute per user (dropping 10 screenshots is normal). Avatars and logos keep their 10. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D19 (was Q6) | No `Range` requests and no video or audio playback in M1. Such files download. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D20 (was Q7) | An issue has at most 100 attachments. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D21 (was Q9) | Uploads with an API key or through MCP come in M6. The upload route takes sessions only in M1. MCP clients can add links. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D22 (was Q10) | Files have a single `issue_id` owner in M1. M3–M5 replace it with `owner_type` and `owner_id` when projects and documents get files. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D23 (was Q14) | The per-user caps (1 GB, 100 unclaimed files) and the 1 GB free-space floor are fixed constants in M1. Configurable quotas come with FR-OPS-08 (M7) and then follow architecture rule 7. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D24 (was Q16) | Only location metadata is stripped from uploaded images (GPS in EXIF, and XMP, which can hold it). Orientation and colour profiles stay, so photos display correctly. An "as uploaded" workspace setting can come later. Accepted as proposed at the M1 gate. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
 | Doc | Section | Exact change | Superseding ADR? |
 |---|---|---|---|
-| ADR-0014 file storage | Decision ("thumbnails are generated on upload") | New ADR "Issue files: claiming, background previews and the byte protocol", superseding ADR-0014. Proposed decision: *Files stay content-addressed on the local volume behind `BlobStore`, now with streaming `putStream`/`commit`/`getStream`. Image previews are made by a pg-boss job queued when a file is claimed, not on upload, and set through a system-only operation. Issue files are owned by their issue once claimed; visibility is the owning issue's (§4.2 rule), never the uploader's. Every insert and delete of a file row takes a per-key advisory lock; bytes are released through a `blob_release` table and a daily sweep. Location metadata is stripped from uploaded images. Download headers and the `sandbox` CSP stand as in ADR-0014.* ADR-0014's status line becomes "Superseded by ADR-NNNN"; `adr/README.md` lists the new ADR. | Yes |
-| ADR-0010 jobs | Queue list | The superseding ADR above, or an ADR-0010 successor, adds `files-preview`, `files-cleanup` (hourly) and `files-sweep` (daily), hyphenated like the code's queue names. | Yes (with the above) |
+| ADR-0014 file storage | Decision ("thumbnails are generated on upload") | New ADR "Issue files: claiming, background previews and the byte protocol", superseding ADR-0014. Proposed decision: *Files stay content-addressed on the local volume behind `BlobStore`, now with streaming `putStream`/`commit`/`getStream`. Image previews are made by a pg-boss job queued when a file is claimed, not on upload, and set through a system-only operation. Issue files are owned by their issue once claimed; visibility is the owning issue's (§4.2 rule), never the uploader's. Every insert and delete of a file row takes a per-key advisory lock; bytes are released through a `blob_release` table and a daily sweep. Location metadata is stripped from uploaded images. Download headers and the `sandbox` CSP stand as in ADR-0014.* ADR-0014's status line becomes "Superseded by ADR-0021"; `adr/README.md` lists the new ADR. | Yes: [ADR-0021](../04-architecture/adr/0021-issue-files.md) |
+| ADR-0010 jobs | Queue list | [ADR-0024](../04-architecture/adr/0024-job-queues.md) (job queue names and the M1 queues, superseding ADR-0010's queue list) adds `files-preview`, `files-cleanup` (hourly) and `files-sweep` (daily), hyphenated like the code's queue names; SPEC-015's queues are in the same ADR. | Yes: ADR-0024 |
 | SPEC-003 | §3.1 definition fields | Add `systemOnly: true` to the registry definition: the operation is callable only by the system actor in every environment, and is hidden from the API, catalog, OpenAPI, MCP and the command menu; it is exempt from rule 2's seed run and rule 4. Used by `attachment.setPreview`, `issue.autoArchive` and `issue.autoClose`. (`internal` stays for dev-only debug ops.) Same row in SPEC-014 and SPEC-015. | No |
 | SPEC-003 | §4 reference types | `FileRef`: resolves through SPEC-014 §4.2 (unclaimed → its uploader; owned → whoever sees the issue, after key narrowing; avatar and logo as before). Add `AttachmentRef` (uuid, an Attachment the actor can see). | No |
 | SPEC-003 | §9 error model | Add `INSUFFICIENT_STORAGE` → HTTP `507`; also in `ROUTE_ERROR_STATUS` and OpenAPI. | No |
@@ -443,6 +443,6 @@ Each open question has a proposed default.
 | command-menu | §3.3 contexts | Add the attachment context chip ("Attachment: design.pdf") and its commands. | No |
 | shortcuts | §3.4 | Add `Mod+Shift+U` "Attach file" and `Ctrl+L` "Link any URL to issue…" (literal Control, macOS only; unbound on Windows and Linux). Listed once with the full key map in SPEC-012 §12. | No |
 | state-machines | §2 | Remove "any edit unarchives": archived issues are read-only, so attachment edits on them are `CONFLICT` (owned by SPEC-015; listed here because attachments follow it). | No |
-| design-system | §4 | No change: Remove attachment follows the existing reversible-delete rule. | No |
+| design-system | §4 | Remove attachment keeps the Undo toast and no dialog (D8). Issue and settings deletes now confirm in a dialog (SPEC-012 §12, SPEC-010 §12), so §4 names attachment removal as the reversible delete that runs at once. | No |
 
 Cross-spec alignment (done in review round 1): SPEC-013 uses this spec's unusable-file message; SPEC-015's purge cites §4.5 and §4.7; SPEC-011's `IssueOutput.attachments` matches §6.2; SPEC-012 lists `Ctrl+L` (macOS only) and `Mod+Shift+U` in its key map.
