@@ -4,6 +4,7 @@
 import { userChangePassword } from '@surface/operations';
 import { eq } from 'drizzle-orm';
 import { accountKey } from '../../auth/attempts.js';
+import { audit } from '../../auth/audit.js';
 import { hashPassword, verifyPassword } from '../../auth/password.js';
 import { userCredentials } from '../../db/schema/index.js';
 import { handler } from '../../executor/context.js';
@@ -24,7 +25,25 @@ export default handler(userChangePassword, async (ctx, input) => {
   // checks at once as the pool has connections would wait on each other, unlikely at our size.
   const key = accountKey(user.email);
   const reservation = await ctx.attempts.reserve([key], ctx.now());
+  // A refusal rolls the operation back, and `ctx.audit` lines with it, so these are written at once
+  // (SPEC-001 §10; S9 security review L4): a stolen session's guesses leave a trace.
+  const refused = (reason: 'incorrect' | 'locked', retryAfter?: number) =>
+    audit(
+      ctx.log,
+      'auth.login_failed',
+      {
+        userId,
+        ...(ctx.actor.sessionId === undefined ? {} : { sessionId: ctx.actor.sessionId }),
+        method: 'password_change',
+        reason,
+        ...(retryAfter === undefined ? {} : { retryAfter }),
+      },
+      reason === 'locked'
+        ? 'password change refused: too many attempts'
+        : 'password change refused: wrong current password',
+    );
   if (!reservation.ok) {
+    refused('locked', reservation.lockedForSeconds);
     const minutes = Math.ceil(reservation.lockedForSeconds / 60);
     throw new SurfaceError(
       'RATE_LIMITED',
@@ -42,6 +61,7 @@ export default handler(userChangePassword, async (ctx, input) => {
     credentials === undefined ||
     !(await verifyPassword(credentials.passwordHash, input.currentPassword))
   ) {
+    refused('incorrect');
     throw new SurfaceError('INVALID_INPUT', WRONG_CURRENT_PASSWORD, {
       issues: [{ path: ['currentPassword'], message: WRONG_CURRENT_PASSWORD }],
     });

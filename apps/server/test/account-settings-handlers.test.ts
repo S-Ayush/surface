@@ -129,6 +129,12 @@ function fakeCtx(options: FakeOptions = {}) {
     }),
   };
   const audits: { event: string; fields: object; message: string }[] = [];
+  // Lines written at once through `audit(ctx.log, …)`, which a rollback doesn't drop.
+  const logged: { level: string; line: object; message: string }[] = [];
+  const log = {
+    info: (line: object, message: string) => void logged.push({ level: 'info', line, message }),
+    warn: (line: object, message: string) => void logged.push({ level: 'warn', line, message }),
+  };
   const reserved: string[][] = [];
   const cleared: string[] = [];
   const attempts: AttemptStore = {
@@ -149,6 +155,7 @@ function fakeCtx(options: FakeOptions = {}) {
     },
   };
   const ctx = {
+    log,
     attempts,
     actor: options.system
       ? { kind: 'system', groups: [] }
@@ -193,6 +200,7 @@ function fakeCtx(options: FakeOptions = {}) {
     events,
     filters,
     audits,
+    logged,
     reserved,
     cleared,
     passwordHash: () => passwordHash,
@@ -354,6 +362,34 @@ describe('user.changePassword (SPEC-001 §3.5, E10)', () => {
     expect(cleared).toEqual([]);
   });
 
+  it('logs a wrong current password as a failed sign-in, though the operation rolls back', async () => {
+    const { ctx, logged, audits } = fakeCtx({
+      sessionId: SESSION,
+      passwordHash: await hashPassword(OLD_PASSWORD),
+    });
+    await expect(
+      changePassword.run(ctx, { currentPassword: 'not it at all', newPassword: 'a brand new one' }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    // Written at once, not through ctx.audit, whose lines a rollback drops (S9 security review L4).
+    expect(audits).toEqual([]);
+    expect(logged).toEqual([
+      {
+        level: 'warn',
+        line: {
+          audit: true,
+          event: 'auth.login_failed',
+          userId: ADA,
+          sessionId: SESSION,
+          method: 'password_change',
+          reason: 'incorrect',
+        },
+        message: 'password change refused: wrong current password',
+      },
+    ]);
+    // Never a password, and never the email.
+    expect(JSON.stringify(logged)).not.toMatch(/not it at all|brand new|ada@example/);
+  });
+
   it('clears the account’s failures once the current password is right', async () => {
     const { ctx, cleared } = fakeCtx({
       sessionId: SESSION,
@@ -367,7 +403,7 @@ describe('user.changePassword (SPEC-001 §3.5, E10)', () => {
   });
 
   it('refuses while the account is locked, without checking the password', async () => {
-    const { ctx, steps, passwordHash } = fakeCtx({
+    const { ctx, steps, logged, passwordHash } = fakeCtx({
       sessionId: SESSION,
       passwordHash: await hashPassword(OLD_PASSWORD),
       lockedFor: 540,
@@ -382,6 +418,17 @@ describe('user.changePassword (SPEC-001 §3.5, E10)', () => {
     });
     expect(steps).toEqual(['get User', 'reserve attempt']);
     expect(passwordHash()).toBe(hash);
+    expect(logged.map((entry) => entry.line)).toEqual([
+      {
+        audit: true,
+        event: 'auth.login_failed',
+        userId: ADA,
+        sessionId: SESSION,
+        method: 'password_change',
+        reason: 'locked',
+        retryAfter: 540,
+      },
+    ]);
   });
 
   it('refuses a wrong current password on its field, changing nothing', async () => {

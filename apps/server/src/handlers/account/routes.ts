@@ -46,6 +46,7 @@ import {
   type LinkKind,
 } from '../../mail/link-tokens.js';
 import { magicLinkUrl, passwordResetUrl } from '../../mail/links.js';
+import type { AttemptStore } from '../../auth/attempts.js';
 import { registerInviteRoutes } from '../invites/routes.js';
 import type { InviteStore } from '../invites/store.js';
 import { closeAfterResponse, newSession, sameOrigin, signedIn, unavailable } from './sign-in.js';
@@ -91,6 +92,8 @@ export interface AccountRouteDeps {
   readonly store?: AccountStore;
   /** Invite acceptance's reads and writes (PLAN-001 S5); tests pass a fake. */
   readonly inviteStore?: InviteStore;
+  /** The sign-in lockout's store, which counts refused invite accepts too (S9 review L2). */
+  readonly attempts: AttemptStore;
   /** Closes these sessions' sockets with `4001` on every replica. */
   readonly closeSessions?: (sessionIds: readonly string[]) => void;
   readonly now?: () => Date;
@@ -289,6 +292,7 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AccountRouteDe
     allowedOrigin: deps.allowedOrigin,
     withTransaction: deps.withTransaction,
     ...(deps.inviteStore ? { store: deps.inviteStore } : {}),
+    attempts: deps.attempts,
     ...(deps.closeSessions ? { closeSessions: deps.closeSessions } : {}),
     now,
     hashPassword: hash,

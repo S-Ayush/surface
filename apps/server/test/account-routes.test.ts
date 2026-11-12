@@ -141,6 +141,7 @@ async function accountApp({ smtp = true }: { smtp?: boolean } = {}) {
   });
   registerAccountRoutes(app, {
     auth,
+    attempts: new FakeAttempts(),
     lifecycle,
     secureCookies: config.secureCookies,
     sessionSecret: config.sessionSecret,

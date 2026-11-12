@@ -8,7 +8,7 @@
  * beyond the row's own.
  */
 import type { Actor } from '@surface/domain';
-import { MAX_CLIENT_MUTATION_ID_LENGTH } from '@surface/operations';
+import { MAX_CLIENT_MUTATION_ID_LENGTH, type AnyOperation } from '@surface/operations';
 import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Queryable } from '../db/pool.js';
@@ -27,6 +27,21 @@ export type Claim = { readonly claimed: true } | { readonly replay: StoredResult
 export function idempotencyOwner(actor: Actor): string | undefined {
   if (actor.apiKey) return `key:${actor.apiKey.id}`;
   return actor.userId === undefined ? undefined : `user:${actor.userId}`;
+}
+
+/**
+ * What `record` stores of `def`'s output: nothing when it holds a secret shown once (an invite or
+ * reset link, whose hash alone is stored: SPEC-001 §6.2; S9 security review L1).
+ */
+export function storedOutput(def: AnyOperation, output: unknown): unknown {
+  return def.secretOutput === undefined ? output : null;
+}
+
+/** A replay can't show an output that wasn't stored: it is refused, saying what to do instead. */
+export function checkReplayable(def: AnyOperation): void {
+  if (def.secretOutput !== undefined) {
+    throw new SurfaceError('CONFLICT', def.secretOutput.replayMessage);
+  }
 }
 
 export function checkClientMutationId(id: string): void {

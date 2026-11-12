@@ -148,6 +148,7 @@ async function inviteApp() {
   const auth = new SessionAuth(sessions, { now });
   const closed: string[] = [];
   const hashed: string[] = [];
+  const attempts = new FakeAttempts();
   const app = await buildApp({
     config,
     lifecycle,
@@ -162,6 +163,7 @@ async function inviteApp() {
     allowedOrigin: origin,
     withTransaction: fake.withTransaction,
     store: fake.store,
+    attempts,
     closeSessions: (ids) => void closed.push(...ids),
     now,
     // argon2 is tested elsewhere; a marker keeps these tests fast.
@@ -196,7 +198,7 @@ async function inviteApp() {
       },
     };
   };
-  return { app, origin, logs, sessions, fake, closed, hashed, accept, browserOf };
+  return { app, origin, logs, sessions, fake, closed, hashed, attempts, accept, browserOf };
 }
 
 const ZOE = { name: 'Zoë Ng', displayName: 'zoe', password: PASSWORD, timezone: 'Europe/Berlin' };
@@ -237,6 +239,57 @@ describe('GET /api/invite/:token', () => {
       expect(res.statusCode).toBe(404);
       expect(res.json()).toMatchObject(INVALID);
     }
+  });
+});
+
+describe('accept attempts (S9 security review L2)', () => {
+  // `iris` is taken: every try below is refused with E5 and leaves the invite pending.
+  const TAKEN = { ...ZOE, displayName: 'iris' };
+
+  it('allows 5 refused tries per invite in 15 minutes, then refuses before hashing', async () => {
+    const { accept, hashed, fake } = await inviteApp();
+    for (let i = 0; i < 5; i += 1) expect((await accept(TOKEN, TAKEN)).statusCode).toBe(409);
+    const locked = await accept(TOKEN, ZOE);
+    expect(locked.statusCode).toBe(429);
+    expect(Number(locked.headers['retry-after'])).toBe(15 * 60);
+    expect(locked.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'RATE_LIMITED',
+        message: 'Too many tries with this invite. Try again in 15 minutes.',
+      },
+    });
+    // No argon2 work while locked, and the invite stays pending for its owner.
+    expect(hashed).toHaveLength(5);
+    expect(fake.invites[0]?.state).toBe('pending');
+    // Another invite is counted on its own.
+    expect((await accept(NO_EMAIL_TOKEN, { ...ZOE, email: 'zoe@example.com' })).statusCode).toBe(
+      200,
+    );
+  });
+
+  it('counts by the invite’s hash and the address, never the raw token', async () => {
+    const { accept, attempts } = await inviteApp();
+    await accept(TOKEN, TAKEN);
+    expect(attempts.rows.map((row) => row.key)).toEqual([
+      `invite:${hashLinkToken(TOKEN)}`,
+      'ip:127.0.0.1',
+    ]);
+  });
+
+  it('forgets an invite’s refused tries once it is accepted', async () => {
+    const { accept, attempts } = await inviteApp();
+    await accept(TOKEN, TAKEN);
+    await accept(TOKEN, TAKEN);
+    expect((await accept(TOKEN, ZOE)).statusCode).toBe(200);
+    expect(attempts.rows.filter((row) => row.key.startsWith('invite:'))).toEqual([]);
+  });
+
+  it('doesn’t count a form the page could have checked, or a dead link', async () => {
+    const { accept, attempts } = await inviteApp();
+    expect((await accept(TOKEN, { ...ZOE, password: 'short' })).statusCode).toBe(400);
+    expect((await accept('no-such-invite-token', ZOE)).statusCode).toBe(404);
+    expect(attempts.rows).toEqual([]);
   });
 });
 

@@ -148,6 +148,7 @@ export async function buildApp({
         publicUrl: config.publicUrl,
         email: auth.email,
         withTransaction: auth.withTransaction,
+        attempts: auth.attempts,
         ...(auth.closeSessions ? { closeSessions: auth.closeSessions } : {}),
         ...(auth.now ? { now: auth.now } : {}),
       });

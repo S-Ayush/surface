@@ -24,6 +24,7 @@ import { z } from 'zod';
 import type { SessionAuth } from '../auth/sessions.js';
 import { FILE_PURPOSES } from '../db/schema/index.js';
 import { uuidv7 } from '../db/uuidv7.js';
+import { tokenBucket } from '../executor/rate-limit.js';
 import type { WithTransaction } from '../executor/transaction.js';
 import { errorBody } from '../http/errors.js';
 import type { Lifecycle } from '../lifecycle.js';
@@ -53,6 +54,13 @@ export const IMAGE_TOO_LARGE_MESSAGE = 'Images must be 2 MB or smaller. Choose a
 export const IMAGE_TYPE_MESSAGE = 'Use a PNG, JPEG, GIF or WebP image.';
 export const IMAGE_UNREADABLE_MESSAGE =
   'That image could not be read. Try saving it again as a PNG or JPEG.';
+/**
+ * Uploads per user per minute. Each costs a sharp decode and a stored file, and the route isn't an
+ * operation, so the executor's limit doesn't apply (S9 security review L3). Setting an avatar or
+ * logo takes one; a few retries fit.
+ */
+export const UPLOADS_PER_MINUTE = 10;
+
 export const IMAGES_UNAVAILABLE_MESSAGE =
   'Image uploads are unavailable on this server. Ask an Admin to check the server log.';
 
@@ -85,6 +93,8 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   const store = deps.store ?? PG_FILE_STORE;
   const process = imageProcessor(deps.log, deps.loadSharp);
   const limit = Math.min(IMAGE_MAX_BYTES, deps.uploadMaxMb * 1024 * 1024);
+  // In memory, per process: like the executor's limiter, several replicas each allow the rate.
+  const uploads = tokenBucket({ queriesPerMinute: 0, mutationsPerMinute: UPLOADS_PER_MINUTE });
 
   const refuse = (
     request: FastifyRequest,
@@ -148,6 +158,18 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
             400,
             'INVALID_INPUT',
             'Say what the image is for: ?purpose=avatar or ?purpose=logo.',
+          );
+        }
+        // Before the body is decoded, so a refused upload costs nothing.
+        const rate = uploads.take(session.actor, 'mutation');
+        if (!rate.allowed) {
+          void reply.header('retry-after', String(rate.retryAfterSeconds));
+          return refuse(
+            request,
+            reply,
+            429,
+            'RATE_LIMITED',
+            `Too many uploads. Try again in ${rate.retryAfterSeconds} second${rate.retryAfterSeconds === 1 ? '' : 's'}.`,
           );
         }
         const purpose = query.data.purpose;

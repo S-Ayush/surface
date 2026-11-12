@@ -30,8 +30,9 @@ export interface AuditFields {
   readonly sessionId?: string;
   /** Why it failed, or how it came about: `incorrect`, `locked`, `setup`, `invite`. */
   readonly reason?: string;
-  /** How someone signed in or tried to. */
-  readonly method?: 'password' | 'magic_link';
+  /** How someone signed in or tried to; `password_change` is a current password checked by
+   * `user.changePassword`, which counts against the same lockout. */
+  readonly method?: 'password' | 'magic_link' | 'password_change';
   /** Seconds until a locked-out sign-in may try again. */
   readonly retryAfter?: number;
   /** For `user.role_changed`. */

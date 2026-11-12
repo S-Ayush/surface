@@ -73,6 +73,7 @@ export default handler(teamUpdate, async (ctx, input) => {
 | `ui` | mutations used in the UI | Title, icon, contexts, optional shortcut |
 | `optimistic` | client-dispatched mutations | Pure function over the client store (§8) |
 | `inverse` | optional (M2) | Returns the op + input that undoes this call, given the pre-state |
+| `secretOutput` | optional | `{ replayMessage }` when the output holds a secret shown once, such as a link whose hash alone is stored (`invite.create`, `user.createResetLink`). The output is never stored for an idempotent replay; see "Idempotency" (§9) |
 | `internal` | optional | `true` hides the op from the API, the catalog, and MCP (e.g. `debug.touch`) |
 | `deprecated` | optional | `{ since, replacedBy }` |
 
@@ -221,7 +222,7 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
   "correlationId": "01J…" } }
 ```
 
-**Idempotency (API/MCP):** `clientMutationId` is stored for 24 h in `api_idempotency(actor_id, client_mutation_id, operation, result)`. A repeat returns the stored result. (Sync clients use `(clientId, seq)` instead, per SPEC-002.)
+**Idempotency (API/MCP):** `clientMutationId` is stored for 24 h in `api_idempotency(actor_id, client_mutation_id, operation, result)`. A repeat returns the stored result. An operation with `secretOutput` stores no result (2026-11-12, PLAN-001 S9 security review): its repeat is `CONFLICT` with the op's `replayMessage`, which says how to get a new link. (Sync clients use `(clientId, seq)` instead, per SPEC-002; their stored results hold no output.)
 - Ids are scoped to the API key, or to the user for session calls, and apply to mutations only (queries ignore them). 1–200 characters.
 - The mutation's transaction claims the id before anything else, so concurrent repeats wait for the first and then replay it; if the first fails, nothing is stored and a repeat runs normally.
 - A replay's body is byte-identical to the first response, and carries the header `Idempotent-Replayed: true`.

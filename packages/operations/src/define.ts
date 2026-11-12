@@ -57,6 +57,12 @@ export interface OperationDef<
   optimistic?(store: OptimisticStore, input: z.output<In>): void;
   /** Returns the call that undoes this one, given the pre-state (M2). */
   inverse?(input: z.output<In>, pre: unknown): InverseCall | null;
+  /**
+   * The output holds a secret shown once, such as a link whose hash alone is stored. The executor
+   * never stores it for an idempotent replay, and a repeated `clientMutationId` is refused with
+   * `replayMessage`, which says how to get a new one (SPEC-003 §6 step 6; PLAN-001 S9).
+   */
+  readonly secretOutput?: { readonly replayMessage: string };
   /** Hidden from the API, the catalog and MCP (`debug.*`). */
   readonly internal?: boolean;
   readonly deprecated?: Deprecation;

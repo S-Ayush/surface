@@ -42,7 +42,14 @@ import { eventOutbox } from '../db/schema/index.js';
 import { uuidv7 } from '../db/uuidv7.js';
 import { queryHelpers, type DomainEvent, type Handler, type HandlerContext } from './context.js';
 import { INTERNAL_MESSAGE, SurfaceError, type ErrorIssue, type OperationError } from './errors.js';
-import { checkClientMutationId, claim, idempotencyOwner, record } from './idempotency.js';
+import {
+  checkClientMutationId,
+  checkReplayable,
+  claim,
+  idempotencyOwner,
+  record,
+  storedOutput,
+} from './idempotency.js';
 import { keyScopeProblem, narrowToKeyTeams, refOutsideKeyTeams } from './key-scope.js';
 import { loggableError } from './log-error.js';
 import { audit, type AuditLine } from '../auth/audit.js';
@@ -442,11 +449,20 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         const tx = drizzle({ client, casing: 'snake_case' });
         if (owner !== undefined && clientMutationId !== undefined) {
           const claimed = await claim(tx, owner, clientMutationId, def.name);
-          if ('replay' in claimed) return { ...claimed.replay, replayed: true };
+          if ('replay' in claimed) {
+            checkReplayable(def);
+            return { ...claimed.replay, replayed: true };
+          }
         }
         const applied = await apply(client, def, prepared, actor, {}, log);
         if (owner !== undefined && clientMutationId !== undefined) {
-          await record(tx, owner, clientMutationId, applied.output, applied.lastSyncId);
+          await record(
+            tx,
+            owner,
+            clientMutationId,
+            storedOutput(def, applied.output),
+            applied.lastSyncId,
+          );
         }
         return { result: applied.output, lastSyncId: applied.lastSyncId, ...postCommit(applied) };
       },

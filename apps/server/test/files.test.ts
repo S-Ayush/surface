@@ -17,6 +17,7 @@ import {
   IMAGE_UNREADABLE_MESSAGE,
   IMAGES_UNAVAILABLE_MESSAGE,
   registerFileRoutes,
+  UPLOADS_PER_MINUTE,
 } from '../src/files/routes.js';
 import type { FileStore, NewFile } from '../src/files/store.js';
 import { registerSecurityHeaders } from '../src/http/security-headers.js';
@@ -184,6 +185,26 @@ describe('POST /files/upload (ADR-0014; SPEC-001 §3.5)', () => {
     expect(response.json()).toMatchObject({
       error: { message: expect.stringContaining('?purpose=avatar') as unknown },
     });
+  });
+
+  it('limits each user to UPLOADS_PER_MINUTE uploads, before decoding (S9 security review L3)', async () => {
+    const { upload, files, as } = setup();
+    for (let i = 0; i < UPLOADS_PER_MINUTE; i += 1)
+      expect((await upload(png)).statusCode).toBe(201);
+    const refused = await upload(png);
+    expect(refused.statusCode).toBe(429);
+    expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+    expect(refused.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'RATE_LIMITED',
+        message: expect.stringMatching(/^Too many uploads/) as unknown,
+      },
+    });
+    expect(files.rows).toHaveLength(UPLOADS_PER_MINUTE);
+    // Per user: someone else can still upload.
+    as(session(BEN, 'member'));
+    expect((await upload(png)).statusCode).toBe(201);
   });
 
   it('answers 503 until the server is ready (SPEC-001 Q5)', async () => {

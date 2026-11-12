@@ -70,13 +70,20 @@ export async function startServer(
   const migrations = options.migrations ?? loadMigrations();
   const lifecycle = new Lifecycle();
   const pool = createPool(config.databaseUrl, logger);
-  // One lockout store for sign-in and for handlers that check a password (AC-6; PLAN-001 S6).
-  const attempts = pgAttemptStore(pool);
+  // One lockout store for sign-in and for handlers that check a password (AC-6; PLAN-001 S6),
+  // on a pool of its own: `user.changePassword` reserves an attempt while its transaction holds a
+  // connection of `pool`, so sharing it would let concurrent calls take every connection and wait
+  // on each other (PLAN-001 S9 security review, M1). Reservations are short, so 2 are enough at
+  // our size; a burst of sign-ins queues on them, and one still waiting after the pool's connect
+  // timeout fails as a 500, not RATE_LIMITED.
+  const attemptsPool = createPool(config.databaseUrl, logger, { max: 2 });
+  const attempts = pgAttemptStore(attemptsPool);
 
   // Hooks run in registration order: the job worker stops before the pool its handlers use.
   let jobs: Jobs | undefined;
   lifecycle.onShutdown('resources', 'job queue', () => jobs?.stop());
   lifecycle.onShutdown('resources', 'database pool', () => pool.end());
+  lifecycle.onShutdown('resources', 'lockout pool', () => attemptsPool.end());
   lifecycle.addReadinessCheck('db', async () => {
     await pool.query('SELECT 1');
     return 'ok';

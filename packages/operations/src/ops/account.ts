@@ -22,5 +22,9 @@ export const userCreateResetLink = defineOperation({
   }),
   permission: (p) => p.admin(),
   destructive: false,
+  secretOutput: {
+    replayMessage:
+      'This reset link was already created, and it is shown only once. Create a new one: it turns the old one off.',
+  },
   examples: [{ user: 'iris@example.com' }],
 });

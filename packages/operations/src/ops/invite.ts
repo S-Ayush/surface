@@ -65,6 +65,10 @@ export const inviteCreate = defineOperation({
   }),
   permission: (p) => p.admin(),
   destructive: false,
+  secretOutput: {
+    replayMessage:
+      'This invite was already created, and its link is shown only once. Revoke it in Members and invite again.',
+  },
   examples: [{ email: 'new.person@example.com', role: 'member', teams: ['ENG'] }],
   ui: { title: 'Invite member…', icon: 'user-plus', contexts: ['global'], shortcut: null },
   // Invites never reach the replica, so there is nothing to predict (SPEC-001 D6).

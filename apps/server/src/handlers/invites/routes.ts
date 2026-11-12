@@ -11,6 +11,9 @@
  *   user and the memberships, marks the invite accepted and signs in, in one transaction: a
  *   refusal (E3, E5) leaves the invite pending. Another site's page is refused (login CSRF), and
  *   the session this browser had ends, as on sign-in (SPEC-001 Q11).
+ * - Refused accepts count like failed sign-ins, per invite and per address (S9 security review
+ *   L2): E3 tells whether an email has an account, so a link's holder may ask only so often, and
+ *   each try costs an argon2 hash.
  */
 import {
   DISPLAY_NAME_MAX_LENGTH,
@@ -32,6 +35,7 @@ import {
 } from '@surface/domain';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { ipKey, type AttemptStore } from '../../auth/attempts.js';
 import { audit } from '../../auth/audit.js';
 import { hashPassword } from '../../auth/password.js';
 import type { SessionAuth } from '../../auth/sessions.js';
@@ -59,6 +63,8 @@ export interface InviteRouteDeps {
   readonly allowedOrigin: string;
   readonly withTransaction: WithTransaction;
   readonly store?: InviteStore;
+  /** The sign-in lockout's store: refused accepts count per invite and per address (AC-6). */
+  readonly attempts: AttemptStore;
   readonly closeSessions?: (sessionIds: readonly string[]) => void;
   readonly now?: () => Date;
   readonly hashPassword?: (password: string) => Promise<string>;
@@ -161,6 +167,27 @@ export function registerInviteRoutes(app: FastifyInstance, deps: InviteRouteDeps
         .code(400)
         .send(fieldErrorBody(request, new FieldError('INVALID_INPUT', first[0], `${first[1]}.`)));
     }
+    // Reserved before argon2 and the checks that tell emails apart, and forgotten once the invite
+    // is accepted. Problems the page could have caught (above) and dead links don't count.
+    const keys = [`invite:${tokenHash}`, ipKey(request.ip)];
+    const reservation = await deps.attempts.reserve(keys, now());
+    if (!reservation.ok) {
+      const minutes = Math.ceil(reservation.lockedForSeconds / 60);
+      request.log.warn(
+        { reason: 'locked', ip: request.ip },
+        'invite accept refused: too many tries',
+      );
+      return reply
+        .code(429)
+        .header('retry-after', String(reservation.lockedForSeconds))
+        .send(
+          errorBody(
+            request,
+            'RATE_LIMITED',
+            `Too many tries with this invite. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+          ),
+        );
+    }
     const timezone =
       input.timezone !== undefined && timeZoneProblem(input.timezone) === undefined
         ? canonicalTimeZone(input.timezone)
@@ -240,6 +267,7 @@ export function registerInviteRoutes(app: FastifyInstance, deps: InviteRouteDeps
       throw error;
     }
 
+    await deps.attempts.succeeded(reservation.attempt, keys[0] ?? '');
     closeAfterResponse(request, reply, joined.ended, deps.closeSessions);
     // SPEC-001 §10, after the commit: this route is outside the executor (no ctx.audit).
     audit(

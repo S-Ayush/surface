@@ -555,7 +555,7 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 >   - **Found and fixed** (`p001-s8-fix-create-dialog`, test first, rechecked in Chrome): (1) while `team.create` waited, the dialog's own optimistic team made its key count as taken ("Team key PLA is taken. Try PLAT"): `createTeamContext` now leaves out the team being created (`creatingId`); (2) Escape while waiting asked "Discard changes? Your unsaved changes will be lost." although the team was queued and would be created: once submitted the form has nothing unsaved (`hasUnsavedChanges`), so it closes at once; unsubmitted typing still asks.
 > - **Verified:** see the session log row "review fixed" for the commands and counts.
 
-### S9: Hardening & lint · S · 🟡 Part 1 done 2026-11-07 (part 2 after S5–S7)
+### S9: Hardening & lint · S · ✅ Done 2026-11-12 (part 1 2026-11-07)
 - Registry lint passes for every SPEC-001 op (AC-16): summaries, keywords, examples, and `ui` metadata for command-menu use ("Create team…", "Invite member…", "Rename team…", "Join team"; corrected in S9, see As built).
 - Log events for the M7 audit log: `auth.*`, `user.*`.
 - ~~Install smoke (PLAN-004 S8) is enabled with a full setup and first team.~~ Held with PLAN-004 S8 (SPEC-004 D4).
@@ -585,6 +585,56 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 > - **`ctx.audit` (2026-11-12, `p001-s9-ctx-audit`, agreed with session E on 2026-11-08):** `HandlerContext.audit(event, fields, message)` lets an operation write a SPEC-001 §10 line. The executor buffers the lines per attempt, carries them with the ended sessions to `afterCommit`, and writes them with `audit()` only for the attempt that committed: a retried (E5) or rolled-back attempt, a refused sync mutation and a replay log nothing. A narrow hook rather than a generic `afterCommit(fn)`, so a handler still can't run arbitrary code outside its transaction. Session E moves `user.setRole`'s `user.role_changed` line to it, and S5 writes `user.invited` and `user.joined` with it. Audit lines are written last in `afterCommit` and a failure to write them is logged, never returned: the operation has committed, and the ended sessions' sockets must still close. SPEC-003 §6 lists `audit` (and `links`, which it lacked). Tests: `executor-context.test.ts` "ctx.audit" (4): a retry and a rollback through `execute`, an accepted and a rejected sync mutation through `executeSynced`. Mutation checks: writing the line at once fails the retry, rollback and rejected tests; dropping the lines from the sync path fails the accepted one. No new integration test (the user's call).
 > - **`ctx.audit` review (2026-11-12):** no blocker or major. Fixed: the synced path had no test (minor 1); SPEC-003 §6 lacked `audit` (minor 2); SPEC-001 §10 read as already true for `user.setRole` (minor 3); audit lines were written before the socket closes and outside their try (nit 1); the context comment's wording (nit 2).
 > - **Part 2 (after S5–S7):** `audit()` for the `user.*` and reset events, a review of token single use in invites, and AC-16 for every §6.2 operation (the `PENDING` list empty).
+
+> **As built, part 2 (2026-11-12, session E, branch `p001-s9-part2` on `739b31d`).** No migration and no new dependency.
+>
+> - **AC-16:** already met once S5 and S6 landed, since every §6.2 operation is registered and passes the lint. `operations/test/spec-001.test.ts` loses its empty `PENDING` and `COMMANDS_PENDING` lists and now checks all 22 operations, the destructive flags and the 4 command titles.
+> - **Audit lines:** already complete. Every SPEC-001 §10 event has a call site and a named test:
+>   - `auth.login` and `auth.login_failed`: `auth-routes.test.ts`, `account-routes.test.ts`;
+>   - `auth.password_reset` and `auth.password_reset_failed`: `account-routes.test.ts`;
+>   - `auth.password_changed`: `account-settings-handlers.test.ts`;
+>   - `user.invited`: `invite-handlers.test.ts`;
+>   - `user.joined`: `setup-routes.test.ts`, `invite-routes.test.ts`;
+>   - `user.role_changed`: `last-admin-guard.test.ts`, `executor-context.test.ts`.
+> - **Security review, part 2.** An independent, read-only review of `938a366..main` (S5, S6, `ctx.audit`, the S4 audit follow-up) against the checklist, with token single use in invites called out. It found no high, 1 medium, 4 low and 5 informational findings. The user chose to fix all five, and decided I2. Each fix started from a failing test:
+>   - **M1 (medium), pool exhaustion.** S6's `user.changePassword` held an executor connection while `ctx.attempts` asked the same pool (max 10) for a second one. 10 calls at once took every connection and waited on each other until the connect timeout. The lockout store now has its own pool (`max: 2`) in `server.ts`, shared by sign-in and the executor, and closed on shutdown.
+>     - Checked by hand, before and after: 12 concurrent calls with a wrong password. Before, 10 failed with 500, and another user's `user.me` took 4,981 ms. After, there were 5 × 400 and 7 × 429 (the lockout), and the probe took 5 ms.
+>     - No test: the integration hold. A burst of sign-ins now queues on 2 connections (a comment says so).
+>   - **L1, plaintext links in `api_idempotency`.**
+>     - A new optional operation field, `secretOutput: { replayMessage }` (SPEC-003 §3.1), set on `invite.create` and `user.createResetLink`. The executor stores `null` for their output (`storedOutput`), and a repeated `clientMutationId` is `CONFLICT` with the message (`checkReplayable`).
+>     - The sync path never stored outputs: `client_mutations` holds `{seq, status, lastSyncId}`. A test pins `mutationOkSchema`'s keys.
+>     - Test: `idempotency-secrets.test.ts`. Checked by hand: the row holds `null`, and the replay answers 409.
+>   - **L2, the invite accept route as an email oracle.** A refused accept (E3, E5, a missing email) counts against `auth_attempts`, per invite (`invite:<token hash>`, 5 in 15 minutes) and per address (`ip:…`, 20, shared with sign-in), and is forgotten on success.
+>     - While locked, the answer is `429` before argon2. Problems the form could catch, and dead links, don't count.
+>     - `AccountRouteDeps` and `InviteRouteDeps` take `attempts`, so `app.ts` passes `auth.attempts`.
+>     - Tests: `invite-routes.test.ts` "accept attempts" (4). Checked by hand: 5 × 409 on `email`, then 429 with `Retry-After: 900`.
+>   - **L3, uploads unlimited.** `POST /files/upload` takes a per-user token bucket of `UPLOADS_PER_MINUTE = 10`, checked before the image is decoded, so a refusal is `429` with `Retry-After`. It is in memory per process, like the executor's limiter.
+>     - Test: `files.test.ts`. Checked by hand: 10 × 201, then 429.
+>   - **L4, no trace of current-password guesses.** A wrong or locked current password in `user.changePassword` logs `auth.login_failed` (`method: 'password_change'`, `reason`, `userId`, `sessionId`). It is written with `audit(ctx.log, …)` at once, because the refusal rolls back and `ctx.audit` lines with it. `AuditFields.method` gains `'password_change'`.
+>     - Tests: `account-settings-handlers.test.ts`, which also checks that no password or email reaches the line. Checked by hand in the server log.
+>   - **I2, re-inviting an email (the user's decision, SPEC-001 D13).** `invite.create` with an email first revokes that email's pending invites (not accepted, revoked or expired ones), in the same transaction.
+>     - Test: `invite-handlers.test.ts`, with the update's SQL. Checked by hand: the older Admin invite's link turned 404, and the newer one works.
+>   - **Recorded, not fixed (informational):**
+>     - I1: when `user.deactivate` lands (later), revoke the user's pending invites, or have accept require an active inviter.
+>     - I3: a link invite doesn't verify the email typed (by design, §3.4).
+>     - I4: shared blobs, already in the S6 follow-ups.
+>     - I5: a password change leaves an open magic link valid. It belongs with the S6 reset-link follow-up.
+>   - **Checked and sound:**
+>     - enumeration (E4 alike for every dead link; files and refs `NOT_FOUND`);
+>     - timing (the link checked before argon2);
+>     - CSRF (the app-wide hook covers files and invites; accept checks `Origin`);
+>     - cookie flags (accept uses the shared `signedIn`);
+>     - invite token single use (256-bit tokens, hash only; the claim is one `UPDATE … WHERE` pending, and concurrent accepts serialise on the row; revoke locks the row; a refusal rolls the claim back; request logs mask `/invite/` and `/api/invite/`);
+>     - log redaction (audit lines carry ids only; the passwords' keys are redacted);
+>     - files (sniffed type, WebP re-encode, CSP sandbox and `nosniff`, content-hash keys, size limits, uploader-only until used);
+>     - private teams (invite teams filtered by visibility; D10);
+>     - sessions (accept ends the previous session; `session.*` reach only the actor's own sessions).
+> - **Others' files** (A agreed): `server.ts` (the lockout pool), `app.ts` (`attempts` to the account routes), `auth/audit.ts` (`'password_change'`), `executor/execute.ts` and `idempotency.ts` (`storedOutput`, `checkReplayable`). Also the shared `packages/operations/src/define.ts` (the optional `secretOutput` field, additive).
+> - **S6 follow-up closed:** A built the image from `f16b547` for `linux/amd64` and `linux/arm64`. In both, sharp 0.35.5 (libvips 8.18.7) loads as uid 10001 with `--read-only` and resizes an image. The images are 120.6 MB and 120.3 MB compressed, against the 250 MB target. amd64 ran under Rosetta, so CI is its first native run.
+> - **Checks:**
+>   - `pnpm check`: server 679, operations 174, web 547.
+>   - `pnpm test:int`: 224 + 2, and sync-sim 7. The existing idempotency and contract tests pass with the flag.
+>   - The hand checks above, against the dev stack (Postgres 17).
 
 ## 2. Modules touched
 `packages/domain/models/*`, `packages/domain/team-key.ts`, `packages/operations/{workspace,user,session,invite,team}/*`, `apps/server/src/{auth,mail,files,setup}/*`, handlers for the ops above, migrations, `apps/web/src/routes/{setup,login,forgot,reset,invite,settings}/*`, `e2e/auth-*.spec.ts`, `e2e/teams-*.spec.ts`.
@@ -620,13 +670,14 @@ Additive tables only. A rollback before any release is a code revert. After a re
 | E12 (S8) | `domain/src/team.test.ts` (`canEndMembership`), `web/test/teams-model.test.ts`, `web/test/teams-screens.test.tsx` (Leave and Remove disabled) (+ the handler path, ⏸ held, checked by hand) |
 | Private-team leak (S8) | `server/test/team-ops-leak.int.test.ts` (not held: permissions.md §5) |
 | Private-team leak (S9, permissions.md §5 item 6) | `server/test/sync-groups.int.test.ts` "a member removed from private team X while connected" and "a client reconnecting after a private team membership changed while it was away" (not held: leak tests), `server/test/sync-hub.test.ts` "group changes", `server/test/sync-hub-source.test.ts` |
-| SPEC-001 §10 audit lines (S9) | `server/test/auth-routes.test.ts` "logs each sign-in as an audit line…", `server/test/setup-routes.test.ts` "logs the first Admin joining by id…", `server/test/executor-context.test.ts` "ctx.audit" (an operation's line only after its commit, through the operations API and sync) |
+| SPEC-001 §10 audit lines (S9) | `server/test/auth-routes.test.ts` "logs each sign-in as an audit line…", `server/test/setup-routes.test.ts` "logs the first Admin joining by id…", `server/test/executor-context.test.ts` "ctx.audit" (an operation's line only after its commit, through the operations API and sync) + (part 2) the §10 event → test list in S9's As built; `account-settings-handlers.test.ts` "logs a wrong current password as a failed sign-in, though the operation rolls back" |
+| S9 security review, part 2 | M1: checked by hand (integration held); L1 `server/test/idempotency-secrets.test.ts`; L2 `server/test/invite-routes.test.ts` "accept attempts"; L3 `server/test/files.test.ts` "limits each user to UPLOADS_PER_MINUTE uploads…"; L4 `server/test/account-settings-handlers.test.ts`; I2 / D13 `server/test/invite-handlers.test.ts` "revokes the email’s older pending invites…" |
 | AC-14 | Unit parts (S7): `server/test/last-admin-guard.test.ts` (`user.setRole`, `workspace.update` Admin-only; reads for anyone), `server/test/link-tokens.test.ts` (`user.createResetLink`), `server/test/invite-handlers.test.ts` (`invite.*` Admin-only, S5), `web/test/settings-page.test.tsx` (not-found for Members) + ⏸ held (integration + e2e) `server/test/admin-permissions.int.test.ts`, `e2e/admin-routes.spec.ts` (checked by hand in S7) |
 | AC-15 | Unit parts (S6): `operations/src/ops/profile.test.ts` (the optimistic patch), `server/test/account-settings-handlers.test.ts` "writes only the changed fields to the synced user row…", `web/test/account-settings.test.tsx` "saving your profile" + ⏸ held (e2e) `e2e/profile-realtime.spec.ts` (checked by hand in S6) |
 | AC-3, AC-4 (S5: invites) | Unit parts: `server/test/invite-handlers.test.ts` (the link returned with and without SMTP, `emailed` = queued, D7), `server/test/invite-routes.test.ts` (accepting creates the account and signs in, once), `web/test/invites.test.tsx` (the link always shown, worded by `emailed`) + ⏸ held (e2e) as above (checked by hand in S5, with the test fake SMTP server for AC-4) |
 | E3, E4, E5 (S5) | `server/test/invite-handlers.test.ts` (E3 on create, on the `email` field), `server/test/invite-routes.test.ts` (E3 and E5 on accept, E4 for used, revoked, expired and unknown links alike, a unique-index race; the concurrent claim checked by reading the SQL, integration held), `domain/src/display-name.test.ts` (D9, suggestions), `web/test/invites.test.tsx` (each refusal on its field) |
 | Private-team leak (S5) | `server/test/invite-leak.int.test.ts` (not held: permissions.md §5; creating, listing and revoking, D10) |
-| AC-16 | `operations/test/spec-001.test.ts` (each §6.2 operation that exists; the rest pending by slice, S9 part 1) + the registry-wide `operations/test/lint.test.ts` |
+| AC-16 | `operations/test/spec-001.test.ts` (every §6.2 operation, nothing pending since S9 part 2) + the registry-wide `operations/test/lint.test.ts` |
 
 ## 5. Risks & mitigations
 

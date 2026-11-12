@@ -9,6 +9,8 @@ import {
   inviteRevoke,
   type AnyOperation,
 } from '@surface/operations';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 import { invites, users, workspace } from '../src/db/schema/index.js';
 import type { DomainEvent, HandlerContext } from '../src/executor/context.js';
@@ -25,6 +27,7 @@ const ENG = '0190f000-0000-7000-8000-0000000000e1';
 const INVITE = '0190f000-0000-7000-8000-0000000000a1';
 const NOW = new Date('2026-11-12T10:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
+const DIALECT = new PgDialect({ casing: 'snake_case' });
 
 type InviteRow = typeof invites.$inferSelect;
 
@@ -55,15 +58,21 @@ function fakeCtx(options: { emailTaken?: boolean; smtp?: boolean; stored?: Invit
   const events: DomainEvent[] = [];
   const emails: unknown[] = [];
   const audited: unknown[] = [];
+  // Each update's filter as the SQL it renders to: the fake applies updates to `stored` whatever
+  // the filter, so tests read which rows an update meant.
+  const updates: { text: string; params: unknown[] }[] = [];
   const rowsOf = (table: unknown): unknown[] => {
     if (table === users) return options.emailTaken ? [{ id: 'someone' }] : [];
     if (table === workspace) return [{ name: 'Acme' }];
     if (table === invites) return stored ? [stored] : [];
     throw new Error('unexpected table');
   };
-  const chain = (rows: () => unknown[]) => {
+  const chain = (rows: () => unknown[], onWhere?: (condition: SQL) => void) => {
     const builder = {
-      where: () => builder,
+      where: (condition: SQL) => {
+        onWhere?.(condition);
+        return builder;
+      },
       limit: () => builder,
       for: (strength: string) => {
         writes.push(`lock ${strength}`);
@@ -87,10 +96,16 @@ function fakeCtx(options: { emailTaken?: boolean; smtp?: boolean; stored?: Invit
     }),
     update: (table: unknown) => ({
       set: (patch: Partial<InviteRow>) => {
-        if (table !== invites || !stored) throw new Error('unexpected update');
+        if (table !== invites) throw new Error('unexpected update');
         writes.push(`update invite ${Object.keys(patch).join(',')}`);
-        stored = { ...stored, ...patch };
-        return chain(() => [stored]);
+        if (stored) stored = { ...stored, ...patch };
+        return chain(
+          () => (stored ? [stored] : []),
+          (condition) => {
+            const { sql: text, params } = DIALECT.sqlToQuery(condition);
+            updates.push({ text, params });
+          },
+        );
       },
     }),
   };
@@ -114,7 +129,7 @@ function fakeCtx(options: { emailTaken?: boolean; smtp?: boolean; stored?: Invit
     audit: (event: string, fields: object, message: string) =>
       void audited.push({ event, ...fields, message }),
   } as unknown as HandlerContext;
-  return { ctx, writes, events, emails, audited, stored: () => stored };
+  return { ctx, writes, events, emails, audited, updates, stored: () => stored };
 }
 
 describe('invite.create (SPEC-001 §3.4)', () => {
@@ -177,6 +192,28 @@ describe('invite.create (SPEC-001 §3.4)', () => {
       details: { issues: [{ path: ['email'], message: EMAIL_TAKEN_MESSAGE }] },
     });
     expect([writes, events]).toEqual([[], []]);
+  });
+
+  it('revokes the email’s older pending invites, so only the newest link works (I2)', async () => {
+    const { ctx, writes, updates } = fakeCtx();
+    await create.run(ctx, { email: 'zoe@example.com', role: 'member', teams: [] });
+    // Before the insert, so the new invite is not among them; accepted, revoked and expired
+    // invites keep their state (S9 security review I2, the user's decision).
+    expect(writes).toEqual(['update invite revokedAt', 'insert invite']);
+    expect(updates).toEqual([
+      {
+        text:
+          '("invites"."email" = $1 and "invites"."accepted_at" is null and ' +
+          '"invites"."revoked_at" is null and "invites"."expires_at" > $2)',
+        params: ['zoe@example.com', NOW.toISOString()],
+      },
+    ]);
+  });
+
+  it('leaves other invites alone for a link without an email', async () => {
+    const { ctx, writes } = fakeCtx();
+    await create.run(ctx, { role: 'member', teams: [] });
+    expect(writes).toEqual(['insert invite']);
   });
 
   it('normalises the email it is given (E2)', () => {

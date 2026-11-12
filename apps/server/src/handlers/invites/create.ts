@@ -1,6 +1,6 @@
 import { EMAIL_TAKEN_MESSAGE, INVITE_TTL_MS } from '@surface/domain';
 import { inviteCreate } from '@surface/operations';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { invites, users, workspace } from '../../db/schema/index.js';
 import { uuidv7 } from '../../db/uuidv7.js';
 import { handler } from '../../executor/context.js';
@@ -31,8 +31,26 @@ export default handler(inviteCreate, async (ctx, input) => {
     }
   }
 
-  const link = ctx.links.invite();
   const now = ctx.now();
+  // The newest invite for an email is the one that works (SPEC-001 §3.4; S9 security review I2,
+  // the user's decision): re-inviting replaces an earlier invite, say one with the wrong role,
+  // rather than leaving both links open. Like an Admin's revoke, it waits for a concurrent accept's
+  // row lock, and accepted or expired invites keep their state.
+  if (input.email !== undefined) {
+    await ctx.tx
+      .update(invites)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(invites.email, input.email),
+          isNull(invites.acceptedAt),
+          isNull(invites.revokedAt),
+          gt(invites.expiresAt, now),
+        ),
+      );
+  }
+
+  const link = ctx.links.invite();
   const [row] = await ctx.tx
     .insert(invites)
     .values({
