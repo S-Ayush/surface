@@ -119,13 +119,13 @@ The M1 specs are Draft. Building starts after one docs PR that:
 | Plan | Implements | Slices | Size |
 |---|---|---|---|
 | [PLAN-010](PLAN-010-workflow-labels-estimates.md) | SPEC-010 Workflow statuses, labels & estimates | 6 | ~17 d |
-| [PLAN-011](PLAN-011-issues-core.md) | SPEC-011 Issues core, content models, partial issue loading, sync foundations | 11 (S4b, S4c, S5a, S5b) | ~42 d |
+| [PLAN-011](PLAN-011-issues-core.md) | SPEC-011 Issues core, content models, partial issue loading, sync foundations | 11 (S4b, S4c, S5a, S5b) | ~43 d |
 | [PLAN-012](PLAN-012-issue-page-list-view.md) | SPEC-012 Issue page, composer, list, shortcuts, drafts, sign-out | 7 | ~33 d |
 | [PLAN-013](PLAN-013-comments-reactions-editor.md) | SPEC-013 Comments, reactions & editor | 5 | ~17 d |
 | [PLAN-014](PLAN-014-attachments-files.md) | SPEC-014 Attachments & files | 6 (S4a, S4b) | ~16 d |
 | [PLAN-015](PLAN-015-recently-deleted-archive.md) | SPEC-015 Recently deleted & archive | 5 | ~12 d |
 
-Total: about **137 ideal days** (40 slices), plus about 2 days for the acceptance gate. That is roughly 15 weeks for two engineers or 11 weeks for three, using the tracks below. The critical path alone is about 44 ideal days, so more people don't shorten it below about 9 weeks. Partial issue loading (ADR-0020, 2026-11-12) added about 14 days: PLAN-011 S4b and S4c (9), and the server-backed counts, archive page and issue loader in PLAN-010, PLAN-012 and PLAN-015 (4), plus sign-out (1).
+Total: about **138 ideal days** (40 slices), plus about 2 days for the acceptance gate. That is roughly 15 weeks for two engineers or 11 weeks for three, using the tracks below. The critical path alone is about 44 ideal days, so more people don't shorten it below about 9 weeks. Partial issue loading (ADR-0020, 2026-11-12) added about 15 days: PLAN-011 S4b and S4c (10), and the server-backed counts, archive page and issue loader in PLAN-010, PLAN-012 and PLAN-015 (4), plus sign-out (1).
 
 **Who builds the shared pieces:**
 - **PLAN-011:** the sync and registry foundations: `OptimisticStore` changes, `systemOnly` and `contentParent`, repo `updateWhere`/`deleteWhere` (with the unlogged content delete for purge), archive on the wire (protocol v0.7), `lockIssueForWrite`, partial issue loading (protocol v0.8: issue groups, subscriptions, the partial bootstrap, `visibleGroups`, the client's removal rules, `useTeamLoadState`), content models (`/sync/content`, hydration, cache), `issueSlug` and the issue route, the label cascade helper, the archived-label refusal, and the `claimInlineFiles` seam.
@@ -160,6 +160,7 @@ flowchart LR
   P11S4c --> P12S3[012·S3 list + my issues]
   P11S4 --> P15S1[015·S1 lifecycle] --> P15S3[015·S3 auto-archive/close]
   P10S2 --> P15S1
+  P11S4c --> P15S1
   P11S6 --> P12S4[012·S4 issue page]
   P11S4c --> P12S4
   P13S2 --> P12S4
@@ -191,7 +192,7 @@ Each plan's header and slices list the exact dependencies; this graph shows the 
 
 ### 7.4 Suggested sequence (two engineers)
 
-Engineer 1 takes issues, sync (partial loading included), lifecycle and the server side of comments and attachments (about 72 days); engineer 2 takes the editor, the UI, settings and files (about 70 days). Each row only starts slices whose dependencies are done in an earlier row, or earlier in the same engineer's row.
+Engineer 1 takes issues, sync (partial loading included), lifecycle and the server side of comments and attachments (about 73 days); engineer 2 takes the editor, the UI, settings and files (about 70 days). Each row only starts slices whose dependencies are done in an earlier row, or earlier in the same engineer's row.
 
 | Weeks | Engineer 1 (issues, sync, lifecycle) | Engineer 2 (editor, UI, settings, files) |
 |---|---|---|
