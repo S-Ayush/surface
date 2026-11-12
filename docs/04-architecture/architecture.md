@@ -115,7 +115,7 @@ surface/
 ## 5. Key flows
 
 ### 5.1 Startup of a client
-1. The SPA loads (static, cacheable) and reads the IndexedDB metadata (`schemaHash`, `lastSyncId`).
+1. The SPA loads (static, cacheable) and reads the IndexedDB metadata (`schemaHash`, `lastSyncId`). Pages come from the server first; when it can't answer, the service worker answers with the cached build ([ADR-0019](adr/0019-offline-app-cache.md), secure contexts only). The app then asks the server who is signed in, and opens the last session's replica if it can't answer ([ADR-0018](adr/0018-offline-start.md)).
 2. **Warm start:** the in-memory store hydrates from IndexedDB, the UI is interactive, and the WebSocket connects with `since=lastSyncId` to receive catch-up deltas.
 3. **Cold start** (no local data, or a schema mismatch): `GET /sync/bootstrap` streams all visible metadata as NDJSON into IndexedDB and memory progressively, then the WebSocket connects.
 

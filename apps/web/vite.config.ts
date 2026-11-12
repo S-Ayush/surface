@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react';
 import { defaultClientConditions, defineConfig } from 'vite';
+import { appCache } from './vite-app-cache.js';
 
 // Development only (`pnpm dev`, scripts/dev.mjs): the browser talks to Vite, which
 // forwards server routes (SERVER_PREFIXES in apps/server/src/http/static.ts) to the
@@ -7,7 +8,8 @@ import { defaultClientConditions, defineConfig } from 'vite';
 const toServer = { target: process.env.SURFACE_DEV_SERVER_URL ?? 'http://localhost:3000' };
 
 export default defineConfig({
-  plugins: [react()],
+  // ADR-0019: `vite build` also writes `dist/sw.js`, the offline app cache's worker.
+  plugins: [react(), appCache()],
   resolve: {
     // Consume workspace packages from TypeScript source (see packages/config/tsconfig.base.json).
     conditions: ['@surface/source', ...defaultClientConditions],
