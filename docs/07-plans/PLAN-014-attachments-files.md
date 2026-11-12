@@ -1,10 +1,10 @@
 # PLAN-014: Attachments & files
 
-Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **Draft** (waits for M1 acceptance, [README §7](README.md)) · Order: **M1, parallel track** (S1–S3 start at once, S4a, S4b and S5 wait on the issue and editor plans) · Depends on: M0 (PLAN-001 S6 files, PLAN-003 executor, PLAN-004 jobs); S4a needs PLAN-011 S1, S3 and S6; S4b needs S4a and PLAN-013 S1; S5 needs PLAN-012 S4, PLAN-012 S1 and PLAN-013 S2. PLAN-015 S2 (purge) needs S3 of this plan.
+Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **Draft** (waits for M1 acceptance, [README §7](README.md)) · Order: **M1, parallel track** (S1–S3 start at once, S4a, S4b and S5 wait on the issue and editor plans) · Depends on: M0 (PLAN-001 S6 files, PLAN-003 executor, PLAN-004 jobs); S4a needs PLAN-011 S1, S3, S4b/S4c (child groups `team:<teamId>`, `visibleGroups`, the client's removal of an absent issue's children) and S6; S4b needs S4a and PLAN-013 S1; S5 needs PLAN-012 S4, PLAN-012 S1 and PLAN-013 S2. PLAN-015 S2 (purge) needs S3 of this plan.
 
 > **Owns:** the file byte protocol, the `files` table changes, the file jobs and the `attachments` model. Branch per slice: `p014-sN-topic` (e.g. `p014-s3-byte-protocol`).
 >
-> **Testing hold:** unit and property tests, the sync property suite and private-team leak tests are written. E2E, perf, smoke and new non-leak integration tests are held ([README §6](README.md#6-testing-hold-e2e-smoke-and-integration)). Held rows are marked ⏸ in §4.
+> **Testing hold:** unit and property tests, the sync property suite and private-team leak tests are written. E2E, perf, smoke and new non-leak integration tests are held ([README §6](README.md#6-testing-hold-e2e-smoke-and-integration)), except `files-bytes-pg.int.test.ts`, which the user allowed (SPEC-014 Q15, 2026-11-12). Held rows are marked ⏸ in §4.
 
 ---
 
@@ -16,10 +16,10 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
   - `apps/server/src/db/schema/files.ts`: `FILE_PURPOSES` gains `attachment`, `inline`, `preview`; new columns `issue_id`, `detached_at`, `width`, `height`, `preview_of`; `size` becomes `bigint` (mode `number`); the purpose check; the four indexes (`storage_key`, `issue_id`, `preview_of`, partial `uploader_id`).
   - `apps/server/src/db/schema/files.ts` (or a new `blob-release.ts` next to it, exported from `schema/index.ts`): `blob_release(storage_key pk, released_at)`.
   - `apps/server/src/files/store.ts`: `readable()` becomes `visibleFile(client, fileId, {userId, groups, keyTeamIds})` with **only the branches that need no `issues` table**: the M0 avatar/logo predicate and the unclaimed-upload branch (the uploader reads their own unclaimed file). A claimed `attachment`/`inline`/`preview` row is not readable in S1 (no such rows exist yet). The issue branch of the §4.2 SQL (`EXISTS (SELECT 1 FROM issues …)`, source = `coalesce(preview_of, id)`) is added in S4a: Postgres refuses to plan a query naming a missing table, even in a branch never reached, so it can't ship before PLAN-011 S3. The SQL is built by one function so S4a adds a branch, not a second predicate. `NewFile` gains `issueId`, `width`, `height`, `previewOf`. `FileStore` stays an interface so route tests keep a fake.
-  - `apps/server/src/files/routes.ts`: `GET`/`HEAD` call `visibleFile` before the `If-None-Match` check; pass the actor's groups and API-key `teamIds` (session only in M1, Q9).
+  - `apps/server/src/files/routes.ts`: `GET`/`HEAD` call `visibleFile` before the `If-None-Match` check; pass the actor's visible groups (every group the actor may see, PLAN-011 S4b's `visibleGroups` once merged; never a socket's subscriptions) and API-key `teamIds` (session only in M1, Q9).
   - `apps/server/src/executor/refs/sources.ts`: `FileRef` resolves through `visibleFile`. `AttachmentRef` is added in S4a, when the model exists.
   - The `attachments` table is created in S4a's migration. S1 has no FK to `issues`: `files.issue_id` is a plain `uuid` column until PLAN-011 S3 lands the `issues` table, and the FK is added in S4a's migration (see §3). This keeps S1 mergeable on its own.
-- **Migration:** next migration number. Files and `blob_release` only. It also adds the `users.avatar_file_id` and `workspace.logo_file_id` FKs to `files(id)` with `ON DELETE RESTRICT`, after nulling ids that name no file (see §3 for how, and the open point in §5).
+- **Migration:** next migration number. Files and `blob_release` only. It also adds the `users.avatar_file_id` and `workspace.logo_file_id` FKs to `files(id)` with `ON DELETE RESTRICT`, with no clean-up step: there are no existing users or rows (SPEC-014 D13). A dev database whose ids fail the keys is recreated.
 - **Operations:** none.
 - **Client / UI:** none.
 - **Tests:**
@@ -65,7 +65,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
 - **Client / UI:** none.
 - **Tests:**
   - `apps/server/test/files-bytes.prop.test.ts` (fast-check, a model of the key lock and a fake store): any interleaving of upload, copy, preview insert, detach, cleanup, purge, drain and sweep leaves no row naming missing bytes, and after a final drain and sweep no bytes without a row: AC-14 (model half), E18, E21.
-  - `apps/server/test/files-bytes-pg.int.test.ts` (real Postgres advisory locks): ⏸ held until the user agrees to Q15 (AC-14, Postgres half). Written as soon as the exception is granted.
+  - `apps/server/test/files-bytes-pg.int.test.ts` (real Postgres advisory locks; **not held**: the user granted SPEC-014 Q15's exception on 2026-11-12): AC-14, Postgres half.
   - `apps/server/test/files-cleanup.test.ts` (unit, fake clock and store): the 24 h rules, two runs at once, previews deleted before their source, keys reach `blob_release`, an avatar delete that fails the FK is skipped: AC-15, E22, E21, E15.
   - `apps/server/test/jobs.int.test.ts` is extended only if it already covers queue registration (existing integration test, kept).
 
@@ -81,9 +81,9 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
   - **Purge step** (`apps/server/src/issues/purge-steps.ts`, the registry PLAN-015 S2 creates; if S2 has not merged, this slice creates the file with the registry type): register `attachments` (eager, `repo.deleteWhere` with one `D` each) and the issue's `files` rows (`deleteFiles` from S3, keys to `blob_release`). The lifecycle rule table (PLAN-015 S1) gains the five attachment rows.
   - `apps/server/src/executor/refs/sources.ts`: `AttachmentRef` (uuid, resolved to an Attachment the actor can see; key `teamIds` narrowing); `FileRef` resolution stays from S1.
   - `apps/server/src/executor/key-scope.ts`: attachment ops are narrowed by `teamIds` like issue ops.
-  - `apps/server/src/sync/models.ts`: register the `Attachment` model (eager, `teamColumn` = `team_id`, groups from the issue row). `issue.get` output gains `attachments` (PLAN-011 `IssueOutput`, shape in §6.2).
+  - `apps/server/src/sync/models.ts`: register the `Attachment` model (eager, `teamColumn` = `team_id`, groups `team:<teamId>` only through PLAN-011 S3's `groupsOfIssueChild`, never the issue's `user:` groups, SPEC-014 §4.1). Bootstrap leaves out the attachments of archived and deleted issues (PLAN-011 S4b's rule covers eager children). `issue.get` output gains `attachments` (PLAN-011 `IssueOutput`, shape in §6.2).
   - Seed fixture: one uploaded file for `attachment.createFile`'s example (`FileRef` examples resolve against it).
-  - `packages/sync-client`: the `Attachment` model in the store (generic; check `packages/sync-client/test` model registration tests), optimistic functions from `packages/operations/src/ops/attachment.ts` using `lifecycleOf` (PLAN-015 S1 supplies the shared function; until then the guard uses the PLAN-011 `archivedAt` and `deletedAt` fields).
+  - `packages/sync-client`: the `Attachment` model in the store (generic; check `packages/sync-client/test` model registration tests). S4a calls PLAN-011 S4c's `registerIssueChild('Attachment', 'issueId')`, so the client drops an issue's Attachment rows once a batch leaves the Issue absent (archived, deleted, purged, unsubscribed); optimistic functions from `packages/operations/src/ops/attachment.ts` using `lifecycleOf` (PLAN-015 S1 supplies the shared function; until then the guard uses the PLAN-011 `archivedAt` and `deletedAt` fields).
 - **Operations:** `attachment.createFile`, `.createLink`, `.update`, `.delete`, `.setPreview` (system).
 - **Client / optimistic:** per §6.2 "Optimistic": refuse an archived or deleted issue at once with the §6.4 message; `createFile` inserts from the upload answer; `createLink` uses `defaultLinkTitle`; `update` patches the title; `delete` removes the row.
 - **UI:** none (S5). The command menu gets the `attachment` context entries in S5.
@@ -94,7 +94,8 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
   - `apps/server/test/files-visibility.test.ts` (extend): the issue branch, one case per remaining matrix row (AC-5 builder side).
   - `apps/server/test/attachment-purge-step.test.ts` (unit, fake repo): attachments get one `D` each, the issue's files go through `deleteFiles` and reach `blob_release` (SPEC-015 AC-4 and AC-5 for attachments).
   - `packages/operations/src/ops/attachment.test.ts` (unit): `optimistic` equals the server row apart from server fields; `pnpm registry:lint` passes; `setPreview` absent from catalog, OpenAPI, MCP and menu, refused to non-system actors: AC-17, AC-18.
-  - `apps/server/test/attachment-leak.int.test.ts` (leak suite, Postgres): non-member gets no Attachment rows (bootstrap, catch-up, deltas), `NOT_FOUND` for every attachment operation like an unknown id, key `teamIds` narrowing: AC-6, E5, E17. Also extends the S1 matrix in `files-leak.int.test.ts` with the issue cells (private team, archived, deleted, preview of an invisible source).
+  - `sync-client/test/attachment-removal.test.ts` (unit): an `A`, a delete's `U`, a purge and an unsubscribe remove the issue's Attachment rows; a restore's packet brings the issue back and the next partial bootstrap or delta the attachments (SPEC-014 §4.1).
+  - `apps/server/test/attachment-leak.int.test.ts` (leak suite, Postgres): non-member gets no Attachment rows (bootstrap, catch-up, deltas); an assignee of a public team's issue who doesn't subscribe to the team gets none either, because Attachment rows are in `team:<teamId>` only; `NOT_FOUND` for every attachment operation like an unknown id, key `teamIds` narrowing: AC-6, E5, E17. Also extends the S1 matrix in `files-leak.int.test.ts` with the issue cells (private team, archived, deleted, preview of an invisible source).
   - The sync property suite gains `Attachment` (create, update, delete, preview update) in its generators: required, not held.
 
 ### S4b: Claiming inline files and previews · M (3 d)
@@ -156,7 +157,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **D
 
 Two migrations, both with the next migration number at the time.
 
-- **S1 (files, `blob_release`, avatar/logo FKs).** Forward-only after release. Before the first release it rolls back by reverting the code and the migration file together (the M1 migrations are not yet released): drop the FKs, the `blob_release` table and the added `files` columns, narrow the purpose check, and cast `size` back to `integer` (safe while no file is over 2 GB). The FKs need the avatar and logo ids cleaned first: the migration sets any `users.avatar_file_id` or `workspace.logo_file_id` that names no file to null. SPEC-014 §4.10 says "through the repo" (architecture rule 2), but a SQL migration cannot call the repo. See the open point in §5.
+- **S1 (files, `blob_release`, avatar/logo FKs).** Forward-only after release. Before the first release it rolls back by reverting the code and the migration file together (the M1 migrations are not yet released): drop the FKs, the `blob_release` table and the added `files` columns, narrow the purpose check, and cast `size` back to `integer` (safe while no file is over 2 GB). The FKs are added with no clean-up step: there are no existing users or rows, so no id can fail them (SPEC-014 D13, user decision 2026-11-12). A dev database that fails them is recreated.
 - **S4a (`attachments`, `files.issue_id` FK).** Additive. Rolls back before release by dropping the table and the FK. After release the tables are kept (forward-only). It is a separate migration from S1 because `files.issue_id` can't reference `issues` until PLAN-011 S3 exists.
 
 No data is moved. M0 file rows keep working: their `issue_id` is null and their purpose is `avatar` or `logo`.
@@ -180,7 +181,7 @@ No data is moved. M0 file rows keep working: their `issue_id` is null and their 
 | AC-11 | `server/test/attachment-history.test.ts` (S4a) |
 | AC-12 | `server/test/attachment-preview.test.ts` (S4b, real sharp) |
 | AC-13 | `server/test/files-strip-location.test.ts` (S2) |
-| AC-14 | `server/test/files-bytes.prop.test.ts` (S3, model half) + ⏸ held (integration) `server/test/files-bytes-pg.int.test.ts` (Postgres half; written if the user grants Q15's exception, otherwise checked by hand in S3) |
+| AC-14 | `server/test/files-bytes.prop.test.ts` (S3, model half) + `server/test/files-bytes-pg.int.test.ts` (S3, Postgres half; not held, Q15 exception granted 2026-11-12) |
 | AC-15 | `server/test/files-cleanup.test.ts` (S3) |
 | AC-16 | `server/test/files-upload.test.ts` (S2, fake disk probe and store) |
 | AC-17 | `operations/src/ops/attachment.test.ts` (S4a) |
@@ -216,10 +217,9 @@ No data is moved. M0 file rows keep working: their `issue_id` is null and their 
 
 | Risk | Mitigation |
 |---|---|
-| **Lost bytes.** Rows share one key, and a delete racing a copy could unlink bytes a row still names. This is silent data loss. | Every insert and delete takes the per-key lock (S3). Bytes are unlinked only by the drain, after a re-check under the lock. The fast-check model runs in S3. The Postgres half of AC-14 needs the Q15 exception: ask the user at the start of S3, since a fake lock can't show this bug. |
+| **Lost bytes.** Rows share one key, and a delete racing a copy could unlink bytes a row still names. This is silent data loss. | Every insert and delete takes the per-key lock (S3). Bytes are unlinked only by the drain, after a re-check under the lock. The fast-check model runs in S3, and so does the Postgres half of AC-14 (Q15 exception granted 2026-11-12), since a fake lock can't show this bug. |
 | **A file leaks through the uploader exception or a stale cache.** | One visibility function for `GET`, `HEAD`, `If-None-Match` and `FileRef` (S1), tested cell by cell before any attachment exists. `Cache-Control: private, no-cache` with the check done before the 304. |
 | **Previews cannot be queued from a `web` role.** Today pg-boss starts in `web` only when SMTP is set. `attachment.createFile` must enqueue in its own transaction. | S4b starts the producer side of pg-boss in every role (queues created, `send` available) and leaves `work` to `all` and `worker`. If `SURFACE_ROLE=web` runs with no worker, previews wait and images show the type icon: documented in the ops notes. |
-| **The migration cannot call the repo.** The avatar/logo FK migration must null ids that name no file. | Do it in the migration SQL: these two rows are synced, so a plain `UPDATE` skips `sync_log`. Safer: run the cleanup as a TypeScript startup step through the repo before migration `N` is applied, or confirm with the user that nulling invalid ids in SQL is accepted (no valid data changes, and a client re-syncs from the next bootstrap). Decide in S1; if SQL is chosen, record it as an "As built" deviation. |
 | **Memory.** Streaming bugs would hold whole files; 30 simultaneous image decodes OOM-killed the server in M0. | The 64 KB counting-stream test (S2). One shared decode limiter per process (S4b). Perf check by hand, AC-20. |
 | **Location stripping corrupts images.** Hand-written JPEG, PNG and WebP chunk rewriting is easy to get wrong. | Fixtures with GPS EXIF and XMP, decoded pixels compared before and after (S2). A file that fails to parse is stored as uploaded only if it is not an image of those types; for those types a parse failure refuses the upload with the "unreadable image" message rather than storing location data. |
 | **Claim vs clean-up races** (E24). | One conditional `UPDATE … RETURNING` per file, `SKIP LOCKED` in clean-up, `FOR SHARE` on the copy source, covered by AC-21 statement tests and the model in S3. |

@@ -46,8 +46,8 @@ This spec is also the **single source of the lifecycle rules** that every other 
 
 1. On the issue page, or on a focused list row, press `Mod+Backspace` (or "…" menu → Delete, or `Mod+K` → "Delete issue").
 2. A dialog asks `Delete "ENG-42 – <title>"?` with the text "Deleted issues are available in the "Recently deleted" view for 30 days, before they are permanently deleted." Buttons: **Cancel** and **Delete**. `Enter` confirms.
-3. The issue moves to Recently deleted and leaves lists (optimistic). There is **no Undo toast**. On the issue page, the page stays and shows the deleted state (§3.4).
-4. `Mod+Z` right after a delete restores it. It covers only the last delete made in this browser tab, until M2's general undo stack replaces it. The client forgets that delete once it is restored, once another delete replaces it, or on reload. After that, restore from Recently deleted (§3.3).
+3. The issue moves to Recently deleted and leaves lists (optimistic: it leaves the replica, §5.1). There is **no Undo toast**. On the issue page, the page stays and shows the deleted state (§3.4), starting from the row it already had.
+4. `Mod+Z` right after a delete restores it. It covers only the last delete made in this browser tab, until M2's general undo stack replaces it. The client forgets that delete once it is restored, once another delete replaces it, or on reload. After that, restore from Recently deleted (§3.3). The replica no longer holds the deleted issue, so the restore has no row to patch: the issue comes back when the server's `V` or `U` arrives (§6.2). Until then the toast says "Restoring ENG-42…", and the open page shows the restore as pending.
 5. `Mod+Z` does nothing special while focus is in a text field or the editor: the field undoes its own typing.
 
 `Mod+Backspace` does not fire while focus is in a text field or the editor (SPEC-005 engine change, §12), so it never deletes an issue while someone is deleting a word.
@@ -72,20 +72,23 @@ What the jobs do is in §6.3. An archived issue is read-only (§3.4). Restore is
 `G` `X` (or "Go to archived issues in ENG", or the "N archived issues" line at the end of the team's issue list) opens `/team/:key/archive`, titled **Archived issues**. It has two tabs:
 
 - **Issues**: the team's archived issues, newest archived first. Rows are normal issue rows. The date column shows the archive day.
-- **Recently deleted issues** (`/team/:key/archive/recently-deleted`, command "Go to recently deleted issues in ENG"): the team's deleted issues, newest deletion first. Rows are normal issue rows. The date column shows the deletion day. A row disappears from this list once `purgeAfter` has passed by the client's clock, even before the job has run.
+- **Recently deleted issues** (`/team/:key/archive/recently-deleted`, command "Go to recently deleted issues in ENG"): the team's deleted issues, newest deletion first. Rows are normal issue rows. The date column shows the deletion day. The server leaves out an issue once its `purgeAfter` has passed, even before the job has run (§5.2).
 
 On both tabs:
 
 1. Rows are a list (`J`/`K`, `↑`/`↓`). `Enter` opens the issue.
 2. The row menu has **Copy ›** and **Restore** (`#`). Nothing else: every edit command is unavailable on a read-only issue (§7).
 3. Empty state: "No matching issues".
-4. The page works offline, since archived and deleted rows stay in the replica (§5.1). Restore queues like any mutation.
+4. **The page reads from the server**, because the replica holds no archived or deleted issue (§5.1, SPEC-011 §5.7). The Issues tab calls `issue.list` with `{team, includeArchived: true, filter: archivedAt is set, orderBy: archivedAt desc}`; the Recently deleted tab calls `issue.listDeleted {team}`. Each loads pages of 50 as the list scrolls (SPEC-003 cursors).
+5. It shows "Loading…" until the first page arrives. Offline, a tab shows "Available when online", and the "N archived issues" line of the team list is hidden.
+6. It refreshes when a packet archives, deletes or restores an issue of the team (an `A`, the `U` of a delete or a restore, a `V`), and when the window regains focus.
+7. Restore needs the network here, like the page. The restored row leaves the list at once; the issue joins the replica when the server's `V` or `U` arrives.
 
-The command-menu identifier fast path (`eng-42`) opens archived and deleted issues too. In M2, search and the "completed issues" view option include archived issues (FR-NAV-04).
+The command-menu identifier fast path (`eng-42`) opens archived and deleted issues too, through `issue.get` (they aren't in the local index, SPEC-011 §5.7). In M2, search and the "completed issues" view option include archived issues (FR-NAV-04).
 
 ### 3.4 An archived or deleted issue's page
 
-`/issue/ENG-42` still opens. There is no banner. Properties are shown, read-only. Title and description are read-only, and the comment box and the reaction buttons are hidden. Every edit shortcut does nothing (§7).
+`/issue/ENG-42` still opens. The replica doesn't hold the issue (§5.1), so the page reads it from the server: the row, description, attachments and reactions from `issue.get`, and the activity (history and comments) from one `/sync/content` request whose answer the page keeps in memory and never stores (the replica only stores content of issues it holds, SPEC-011 §5.3). It refreshes on the same packets as the archive page and on focus. Offline it shows "Available when online". There is no banner. Properties are shown, read-only. Title and description are read-only, and the comment box and the reaction buttons are hidden. Every edit shortcut does nothing (§7).
 
 - **Deleted:** the breadcrumb is "ENG › Recently deleted issues › ENG-42 Title". A **Deleted** badge follows the title. The activity ends with "Ada deleted the issue". The "…" menu has **Copy ›**, **Restore** (`#`) and, for Admins, **Permanently delete…**. Restore is hidden once `now ≥ purgeAfter` (§4.2).
 - **Archived:** the breadcrumb is "ENG › Archived issues › ENG-42 Title". An **Archived** badge follows the title. The activity ends with "Issue was automatically archived". The "…" menu has **Copy ›**, **Restore** (`#`) and **Delete** (`Mod+Backspace`).
@@ -104,7 +107,7 @@ SPEC-011 §4.1 owns the columns: `archivedAt`, `deletedAt` and `deletedById`. Al
 |---|---|---|---|
 | archivedAt | `issue.autoArchive` (system job only) | `issue.restore` | Kept while the issue is deleted |
 | deletedAt | `issue.delete` | `issue.restore` | |
-| deletedById | `issue.delete` (the actor's user; null for the system actor) | `issue.restore` | Shown on the Recently deleted tab offline, without history |
+| deletedById | `issue.delete` (the actor's user; null for the system actor) | `issue.restore` | Shown on the Recently deleted tab (`DeletedIssue.deletedBy`), without reading history |
 
 An issue is in exactly one state:
 
@@ -201,7 +204,7 @@ Purging an issue runs in **one transaction**, through the repo layer:
 - **Eager rows** (the Issue and its Attachments) each log a `D` delta.
 - **Content rows** (IssueContent, IssueHistory, Comment, Reaction) log **no** `D` (Q2). The client already drops them: after a delta batch is applied, the content rows and hydration mark of any parent whose Issue row is absent are removed (SPEC-011 §5.3). A group change's `D`+`U` pair leaves the Issue present after the batch, so it keeps content; only a real delete removes it.
 
-This keeps a purge to a handful of `sync_log` rows instead of thousands, so it holds the global sync lock only briefly and doesn't flood every client with deletes for rows they never loaded. It relaxes "every synced write is logged" for content rows whose parent is deleted, so it needs a new ADR (§12). Until that ADR is accepted, the fallback is to log one `D` per content row through `repo.deleteWhere`'s chunked insert; nothing else in this spec changes.
+This keeps a purge to a handful of `sync_log` rows instead of thousands, so it holds the global sync lock only briefly and doesn't flood every client with deletes for rows they never loaded. It relaxes "every synced write is logged" for content rows whose parent is deleted, so it needs a new ADR (§12). The decision is taken (Q2, 2026-11-12); the ADR is written at the M1 acceptance gate. If that ADR were rejected, the fallback is to log one `D` per content row through `repo.deleteWhere`'s chunked insert; nothing else in this spec changes.
 
 `files` rows are server-only and produce no delta.
 
@@ -247,30 +250,33 @@ The `archived_at`, `deleted_at` and `deleted_by_id` columns come with SPEC-011's
 
 ### 5.1 Replica
 
+The replica holds **live issues only** (SPEC-011 §5.7, D17). `archivedAt` is still a synced field, and `A` and `V` packets carry the full row `d` (shared sync change, §12).
+
 | State | In the replica | How it changes |
 |---|---|---|
-| Archived | Yes. `archivedAt` is a synced field, and the client derives `$archived` from it. | `A` and `V` packets, which carry the full row `d` and are applied as upsert plus flag (shared sync change, §12). `V` for a row the client lacks re-inserts it. |
-| Deleted | Yes, with `deletedAt` and `deletedById` set (D1) | A `U` delta sets or clears them |
-| Purged | No | A `D` for the Issue and a `D` for each Attachment. After that batch the Issue is absent, so the client drops its content rows and hydration mark (SPEC-011 §5.3, §4.5). |
+| Archived | No. Bootstrap leaves it out. | The `A` packet removes the Issue, with a tombstone at the packet's id, and its children and hydration mark. A restore's `V` inserts it again. |
+| Deleted | No. Bootstrap leaves it out. | The delete's `U` (with `deletedAt` set) removes it the same way. A restore's `U` (the live row) inserts it again. |
+| Purged | No | A `D` for the Issue and a `D` for each Attachment. A client that saw the delete already removed the issue, so the `D`s only confirm its tombstones. After that batch the Issue is absent, so any content rows and hydration mark go (SPEC-011 §5.3, §4.5). |
 
-A restore of an archived issue logs `V`. A restore of an issue that is both deleted and archived logs `V` and the `U` for `deletedAt`, in one transaction. Because `V` carries the full row, the order can't leave a replica that differs from a bootstrap.
+A restore of an archived issue logs `V`. A restore of an issue that is both deleted and archived logs `V` and the `U` for `deletedAt`, in one transaction. Because both carry the full row, and the client keeps or removes the row by its final `archivedAt` and `deletedAt`, the order can't leave a replica that differs from a bootstrap.
 
-Archived and deleted rows are kept so the archive page, the issue pages and restore work offline, and so a restore needs no refetch. The replica holds at most 30 days of deleted rows.
+The archive page, the Recently deleted tab and the pages of archived and deleted issues read from the server (§3.3, §3.4), so they need the network. Restore needs no refetch: the row arrives with the restore's packet.
 
 ### 5.2 What hides them
 
 | Surface (M1) | Archived | Deleted |
 |---|---|---|
 | Team issues list, the "Assigned to me" list (SPEC-012) | Hidden | Hidden |
-| Archive page, tab Issues | Shown | Hidden |
-| Archive page, tab Recently deleted issues; `issue.listDeleted` | Hidden | Shown, until `purgeAfter` |
+| Archive page, tab Issues (`issue.list` with `includeArchived`, server) | Shown | Hidden |
+| Archive page, tab Recently deleted issues; `issue.listDeleted` (server) | Hidden | Shown, until `purgeAfter` |
 | `issue.list`, `issue.count`, `issue.groupBy` | Only with `includeArchived` | Never; `issue.listDeleted` instead |
 | `issue.get`, `IssueRef` | Resolves | Resolves (so restore and the page work) |
-| Command-menu identifier fast path | Opens | Opens (deleted state) |
-| Team issue counts on settings pages (SPEC-010) | Counted | Counted (a status can't be deleted while any issue uses it) |
-| Content prefetch (SPEC-011 §5.4) | Not prefetched | Not prefetched |
+| Command-menu identifier fast path | Opens (through `issue.get`: not in the replica) | Opens (deleted state, through `issue.get`) |
+| Team issue counts on settings pages (SPEC-010, from the server) | Counted | Counted by the server's refusal (a status can't be deleted while any issue uses it); the displayed count leaves them out (`issue.groupBy`) |
+| Content prefetch (SPEC-011 §5.4) | Not prefetched (not held) | Not prefetched (not held) |
+| The client replica | Not stored | Not stored |
 
-Every client view filters with `lifecycleOf` (§4.1), so no view forgets.
+The server filters by lifecycle in SQL, and every client view still filters with `lifecycleOf` (§4.1), so no view forgets, even for an optimistic row.
 
 ### 5.3 Permissions
 
@@ -283,7 +289,7 @@ Every client view filters with `lifecycleOf` (§4.1), so no view forgets.
 | `team.updateAutomations` | ✅ team member | ✅ | `read_write` |
 | `issue.autoArchive`, `issue.autoClose` | system only: not callable by any user, key or MCP | | |
 
-Every operation here, `issue.listDeleted` included, applies the API key's `teamIds` in SQL (permissions §3.5): public teams share the `workspace` group, so group filtering alone doesn't narrow a key.
+Every operation here, `issue.listDeleted` included, applies the API key's `teamIds` in SQL (permissions §3.5): every member may see every public team's group (SPEC-011 §5.7), so group filtering alone doesn't narrow a key.
 
 Private teams: an Admin who isn't a member can't see the team's issues, so `issue.purge` on one is `NOT_FOUND`, worded as for an issue that doesn't exist (permissions §2: Admins get metadata only). The jobs are the system actor and see everything.
 
@@ -311,9 +317,9 @@ Every operation passes `pnpm registry:lint` with seed-fixture examples. The fixt
 
 These use the `OptimisticStore` additions SPEC-011 §6.3 lists (`unarchive`, readable `archivedAt`, `find` ordered by id).
 
-- `issue.delete`: patch `deletedAt = store.now` and `deletedById = me`.
-- `issue.restore`: clear `deletedAt` and `deletedById`; if `archivedAt` is set, `store.unarchive('Issue', id)` and patch `archivedAt = null`; set `updatedAt = store.now`.
-- `issue.purge`: remove only the Issue row. Its children are hidden because their parent is gone. When the server's batch arrives, the Issue is absent after it, so the client drops the content (SPEC-011 §5.3).
+- `issue.delete`: removes the Issue from the overlay, so it leaves every list at once. Its children are hidden because their parent is gone. The server's `U` then removes it from the base replica (§5.1). A rejection rolls the removal back.
+- `issue.restore`: a no-op `optimistic` (registry rule 3 still needs one). The replica doesn't hold an archived or deleted issue, so there is no row to patch: the row returns with the server's `V` or `U`. The UI shows the restore as pending until then (§3.1).
+- `issue.purge`: a no-op `optimistic`, for the same reason. When the server's batch arrives, the Issue stays absent, so any content goes too (SPEC-011 §5.3).
 - Direct-edit operations predict nothing about the lifecycle: archived and deleted issues never reach them, because the UI disables edits (§7). An edit queued before the issue was locked is rejected by the server and rolled back (E1).
 - The system-only operations have no `optimistic`.
 
@@ -381,10 +387,10 @@ Added to `docs/05-design/shortcuts.md` on acceptance (§12).
 | # | Case | Behaviour |
 |---|---|---|
 | E1 | Someone edits an issue offline, and it is deleted or auto-archived before the edit reaches the server | The edit is `CONFLICT` "ENG-42 was deleted. Restore it to edit it." (or "…is archived…") and the client rolls it back (NFR-08). For a description or comment edit, the rejection toast has **Copy text**, so the typing isn't lost. |
-| E2 | The job archives an issue while someone has it open and is typing a comment | The comment is `CONFLICT` as in E1, with **Copy text**. The page switches to the archived state when the `A` packet arrives. |
+| E2 | The job archives an issue while someone has it open and is typing a comment | The comment is `CONFLICT` as in E1, with **Copy text**. The `A` packet removes the issue from the replica, and the page switches to the read-only archived view fed by `issue.get` (§3.4). |
 | E3 | Two people delete and restore the same issue at once | Both take the issue row lock, so the server applies them in order; history shows both. |
 | E4 | A restore arrives at or after `purgeAfter`, before the job ran | `CONFLICT` (§4.2); the job purges it on its next run. |
-| E5 | The issue is purged while someone has its page open | The Issue `D` removes it and its content; the page switches to not-found ("This issue was deleted permanently."). Queued edits for it are `NOT_FOUND` and roll back. |
+| E5 | The issue is purged while someone has its page open | The page shows a deleted issue, read from the server. The Issue `D` makes it refresh, `issue.get` answers `NOT_FOUND`, and the page switches to not-found ("This issue was deleted permanently."). Queued edits for it are `NOT_FOUND` and roll back. |
 | E6 | A purge transaction fails (crash, error) | It rolls back: the issue stays deleted, nothing is recorded in `blob_release`, and the next run retries. |
 | E7 | The server crashes after a purge commits, before cleanup | The keys are in `blob_release`; the next `files-cleanup` run removes the bytes. |
 | E8 | Two issues share bytes (the same content) and one is purged | Cleanup keeps the bytes while any `files` row still has the key. |
@@ -393,7 +399,7 @@ Added to `docs/05-design/shortcuts.md` on acceptance (§12).
 | E11 | A label on an archived or deleted issue is deleted | It is removed from the issue's `labelIds` (SPEC-010), without changing its lifecycle or `updatedAt`; a restore brings the issue back without it. |
 | E12 | An Admin purges an issue of a private team they're not in | `NOT_FOUND`; the job purges it after 30 days. |
 | E13 | A Member opens Recently deleted issues | They see the team's deleted issues they can see, with Restore; no purge action. |
-| E14 | A user presses `Mod+Z` right after a delete, while offline | `issue.restore` queues and applies on reconnect if it's still before `purgeAfter`; otherwise it is rejected with the §4.2 message. |
+| E14 | A user presses `Mod+Z` right after a delete, while offline | `issue.restore` queues and applies on reconnect if it's still before `purgeAfter`; otherwise it is rejected with the §4.2 message. The issue isn't in the replica, so nothing reappears until the server's packet arrives; the toast shows the restore as pending. |
 | E15 | A comment is posted while another user deletes the issue | The second to take the issue row lock loses: either the comment lands and then the issue is deleted, or the comment is `CONFLICT`. Never a comment on a deleted issue. |
 | E16 | A comment insert races a purge | The purge locks the issue first; the comment waits, then gets `NOT_FOUND`. The purge never fails on a foreign key. |
 | E17 | Someone reacts to a comment on an archived issue | `CONFLICT` "ENG-42 is archived. Restore it to edit it." Reactions are edits too. |
@@ -402,6 +408,9 @@ Added to `docs/05-design/shortcuts.md` on acceptance (§12).
 | E20 | Someone restores an archived issue that closed long ago | It is live again, and `updatedAt` is now, so the job leaves it alone for another full period. |
 | E21 | Auto-close and a user edit the same issue at once | Both take the issue row lock. If the user's edit lands first, the issue is no longer stale and the job's `WHERE` re-check (under the lock) skips it. |
 | E22 | Someone tries to delete the team's auto-close status | SPEC-010 refuses it, like the default status: "This status closes stale issues. Choose another one in Settings → Automations first." Turning auto-close on requires a Canceled status. |
+| E23 | The archive page or a deleted issue's page is opened offline | "Available when online" (SPEC-011 E34). The team's live lists still work from the replica. |
+| E24 | Someone else restores, deletes or the job archives an issue of the team while its archive page is open | The packet (`V`, `U` or `A`) makes the open tab refresh, so the row joins or leaves the list. Focus follows SPEC-012 E2. |
+| E25 | A delete is rejected (the issue was purged meanwhile, or a permission changed) | The optimistic removal rolls back and the row returns to the list, with a toast giving the server's message. |
 
 ## 9. Acceptance criteria
 
@@ -421,12 +430,14 @@ Added to `docs/05-design/shortcuts.md` on acceptance (§12).
 | AC-10 | Permissions of §5.3: Admin-only purge; `allowDestructive` for delete and purge; the API key's `teamIds` narrowing on `issue.listDeleted`, `issue.restore`, `issue.purge` and `team.updateAutomations`; `issue.autoArchive` and `issue.autoClose` can't be called by a user, a key or MCP. | unit |
 | AC-11 | Private-team leak: for a non-member, `issue.listDeleted` (with `withTotal`) never returns or counts a private team's issues; `issue.purge`, `issue.restore` and `issue.delete` on one are `NOT_FOUND`, worded as for a missing issue; `/sync/content` and `GET /files/:id` for a deleted private issue and its attachments are `NOT_FOUND`; the `U`, `A`, `V` and `D` deltas of these transitions, including the jobs' archive, never reach non-members; MCP `search_operations` examples for the new operations leak nothing. A key with `teamIds=[A]` sees nothing of team B in any of them. | integration (leak test, not held) |
 | AC-12 | History gets the entries of §4.8, with one `restored` entry per restore, and no other entry marks a return from archive. | unit |
-| AC-13 | Each mutation's `optimistic` produces the rows the server commits, apart from server fields. The sync property suite includes delete, restore, auto-archive and purge in its generator, and checks that archive → restore, and a purge, leave the replica equal to a fresh bootstrap. | unit + property (sync suite, not held) |
+| AC-13 | Each mutation's `optimistic` produces the rows the server commits, apart from server fields: delete removes the Issue; restore and purge predict nothing. The sync property suite includes delete, restore, auto-archive and purge in its generator, and checks that archive → restore, and a purge, leave the replica equal to a fresh bootstrap (which holds no archived or deleted issue). | unit + property (sync suite, not held) |
 | AC-14 | `Mod+Backspace` and `#` don't fire while focus is in a text field or the editor. `Mod+Z` restores only the last delete made in this tab, once, and not while typing. No binding exists for archive, unarchive or purge. `#` and `Mod+Backspace` don't conflict with any other binding in the `issue` scope. | unit (shortcut engine, conflict test) |
 | AC-15 | The delete dialog shows the identifier, title and the 30-day text of §3.1, and no Undo toast follows. The "Permanently delete…" dialog is a plain confirm (no typed text). The command menu hides each command where `ui.available` is false (every edit command on an archived or deleted issue; "Restore issue" only on archived or deleted ones) and never ranks a destructive command first for a query it matches only by keyword. | unit (component and ranking tests) |
 | AC-16 | The Automations page offers only 1, 3, 6, 9, 12 months; auto-archive defaults to 6 and can't be off; auto-close is off by default for a new team, turns on at 6 months with the first Canceled status, and only accepts a Canceled-category status of the team. | unit (operation validation, component) |
 | AC-17 | Keyboard only: delete with `Mod+Backspace` and confirm with `Enter`, restore with `Mod+Z`; delete again, open Recently deleted with `G` `X` and its tab, and restore with `#`; restore an archived issue with `#`. | e2e ⏸ (checked by hand) |
 | AC-18 | Every operation passes `pnpm registry:lint`; examples run against the seed fixture. | unit |
+| AC-19 | The archive page reads from the server (§3.3): the Issues tab from `issue.list` (`includeArchived`, `archivedAt` set, newest archived first) and the Recently deleted tab from `issue.listDeleted`, which leaves out issues past `purgeAfter`. It shows "Loading…" until the first page, "Available when online" offline, and refreshes on an `A`, a delete or restore `U`, a `V` for the team, and on focus. | unit (archive data source with a fake server and fake packets) |
+| AC-20 | The page of an archived or deleted issue renders read-only from `issue.get` and an in-memory `/sync/content` answer, stores nothing in the replica, and shows "Available when online" offline. `Mod+Z` after a delete shows the restore as pending until the `V` or `U` arrives; a rejected delete returns the row (E25). | unit (page data source, last-delete flow, fake server) |
 
 ## 10. Metrics & performance
 
@@ -434,7 +445,7 @@ Budgets, measured once the perf hold lifts (⏸, plans README §6):
 
 - Delete and restore: p95 < 50 ms on the server.
 - Purge of one issue with 500 comments and 50 attachments: < 1 s, with the global sync lock held for < 50 ms.
-- The archive page renders from the replica in < 50 ms with 1,000 archived or deleted issues (NFR-01).
+- The archive page's first page (50 rows) answers in < 200 ms p95 on a LAN with 10,000 archived issues in the team (`issue.list` and `issue.listDeleted` use the `deleted_at` index and the issue indexes of SPEC-011 §4.10).
 - One auto-archive run of 5,000 issues finishes in < 5 min.
 
 Job metrics as in §6.3. An audit line per purge.
@@ -445,15 +456,14 @@ Each has a proposed default.
 
 | # | Question | Proposed default |
 |---|---|---|
-| Q2 | Purge without logging a `D` per content row (§4.5) needs a sync-protocol rule and an ADR. Accept that, or log every row? | Accept: a heavy issue would otherwise send thousands of deletes to every client, most for rows they never loaded. Fallback stated in §4.5. |
 | Q3 | Does a comment or reaction count as activity for auto-close? | No: staleness follows `updatedAt` (SPEC-011). Linear's behaviour not observable; kept. |
 
 ### Decisions
 
 | # | Decision | Date |
 |---|---|---|
-| D1 | Deleted issues stay in the client replica, flagged by `deletedAt`: the archive page and restore work offline, a restore needs no refetch, and the replica holds at most 30 days of them. | 2026-11-12 |
-| D2 | Who deleted an issue is stored on the row (`deletedById`, SPEC-011), so the Recently deleted tab shows it offline. | 2026-11-12 |
+| D1 | Deleted issues stay in the client replica, flagged by `deletedAt`: the archive page and restore work offline, a restore needs no refetch, and the replica holds at most 30 days of them. **Superseded by D17.** | 2026-11-12 |
+| D2 | Who deleted an issue is stored on the row (`deletedById`, SPEC-011), so the Recently deleted tab shows it without reading history. (It said "offline"; D17 made the tab need the network.) | 2026-11-12 |
 | D3 | Copy Linear: deleting asks for confirmation (`Delete "ENG-42 – <title>"?`, with the 30-day text) and shows no Undo toast. `Mod+Z` right after a delete restores the last delete of the tab until M2's general undo. This replaces the first draft's "no dialog, 8 s Undo toast" and design-system §4's rule for reversible deletes (§12). | 2026-11-12 |
 | D4 | Children are not archived or deleted row by row; their state derives from the issue. Fewer deltas, and a restore is exact. state-machines §2 changes to match (§12). | 2026-11-12 |
 | D5 | Copy Linear: archive is automatic only. There is no archive or unarchive operation, command, menu entry or key. A daily job archives closed issues after the team's period. This removes the earlier "open issues can be archived manually" rule. | 2026-11-12 |
@@ -468,6 +478,8 @@ Each has a proposed default.
 | D14 | Copy Linear: "Permanently delete…" (Admin) opens a plain confirm dialog, not a typed identifier. It has no shortcut. | 2026-11-12 |
 | D15 | Copy Linear: the team **Automations** page holds auto-archive (1/3/6/9/12 months, default 6, "Changes apply within a day") and auto-close of stale issues (off by default, 6 months, a Canceled status). FR-WF-08 and FR-WF-09 move from M4 to M1. Auto-close parent and sub-issues are M3; the creator's archive notification is M4. | 2026-11-12 |
 | D16 | Linear's Recently deleted tab is per team; Surface's is too. The old workspace-wide Trash and the sidebar Trash entry are gone. | 2026-11-12 |
+| Q2 | Accepted: purge deletes content rows without logging a `D` per row (§4.5). The ADR is written at the M1 acceptance gate; the per-row fallback stays in the code, off by default. User decision. | 2026-11-12 |
+| D17 | Copy Linear, through partial issue loading (SPEC-011 §5.7, ADR-0020): archived and deleted issues are never stored on the client. An `A` or a delete's `U` removes the issue; restore's `V` or `U` inserts it again. The archive page, the Recently deleted tab and their issue pages read from the server, online only, read-only, refreshed on packets and focus. Delete's optimistic removes the row; restore's and purge's predict nothing. Replaces D1. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -475,7 +487,8 @@ Each has a proposed default.
 |---|---|---|---|
 | sync-protocol | §4.3, §11 | `A` and `V` packets carry the full row `d`, applied as upsert plus flag; `V` for a missing row re-inserts it. `archivedAt` is a synced field and the client derives `$archived` from it. Changelog v0.7, `schemaHash` bump. (Shared with SPEC-010 and SPEC-011.) | No |
 | sync-protocol | §4.2, §11 | Content rows deleted with their issue log no `D` (Q2). The client side needs no new wire rule: content is dropped when its Issue is absent after a batch (SPEC-011 §5.3 and its §12 row for sync-protocol §4.2, §6). | **Yes**: a new ADR, because skipping the `D`s relaxes "every synced write is logged" (architecture rule 2) |
-| SPEC-002 | Decisions | Record the two sync changes above (A/V full rows; content rows of a purged issue log no `D`). | — |
+| SPEC-002 | Decisions | Record the two sync changes above (A/V full rows; content rows of a purged issue log no `D`, Q2 accepted 2026-11-12). | — |
+| sync-protocol | §4.1, §4.3 | Relies on SPEC-011's v0.8 row: archived and deleted issues are not bootstrapped, and an `A` or a delete's `U` removes the Issue on the client; restore's `V` or `U` inserts it (D17). | ADR-0020 |
 | SPEC-003 | §8 | Relies on SPEC-011's §12 change: `store.unarchive`, readable `archivedAt`, `store.find` ordered by id. No optimistic code predicts an unarchive. | No |
 | SPEC-003 | §3.1 `ui` entry | Registry `ui` gains `available(target, store)`. | No |
 | SPEC-003 | §3.1 definition fields | Add `systemOnly: true` to the registry definition: the operation is callable only by the system actor in every environment, and is hidden from the API, catalog, OpenAPI, MCP and the command menu; it is exempt from rule 2's seed run and rule 4. Used by `attachment.setPreview`, `issue.autoArchive` and `issue.autoClose`. (`internal` stays for dev-only debug ops.) Same row in SPEC-014 and SPEC-015. | No |

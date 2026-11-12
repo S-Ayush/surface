@@ -1,10 +1,10 @@
 # PLAN-011: Issues core: create, properties, history, IDs
 
-Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft** (waits for M1 acceptance, README §7) · Order: **1st of M1, critical path** (S1 → S6; S5 is two PRs, S5a and S5b) · Depends on: M0 (PLAN-001…005 on `main`); PLAN-010 S1 (S3, S4); PLAN-013 S1 (S6); PLAN-010 S5 (S8)
+Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft** (waits for M1 acceptance, README §7) · Order: **1st of M1, critical path** (S1 → S4 → S5a → S5b → S6; S4b → S4c, partial issue loading, run beside S5a and S5b, and S6 needs S4b; S5 is two PRs, S5a and S5b) · Depends on: M0 (PLAN-001…005 on `main`); PLAN-010 S1 (S3, S4); PLAN-013 S1 (S6); PLAN-010 S5 (S8)
 
-> **Shared foundations.** This plan owns the sync and registry changes every M1 plan builds on (SPEC-011 §1): the `OptimisticStore` additions, the registry flags `systemOnly` and `contentParent`, the repo's bulk writes, archive state on the wire, groups from the locked issue row, `lockIssueForWrite`, and the content-model machinery. Other plans cite these slices by number. **S5 and S6 must keep their numbers.** S5 is built as two PRs, S5a (protocol and server) and S5b (client); another plan's "PLAN-011 S5" means both are merged.
+> **Shared foundations.** This plan owns the sync and registry changes every M1 plan builds on (SPEC-011 §1): the `OptimisticStore` additions, the registry flags `systemOnly` and `contentParent`, the repo's bulk writes, archive state on the wire, groups from the locked issue row, `lockIssueForWrite`, and the content-model machinery, and partial issue loading (SPEC-011 §5.7, ADR-0020: S4b server, S4c client). Other plans cite these slices by number. **Every slice keeps its number**; S4b and S4c were inserted after S4 without renumbering. S5 is built as two PRs, S5a (protocol and server) and S5b (client); another plan's "PLAN-011 S5" means both are merged.
 >
-> **Order of change.** The sync engine is changed in the order that keeps every slice mergeable alone: first code no wire depends on (S1), then one wire change (S2, protocol v0.7), then the first issue tables (S3), the operations on them (S4), then content (S5a protocol and server, S5b client, S6 real content, S7 cache). S8 runs last. Each slice says what stays stubbed until a later one.
+> **Order of change.** The sync engine is changed in the order that keeps every slice mergeable alone: first code no wire depends on (S1), then one wire change (S2, protocol v0.7), then the first issue tables (S3), the operations on them (S4), then partial issue loading (S4b server and protocol v0.8, S4c client) beside content (S5a protocol and server, S5b client), then S6 real content and S7 cache. S8 runs last. S3 already gives children `team:<teamId>` only, so content is built on its final groups; S6 needs S4b, because connections receive a public team's `team:<id>` group, and so its content deltas, only from S4b. Each slice says what stays stubbed until a later one.
 
 ---
 
@@ -63,8 +63,8 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
   - `src/order-key.ts` (new): `keyBefore(first, jitter)` and `keyBetween(a, b, jitter)` over PLAN-010's `fractionalKeyBetween`, with a jitter suffix. `jitterFromId(id)` gives the optimistic jitter (SPEC-011 §6.2).
   - `src/issue.ts` (new): `issueTitleProblem`, `normalizeTitle` (line breaks to spaces), `PRIORITIES` reuse (`priority.ts`).
 - **Server:**
-  - `SYNCED_MODELS.Issue` (`apps/server/src/sync/models.ts`): on insert, groups come from the team row `FOR SHARE`. On update, the repo **keeps the locked row's groups** unless the patch changes `teamId` (M3), so no team read happens after the issue lock (SPEC-011 §4.8). Add `issues` to `SYNCED_TABLES` (`packages/config/eslint.js`) and the sync scope table in `apps/server/src/db/README.md`.
-  - `groupsOfIssueChild` (same file): a child's groups and `teamId` come from its issue's locked row (`issues.sync_groups`, `issues.team_id`), never from input. The repo overwrites any `teamId` a handler passes for a child model.
+  - `SYNCED_MODELS.Issue` (`apps/server/src/sync/models.ts`): on insert, groups come from the team row `FOR SHARE` (in S3 and S4 the team row's groups, `workspace` for a public team, like statuses; S4b replaces the builder with SPEC-011 §5.7's). On update, the repo **keeps the locked row's groups** unless the patch changes `teamId` (M3), so no team read happens after the issue lock (SPEC-011 §4.8). Add `issues` to `SYNCED_TABLES` (`packages/config/eslint.js`) and the sync scope table in `apps/server/src/db/README.md`.
+  - `groupsOfIssueChild` (same file): a child's `teamId` comes from its issue's locked row (`issues.team_id`), never from input, and its groups are `team:<teamId>` only, never the issue's `user:` groups (SPEC-011 §5.1, §5.7). The repo overwrites any `teamId` a handler passes for a child model.
   - `apps/server/src/issues/lifecycle.ts` (new, the path SPEC-015 §4.4 names): `lockIssueForWrite(tx, issueId, ctx, mode)` → `LockedIssue` (`id`, `teamId`, `number`, `syncGroups`, `state`). `FOR UPDATE`, filtered by the actor's groups and the API key's teams (`visibleTo`, `executor/list.ts`); missing or invisible is `NOT_FOUND`. `edit` refuses archived and deleted issues with the §6.4 `CONFLICT` messages; `cascade` checks nothing; `lifecycle` returns the state. PLAN-015 S1 adds the lifecycle rule table behind `lifecycle`.
   - `apps/server/src/issues/numbering.ts` (new): `nextIssueNumber(tx, teamId)` upserts `team_issue_counters` (`INSERT … ON CONFLICT DO UPDATE SET last_number = last_number + 1 RETURNING`, the table's documented form; it takes the same row lock as SPEC-011 §4.5's `UPDATE … RETURNING` and covers a team without a row). `firstSortKey(tx, teamId)` reads the team's lowest `sort_order` after the counter lock and returns `keyBefore` with random jitter.
 - **Client:** `Issue` registered through `PRODUCTION_MODELS`, so the web store holds it; `IssueRef` resolution in `sync-client/src/refs.ts` (identifier via the team key, or id).
@@ -74,7 +74,7 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
   - `domain/src/order-key.test.ts` (new, property): any sequence of `keyBefore`/`keyBetween` gives a strict byte order with no duplicates; equal inputs with different jitter differ; `jitterFromId` is deterministic (AC-2 unit part).
   - `domain/src/issue.test.ts` (new): title trimming, line breaks, 1–255 characters.
   - `server/test/issue-lock.test.ts` (new): `edit` refuses archived and deleted issues even for a no-op, with the §6.4 wording; `cascade` passes; `NOT_FOUND` for an invisible or key-excluded issue (AC-23 unit part).
-  - `server/test/issue-child-groups.test.ts` (new): a child's `teamId` and groups come from the locked issue row; a `teamId` in input is overwritten; no team row is read on an issue update (AC-19, D5).
+  - `server/test/issue-child-groups.test.ts` (new): a child's `teamId` comes from the locked issue row and its groups are `team:<teamId>` only; a `teamId` in input is overwritten; no team row is read on an issue update (AC-19, D5).
   - `server/test/issue-numbering.test.ts` (new): the counter statement and the sort key read come after the counter lock (unit over the statement order).
   - `server/test/workspace-models.test.ts` (extend): `Issue` columns match the model; `issue_search_text` is not synced.
   - `server/test/resolvers.int.test.ts` is existing: run it. New `IssueRef` leak cases go in S4's leak test.
@@ -110,13 +110,51 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
   - `tests/sync-sim/test/issues-real-server.int.test.ts` (new, **sync property suite, not held**): concurrent creates in one team, with rejected creates, give gap-free numbers in commit order and distinct sort keys (AC-2, E1, E3); two clients adding and removing labels, same-group adds included, converge (AC-4, E5–E7).
   - `server/test/issue-leak.int.test.ts` (new, **leak test, not held**): for private SEC, a non-member's bootstrap, catch-up and live deltas carry no SEC issue; `issue.get`, `update` and every `IssueRef` are `NOT_FOUND` worded like a missing issue; `list`, `count` and `groupBy` exclude SEC (and its group names); an API key limited to team A gets the same for public team B (AC-10, E13).
 
+### S4b: Partial issue loading, server · M (4 d)
+- Needs S4. SPEC-011 §5.6, §5.7, ADR-0020.
+- **Group builders** (`apps/server/src/sync/models.ts`): `groupsOfIssue` gives a private team's issue `team:<teamId>`, and a public team's issue `team:<teamId>`, `user:<creatorId>` and `user:<assigneeId>` when assigned. Children keep S3's `team:<teamId>` only. Public team issues leave the `workspace` group; dev databases with issues from S3–S4 are recreated (nothing is released between slices).
+- **An assignee change is a group change, through the repo.** On a public team's issue, `issue.update` that changes `assigneeId` recomputes the `user:` part from the locked row (a public issue always carries `user:<creatorId>`, so no team row is read after the issue lock, SPEC-011 §4.8). The repo logs `D` with the old groups, then `U` with the new ones, under consecutive ids (sync-protocol §6).
+- **Two kinds of groups** (`apps/server/src/sync/groups.ts`):
+  - `visibleGroups(actor)`: every group the actor may see, including every public team's `team:<id>`. Every query, `IssueRef`, `/sync/content` (S5a) and `GET /files/:id` (PLAN-014) filter with it, never with a socket's groups.
+  - A **connection's groups**: `workspace`, `user:<id>`, the member private teams (as today) and the **subscribed** public teams.
+- **WebSocket** (`packages/sync-protocol/src/socket.ts`, `apps/server/src/sync/socket.ts`): the `teams` query parameter on `/sync/ws`; client messages `subscribe` and `unsubscribe`, server message `subscribed {teams, at}`. Each team is checked: a public team, or a private team the user is a member of. Anything else (unknown id, a private team the user isn't in) is dropped from `teams` silently, identically. Catch-up uses the accepted set. From the packet after `at`, the hub sends the team's deltas.
+- **Partial bootstrap** (`apps/server/src/sync/bootstrap.ts`): `GET /sync/bootstrap?groups=team:<id>` is enabled. It streams the Issue rows and eager children of that group from one snapshot, with `lastSyncId`. An unknown or invisible team gives an empty stream, never an error.
+- **Bootstrap leaves out archived and deleted issues and their children**, full and partial (`archived_at IS NULL AND deleted_at IS NULL`; eager children joined through `issue_id`).
+- **Protocol v0.8:** bump `SYNC_PROTOCOL_VERSION` (`schema-hash.ts`), so every client re-bootstraps once.
+- **Docs in the same PR:** sync-protocol §4.1, §4.3, §6 (v0.8) and permissions §2, per SPEC-011 §12, if M1 acceptance hasn't already applied them.
+- **Tests:**
+  - `server/test/issue-groups.test.ts` (new): a private team's issue has only `team:<teamId>`; a public one adds `user:<creatorId>` and `user:<assigneeId>`; children have `team:<teamId>` only; an assignee change logs `D` then `U` with the right groups (AC-26 unit part, E28, E29).
+  - `server/test/sync-subscribe.test.ts` (new, fake hub socket): accepted set, `at`, catch-up on the accepted set; an unknown team and a non-member's private team are dropped identically (E32).
+  - `server/test/sync-bootstrap-partial.test.ts` (new, query builder): `groups` parsing; archived and deleted issues and their children left out of full and partial bootstraps (AC-26, AC-29 server part).
+  - `sync-protocol/test/socket.test.ts` (extend): `subscribe`, `unsubscribe`, `subscribed` and the `teams` parameter.
+  - `server/test/subscribe-leak.int.test.ts` (new, **leak test, not held**): a non-member's `subscribe` to private SEC and `?groups=team:<SEC>` behave exactly as for an unknown team; no `user:` group delivers a SEC issue or any child row; a key with `teamIds=[A]` sees no team B issue through `user:` groups (AC-28).
+  - ⏸ held (integration) `server/test/sync-bootstrap-partial.int.test.ts`: full and partial bootstrap contents against Postgres (AC-26 integration part).
+
+### S4c: Partial issue loading, client · L (5 d)
+- Needs S4b.
+- **Subscription manager** (`packages/sync-client/src/subscriptions.ts`, new):
+  - Member public teams come from the user's TeamMembership rows and follow them live (a join subscribes, a leave unsubscribes).
+  - The on-demand set (at most 5 teams, least recently opened dropped) is stored in IndexedDB, per replica (a `subscriptions` store). `openTeam(teamId)` touches it.
+  - The socket URL carries `teams=`. After `subscribed`, the client runs the partial bootstrap and stores its rows at version `C` through the per-row version and tombstone rules. There is no buffering: packets after `at` apply as they arrive (E30). After a full bootstrap it subscribes its on-demand teams again.
+- **Unsubscribe removal:** after `unsubscribe`, the client removes every Issue row whose `groups` no longer meet the connection's groups. Its children go by the after-batch rule for an absent Issue: content and hydration marks by S5b's rule (whichever of S4c and S5b merges second wires them together), and eager children through `registerIssueChild(model, 'issueId')` (new here; PLAN-014 S4a registers Attachment). A row also in `user:<id>` stays (E31). Leaving a private team keeps today's `resync(groups)`.
+- **Archived and deleted removal** (`deltas.ts`): an Issue packet whose row has `archivedAt` or `deletedAt` set (`A`, or a delete's `U`) removes the Issue with a tombstone at the packet's id, with its children and hydration mark. A later `V` or `U` of the live row inserts it again (AC-29, E33).
+- **The Issue model declares `groups`** (`issue-models.ts`; cut to the connection's groups, SPEC-002 Q8). This changes the schema hash.
+- **`sync-react`:** `useTeamLoadState(teamId)` returns `loading`, `ready` or `offline` (offline and never loaded) and subscribes the team on demand when it isn't a member team. PLAN-012 S3 and S4 use it.
+- **Fake hub** (`sync-client/test/support/hub.ts`, `server.ts`): connection groups, `subscribe`/`unsubscribe`/`subscribed`, the partial bootstrap, `user:` groups on issues and the `D`+`U` pair on reassignment.
+- **Sim:** the fake-hub generator (`tests/sync-sim/src/steps.ts`) gains subscribe, unsubscribe, reassign, archive, delete and restore, interleaved with deltas and socket drops.
+- **Tests:**
+  - `sync-client/test/subscriptions.test.ts` (new, fake hub, fake-indexeddb): LRU of 5 and its IDB persistence; member teams from TeamMembership; re-subscribe after reconnect and after a full bootstrap; a packet before the partial bootstrap answer and the answer at `C` keep the newer row (AC-27 unit part, E30, E31).
+  - `sync-client/test/issue-removal.test.ts` (new): an `A` and a delete's `U` remove the Issue with its children and mark; restore's `V` or `U` inserts it; unsubscribe keeps `user:` rows; a reassignment away removes it (AC-29 unit part, E28, E29, E33).
+  - `sync-react/test/team-load-state.test.tsx` (new): `loading` → `ready`; offline and never loaded is `offline`.
+  - `tests/sync-sim/test/partial.prop.test.ts` (new, **sync property suite, not held**): subscribes, unsubscribes, reassignments, archives, deletes and restores, interleaved with deltas and socket drops, leave a replica equal to a fresh bootstrap with the same subscriptions; no archived or deleted Issue is ever stored (AC-27, AC-29).
+
 ### S5a: Content protocol and server · M (3 d)
 - **Shared definitions:**
   - `defineModel` gains `parent: { model, field }` for `load: 'content'` (`packages/domain/src/model/define-model.ts`); required for content models, refused on eager ones. `SchemaHashModel` and `computeSchemaHash` include it (`packages/sync-protocol/src/schema-hash.ts`).
   - The `IssueContent` and `IssueHistory` models (`issue-models.ts`, parent `Issue` by `issueId`), added to `PRODUCTION_MODELS`, and their `SYNCED_MODELS` entries with `groupsOfIssueChild` and `teamColumn` (§5.1). Their tables exist since S3. Nothing writes them until S6, except tests through the repo.
   - The repo logs an Issue row before its content rows in one transaction (an assertion in `flush`, §5.1).
 - **Wire** (`packages/sync-protocol/src/content.ts`, new): `CONTENT_PATH`, `encodeContentQuery`/`decodeContentQuery` (1–50 distinct `issue:<uuid>` parents, `userId`, `schemaHash`), and the `meta`/`row`/`end` frames of §5.2 over the existing NDJSON codec.
-- **Server** (`apps/server/src/sync/content.ts`, new; route in `routes.ts`): `GET /sync/content`. Errors before the first frame per the §5.2 table (`400`, `401` incl. another `userId`, `403` for API keys, `426`, `503`). One `REPEATABLE READ READ ONLY` snapshot: `lastSyncId` from `sync_state`, visible parents (`sync_groups && $groups`), then their content rows through `clientRow`, counted for `meta.rows`. Gzip as for bootstrap.
+- **Server** (`apps/server/src/sync/content.ts`, new; route in `routes.ts`): `GET /sync/content`. Errors before the first frame per the §5.2 table (`400`, `401` incl. another `userId`, `403` for API keys, `426`, `503`). One `REPEATABLE READ READ ONLY` snapshot: `lastSyncId` from `sync_state`, visible parents (`sync_groups && $groups`, where `$groups` is every group the actor may see: S4b's `visibleGroups` once merged, never the socket's subscriptions), then their content rows through `clientRow`, counted for `meta.rows`. Gzip as for bootstrap.
 - **Fake server** (`sync-client/test/support/hub.ts`, `server.ts`): `GET /sync/content` for test content models, with faults, so S5b tests run against it.
 - **Tests (S5a):**
   - `sync-protocol/test/content.test.ts` (new): query limits and duplicates, frames, a truncated stream detected (AC-9 codec part).
@@ -142,7 +180,7 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
   - `tests/sync-sim/test/content.prop.test.ts` (new, sync property suite): content fetches interleaved with deltas, deletes, purges (unlogged content deletes included), group changes and socket drops equal a fresh fetch (AC-8, fake-hub part).
 
 ### S6: IssueContent, IssueHistory and the description · L
-- **Needs PLAN-013 S1** (`@surface/editor/schema`: `validateDoc`, `docToText`, Markdown in and out; `EMPTY_DOC`, `DOC_SCHEMA_VERSION` in `packages/domain`). `DOC_SCHEMA_VERSION` feeds `computeSchemaHash` (§4.3).
+- **Needs S4b** (connections receive public teams' `team:<id>` groups, so the real-server sim sees content deltas) and S5b. **Needs PLAN-013 S1** (`@surface/editor/schema`: `validateDoc`, `docToText`, Markdown in and out; `EMPTY_DOC`, `DOC_SCHEMA_VERSION` in `packages/domain`). `DOC_SCHEMA_VERSION` feeds `computeSchemaHash` (§4.3).
 - **Writes:**
   - `issue.create` gains `description?` (JSON, or Markdown for API and MCP, Q12) and writes the IssueContent row (`EMPTY_DOC` when absent, version 1) and one `created` history entry, Issue first.
   - `issue.update` writes one `updated` entry with every changed field from `issueChangeSet`, with reference names snapshotted (§4.4).
@@ -167,7 +205,7 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
 
 ### S7: Content cache: eviction and prefetch · M
 - **Eviction** (`packages/sync-client/src/content.ts`, `locks.ts`, §5.4, Q11): at most 2,000 hydrated issues per replica, least recently opened first. A tab holds a shared Web Lock `surface-content:<issueId>` while an issue is open (`content.open` takes it, the release handle frees it). Eviction takes each candidate's lock exclusively with `ifAvailable`, and skips it when held; it removes the parent's rows and hydrated mark in one IDB transaction (`storage.evictContent`). Without Web Locks (plain HTTP), nothing is evicted.
-- **Prefetch** (`content.prefetch(ids)` + `sync-react` `usePrefetchContent`): open issues assigned to the user (the 100 most recently updated) after start; the first 50 visible rows of a list (debounced 200 ms); hover after 150 ms. At most 50 parents per request and 4 requests in flight; hydrated parents are not requested. PLAN-012 S3 and S4 call the hooks from the list and the issue page.
+- **Prefetch** (`content.prefetch(ids)` + `sync-react` `usePrefetchContent`), of issues the replica holds only (SPEC-011 §5.7): open issues assigned to the user (the 100 most recently updated) after start; the first 50 visible rows of a list (debounced 200 ms); hover after 150 ms. At most 50 parents per request and 4 requests in flight; hydrated parents are not requested. PLAN-012 S3 and S4 call the hooks from the list and the issue page.
 - **Offline state:** `useIssueContent` reports `offline` for a never-hydrated parent, so the UI shows "Available when online" (E11).
 - **Sim:** evictions join the fake-hub generator.
 - **Tests:**
@@ -179,9 +217,9 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
 - **Needs PLAN-010 S5** (`label.delete` calling S4's cascade helper) for the cascade interleavings. Runs after S6 and S7.
 - **Sim:** the real-server generator gains `label.delete` racing `issue.update` that adds the label, and label cascades interleaved with archive and delete (AC-18, AC-20, E22). PLAN-015 adds its lifecycle operations (delete, restore, auto-archive) to the same generator (PLAN-015 S5).
 - **Leak suite:** complete the permissions.md §5 checklist for issues, content and history across S2–S6's leak files (AC-10): bootstrap, catch-up, live deltas, `/sync/content`, every operation, list/count/groupBy, group names in `groupBy`, API key `teamIds`, `A`/`V` frames.
-- **Filter conformance** (Q13): ⏸ held. Re-running the PLAN-003 S5 harness for the Issue model (`server/test/issue-filter-conformance.int.test.ts`) needs Postgres and is not a leak test, so it waits for the hold to lift, or for the user to grant Q13's exception at the acceptance gate. The unit half runs now: the client evaluator and the SQL compiler share `ISSUE_FILTER_FIELDS` (S4), and `domain/src/issue-filter.test.ts` (new) evaluates every field and operator on the client.
-- **Size budget** (AC-14): `domain/src/issue-size.test.ts` (new) generates rows over the §10 seed distribution and asserts an average compact-JSON Issue row of at most 650 bytes.
-- **1,000-case run** of the sync property suite on `main` with Issue and content in the generator (AC-8), recorded in "As built".
+- **Filter conformance** (Q13, exception granted by the user 2026-11-12, so not held): `server/test/issue-filter-conformance.int.test.ts` (new) re-runs the PLAN-003 S5 harness for the Issue model, through the real codec, against Postgres. The client evaluator and the SQL compiler share `ISSUE_FILTER_FIELDS` (S4), and `domain/src/issue-filter.test.ts` (new) evaluates every field and operator on the client.
+- **Size budget** (AC-14): `domain/src/issue-size.test.ts` (new) generates rows over the §10 seed distribution and asserts an average compact-JSON Issue row of at most 650 bytes. The per-replica total (35 MB with partial loading, SPEC-011 §10) is a perf test, held.
+- **1,000-case run** of the sync property suite on `main` with Issue, content and partial loading in the generator (AC-8, AC-27, AC-29), recorded in "As built".
 - **Hardening:** review every new handler for the lock order of §4.8 (a unit test lists each issue-writing handler and checks it calls `lockIssueForWrite`); the overlay perf test (`overlay.perf.test.ts`) with 10k issues in the base.
 - **Tests:** as above, plus `tests/sync-sim/test/issues-real-server.int.test.ts` (extend, sync property suite: AC-18, AC-20).
 
@@ -189,21 +227,21 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
 
 ## 2. Modules touched
 
-- `packages/domain`: `src/model/define-model.ts` (`parent`), `src/model/fields.ts` (`day()`), `src/model/issue-models.ts` (new), `src/model/workspace-models.ts` (`Label.archivedAt`, `PRODUCTION_MODELS`), `src/model/debug-item.ts`, `src/order-key.ts`, `src/issue.ts`, `src/issue-history.ts`, `src/activity-line.ts` (new), `src/refs.ts`.
+- `packages/domain`: `src/model/define-model.ts` (`parent`), `src/model/fields.ts` (`day()`), `src/model/issue-models.ts` (new; Issue declares `groups`, S4c), `src/model/workspace-models.ts` (`Label.archivedAt`, `PRODUCTION_MODELS`), `src/model/debug-item.ts`, `src/order-key.ts`, `src/issue.ts`, `src/issue-history.ts`, `src/activity-line.ts` (new), `src/refs.ts`.
 - `packages/operations`: `src/optimistic.ts`, `src/define.ts`, `src/lint.ts`, `src/catalog.ts`, `src/ops/issue.ts` (new), `src/ops/debug.ts`, `src/ops/index.ts`.
-- `packages/sync-protocol`: `src/socket.ts` (`A`/`V` with `d`), `src/schema-hash.ts` (version bump, `parent`), `src/content.ts` (new), `src/index.ts`.
-- `packages/sync-client`: `src/overlay.ts`, `src/pool.ts`, `src/deltas.ts`, `src/store.ts`, `src/content.ts` (new), `src/hydrate.ts` (skip content models), `src/refs.ts`, `src/locks.ts`, `src/storage/{types,indexeddb,memory,rpc}.ts`, `test/support/{hub,server}.ts`.
-- `packages/sync-react`: `src/hooks.ts` (`useIssueContent`, `usePrefetchContent`).
-- `apps/server`: `src/sync/{repo,bulk,models,registry,delta-writer,content,routes}.ts`, `src/db/schema/issues.ts` (new), `src/db/README.md`, `src/issues/{lifecycle,numbering,history,cascade}.ts` (new), `src/handlers/issues/*` (new), `src/handlers/debug/*`, `src/handlers/index.ts`, `src/executor/{execute,list}.ts`, `src/executor/refs/sources.ts`, `src/http/ops.ts`, `migrations/` (one new migration), `test/seed.ts`.
+- `packages/sync-protocol`: `src/socket.ts` (`A`/`V` with `d`; `subscribe`, `unsubscribe`, `subscribed`, the `teams` parameter), `src/schema-hash.ts` (version bumps v0.7 and v0.8, `parent`), `src/content.ts` (new), `src/index.ts`.
+- `packages/sync-client`: `src/overlay.ts`, `src/pool.ts`, `src/deltas.ts`, `src/store.ts`, `src/content.ts` (new), `src/subscriptions.ts` (new), `src/hydrate.ts` (skip content models), `src/refs.ts`, `src/locks.ts`, `src/storage/{types,indexeddb,memory,rpc}.ts`, `test/support/{hub,server}.ts`.
+- `packages/sync-react`: `src/hooks.ts` (`useIssueContent`, `usePrefetchContent`, `useTeamLoadState`).
+- `apps/server`: `src/sync/{repo,bulk,models,groups,registry,delta-writer,content,routes,socket,bootstrap}.ts`, `src/db/schema/issues.ts` (new), `src/db/README.md`, `src/issues/{lifecycle,numbering,history,cascade}.ts` (new), `src/handlers/issues/*` (new), `src/handlers/debug/*`, `src/handlers/index.ts`, `src/executor/{execute,list}.ts`, `src/executor/refs/sources.ts`, `src/http/ops.ts`, `migrations/` (one new migration), `test/seed.ts`.
 - `apps/web`: `src/app/router.tsx` (issue route), `src/command-menu/sources/{operations,navigation}.ts`.
 - `packages/config/eslint.js` (`SYNCED_TABLES`), `tests/sync-sim/src/*` (generator, world, real server).
 
 ## 3. Migration & rollback
 
-- **One migration**, in S3 (next migration number): `issues`, `issue_content`, `issue_history`, `issue_search_text`, their foreign keys and indexes. It is additive. S1, S2, S4, S5a, S5b, S6–S8 add no migration: S2's `archivedAt` columns already exist on `labels` and `debug_items`.
-- **Before release:** a slice is rolled back by reverting its PR. For S3, revert the migration file with the code and recreate dev and CI databases, because the runner records applied migrations in `schema_migrations` and never runs a down step. S6 also needs dev databases recreated (issues from S4–S5b have no IssueContent row).
+- **One migration**, in S3 (next migration number): `issues`, `issue_content`, `issue_history`, `issue_search_text`, their foreign keys and indexes. It is additive. S1, S2, S4, S4b, S4c, S5a, S5b, S6–S8 add no migration: S2's `archivedAt` columns already exist on `labels` and `debug_items`.
+- **Before release:** a slice is rolled back by reverting its PR. For S3, revert the migration file with the code and recreate dev and CI databases, because the runner records applied migrations in `schema_migrations` and never runs a down step. S4b and S6 also need dev databases recreated (S4b moves public issues out of `workspace`; issues from S4–S5b have no IssueContent row).
 - **After release:** forward-only. A later change adds a migration; nothing is dropped.
-- **Clients:** S2 (protocol version bump), S3 (`Issue`), S5a (content models, `parent`) and S6 (`DOC_SCHEMA_VERSION`) each change the schema hash, so connected clients re-bootstrap once (SPEC-002 E7). Pending mutations survive it (E8). Nothing is released between M1 slices, so users see one reload per release.
+- **Clients:** S2 (protocol version bump), S3 (`Issue`), S4b (protocol v0.8), S4c (`Issue.groups`), S5a (content models, `parent`) and S6 (`DOC_SCHEMA_VERSION`) each change the schema hash, so connected clients re-bootstrap once (SPEC-002 E7). Pending mutations survive it (E8). Nothing is released between M1 slices, so users see one reload per release.
 - **Wire:** S2 is a codec change. Old clients are told to reload by the schema hash before they decode an `A` or `V` packet with `d`.
 
 ## 4. Test plan (AC → test)
@@ -222,10 +260,10 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
 | AC-8 | Sync property suite (not held): `tests/sync-sim/test/content.prop.test.ts` (fake hub: fetches, deletes, purges, `D`+`U`, drops, S5b; evictions, S7) + `tests/sync-sim/test/issues-real-server.int.test.ts` (Issue ops and content on the real server, S6) + the 1,000-case run on `main` (S8) |
 | AC-9 | `sync-protocol/test/content.test.ts` (codec) + `server/test/sync-content-route.test.ts` (errors, visibility, counts) (S5a) + `sync-client/test/content-hydration.test.ts` (fake server) (S5b) + ⏸ held (integration) `server/test/sync-content.int.test.ts` (endpoint) |
 | AC-10 | Leak tests (not held): `server/test/archive-wire-leak.int.test.ts` (S2), `server/test/issue-leak.int.test.ts` (S4), `server/test/content-leak.int.test.ts` (S5a, S6), completed against permissions.md §5 in S8 |
-| AC-11 | `domain/src/issue-filter.test.ts` (client evaluator, S8) + ⏸ held (integration) `server/test/issue-filter-conformance.int.test.ts` (written when the hold lifts or Q13's exception is granted) |
+| AC-11 | `domain/src/issue-filter.test.ts` (client evaluator, S8) + `server/test/issue-filter-conformance.int.test.ts` (Postgres, not held: Q13 exception granted 2026-11-12, S8) |
 | AC-12 | `operations/test/spec-011.test.ts` + `operations/test/lint.test.ts` (S4, S6) + the existing `server/test/registry-contract.int.test.ts` (examples against the seed; existing, run) |
 | AC-13 | ⏸ held (e2e perf) `e2e/issue-realtime.perf.spec.ts` (checked by hand in PLAN-012 S7's demo) |
-| AC-14 | `domain/src/issue-size.test.ts` (row size, S8) + ⏸ held (perf) the 100k eager total |
+| AC-14 | `domain/src/issue-size.test.ts` (row size, S8) + ⏸ held (perf) the per-replica eager total at the reference scale |
 | AC-15 | `server/test/issue-handlers.test.ts` (re-read `CONFLICT`, E19) (S4) + ⏸ held (integration) `server/test/issue-status-fk.int.test.ts` (`ON DELETE RESTRICT`) |
 | AC-16 | `domain/src/issue.test.ts` (a label moved into an exclusive group: the next add removes the others) (S4, with PLAN-010 S1's rule tests) |
 | AC-17 | `server/test/issue-cascade.test.ts` (cascade function, S4) + ⏸ held (integration) `server/test/label-delete-cascade.int.test.ts` (with PLAN-010 S5) |
@@ -237,7 +275,11 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
 | AC-23 | `server/test/issue-lock.test.ts` (S3) + `server/test/issue-handlers.test.ts` (S4) + `server/test/issue-description.test.ts` (S6) + ⏸ held (integration) `server/test/issue-readonly.int.test.ts`. Child writes are covered by PLAN-013 S3 and PLAN-014 S4a. |
 | AC-24 | `domain/src/issue-slug.test.ts` (property) + `web/test/app-router.test.tsx` (any slug resolves and is replaced) (S4) |
 | AC-25 | `domain/src/activity-line.test.ts` (S6) |
-| Leak: permissions.md §5 (bootstrap, catch-up, deltas, refs, lists, `groupBy` names, API key `teamIds`, `A`/`V`, `/sync/content`) | The AC-10 files above (not held) |
+| AC-26 | `server/test/issue-groups.test.ts` + `server/test/sync-bootstrap-partial.test.ts` (S4b) + ⏸ held (integration) `server/test/sync-bootstrap-partial.int.test.ts` (bootstrap contents) |
+| AC-27 | `sync-client/test/subscriptions.test.ts` (S4c) + `tests/sync-sim/test/partial.prop.test.ts` (sync property suite, not held, S4c) |
+| AC-28 | `server/test/subscribe-leak.int.test.ts` (leak test, not held, S4b) |
+| AC-29 | `server/test/sync-bootstrap-partial.test.ts` (S4b) + `sync-client/test/issue-removal.test.ts` (S4c) + `tests/sync-sim/test/partial.prop.test.ts` (sync property suite, not held, S4c) |
+| Leak: permissions.md §5 (bootstrap, catch-up, deltas, refs, lists, `groupBy` names, API key `teamIds`, `A`/`V`, `/sync/content`, subscriptions, `user:` groups) | The AC-10 and AC-28 files above (not held) |
 | E13 | `server/test/issue-leak.int.test.ts` (one wording for missing, private and key-excluded) (S4) |
 | E17, E23, E24, E25 | `sync-client/test/content-hydration.test.ts` (S5b) + `tests/sync-sim/test/content.prop.test.ts` |
 | E18 | `sync-client/test/storage.prop.test.ts` (S5b) |
@@ -245,6 +287,11 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
 | E21 | `domain/src/issue-history.test.ts` (description fold) (S6) |
 | E26 | `sync-client/test/rejection.test.ts` (extend: a queued edit rejected with `CONFLICT` rolls back, nothing unarchived) (S4) |
 | E27 | `web/test/app-router.test.tsx` (S4) |
+| E28, E29 | `server/test/issue-groups.test.ts` (S4b) + `sync-client/test/issue-removal.test.ts` (S4c) |
+| E30, E31 | `sync-client/test/subscriptions.test.ts` (S4c) |
+| E32 | `server/test/sync-subscribe.test.ts` (S4b) + `server/test/subscribe-leak.int.test.ts` |
+| E33 | `sync-client/test/issue-removal.test.ts` (S4c) + PLAN-012 S4 `web/test/issue-page.test.tsx` (the read-only view) |
+| E34 | `sync-react/test/team-load-state.test.tsx` (S4c) + PLAN-012 S3 list tests and PLAN-015 S4 `web/test/archive-screen.test.tsx` (the "Available when online" states) |
 
 ## 5. Risks & mitigations
 
@@ -255,7 +302,10 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Draft**
 | Awaiting hydration in `dispatch` reorders seqs or stalls the queue | A FIFO dispatch chain: later dispatches wait behind an awaiting one, so seqs follow call order. Offline with an unhydrated parent refuses at once instead of waiting. `content-dispatch.test.ts` covers both. |
 | A deadlock between issue edits, child writes and label cascades | One lock order (§4.8), enforced in `lockIssueForWrite` and the create path; a unit test checks the order of locks each handler takes; the real-server sim races edits against `label.delete` (AC-20). The executor still retries deadlocks (E5), so a missed case degrades to a retry, not an error. |
 | Groups from the issue row go stale when a team's privacy changes (M7) or an issue moves (M3) | Documented as the M3/M7 obligation: those operations rewrite issue and child groups with `updateWhere`. `updateWhere` refuses `teamId` patches, so nothing changes groups silently. |
-| Eager size over budget (≈ 61 MB at 100k issues, Q15) | AC-14's row-size test fails on growth. The budget change is M1 acceptance's call (Q15); a compact encoding is a later spec. |
+| Eager size over budget (≈ 61 MB at 100k issues if every issue were held) | Partial loading (S4b, S4c; Q15 decided) keeps a replica to its teams' live issues and the user's own. AC-14's row-size test fails on growth; the per-replica total is measured once perf tests resume. |
+| A subscription or a `user:` group leaks a private team's issue | Private issues never carry a `user:` group; the server checks every subscription and ignores an invalid one exactly like an unknown team; `subscribe-leak.int.test.ts` (AC-28) is written in S4b, not held. |
+| Moving public issues from `workspace` to `team:<id>` hides them from a query that filters by a socket's groups | One `visibleGroups(actor)` for every read path (S4b); the leak and unit tests check queries, `IssueRef` and `/sync/content` with an unsubscribed public team. |
+| The replica diverges after unsubscribes, reassignments, archives or restores | The removal rules live in two places only (`subscriptions.ts`, `deltas.ts`), each with a unit test; `partial.prop.test.ts` compares with a fresh bootstrap with the same subscriptions at 1,000 cases (S8). |
 | `IssueContent` rows broadcast to every connection on each save (§10) | Autosave is debounced (SPEC-013); the description fold keeps history small. Measured once perf tests resume. |
 | IndexedDB upgrade for the new stores and the `issueId` index blocks or fails in an open older tab | The existing version-change path (`openUnblocked`, "Another Surface tab is using an older version…") handles it; the schema hash change reloads old tabs first. `indexeddb.test.ts` covers creating the content stores and index on upgrade. |
 | Eviction removes content another tab has open | Shared Web Lock per open issue; eviction takes the lock exclusively with `ifAvailable` before removing. No eviction without Web Locks. |

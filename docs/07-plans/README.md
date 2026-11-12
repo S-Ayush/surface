@@ -85,7 +85,8 @@ flowchart LR
 - **Not held, written as usual:**
   - unit and property (fast-check) tests, including the unit parts of any held criterion. `pnpm check` is the gate;
   - the **sync property suite** (SPEC-002 AC-2/AC-3, PLAN-002 S9), against the real executor and Postgres;
-  - **private-team leak tests** that need Postgres: the `permissions.md` §5 checklist and SPEC-002 AC-11 (bootstrap, catch-up and live deltas filtered by sync groups). A slice that adds a query, a delta path or a read operation adds its leak tests in `*.int.test.ts`.
+  - **private-team leak tests** that need Postgres: the `permissions.md` §5 checklist and SPEC-002 AC-11 (bootstrap, catch-up and live deltas filtered by sync groups). A slice that adds a query, a delta path or a read operation adds its leak tests in `*.int.test.ts`;
+  - **exceptions the user granted on 2026-11-12:** the Issue filter conformance run `issue-filter-conformance.int.test.ts` (SPEC-011 Q13, PLAN-011 S8) and the Postgres byte-lock test `files-bytes-pg.int.test.ts` (SPEC-014 Q15, PLAN-014 S3).
 - **Existing integration tests are kept** (PLAN-003, PLAN-004, PLAN-002 S2 and anything else already on main). They still run with `pnpm test:int`; run them when you change code they cover. Don't delete them.
 - **Recorded in** SPEC-001, SPEC-002 and SPEC-005 decision D1, and SPEC-004 D4 (CI stages, install smoke).
 - **Known risk while held:** catch-up and resync (SPEC-002 AC-9/AC-10) and the auth flows (SPEC-001) are only covered by unit tests. Review these areas with extra care, and write their integration tests first when the hold lifts.
@@ -102,8 +103,14 @@ Exit (METHODOLOGY M1): **start dogfooding.** Surface's own backlog lives in Surf
 
 The M1 specs are Draft. Building starts after one docs PR that:
 - applies every row of each spec's "§12. Changes to accepted docs on acceptance" (PRD, METHODOLOGY, domain docs, glossary, events, sync-protocol, SPEC-002/003/005, design docs);
-- writes the ADRs the §12 tables name: one superseding ADR-0014 (files), purge without a `D` per content row (SPEC-015 Q2), the one-off document migration as a rule-2 exception (SPEC-013 D6), and any other §12 row marked "ADR: yes";
-- settles the open questions the user owns: testing-hold exceptions (SPEC-011 Q13, SPEC-014 Q15), description history (SPEC-011 Q18), the eager size budget (SPEC-011 Q15), the replica not deleted on sign-out (SPEC-012 Q3);
+- writes the ADRs the §12 tables name: one superseding ADR-0014 (files), purge without a `D` per content row (SPEC-015 Q2), the one-off document migration as a rule-2 exception (SPEC-013 D6), and any other §12 row marked "ADR: yes"; and moves [ADR-0020](../04-architecture/adr/0020-partial-issue-sync.md) (partial issue sync) from Proposed to Accepted;
+- records the user's decisions. The open questions the user owned were **decided on 2026-11-12** and are in each spec's Decisions table:
+  - testing-hold exceptions granted: the Issue filter conformance test (SPEC-011 Q13) and the Postgres byte-lock test (SPEC-014 Q15);
+  - description history stays v2 (SPEC-011 Q18);
+  - the eager size budget: copy Linear with partial issue loading, 35 MB per replica (SPEC-011 Q15, ADR-0020);
+  - explicit sign-out deletes the local replica, in M1 (SPEC-012 Q3, PLAN-012 S7);
+  - purge logs no `D` per content row; the ADR is written at the gate (SPEC-015 Q2);
+  - the avatar and logo foreign keys are added with no clean-up step, since there are no existing rows (SPEC-014 D13);
 - fixes the spec gaps found while planning (listed in the PR);
 - sets SPEC-010 to SPEC-015 to Accepted and the plans to Ready.
 
@@ -111,17 +118,17 @@ The M1 specs are Draft. Building starts after one docs PR that:
 
 | Plan | Implements | Slices | Size |
 |---|---|---|---|
-| [PLAN-010](PLAN-010-workflow-labels-estimates.md) | SPEC-010 Workflow statuses, labels & estimates | 6 | ~16 d |
-| [PLAN-011](PLAN-011-issues-core.md) | SPEC-011 Issues core, content models, sync foundations | 9 (S5a, S5b) | ~33 d |
-| [PLAN-012](PLAN-012-issue-page-list-view.md) | SPEC-012 Issue page, composer, list, shortcuts, drafts | 7 | ~30 d |
+| [PLAN-010](PLAN-010-workflow-labels-estimates.md) | SPEC-010 Workflow statuses, labels & estimates | 6 | ~17 d |
+| [PLAN-011](PLAN-011-issues-core.md) | SPEC-011 Issues core, content models, partial issue loading, sync foundations | 11 (S4b, S4c, S5a, S5b) | ~42 d |
+| [PLAN-012](PLAN-012-issue-page-list-view.md) | SPEC-012 Issue page, composer, list, shortcuts, drafts, sign-out | 7 | ~33 d |
 | [PLAN-013](PLAN-013-comments-reactions-editor.md) | SPEC-013 Comments, reactions & editor | 5 | ~17 d |
 | [PLAN-014](PLAN-014-attachments-files.md) | SPEC-014 Attachments & files | 6 (S4a, S4b) | ~16 d |
-| [PLAN-015](PLAN-015-recently-deleted-archive.md) | SPEC-015 Recently deleted & archive | 5 | ~11 d |
+| [PLAN-015](PLAN-015-recently-deleted-archive.md) | SPEC-015 Recently deleted & archive | 5 | ~12 d |
 
-Total: about **123 ideal days** (38 slices), plus about 2 days for the acceptance gate. That is roughly 14 weeks for two engineers or 10 weeks for three, using the tracks below. The critical path alone is about 41 ideal days, so more people don't shorten it below about 9 weeks.
+Total: about **137 ideal days** (40 slices), plus about 2 days for the acceptance gate. That is roughly 15 weeks for two engineers or 11 weeks for three, using the tracks below. The critical path alone is about 44 ideal days, so more people don't shorten it below about 9 weeks. Partial issue loading (ADR-0020, 2026-11-12) added about 14 days: PLAN-011 S4b and S4c (9), and the server-backed counts, archive page and issue loader in PLAN-010, PLAN-012 and PLAN-015 (4), plus sign-out (1).
 
 **Who builds the shared pieces:**
-- **PLAN-011:** the sync and registry foundations: `OptimisticStore` changes, `systemOnly` and `contentParent`, repo `updateWhere`/`deleteWhere` (with the unlogged content delete for purge), archive on the wire (protocol v0.7), `lockIssueForWrite`, content models (`/sync/content`, hydration, cache), `issueSlug` and the issue route, the label cascade helper, the archived-label refusal, and the `claimInlineFiles` seam.
+- **PLAN-011:** the sync and registry foundations: `OptimisticStore` changes, `systemOnly` and `contentParent`, repo `updateWhere`/`deleteWhere` (with the unlogged content delete for purge), archive on the wire (protocol v0.7), `lockIssueForWrite`, partial issue loading (protocol v0.8: issue groups, subscriptions, the partial bootstrap, `visibleGroups`, the client's removal rules, `useTeamLoadState`), content models (`/sync/content`, hydration, cache), `issueSlug` and the issue route, the label cascade helper, the archived-label refusal, and the `claimInlineFiles` seam.
 - **PLAN-012:** the shortcut engine changes, property commands, `ui.available`, the `Draft` model, the shared `packages/ui` components, the read-only issue page frame, and delete on a live issue (dialog, `Mod+Z`).
 - **PLAN-013:** `packages/editor` and `@surface/editor/schema`.
 - **PLAN-014:** the file byte protocol, the file jobs, and the real `claimInlineFiles` body.
@@ -134,7 +141,9 @@ flowchart LR
   G[7.1 acceptance gate] --> P10S1[010·S1 domain]
   subgraph TA[Track A: issues and sync]
     P10S1 --> P11S1[011·S1 foundations] --> P11S2[011·S2 archive on wire] --> P11S3[011·S3 schema + lock] --> P11S4[011·S4 issue ops]
+    P11S4 --> P11S4b[011·S4b partial load server] --> P11S4c[011·S4c partial load client]
     P11S4 --> P11S5a[011·S5a content protocol] --> P11S5b[011·S5b content client] --> P11S6[011·S6 description + history] --> P11S7[011·S7 cache] --> P11S8[011·S8 leak suite]
+    P11S4b --> P11S6
   end
   subgraph TB[Track B: editor and UI]
     G --> P13S1[013·S1 editor schema] --> P13S2[013·S2 editor component]
@@ -146,17 +155,19 @@ flowchart LR
   end
   P13S1 --> P11S6
   P11S2 --> P10S6[010·S6 label archive]
-  P11S4 --> P10S5[010·S5 issue halves] --> P11S8
+  P11S4b --> P10S5[010·S5 issue halves] --> P11S8
   P10S3 --> P10S5
-  P11S4 --> P12S3[012·S3 list + my issues]
+  P11S4c --> P12S3[012·S3 list + my issues]
   P11S4 --> P15S1[015·S1 lifecycle] --> P15S3[015·S3 auto-archive/close]
   P10S2 --> P15S1
   P11S6 --> P12S4[012·S4 issue page]
+  P11S4c --> P12S4
   P13S2 --> P12S4
   P13S2 --> P12S5[012·S5 composer + drafts]
   P11S6 --> P12S5
   P11S5b --> P13S3[013·S3 comments] --> P13S4[013·S4 reactions]
   P11S6 --> P14S4a[014·S4a attachments] --> P14S4b[014·S4b claim + previews]
+  P11S4c --> P14S4a
   P14S3 --> P14S4a
   P13S1 --> P14S4b
   P11S6 --> P15S2[015·S2 purge]
@@ -165,6 +176,7 @@ flowchart LR
   P12S4 --> P14S5[014·S5 attachments UI]
   P14S4b --> P14S5
   P12S4 --> P15S4[015·S4 archive page]
+  P11S4c --> P15S4
   P15S1 --> P12S6[012·S6 pickers + delete]
   P12S5 --> P12S6
   P12S6 --> P15S4
@@ -174,26 +186,26 @@ flowchart LR
 
 Each plan's header and slices list the exact dependencies; this graph shows the main ones.
 
-**Critical path:** 010·S1 → 011·S1–S6 (S5a, S5b) → 012·S4 → 012·S6 → 015·S4 → 012·S7, about 41 ideal days (012·S5 runs beside 012·S4).
+**Critical path:** 010·S1 → 011·S1–S4 → 011·S5a → S5b → S6 → 012·S4 → 012·S6 → 015·S4 → 012·S7, about 44 ideal days (011·S4b–S4c run beside S5a–S5b and are done before 012·S3 and 012·S4 need them; 012·S5 runs beside 012·S4).
 **Start at once after the gate:** 010·S1–S4, 012·S1–S2, 013·S1–S2, 014·S1–S3.
 
 ### 7.4 Suggested sequence (two engineers)
 
-Engineer 1 takes issues, sync, lifecycle and the server side of comments and attachments (about 64 days); engineer 2 takes the editor, the UI, settings and files (about 63 days). Each row only starts slices whose dependencies are done in an earlier row.
+Engineer 1 takes issues, sync (partial loading included), lifecycle and the server side of comments and attachments (about 72 days); engineer 2 takes the editor, the UI, settings and files (about 70 days). Each row only starts slices whose dependencies are done in an earlier row, or earlier in the same engineer's row.
 
 | Weeks | Engineer 1 (issues, sync, lifecycle) | Engineer 2 (editor, UI, settings, files) |
 |---|---|---|
 | 1 | Gate · 010·S1 · 011·S1 | Gate · 013·S1 |
 | 2–3 | 011·S2–S3 | 013·S2 · 012·S1 |
-| 4–5 | 011·S4 · 010·S6 | 012·S2 · 010·S2 |
-| 6–7 | 011·S5a–S5b | 010·S3–S4 · 014·S1 |
-| 8 | 011·S6 | 014·S2–S3 |
-| 9 | 010·S5 · 015·S1 | 012·S3 |
-| 10 | 013·S3 | 012·S4 |
-| 11 | 013·S4 · 015·S2 | 012·S5 |
-| 12 | 014·S4a–S4b | 013·S5 · 012·S6 |
-| 13 | 011·S7–S8 | 014·S5 · 015·S4 |
-| 14 | 015·S3 · 015·S5 | 012·S7 (M1 demo) |
+| 4–5 | 011·S4 · 010·S6 · 011·S4b | 012·S2 · 010·S2 |
+| 6–7 | 011·S4c · 011·S5a | 010·S3–S4 · 014·S1 |
+| 8–9 | 011·S5b · 011·S6 | 014·S2–S3 · 012·S3 |
+| 10 | 010·S5 · 015·S1 | 012·S4 |
+| 11 | 013·S3 · 015·S2 | 012·S5 |
+| 12 | 013·S4 · 014·S4a | 012·S6 |
+| 13 | 014·S4b · 011·S7 | 013·S5 · 015·S4 |
+| 14 | 011·S8 · 015·S3 | 014·S5 |
+| 15 | 015·S5 | 012·S7 (M1 demo) |
 
 ### 7.5 Conventions
 

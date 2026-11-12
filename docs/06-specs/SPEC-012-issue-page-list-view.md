@@ -9,7 +9,7 @@ Related: [design-system §3–§5](../05-design/design-system.md) · [shortcuts 
 
 ## 1. Problem & goal
 
-SPEC-011 gives Surface issues, but no way to see or touch them in the app. This spec adds the screens people use all day: the **composer** that creates an issue from anywhere with `C`, the **issue page** where an issue is read and edited, the team's **issue list**, and a minimal **Assigned to me** list as the home page. Every action works by keyboard and from `Mod+K`, renders from the local replica with no spinner, and survives going offline. The M1 exit is dogfooding (METHODOLOGY §3), so these screens must be good enough for the team to run Surface's own backlog in Surface.
+SPEC-011 gives Surface issues, but no way to see or touch them in the app. This spec adds the screens people use all day: the **composer** that creates an issue from anywhere with `C`, the **issue page** where an issue is read and edited, the team's **issue list**, and a minimal **Assigned to me** list as the home page. Every action works by keyboard and from `Mod+K`. The lists of the user's own teams and My issues render from the local replica with no spinner and survive going offline. Another public team's issues, and archived or deleted issues, load from the server the first time (SPEC-011 §5.7, ADR-0020). The M1 exit is dogfooding (METHODOLOGY §3), so these screens must be good enough for the team to run Surface's own backlog in Surface.
 
 This spec also owns the **M1 shortcut map** (§3.6): every key that M1's specs bind, the new scopes, and the shortcut engine changes they need.
 
@@ -27,13 +27,14 @@ This spec also owns the **M1 shortcut map** (§3.6): every key that M1's specs b
 - Copy identifier, link, "ID + title" and git branch name.
 - Synced drafts for the composer and for comments: the `Draft` model and its two operations (§3.2, §4.3).
 - Loading, empty, not-found, offline and "Available when online" states; accessibility; reading at 375 px.
+- The client side of partial issue loading (SPEC-011 §5.7) on these screens: another team's list, an issue the replica doesn't hold, the identifier fallback (§3.3 item 10, §3.4 item 11).
+- Deleting the local replica database on explicit sign-out (§3.12, Q3).
 
 **Out of scope**
 
 - Board layout, filters, display options, view tabs (Active, Backlog), custom views, multi-select and bulk edit, peek, general undo and redo, manual reordering, global search: M2. The My issues tabs Subscribed (M4) and Activity (later).
 - The editor itself, comments, resolve and reactions (SPEC-013); upload and attachment rendering (SPEC-014); what delete, restore, auto-archive and permanent delete do, and the team archive pages (SPEC-015). This spec places their controls and binds their keys. There is no manual archive.
 - Project, cycle, parent, relations, team moves (M3); triage, subscriptions, templates (M4); pre-filled create URL (FR-ISS-13, M2).
-- Deleting the replica on sign-out (Q3: a finding for SPEC-002, not fixed here).
 - Linear's embeds, external images and link unfurling: not copied (see Decisions, D9).
 
 ## 3. User flows
@@ -60,20 +61,21 @@ Drafts are saved on the server and follow the user to every device (Linear does 
 - **Comment drafts:** an unsent comment (SPEC-013 comment box) is kept per issue and shown in the box whenever the issue page opens, on any device. A comment draft's `data` is `{text}`. Sending the comment discards the draft (`draft.discard`, SPEC-013 §3.1). If the server rejects the comment, its text goes back into the issue's comment draft when that draft is empty or gone; if the user has typed something new meanwhile, that draft stays and the toast offers **Copy text**. The draft is deleted when its text is empty. At most 50 comment drafts per user: saving a 51st deletes the oldest. The client discards a comment draft older than 30 days when it reads it.
 - **Saving:** comment drafts are saved 500 ms after the last change and on navigation (`draft.save`, optimistic, so it works offline and queues like any operation). The composer saves only when the person chooses **Save**.
 - **Storage:** the replica holds `Draft` rows like any other synced model, so there is no separate drafts store. A draft survives reloads, resyncs and bootstraps. In the memory fallback (IndexedDB unavailable, SPEC-002 E6) the replica, drafts included, lives in memory for the tab's life; the server copy is what survives. The shell's IndexedDB banner already says that.
-- **Sign-out:** nothing is deleted, because drafts are the user's data on the server. The replica on the device is Q3's finding.
+- **Sign-out:** drafts are the user's data on the server, so they survive it. Explicit sign-out deletes the replica on the device (§3.12); the next sign-in bootstraps it again, drafts included.
 - On restore, values that no longer resolve (a deleted status or label, an archived label, a team the user can no longer see, an assignee who can't see a private team) are dropped with the same inline note as a team change.
 
 ### 3.3 The issue list (`/team/:key/issues`)
 
 1. Reached from the sidebar (team ▸ **Issues**), `G` `E`, `Ctrl+Shift+1…9` (the n-th team in the sidebar, Q7), "Go to ENG issues" in `Mod+K`, and links.
-2. The header shows the breadcrumb "ENG › Issues" and an issue count. No view tabs, filter or display controls in M1.
+2. The header shows the breadcrumb "ENG › Issues" and an issue count (the team's issues in the replica, which holds every live issue of a subscribed team). No view tabs, filter or display controls in M1.
 3. Issues are grouped by **status**, in workflow order (SPEC-010: category order, then position). Each GroupHeader shows the StatusIcon, name, count and a `+`. Groups with no issues are hidden. Completed and Canceled groups start collapsed (Q8). Collapse state is kept per team and device in `localStorage`.
 4. Within a group the order is fixed (Q9): priority (Urgent first, No priority last), then `updatedAt`, newest first, then identifier number, descending (a total order, so equal timestamps never swap). Live deltas re-sort without moving the focused row out from under the keyboard: a focused row that moves keeps focus and scrolls into view.
 5. **Rows** (IssueRow, fixed columns in M1): priority · identifier · status · title · labels · estimate (when the team uses estimates) · due date · assignee · **created** (a short date, "Nov 6", with the year when it isn't this year; D2). Pills open their pickers on click. **Right-click** (or the row's context-menu key) opens the row menu, in this order: Status `S` · Priority `P` · Assignee `A` · Due date `Shift+D` · Labels `L` · Estimate `Shift+E` (when used) · Copy › (§3.7) · Delete `Mod+Backspace`. Later milestones add their items between Labels and Copy.
-6. Archived and deleted issues are not listed (SPEC-015). When the team has archived issues, a footer line "N archived issues" links to the team archive (`/team/:key/archive`, SPEC-015). The sidebar has a team-level **Archive** item (`G` `X`) leading to SPEC-015's page, "Archived issues", whose second tab is "Recently deleted issues". Its rows are this spec's IssueRow; the date column shows the deletion day on that tab (§3.10). Pending issues (no number yet) show `ENG-…`.
+6. Archived and deleted issues are not listed (SPEC-015); the replica doesn't hold them (SPEC-011 §5.7). When the team has archived issues, a footer line "N archived issues" links to the team archive (`/team/:key/archive`, SPEC-015). N comes from `issue.count` with `{team, includeArchived: true, filter: archivedAt is set}`, fetched when the list opens and on focus; the line is hidden offline and until the answer arrives. The sidebar has a team-level **Archive** item (`G` `X`) leading to SPEC-015's page, "Archived issues", whose second tab is "Recently deleted issues". Its rows are this spec's IssueRow; the date column shows the deletion day on that tab (§3.10). Pending issues (no number yet) show `ENG-…`.
 7. **Keys:** `J` / `↓` and `K` / `↑` move focus through rows and group headers. `Enter` opens the focused issue. `T` on a focused group header collapses or expands it (a click on the header does the same); `Alt+T` collapses or expands all groups. Property shortcuts (§3.6) act on the focused row.
 8. **Focus memory:** the list remembers, per route and tab (in memory), the focused issue's id and the scroll position. Coming back to the route (`Esc` from the issue page, the browser's back button, a link) restores the scroll and focuses that row; if the issue left the list, its neighbour at the same index.
 9. The list is virtualised (fixed row and header heights per design-system §2.5) and scrolls at 60 fps with 10,000 issues (NFR-04). The focused row stays mounted while it is scrolled out of view, so focus is never lost to the document body.
+10. **A public team the user isn't a member of** (SPEC-011 §5.7). Opening its list subscribes the client to the team on demand (at most 5 such teams; the least recently opened is dropped). Until the partial bootstrap is applied, the list shows "Loading…" (the skeleton after 150 ms), then renders from the replica and stays live like a member team's. Offline, a team that was never loaded shows "Available when online"; a team still subscribed renders from the replica. The load state comes from a `sync-react` hook (PLAN-011 S4c).
 
 ### 3.4 The issue page (`/issue/:identifier`)
 
@@ -86,10 +88,11 @@ Layout per [design-system §3](../05-design/design-system.md): a centred text co
 4. **Attachments** (SPEC-014) under the description, then **Activity**: history entries and comments (SPEC-013: reply, resolve, reactions, menu) in one chronological stream, oldest first, with the comment box at the end (SPEC-013 §7). History lines use SPEC-011's wording: "Ada moved from Todo to In Progress · 2h ago", "Ada self-assigned the issue", "Ada created the issue", "Ada deleted the issue", with the names stored in the entry and the full timestamp in a tooltip. An actor that is an API key or MCP shows "via API" or "via MCP". When there are more than 30 activity items, only the newest 30 show, below a "Show N earlier" button that reveals the rest from the cache (Q10).
 5. **Properties panel:** status, priority, assignee, labels, estimate (shown while the team uses estimates or the issue has one; an off-scale value shows as its number with an "Off scale" hint), due date, then "Created by Ada · Nov 6" and "Updated 2h ago". Each row is a PropertyPill with its picker.
 6. **Pending issue:** opened at `/issue/<id>` (SPEC-011). When the number arrives the URL is replaced with `/issue/ENG-42/<title-slug>` (`history.replaceState`), focus and scroll unchanged.
-7. **Not found:** an identifier that doesn't resolve once the replica is ready shows "ENG-99 doesn't exist, or you don't have access to it." with **Go to ENG issues** (or **Go home** for an unknown team key). The same wording for a private issue (no leak, SPEC-011). While the replica is still loading, the shell's progress shows instead (SPEC-005 §3).
-8. **Archived and deleted issues** open read-only (SPEC-015 §3.4). There is no banner. Title and description are read-only, the properties show but don't open, and the comment box and reaction buttons are hidden. An archived issue has the breadcrumb "ENG › Archived issues › ENG-42 Title" and an **Archived** badge after the title; a deleted one has "ENG › Recently deleted issues › ENG-42 Title" and a **Deleted** badge. The ⋯ menu offers **Copy ›** and **Restore** (`#`); an archived issue also offers **Delete**, and an Admin sees **Permanently delete…** on a deleted one (SPEC-015). The other issue commands are unavailable (§3.8). There is no archive command: archiving is automatic (SPEC-015).
+7. **Not found:** an identifier that the replica doesn't hold and that `issue.get` answers with `NOT_FOUND` (item 11) shows "ENG-99 doesn't exist, or you don't have access to it." with **Go to ENG issues** (or **Go home** for an unknown team key). The same wording for a private issue (no leak, SPEC-011). While the replica is still loading, the shell's progress shows instead (SPEC-005 §3).
+8. **Archived and deleted issues** open read-only (SPEC-015 §3.4). The replica doesn't hold them, so the page reads them from the server: `issue.get` for the row, description, attachments and reactions, and an in-memory `/sync/content` answer for the activity (SPEC-015 §3.4). Offline: "Available when online". There is no banner. Title and description are read-only, the properties show but don't open, and the comment box and reaction buttons are hidden. An archived issue has the breadcrumb "ENG › Archived issues › ENG-42 Title" and an **Archived** badge after the title; a deleted one has "ENG › Recently deleted issues › ENG-42 Title" and a **Deleted** badge. The ⋯ menu offers **Copy ›** and **Restore** (`#`); an archived issue also offers **Delete**, and an Admin sees **Permanently delete…** on a deleted one (SPEC-015). The other issue commands are unavailable (§3.8). There is no archive command: archiving is automatic (SPEC-015).
 9. **Back to the list:** `Esc`, when no overlay is open and focus isn't in a text field or the editor, goes back to the source list (else to the issue's team list) and restores its focus (§3.3 item 8).
 10. **Hydration:** opening the page requests the issue's content if it isn't hydrated (SPEC-011). Sending a comment or saving a description on an issue that isn't hydrated starts its hydration first, so the confirmed row never disappears (SPEC-011).
+11. **An issue the replica doesn't hold** (a link, a pasted identifier, `Mod+K`, an issue of another team): the page calls `issue.get`. A live issue of a public team subscribes its team on demand (as §3.3 item 10), and the page renders as soon as the row is in the replica; it shows the skeleton after 150 ms until then. An archived or deleted issue opens the read-only view of item 8. `NOT_FOUND` shows item 7's page. Offline, an issue the replica doesn't hold shows "Available when online". Opening any issue of a non-member public team subscribes its team, so its comments and attachments are live while it is open (SPEC-013 §5.1).
 
 ### 3.5 Property pickers
 
@@ -219,11 +222,12 @@ Commands come from SPEC-011's `ui` entries plus these client commands. Context r
 - **Availability:** issue commands use the `ui.available(target, store)` predicate (SPEC-003 change, §12). Editing commands are unavailable for an archived or deleted issue; their shortcuts then show the hint "ENG-42 is archived. Restore it to edit it." or "ENG-42 was deleted. Restore it to edit it." (SPEC-005 §5 "not available here"). **Restore issue** is available only there.
 - **Destructive commands** (Delete issue) never rank first for a query they match only by keyword; they rank first only when the query matches their title better than any other command. They always run from their own item (Linear ranked "Delete issue" first for the query "deleted"). Wording shared with SPEC-015.
 - There is no "Archive issue" command: archiving is automatic (D6).
+- **Issue search** in `Mod+K` covers the issues in the replica (the local index, ADR-0008). An exact identifier the replica doesn't hold (`eng-87`) still offers **Open ENG-87**, which opens the route and resolves through `issue.get` (§3.4 item 11).
 
 ### 3.9 My issues (`/my-issues`, D5)
 
 1. `/` opens the home view (SPEC-005). With no home team preference it is My issues. M1 has two tabs: **Assigned** (`/my-issues`) and **Created** (`/my-issues/created`). Subscribed (M4) and Activity (later) stay hidden until they are built. `G` `M` opens the tab the user used last, Assigned at first.
-2. **Assigned** holds the user's issues that are not archived, deleted, completed or canceled, across all teams the user can see. **Created** holds the issues the user created that are not archived or deleted, completed and canceled included.
+2. **Assigned** holds the user's issues that are not archived, deleted, completed or canceled, across all teams the user can see. **Created** holds the issues the user created that are not archived or deleted, completed and canceled included. Both render from the replica and work offline: it holds every live issue assigned to or created by the user, in any team they can see (`user:` groups, SPEC-011 §5.7).
 3. Grouped by **status**: issues whose status has the same name and category share a group, because statuses belong to teams; each row shows its own status. Groups follow category order, then the lowest status position, then name. Each GroupHeader shows the StatusIcon, name, count and a `+`; Completed and Canceled groups start collapsed. The `+` opens the composer with that status when the context team has one by that name, and with the assignee set to the user on Assigned. Within a group: priority, then `updatedAt` newest first, then identifier.
 4. The same IssueRow, keys, row menu, focus memory and pickers as the team list (§3.3). The identifier column always shows the team key.
 5. Empty Assigned: "Nothing is assigned to you. Issues assigned to you show up here." with **Create issue** (`C`). Empty Created: "You haven't created any issues yet." with **Create issue**.
@@ -233,17 +237,25 @@ Commands come from SPEC-011's `ui` entries plus these client commands. Context r
 SPEC-015 owns what these pages do. This spec gives them the list machinery.
 
 1. `G` `X`, the sidebar's team **Archive** item and "Go to ENG archive" open `/team/:key/archive`, titled "Archived issues", with two tabs: **Issues** (archived) and **Recently deleted issues** (`/team/:key/archive/recently-deleted`, command "Go to recently deleted issues"). There is no workspace-level page of deleted issues (D6).
-2. Rows are the IssueRow of §3.3, grouped by status, with the same focus model. On Recently deleted the date column shows the deletion day instead of the created date.
+2. Rows are the IssueRow of §3.3, grouped by status, with the same focus model. They are read from the server, not the replica (SPEC-015 §3.3), so the page shows "Loading…" first and "Available when online" offline. On Recently deleted the date column shows the deletion day instead of the created date.
 3. The row menu has **Copy ›** and **Restore** (`#`). Nothing else edits these issues (§3.4 item 8). `Enter` opens the issue page.
 4. `#` restores the focused issue from either tab, or the open page. Restore is one command for both states (SPEC-015 decides the operation). After a restore the row leaves the list and focus moves to the next row (E2), with a toast "Restored ENG-42" and **Open**.
 
 ### 3.11 Delete and restore
 
 1. `Mod+Backspace` (not while typing), **Delete** in the ⋯ or row menu, or "Delete issue" in `Mod+K` opens a confirm dialog: title `Delete "ENG-42 – Fix login redirect"?`, body "Deleted issues are available in the "Recently deleted" view for 30 days, before they are permanently deleted.", buttons **Cancel** and **Delete**. Focus starts on **Delete**, so `Mod+Backspace` then `Enter` deletes by keyboard, and `Mod+Enter` also submits. There is no Undo toast (D8).
-2. Confirming dispatches `issue.delete`. On the issue page, the page stays and shows the deleted state (SPEC-015 §3.1, §3.4). On a list, focus moves to the next row (E2). A polite live region announces "ENG-42 deleted".
-3. The client remembers the **last issue the user deleted** in this session (memory only). `Mod+Z` outside text restores it with `issue.restore` and shows "Restored ENG-42". The memory clears after the restore, after the next delete (it then holds that one), and on reload. The key is free for M2's general undo, which replaces this rule.
+2. Confirming dispatches `issue.delete`, whose optimistic removes the issue from the replica (SPEC-015 §6.2). On the issue page, the page stays and shows the deleted state, starting from the row it had (SPEC-015 §3.1, §3.4). On a list, the row leaves at once and focus moves to the next row (E2). A polite live region announces "ENG-42 deleted".
+3. The client remembers the **last issue the user deleted** in this session (memory only). `Mod+Z` outside text restores it with `issue.restore`. The replica doesn't hold the deleted issue, so the toast says "Restoring ENG-42…" until the server's packet brings the row back, then "Restored ENG-42" (SPEC-015 §3.1). The memory clears after the restore, after the next delete (it then holds that one), and on reload. The key is free for M2's general undo, which replaces this rule.
 4. **Restore from the lists and pages** is `#` (§3.10). It works on archived and deleted issues alike.
 5. If the issue has sub-issues (M3), SPEC-015's M3 rule adds them to the dialog: `Delete "TUN-28 – …" and 3 sub-issues?`.
+
+### 3.12 Sign-out deletes the local replica (Q3)
+
+1. **Log out** in the avatar menu (SPEC-005) is an explicit sign-out. The client calls `POST /auth/logout`, closes its socket, then deletes the replica database `surface-<workspaceId>-<userId>` (SPEC-002 §3.1: rows, hydration marks, the subscription set and the mutation queue) and goes to the sign-in page.
+2. **Unsent changes:** when the mutation queue isn't empty, Log out first asks "N changes haven't been sent yet. Signing out discards them." with **Cancel** and **Log out**. Offline, that is the only way the queue can be non-empty, and Log out still deletes the database after the dialog (the server session ends at its next contact or expiry).
+3. **Other tabs** of the app close their database connection when they see the session end, so the delete isn't blocked; they then show the sign-in page.
+4. A session that expires or is revoked (not an explicit Log out) deletes nothing: the next sign-in of the same user reuses the replica and sends the queue.
+5. The next sign-in finds no database and bootstraps fresh (SPEC-002 §3.1 cold start). Drafts come back from the server (§3.2).
 
 ## 4. Domain & client changes
 
@@ -301,7 +313,8 @@ A synced model in the user's own sync group `user:<id>`, so only its owner ever 
 
 ## 5. Sync & permissions
 
-- Everything renders from the replica: eager Issue (with `labelIds`), statuses, labels and users. Description and history come from content hydration (SPEC-011): opening an issue page requests its content if it isn't hydrated; the list prefetches the content of visible issues (debounced, SPEC-011). An issue open in any tab is never evicted from the content cache (SPEC-011).
+- The views render from the replica: eager Issue (with `labelIds`), statuses, labels and users. Description and history come from content hydration (SPEC-011): opening an issue page requests its content if it isn't hydrated; the list prefetches the content of visible issues it holds (debounced, SPEC-011). An issue open in any tab is never evicted from the content cache (SPEC-011).
+- **Partial issue loading** (SPEC-011 §5.7). The replica holds the live issues of the teams the client subscribes to and the user's own issues, never an archived or deleted one. A non-member public team's list or issue subscribes the team on demand (§3.3 item 10, §3.4 item 11). Server reads, online only: `issue.get` for an issue not held, `issue.count` for "N archived issues", and SPEC-015's archive queries. Each refreshes on the relevant packets and on focus.
 - All edits are SPEC-011 operations with `optimistic`, so they work offline and queue (sync-protocol §5.3). Drafts use `draft.save` and `draft.discard` the same way.
 - `Draft` rows arrive only in the owner's `user:<id>` group (§4.3). The leak checklist (permissions.md §5) gains: another user's drafts never reach a replica, and a draft for a team the user left holds nothing the user couldn't already see.
 - Any user who can see a team can create and edit its issues (SPEC-011). A private team's issues never reach a non-member's replica, so their identifiers show "not found" (§3.4), and the assignee picker of a private team offers only members (§3.5).
@@ -332,6 +345,11 @@ Routes join the shell router (`apps/web/src/app/router.tsx`) under the session g
 | State | Shown |
 |---|---|
 | Replica loading | The shell's bootstrap progress (SPEC-005). Eager data is never shown as loading after that (design-system §4). |
+| Another team's list, loading | "Loading…" (skeleton after 150 ms) until its partial bootstrap is applied (§3.3 item 10) |
+| Another team's list, offline and never loaded | "Available when online" |
+| Issue not in the replica, loading | Skeleton after 150 ms while `issue.get` and the team's load run (§3.4 item 11) |
+| Issue not in the replica, offline | "Available when online" |
+| Archive pages, archived or deleted issue, offline | "Available when online" (SPEC-015 §3.3, §3.4) |
 | Team with no issues | EmptyState: "No issues in ENG yet. Create one with `C`." with **Create issue** |
 | Nothing assigned, nothing created, no drafts | §3.9 item 5, §7.1 |
 | No visible team | §3.1 item 3; `G` `E` shows "Join a team to see its issues" |
@@ -363,7 +381,7 @@ Routes join the shell router (`apps/web/src/app/router.tsx`) under the session g
 |---|---|---|
 | E1 | The focused row's issue changes group (someone moved its status) | The row moves; focus follows it and scrolls it into view. |
 | E2 | The focused row is deleted, archived or moved out of the list by someone else, or by you (delete, restore) | Focus moves to the next row (or the previous at the end); a polite announcement says "ENG-42 was removed". |
-| E3 | An issue page is open when someone deletes the issue (or the auto-archive job archives it) | The page switches to the read-only state of §3.4 item 8 (badge, no banner); the issue commands become unavailable (§3.8); the page doesn't navigate away. An open picker for it closes. Edits already sent get `CONFLICT` ("ENG-42 was deleted. Restore it to edit it.") and roll back. |
+| E3 | An issue page is open when someone deletes the issue (or the auto-archive job archives it) | The packet removes the issue from the replica (SPEC-011 §5.7), and the page switches to the read-only state of §3.4 item 8 (badge, no banner), fed by `issue.get`; until it answers, or offline, it shows the row it had. The issue commands become unavailable (§3.8); the page doesn't navigate away. An open picker for it closes. Edits already sent get `CONFLICT` ("ENG-42 was deleted. Restore it to edit it.") and roll back. |
 | E4 | The title is being edited when a remote title change arrives | The local edit wins on save (last writer); until then the input keeps the user's text. |
 | E5 | The description is being edited when a remote description save arrives | The editor keeps the user's text; the next save gets `CONFLICT` and shows the banner of §3.4. |
 | E6 | `C` pressed while the composer is already open | Nothing: focus stays in the composer. |
@@ -378,7 +396,7 @@ Routes join the shell router (`apps/web/src/app/router.tsx`) under the session g
 | E15 | The user confirms Delete on an issue someone else just deleted | The server's answer is shown as a toast (SPEC-015); the page or row shows the deleted state. |
 | E16 | ⌘⌫ or Ctrl+Backspace in the title, description or a comment | Deletes text as the platform does; nothing is deleted (`whileTyping: false`). |
 | E17 | Digits typed in a picker after a letter ("v2") | They go into the search query; no quick pick. |
-| E18 | A comment draft exists for an issue that was deleted or permanently deleted | Kept until it expires (30 days) or is the oldest of 50; the Drafts page hides it while the issue isn't in the replica, and shows it again if the issue is restored. |
+| E18 | A comment draft exists for an issue that was deleted or permanently deleted | Kept until it expires (30 days) or is the oldest of 50. For a draft whose issue isn't in the replica, the Drafts page asks `issue.get` (online): a live issue shows with its identifier and title; an archived, deleted or not-found one is hidden, and shows again if the issue is restored. Offline, such a draft shows as "Issue not loaded". |
 | E19 | A draft is saved offline | `draft.save` queues like any operation. On another device it appears after the queue is sent. |
 | E20 | A create is rejected while "Create more" is on and the user is typing the next issue | **Restore in composer** asks before replacing what is in the composer; Cancel keeps it (§3.1 item 9). |
 | E21 | A user presses `Space` on a label, then `Enter` | The label is toggled once and applied; `Enter` doesn't toggle it back (§3.5). |
@@ -387,6 +405,11 @@ Routes join the shell router (`apps/web/src/app/router.tsx`) under the session g
 | E24 | `Mod+Z` restores an issue that someone else already restored or permanently deleted | The server's message shows as a toast (SPEC-015); the memory clears. |
 | E25 | The user closes the composer with content and picks **Discard** | The content is dropped, and the team's existing draft, if any, stays untouched. |
 | E26 | An old issue link without a slug, with a wrong slug, or with a slug for an old title | It resolves, and the address is replaced with the current slug (§3.4 item 1). |
+| E27 | A link to ENG-42, in a public team the user isn't in and doesn't subscribe to, is opened | `issue.get` answers; the client subscribes to ENG on demand; the page renders when the row is local (§3.4 item 11). |
+| E28 | The user opens a sixth non-member team's list | The least recently opened on-demand team is dropped (SPEC-011 E31). Its issues leave the replica except the user's own; opening it again loads it again. |
+| E29 | `eng-87` is typed in `Mod+K` and ENG-87 isn't in the replica | **Open ENG-87** is still offered and resolves through `issue.get`; a wrong identifier gives the not-found page (§3.8). |
+| E30 | Log out with unsent changes | The dialog of §3.12 item 2; **Cancel** keeps the session and the queue. |
+| E31 | The "N archived issues" count is asked for offline | The footer line is hidden; it appears after reconnecting (§3.3 item 6). |
 
 ## 9. Acceptance criteria
 
@@ -419,6 +442,10 @@ Routes join the shell router (`apps/web/src/app/router.tsx`) under the session g
 | AC-23 | Opening a hydrated issue renders in < 100 ms; a property change paints in < 16 ms after the key press (NFR-01). | perf ⏸ (checked by hand) |
 | AC-25 | The team archive routes show the two tabs "Issues" and "Recently deleted issues" with the IssueRow; the deleted tab's date column shows the deletion day; `#` and the row menu's **Restore** restore from either tab and from an open archived or deleted issue, and are unavailable elsewhere; no editing command or key works on those issues; there is no archive command. | unit (list model, availability) |
 | AC-26 | An archived or deleted issue's page is read-only: properties don't open, there is no banner, the archived page has the "Archived" badge and the breadcrumb "Archived issues", and the deleted page has the "Deleted" badge and the breadcrumb "Recently deleted issues". | unit + story |
+| AC-27 | A non-member public team's list subscribes the team on open, shows "Loading…" until its partial bootstrap is applied, then renders from the replica; offline and never loaded, it shows "Available when online"; a sixth team drops the least recently opened (E28). My issues renders from the replica, offline too. | unit (list data source with the fake hub, `sync-react` load-state hook) |
+| AC-28 | An issue not in the replica is read with `issue.get`: a live public-team issue subscribes its team and renders when the row is local; an archived or deleted one opens read-only (§3.4 item 8); `NOT_FOUND` gives the not-found page; offline shows "Available when online". The `Mod+K` identifier fast path offers an identifier the replica doesn't hold (E27, E29). | unit (route loader with a fake dispatcher and fake hub, command source) |
+| AC-29 | Explicit Log out deletes the replica database and the next sign-in bootstraps fresh; with unsent changes it asks first; a session expiry deletes nothing (§3.12). | unit (`fake-indexeddb`: sign-out deletes the database, a later sign-in bootstraps fresh) |
+| AC-30 | The "N archived issues" footer reads `issue.count` (archived only, the team), is hidden offline and until it answers, and refreshes on focus (§3.3 item 6). | unit (footer with a fake dispatcher) |
 | AC-24 | Labels picker: `Space` toggles; `Enter` applies the pending toggles and closes, and toggles the highlighted label only when nothing is pending (E21). Restore in composer asks before replacing a non-empty composer (E20). A rejected comment's text goes back into the issue's comment draft only when that draft is empty, else the toast offers Copy text (§3.2). | unit + story |
 
 ## 10. Metrics & performance
@@ -435,7 +462,6 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 
 | # | Question | Proposed default |
 |---|---|---|
-| Q3 | Drafts now live on the server, but the replica database on the device isn't deleted on sign-out: nothing deletes it today (no `deleteDatabase` in `apps/web` or `sync-client`), so issue data and the user's drafts stay on a shared device after sign-out. | **Finding for the user.** Not fixed in this spec. Proposed: a SPEC-002 follow-up deletes the user's replica database on explicit sign-out. |
 | Q5 | Property shortcuts inside the composer? | None as single letters (focus is usually in a text field). Pills are reachable with `Tab`; each picker opens with `Enter` or `Space`. |
 | Q6 | `J` / `K` on the issue page to step through the source list? | Yes, in the page scope `issue-page` (§3.6). |
 | Q7 | Where does `Ctrl+Shift+1…9` go (Linear: "go to team")? | To that team's issue list (its most-used page in M1). |
@@ -461,6 +487,8 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | D7 | Copy Linear: reactions also sit on the issue, under the description. Custom emoji: later. Underline (`Mod+U`) exists in the editor (SPEC-013). | 2026-11-12 |
 | D8 | Copy Linear: Delete opens a confirm dialog, `Delete "ENG-42 – <title>"?`, with Cancel and Delete. No Undo toast. `Mod+Z` right after a delete restores the last deleted issue (this session only) until M2's general undo. Replaces "no dialog, Undo toast" (old D3). Shared with SPEC-015. | 2026-11-12 |
 | D9 | Linear embeds YouTube, Loom and Figma links, shows external images and unfurls links. **Not copied**: they need outbound network calls (CLAUDE.md rule 5). | 2026-11-12 |
+| Q3 | Explicit sign-out deletes the user's local replica database (IndexedDB), scheduled in M1 (§3.12, PLAN-012 S7). Nothing deleted it before (no `deleteDatabase` in `apps/web` or `sync-client`), so issue data and drafts stayed on a shared device. A session expiry deletes nothing. User decision; changes SPEC-002 (§12). | 2026-11-12 |
+| D12 | Copy Linear, through partial issue loading (SPEC-011 §5.7, ADR-0020): member teams' lists and My issues stay local and offline; another public team's list subscribes on open ("Loading…", offline "Available when online"); an issue not held is read with `issue.get`, then its team is subscribed; archived and deleted issues and the archive tabs read from the server; "N archived issues" comes from `issue.count`; prefetch covers held issues only. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -490,5 +518,5 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | PRD | FR-ISS-11 | "Local unsaved draft" → drafts saved on the server and synced to all devices, with a Drafts page. | No |
 | PRD | FR-NAV-01 | Replace the workspace-level deleted-issues item with team **Archive** (with Recently deleted) and **Drafts**. | No |
 | PRD | FR-NAV-10 | Note: Assigned and Created ship in M1 (D5). | No |
-
-**For the user (not an accepted-doc change):** the replica isn't deleted on sign-out (Q3).
+| SPEC-002 | §3 (flows: add "sign-out"), §5.1 (storage), Decisions | Explicit sign-out deletes the replica database `surface-<workspaceId>-<userId>`, its mutation queue included, after a warning when changes are unsent; a session expiry keeps it (Q3, §3.12). Dated "Changed (SPEC-012)". | No |
+| SPEC-005 | §7 (avatar menu) | Log out deletes the local replica and warns about unsent changes (§3.12). | No |

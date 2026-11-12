@@ -21,5 +21,6 @@
 | [0017](0017-sync-react-package.md) | Where the sync inspector and UI hooks live (`@surface/sync-react`) |
 | [0018](0018-offline-start.md) | Opening the app while the server can't be reached (remembered session) |
 | [0019](0019-offline-app-cache.md) | Keeping the app's own files in the browser (offline app cache) |
+| [0020](0020-partial-issue-sync.md) | Partial issue sync: your teams up front, other issues on demand (Proposed; supersedes the full-metadata clause of 0002) |
 
 Format: context → options → decision → consequences. An accepted ADR is never edited in substance; a new ADR supersedes it.

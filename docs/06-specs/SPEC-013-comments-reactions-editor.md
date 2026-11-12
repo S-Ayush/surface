@@ -274,7 +274,7 @@ One migration adds:
 - `comments`: the §4.1 columns (including `resolved_at`, `resolved_by_id`).
 - `comment_search_text`: server-only, `comment_id` primary key with `ON DELETE CASCADE`, and the extracted text.
 - `reactions`: the §4.2 columns (`comment_id` nullable).
-- `sync_groups` on both, with GIN indexes. Rows copy the issue's `sync_groups` at insert (public teams: `workspace`; private teams: the team's group), and are rewritten with the issue's when they change (SPEC-014 has the same rule for Attachments).
+- `sync_groups` on both, with GIN indexes. Rows get `team:<teamId>` at insert, never the issue's `user:` groups (SPEC-011 §5.7), and are rewritten when the issue's team or the team's privacy changes (M3, M7; SPEC-014 has the same rule for Attachments).
 - Foreign keys to `issues`, `comments`, `teams` and `users` (`resolved_by_id` too), all `ON DELETE RESTRICT` (§4.3).
 - Indexes on `comments (issue_id, created_at)`, `comments (parent_comment_id)`, `reactions (comment_id)` and `reactions (issue_id)`.
 - `timestamptz(3)` timestamps.
@@ -287,10 +287,12 @@ One migration adds:
 
 | Model | Load | `teamColumn` | Sync groups | Notes |
 |---|---|---|---|---|
-| Comment | content, parent `Issue` via `issueId` | `teamId` | The issue's, copied at insert | Soft-deleted rows stay (placeholder); hard deletes are `D` deltas. Search text is in a server-only table. |
-| Reaction | content, parent `Issue` via `issueId` | `teamId` | The issue's, copied at insert | |
+| Comment | content, parent `Issue` via `issueId` | `teamId` | `team:<teamId>` only (SPEC-011 §5.7) | Soft-deleted rows stay (placeholder); hard deletes are `D` deltas. Search text is in a server-only table. |
+| Reaction | content, parent `Issue` via `issueId` | `teamId` | `team:<teamId>` only (SPEC-011 §5.7) | |
 
 Hydration, caching, eviction and offline behaviour are SPEC-011 §5.3 and §5.4. An issue's comments and reactions arrive with its description and history, and live deltas apply once the issue is hydrated. Dispatching a comment or reaction mutation for an issue that isn't hydrated starts hydration of that issue first, so the confirmed row never vanishes when its pending entry is dropped (SPEC-011 §5.3). The UI only offers comment boxes on hydrated issues (§3.1), so in practice this covers API-shaped clients and races.
+
+Comment and Reaction deltas reach a connection only through `team:<teamId>`, never through the issue's `user:` groups (SPEC-011 §5.7). Opening an issue subscribes its team when the client doesn't already (SPEC-011 §5.7), so an open issue's comments are always live. The comments of an archived or deleted issue are shown read-only from the server, not from the replica (SPEC-015 §3.4).
 
 API keys with `teamIds` see comments and reactions only of those teams, filtered in SQL by `team_id` in `comment.list`, `CommentRef` and `/sync/content` (permissions §3.5).
 
@@ -333,7 +335,7 @@ Private team comments and reactions are invisible to non-members. A `CommentRef`
 Optimistic code runs in `packages/operations` and never parses or builds documents beyond `EMPTY_DOC` from domain. It uses the SPEC-003 §8 store, with the additions SPEC-011 §12 lists (`find` ordered by id). No operation here touches the issue row: comments and reactions don't move the issue's `updatedAt` (SPEC-011 §4.1), and none predicts an unarchive (D10).
 
 - **Markdown bodies:** the web app always sends JSON. If `body` is a string, `optimistic` does nothing, and the comment appears when the server confirms it.
-- `comment.create` inserts the Comment with `body`, `version` 1, the issue's `teamId` and sync groups (read from the store).
+- `comment.create` inserts the Comment with `body`, `version` 1, and the issue's `teamId` (read from the store); its groups are `team:<teamId>`.
 - `comment.update` patches `body`, `editedAt` and `version` + 1.
 - `comment.delete` reads the replies with `store.find('Comment', {parentCommentId: id})`. With no replies, it removes the comment and its reactions (`store.find('Reaction', {commentId: id})`). With replies, it applies the soft-delete shape (`EMPTY_DOC`, `deletedAt`, `version` + 1) and removes the reactions. If the comment was the last reply of a soft-deleted parent, it removes the parent too.
 - `reaction.set` inserts or removes the Reaction with id `reactionId(subject, user, emoji)`. Its subject is the comment, or the issue when `issue` is given.
@@ -389,7 +391,7 @@ Optimistic code runs in `packages/operations` and never parses or builds documen
 | E7 | Markdown from MCP contains a table, HTML or an external image | Tables and HTML become plain-text paragraphs; the image becomes a link (§4.4). No error. |
 | E8 | A comment's author is deactivated (M7) | The comment stays with their name; users are never purged (permissions §6). |
 | E9 | A body names a file the author can't use (via the API) | `INVALID_INPUT` on `body` with SPEC-014's message, never `NOT_FOUND` on the file, so nothing leaks. |
-| E10 | An issue whose comments are hydrated becomes invisible to the user (a private team change) | Its content goes with the issue (SPEC-002 resync on group change). |
+| E10 | An issue whose comments are hydrated becomes invisible to the user (a private team change) | Its content goes with the issue (SPEC-002 resync on group change). The same holds when the issue leaves the replica for another reason (E27). |
 | E11 | A file is pasted or dropped, or a pasted HTML image is a `data:` or `blob:` URI | Uploaded with `purpose=inline` (SPEC-014 §3), then inserted as an `image` node (raster images) or a `file` chip (anything else). It isn't an Attachment. If the upload fails, nothing is inserted and a toast says why. |
 | E12 | `comment.list` on an issue with 1,000 comments | Paged (SPEC-003 §7.1). The web app reads the replica, not the list. |
 | E13 | Two people delete the last two replies of a soft-deleted comment at once | The thread lock orders them; the second delete sees no replies left and hard-deletes the parent. |
@@ -406,6 +408,7 @@ Optimistic code runs in `packages/operations` and never parses or builds documen
 | E24 | The user presses `Mod+Enter` in a checklist item of a description or comment | It toggles the item. Outside a checklist item it submits or saves (§3.5). |
 | E25 | The user reacts to an issue that is already at 20 distinct emoji | `INVALID_INPUT` with the cap message; the issue's own cap is separate from its comments' (§4.2). |
 | E26 | A comment with a resolved thread is copied as Markdown | Only the comment's body is copied. Resolved state isn't part of it. |
+| E27 | An issue with hydrated comments leaves the replica: reassigned away from a user who holds it only through `user:`, its on-demand team dropped, archived or deleted (SPEC-011 §5.7) | Its comments and reactions go with it, with its hydration mark (SPEC-011 §5.3). Reopening it fetches them again; an archived or deleted issue shows them read-only from the server (SPEC-015 §3.4). |
 
 ## 9. Acceptance criteria
 
@@ -482,6 +485,7 @@ Each has a proposed default. Accepted ones move to the Decisions table with the 
 | D9 | Linear embeds YouTube, Loom and Figma links on paste and unfurls links; not copied, because each makes a request to a third party (rule 5). Pasted URLs stay plain links. | 2026-11-12 |
 | D10 | Copy Linear: an archived issue is read-only. Every comment, reply, resolve and reaction on it is `CONFLICT` ("ENG-42 is archived. Restore it to edit it."); a deleted issue is the same with "was deleted". No comment unarchives an issue, so the extra history entry for it, the optimistic code's predicted unarchive and the extra lock mode that comment writes once had are gone. Replaces the unarchive-on-comment rule. | 2026-11-12 |
 | D11 | Copy Linear: comment drafts are synced `Draft` rows owned by SPEC-012, so an unsent comment follows the user across devices. The draft is one text, with no separate field for sent text: sending discards the draft, and a rejection puts the text back into an empty draft, else offers Copy text (§3.1). | 2026-11-12 |
+| D12 | Partial issue loading (SPEC-011 §5.7, ADR-0020): Comment and Reaction rows are in `team:<teamId>` only, never in the issue's `user:` groups. Opening an issue subscribes its team, so open issues stay live; an issue leaving the replica takes its comments with it (E27). | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 

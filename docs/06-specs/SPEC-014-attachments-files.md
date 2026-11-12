@@ -87,8 +87,8 @@ The SPEC-015 lifecycle rule applies: archived issues are read-only, and so are d
 | creatorId | User | |
 | createdAt, updatedAt | timestamptz | |
 
-- **Sync groups** are the issue's (permissions §2: children inherit). **Invariant:** any operation that changes an issue's sync groups (move-team in M3, a team's privacy change in M7) rewrites its Attachment rows' groups and `teamId` in the same transaction, through the repo. The leak suite covers it when those operations land.
-- Attachments of an archived or deleted issue stay with it.
+- **Sync groups** are `team:<teamId>` only (SPEC-011 §5.7): never the issue's `user:` groups, so an assignee who doesn't subscribe to the team holds the Issue row but not its attachments until they open it (opening subscribes the team). **Invariant:** any operation that changes an issue's team or the team's privacy (move-team in M3, a privacy change in M7) rewrites its Attachment rows' groups and `teamId` in the same transaction, through the repo. The leak suite covers it when those operations land.
+- Attachments of an archived or deleted issue stay with it on the server. The client doesn't hold them (SPEC-011 §5.7): bootstrap leaves them out with their issue, and once a delta batch leaves an Issue absent (archived, deleted, purged, or its team unsubscribed), the client drops that issue's Attachment rows too, as it does content (SPEC-011 §5.3). The read-only page of an archived or deleted issue shows its attachments from `issue.get` (SPEC-015 §3.4).
 - At most 100 attachments per issue (Q7), counted under the issue row lock.
 - Rows are hard-deleted (`D` delta).
 
@@ -109,7 +109,7 @@ The M0 `files` table gains:
 
 A preview's `uploader_id` is its source's uploader (the column is `NOT NULL`, and the system actor has no user id). File rows are never synced (SPEC-001 D12 stands). Clients learn what they need from Attachment rows and from the `src` in documents.
 
-**Visibility of a file.** One rule, used by `GET /files/:id`, `HEAD`, the `If-None-Match` path and the `FileRef` resolver alike. It replaces M0's "the uploader can always read it", which would let an uploader keep reading their file after leaving a private team. For a reader with groups `G` (after API-key `teamIds` narrowing, permissions §3.5) and user id `me`, a file `f` is visible when:
+**Visibility of a file.** One rule, used by `GET /files/:id`, `HEAD`, the `If-None-Match` path and the `FileRef` resolver alike. It replaces M0's "the uploader can always read it", which would let an uploader keep reading their file after leaving a private team. For a reader with groups `G` (after API-key `teamIds` narrowing, permissions §3.5; `G` is every group the actor may see, including every public team's `team:<id>`, not only the teams a socket subscribes to, SPEC-011 §5.7) and user id `me`, a file `f` is visible when:
 
 ```sql
 -- s = the file whose owner decides: f itself, or f's source when f is a preview
@@ -222,7 +222,7 @@ An Admin purges an issue with "Permanently delete…" on its page in "Recently d
 - An Attachment's file is owned by the attachment's issue, with purpose `attachment`. An attachment never points at another issue's file.
 - An owned file's owner never changes.
 - A file row's bytes exist while the row does (§4.5).
-- An Attachment's `teamId` and sync groups equal its issue's.
+- An Attachment's `teamId` equals its issue's, and its sync groups are `team:<teamId>` (SPEC-011 §5.7).
 - A file with `detached_at` set has no Attachment row naming it.
 - INV-21: purge leaves no Attachment, file row or bytes behind that only the purged issue used.
 
@@ -233,7 +233,7 @@ One migration:
 - `files`: the purpose check widened; `issue_id` (FK to `issues`, no cascade: purge deletes file rows explicitly), `detached_at`, `width`, `height`, `preview_of` (FK to `files`, `ON DELETE RESTRICT`, §4.1); `size` to `bigint`; the indexes of §4.2.
 - `blob_release(storage_key text primary key, released_at timestamptz(3) not null default now())`.
 - `attachments` with `team_id`, `sync_groups` and a GIN index, foreign keys to `issues`, `teams` and `users`, `size bigint`, and `timestamptz(3)`.
-- Foreign keys from `users.avatar_file_id` and `workspace.logo_file_id` to `files(id)`, `ON DELETE RESTRICT`. `users` and `workspace` are synced tables, so a `SET NULL` cascade would change synced rows without a `sync_log` row (architecture rule 2). Clean-up skips a row whose delete fails the foreign key (§4.6). The migration first sets any id that names no file row to null, through the repo.
+- Foreign keys from `users.avatar_file_id` and `workspace.logo_file_id` to `files(id)`, `ON DELETE RESTRICT`. `users` and `workspace` are synced tables, so a `SET NULL` cascade would change synced rows without a `sync_log` row (architecture rule 2). Clean-up skips a row whose delete fails the foreign key (§4.6). There are no deployed users or rows yet, so the migration adds these keys with no clean-up step; a dev database whose ids fail them is recreated (D13).
 
 `domain-model §7` names the operation `attachment.uploadFile`; this spec renames it `attachment.createFile` (Q8, §12).
 
@@ -241,7 +241,7 @@ One migration:
 
 | Model | Load | Sync group | Notes |
 |---|---|---|---|
-| Attachment | eager | the issue's (team group, or `workspace` for a public team) | Metadata only (sync-protocol §2). `teamColumn` = `team_id`. |
+| Attachment | eager, with its issue's team (SPEC-011 §5.7) | `team:<teamId>` only, never the issue's `user:` groups | Metadata only (sync-protocol §2). `teamColumn` = `team_id`. Not held for archived, deleted or unheld issues (§4.1). |
 | File | server-only | — | Read through `GET /files/:id`; named by Attachment rows and document `src` |
 
 | Action | Who (on an issue the actor can see) |
@@ -349,7 +349,7 @@ Defined in SPEC-012 (issue page) and SPEC-013 (editor). This spec only requires:
 
 ## 9. Acceptance criteria
 
-> **Held:** tests that need a browser, a running stack or Postgres are not written for now ([plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration)), except private-team leak tests and the sync property suite.
+> **Held:** tests that need a browser, a running stack or Postgres are not written for now ([plans README §6](../07-plans/README.md#6-testing-hold-e2e-smoke-and-integration)), except private-team leak tests, the sync property suite and the Postgres byte-protocol test (Q15, a user-granted exception).
 
 | AC | Criterion | Test |
 |---|---|---|
@@ -366,7 +366,7 @@ Defined in SPEC-012 (issue page) and SPEC-013 (editor). This spec only requires:
 | AC-11 | History records added and removed attachments with their titles, folding creator changes within 3 minutes of creation (SPEC-011 §4.4). | unit |
 | AC-12 | The preview job makes an 800 px WebP without metadata for images up to 25 MP, stores the row with `preview_of` and the source's uploader, sets `previewFileId` through `attachment.setPreview`, does nothing for a gone attachment or on a re-run, and skips larger or broken images without failing. Avatars and previews share one limiter of 2 decodes per process. | unit (with the real sharp, as `files.test.ts`) |
 | AC-13 | Location metadata is stripped from JPEG, PNG and WebP uploads without changing pixel data; JPEG orientation survives. | unit (fixtures with GPS EXIF and XMP; decoded pixels compared) |
-| AC-14 | The byte protocol holds: under any interleaving of upload, copy, preview insert, detach, clean-up, purge, drain and sweep, no `files` row ever names missing bytes, and after a final drain and sweep no bytes remain without a row. | property (fast-check) against a model of the lock and store **plus** a run against real Postgres advisory locks (Q15) |
+| AC-14 | The byte protocol holds: under any interleaving of upload, copy, preview insert, detach, clean-up, purge, drain and sweep, no `files` row ever names missing bytes, and after a final drain and sweep no bytes remain without a row. | property (fast-check) against a model of the lock and store **plus** a run against real Postgres advisory locks (`files-bytes-pg.int.test.ts`, allowed under the hold: Q15) |
 | AC-15 | The clean-up job removes unclaimed files and detached files after 24 h, unreferenced avatars and logos after 24 h, and drains `blob_release`. Two runs at once don't fail or double-delete. Previews are deleted explicitly before their source, with their keys in `blob_release`; an avatar or logo delete that fails the foreign key is skipped (E21, E22). | unit (fake clock and store) |
 | AC-16 | Uploads are refused with `507` below the free-space floor, and with `429` beyond the per-user unclaimed caps or rate. | unit (fake disk-space probe, fake store) |
 | AC-17 | Each mutation's `optimistic` produces the Attachment the server commits, apart from server fields (`createdAt`, `updatedAt`, `previewFileId`), and refuses an archived or deleted issue like the server does. | unit |
@@ -400,7 +400,6 @@ Each open question has a proposed default.
 | Q9 | Uploads with an API key or through MCP? | M6. The upload route takes sessions only in M1. MCP clients can add links. |
 | Q10 | A single `issue_id` owner on files, or a general owner? | `issue_id` in M1. M3–M5 replace it with `owner_type` and `owner_id` when projects and documents get files. |
 | Q14 | Fixed per-user caps (1 GB, 100 unclaimed files) and a 1 GB free-space floor, or settings? | Fixed constants in M1. Configurable quotas come with FR-OPS-08 (M7) and then follow architecture rule 7. |
-| Q15 | The byte protocol's interleaving test needs real Postgres advisory locks (AC-14). That is an integration test, which the testing hold stops. | Allow it as an exception, like leak tests: a lost-bytes bug is silent data loss that a fake lock can't show. Until the user agrees, only the fast-check model runs, and the Postgres half is ⏸. |
 | Q16 | Strip only location, or all camera metadata, from uploaded images? | Only location (GPS in EXIF, and XMP, which can hold it). Orientation and colour profiles stay, so photos display correctly. An "as uploaded" workspace setting can come later. |
 
 **Decisions**
@@ -419,6 +418,9 @@ Each open question has a proposed default.
 | D10 | Linear embeds YouTube, Loom and Figma links, loads external images and unfurls links; not copied, because architecture rule 5 forbids outbound calls. A link shows the title the person typed (or the URL), and images only come from `/files/<id>`. | 2026-11-12 |
 | D11 | Copy Linear: archived issues are read-only. Attachment changes on an archived or deleted issue are `CONFLICT`; nothing unarchives as a side effect, and Restore is the only way back (SPEC-015). Replaces "any edit unarchives" and the optimistic unarchive prediction. | 2026-11-12 |
 | D12 | Copy Linear: "Trash" is called "Recently deleted issues", and purging is "Permanently delete…" with a confirm dialog (SPEC-015). | 2026-11-12 |
+| Q15 | The Postgres half of the byte-protocol test (`files-bytes-pg.int.test.ts`, AC-14) is allowed under the testing hold, as an exception the user granted at the M1 gate: a lost-bytes bug is silent data loss that a fake lock can't show. | 2026-11-12 |
+| D13 | There are no existing users or rows, so the migration adds the `users.avatar_file_id` and `workspace.logo_file_id` foreign keys with no clean-up step (§4.10). The earlier step that nulled ids naming no file "through the repo" is dropped: a migration can't call the repo. Dev databases that fail the keys are recreated. User decision. | 2026-11-12 |
+| D14 | Partial issue loading (SPEC-011 §5.7, ADR-0020): Attachment rows are in `team:<teamId>` only, and the client holds none for an archived, deleted or unheld issue (§4.1, §5). File visibility checks every group the actor may see, not a socket's subscriptions (§4.2). | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 
