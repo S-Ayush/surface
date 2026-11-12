@@ -1,6 +1,8 @@
 // The offline app cache's rules (ADR-0019): which requests the service worker answers, and how.
 // Pure functions over a CacheStorage-like store and a fetch, so they are tested in Node; `sw.ts`
-// wires them to the worker's events. No imports: the worker is bundled from this file alone.
+// wires them to the worker's events. Its one import, the server's paths, has no imports itself, so
+// the worker bundle stays small.
+import { isServerPath } from '@surface/sync-protocol/server-paths';
 
 /** One build of the web app: its id, and the page and files the worker keeps (`vite-app-cache.ts`). */
 export type AppBuild = { readonly id: string; readonly files: readonly string[] };
@@ -30,29 +32,9 @@ const PAGE = '/index.html';
 
 export const cacheName = (buildId: string): string => `${CACHE_PREFIX}${buildId}`;
 
-/**
- * The server's own paths, matched as it matches them: a copy of `SERVER_PREFIXES` in
- * apps/server/src/http/static.ts, which the web app can't import (session A's handoff moves the
- * list where both can). A prefix ending in `/` is a whole segment (`/api` and `/api/…`); the
- * others are plain prefixes, so `/mcpx` is the server's too.
- */
-const SERVER_PREFIXES = [
-  '/api/',
-  '/sync/',
-  '/auth/',
-  '/files/',
-  '/mcp',
-  '/healthz',
-  '/readyz',
-  '/metrics',
-];
-
 /** Paths the worker never answers: the server's, and `/setup`, which the server redirects to. */
 function notTheApp(path: string): boolean {
-  if (path === '/setup' || path.startsWith('/setup/')) return true;
-  return SERVER_PREFIXES.some(
-    (prefix) => path === prefix.replace(/\/$/, '') || path.startsWith(prefix),
-  );
+  return path === '/setup' || path.startsWith('/setup/') || isServerPath(path);
 }
 
 /** `asset`: a file of a build; `page`: a page load of the app; undefined: left to the network. */

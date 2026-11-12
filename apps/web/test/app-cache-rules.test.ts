@@ -1,6 +1,7 @@
 // ADR-0019: what the service worker handles and how it answers. The worker itself only wires these
 // rules to its events; installing and answering offline in a browser are checked by hand (e2e
 // held, plans README §6).
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PAGE_TIMEOUT_MS,
@@ -20,6 +21,23 @@ const get = (path: string, mode: RequestMode = 'no-cors') => ({
   method: 'GET',
   url: `${ORIGIN}${path}`,
   mode,
+});
+
+describe('what the worker bundles', () => {
+  // `vite-app-cache.ts` bundles `sw.ts` on its own. Importing the package root (or anything else)
+  // would pull Zod and the schemas into `sw.js`, with every other test still green.
+  it('imports only the server’s paths, which import nothing themselves', () => {
+    const imported = ['../src/offline/sw.ts', '../src/offline/app-cache.ts'].flatMap((file) =>
+      [
+        ...readFileSync(new URL(file, import.meta.url), 'utf8').matchAll(
+          /^import (?!type )[^;]*?from '([^']+)'|import\(\s*'([^']+)'/gm,
+        ),
+      ].map((match) => match[1] ?? match[2]),
+    );
+    expect(new Set(imported)).toEqual(
+      new Set(['./app-cache.js', '@surface/sync-protocol/server-paths']),
+    );
+  });
 });
 
 describe('what the worker answers', () => {
@@ -55,7 +73,7 @@ describe('what the worker answers', () => {
     }
   });
 
-  it('draws the line where the server does (SERVER_PREFIXES in apps/server/src/http/static.ts)', () => {
+  it('draws the line where the server does (@surface/sync-protocol/server-paths)', () => {
     // `/api/`, `/sync/`, `/auth/` and `/files/` are whole segments; the server's other paths are
     // plain prefixes, so it answers `/mcpx` and `/metricsfoo` itself (a JSON 404).
     expect(route(get('/apikeys', 'navigate'), ORIGIN)).toBe('page');

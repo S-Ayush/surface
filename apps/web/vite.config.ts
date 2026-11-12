@@ -3,7 +3,7 @@ import { defaultClientConditions, defineConfig } from 'vite';
 import { appCache } from './vite-app-cache.js';
 
 // Development only (`pnpm dev`, scripts/dev.mjs): the browser talks to Vite, which
-// forwards server routes (SERVER_PREFIXES in apps/server/src/http/static.ts) to the
+// forwards server routes (SERVER_PREFIXES in @surface/sync-protocol/server-paths) to the
 // server. The Host header is kept, so the server sees the SURFACE_URL origin.
 const toServer = { target: process.env.SURFACE_DEV_SERVER_URL ?? 'http://localhost:3000' };
 

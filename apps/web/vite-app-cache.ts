@@ -29,12 +29,15 @@ export function appBuild(fileNames: readonly string[], indexHtml: string): AppBu
 export function appCache(): Plugin {
   let root = '';
   let outDir = '';
+  let conditions: string[] = [];
   return {
     name: 'surface-app-cache',
     apply: 'build',
     configResolved(config) {
       root = config.root;
       outDir = path.resolve(config.root, config.build.outDir);
+      // The app's conditions (`@surface/source`), so the worker bundles the same package source.
+      conditions = [...config.resolve.conditions];
     },
     async closeBundle() {
       const files = readdirSync(outDir, { recursive: true, withFileTypes: true })
@@ -48,6 +51,7 @@ export function appCache(): Plugin {
         root,
         logLevel: 'warn',
         define: { __SURFACE_APP_BUILD__: JSON.stringify(app) },
+        resolve: { conditions },
         build: {
           outDir,
           emptyOutDir: false,
