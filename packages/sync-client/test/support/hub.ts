@@ -100,6 +100,12 @@ export class FakeHub {
   csrfRefusals = 0;
   /** What `GET /auth/session` answers: `401` when the session is gone. */
   sessionStatus = 200;
+  /**
+   * No session for this browser's cookie, or one of another user (SPEC-002 E14):
+   * mutate answers `401`, and a new socket opens and is closed with `4001` before
+   * any message, as the real hub accepts the upgrade first (sync-protocol §4.3).
+   */
+  signedOut = false;
   /** Refuse every mutate request with `403 FORBIDDEN` (not a CSRF refusal). */
   forbidMutate = false;
   /** The `userId` each request named, in order (SPEC-002 E14). */
@@ -156,6 +162,7 @@ export class FakeHub {
     }
     const headers = new Headers(init.headers);
     this.mutateHeaders.push(headers);
+    if (this.signedOut) return Promise.resolve(errorResponse(401, 'UNAUTHENTICATED'));
     if (this.csrfToken !== undefined && headers.get(CSRF_HEADER) !== this.csrfToken) {
       this.csrfRefusals += 1;
       return Promise.resolve(errorResponse(403, CSRF_INVALID));
@@ -406,6 +413,11 @@ export class HubConnection {
   open(): void {
     if (this.closedWith !== undefined) return;
     this.isOpen = true;
+    if (this.hub.signedOut) {
+      this.handlers.onOpen();
+      this.close(CloseCode.SessionRevoked);
+      return;
+    }
     this.handlers.onOpen();
     if (this.schemaHash !== this.hub.schemaHash) this.send({ t: 'resync', reason: 'schema' });
     else if (this.since < this.hub.retainedFrom) this.send({ t: 'resync', reason: 'too_old' });

@@ -536,6 +536,7 @@ export class SyncStore {
         }
       },
       onOutdated: () => this.#outdated(),
+      onUnauthenticated: () => this.#redial(),
       onFenced: () => this.#queueLost(persistence),
       onConfirmed: ({ op, seq, sentAt }) => {
         const ms = Math.max(0, (this.#options.clock ?? Date.now)() - sentAt);

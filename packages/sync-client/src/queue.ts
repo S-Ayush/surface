@@ -16,7 +16,11 @@
  *   same batch with backoff. A `429` or `503` with `Retry-After` (a rate
  *   limit, or a server still starting, SPEC-003 §9) resends after that many
  *   seconds instead, within the backoff's bounds (SPEC-002 Q12). `CLIENT_OUTDATED`
- *   stops the queue until reload.
+ *   stops the queue until reload. A `401` (no session, or another user's,
+ *   SPEC-002 E14) parks it with every mutation kept: the store redials, and
+ *   the queue resends after a backoff once the socket opens again. A `4001`
+ *   there leaves the socket down for good, so the queue stays offline until
+ *   its user signs in again (a new store adopts it).
  *   `SEQ_GAP` means the server has lost seqs this client already removed
  *   (e.g. a database restore): the unsent mutations are renumbered from
  *   `lastSeq + 1` and sent again.
@@ -110,6 +114,11 @@ export interface QueueOptions {
   readonly onRebuild: () => void;
   readonly onRejected: (rejection: Rejection) => void;
   readonly onOutdated: () => void;
+  /**
+   * `401`: no session, or another user's (SPEC-002 E14). The queue has parked;
+   * the store redials, so the socket finds out which (`4001`, or open again).
+   */
+  readonly onUnauthenticated: () => void;
   /** Another tab owns this queue now; this tab must stop. */
   readonly onFenced: () => void;
   /** The CSRF token to send, read at each request (SPEC-001 §6.1). */
@@ -155,10 +164,12 @@ export class MutationQueue {
   #nextSeq: number;
   #writes: Promise<unknown> = Promise.resolve();
   #online = false;
+  /** Refused with `401`: send nothing until the connection opens again (SPEC-002 E14). */
+  #parked = false;
   #stopped = false;
   #inFlight: AbortController | undefined;
   #retry: unknown;
-  /** The server's `Retry-After` for the next resend, in ms; it replaces the backoff once. */
+  /** Failed sends since the last answer: picks the next backoff (`backoffDelay`). */
   #attempt = 0;
   /** At most this many mutations per batch; lowered when the server refuses a batch (413, 400). */
   #batchLimit = MAX_MUTATIONS_PER_BATCH;
@@ -260,12 +271,21 @@ export class MutationQueue {
    * The live connection is up (send now) or down (hold). Going down abandons
    * the request in flight: after a sleep or a network change it may hang for
    * minutes, and its resend is deduped. Coming back sends at once, without
-   * waiting out a retry delay (SPEC-002 §3.6, review M3).
+   * waiting out a retry delay (SPEC-002 §3.6, review M3), except after a `401`:
+   * then it resends after the next backoff (SPEC-002 E14).
    */
   setOnline(online: boolean): void {
     this.#online = online;
     if (!online) {
       this.#inFlight?.abort('offline');
+      return;
+    }
+    if (this.#parked) {
+      // The session answered the socket, but the last send was refused: resend after a
+      // growing backoff, so a server (or proxy) that disagrees with itself can't make a
+      // tight loop of 401s and redials.
+      this.#parked = false;
+      this.#retryLater();
       return;
     }
     this.#options.timers.clearTimeout(this.#retry);
@@ -373,7 +393,15 @@ export class MutationQueue {
 
   /** Send the next batch, if there is one and nothing is in flight. */
   #flush(): void {
-    if (this.#stopped || !this.#online || this.#inFlight || this.#retry !== undefined) return;
+    if (
+      this.#stopped ||
+      this.#parked ||
+      !this.#online ||
+      this.#inFlight ||
+      this.#retry !== undefined
+    ) {
+      return;
+    }
     const batch = this.#nextBatch();
     if (batch.length === 0) return;
     const controller = new AbortController();
@@ -535,6 +563,13 @@ export class MutationQueue {
         code: 'PAYLOAD_TOO_LARGE',
         message: 'This change is too large to save. Split it into smaller changes.',
       });
+    }
+    if (response.status === 401) {
+      // Never resent under this cookie: it may be another user's, and the mutations are
+      // this queue's user's. They stay queued until that user's session answers again.
+      this.#parked = true;
+      this.#options.onUnauthenticated();
+      return 'stop';
     }
     const retryAfterMs = retryAfter(response);
     if (retryAfterMs !== undefined) {

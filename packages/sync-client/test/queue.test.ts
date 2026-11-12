@@ -6,7 +6,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MAX_MUTATION_BATCH_BYTES, MUTATE_PATH } from '@surface/sync-protocol';
 import type { SocketFactory } from '../src/socket.js';
-import { InvalidInputError, REQUEST_TIMEOUT_MS } from '../src/queue.js';
+import { claimQueue } from '../src/owner.js';
+import { Persistence } from '../src/persistence.js';
+import { InvalidInputError, MutationQueue, REQUEST_TIMEOUT_MS } from '../src/queue.js';
 import { MemoryStorage } from '../src/storage/memory.js';
 import type { QueueWrite } from '../src/storage/types.js';
 import { FakeHub } from './support/hub.js';
@@ -20,8 +22,10 @@ import {
   serverItems,
   until,
 } from './support/live.js';
-import { DebugItem, id } from './support/models.js';
-import { debugCreate, debugHide, debugRename, debugTouch } from './support/ops.js';
+import { DebugItem, TEST_MODELS, USER_ID, id } from './support/models.js';
+import { FIXTURE_OPS, debugCreate, debugHide, debugRename, debugTouch } from './support/ops.js';
+import { TEST_SCHEMA_HASH } from './support/server.js';
+import { ManualTimers } from './support/timers.js';
 
 function seededHub(): FakeHub {
   const hub = new FakeHub();
@@ -277,7 +281,7 @@ function refusing(hub: FakeHub) {
       'content-type': next.html ? 'text/html' : 'application/json',
     });
     if (next.retryAfter !== undefined) headers.set('retry-after', next.retryAfter);
-    const code = next.status === 429 ? 'RATE_LIMITED' : 'UNAVAILABLE';
+    const code = { 401: 'UNAUTHENTICATED', 429: 'RATE_LIMITED' }[next.status] ?? 'UNAVAILABLE';
     const body = next.html
       ? '<html><body>Service unavailable</body></html>'
       : JSON.stringify({ ok: false, error: { code, message: 'Not now.', correlationId: 'c-1' } });
@@ -749,5 +753,143 @@ describe('dispatch', () => {
   it('refuses to dispatch before the store has started', () => {
     const { store } = liveStore(seededHub());
     expect(() => store.dispatch(debugTouch, { id: id(1) })).toThrow(/Wait for the workspace/);
+  });
+});
+
+// SPEC-002 E14: a 401 means this browser's session is gone or is another user's.
+// The queue keeps its mutations for its own user and lets the socket find out.
+describe("a session that is gone or another user's (E14)", () => {
+  it('stops sending at a 401, keeps every mutation, and stays down once the socket gets 4001', async () => {
+    const hub = seededHub();
+    const onSessionRevoked = vi.fn();
+    const { store, timers } = liveStore(hub, { onSessionRevoked });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.signedOut = true;
+    const first = store.dispatch(debugTouch, { id: id(1) });
+    await until(() => store.connection === 'revoked');
+    expect(onSessionRevoked).toHaveBeenCalledOnce();
+    const second = store.dispatch(debugTouch, { id: id(2) });
+    timers.advance(60_000); // a resend would be due in here
+    await idle();
+    expect(hub.mutateHeaders).toHaveLength(1);
+    expect(hub.executed()).toBe(0);
+    expect(store.pending.map((p) => p.seq)).toEqual([1, 2]);
+    let settled = false;
+    void Promise.race([first, second]).then(() => (settled = true));
+    await idle();
+    expect(settled).toBe(false);
+    await store.close();
+  });
+
+  it('redials at a 401, and resends after the shortest backoff when the session is fine', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 401 });
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => hub.connections.length === 2 && store.connection === 'online');
+    await eventually(() => timers.pending.includes(500));
+    expect(hub.executed()).toBe(0);
+    expect(timers.runNext()).toBe(500);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  it('backs off further while the reopened connection is refused again', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 401 }, { status: 401 });
+    const { store, timers } = liveStore(hub, { fetch: server.fetch });
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(1) });
+    for (const [connections, delay] of [
+      [2, 500],
+      [3, 1000],
+    ] as const) {
+      await eventually(() => hub.connections.length === connections);
+      await eventually(() => timers.pending.includes(delay));
+      expect(timers.runNext()).toBe(delay);
+    }
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    await store.close();
+  });
+
+  // The store takes a parked queue offline at once (it redials); the queue holds by
+  // itself too, so a store that kept it online could never resend under that cookie.
+  it('sends nothing more after a 401 until it is told the connection opened again', async () => {
+    const hub = seededHub();
+    const server = refusing(hub);
+    server.script.push({ status: 401 });
+    let posts = 0;
+    const fetch = (url: string, init: RequestInit) => {
+      if (url.endsWith(MUTATE_PATH)) posts += 1;
+      return server.fetch(url, init);
+    };
+    const timers = new ManualTimers();
+    const persistence = new Persistence(
+      new MemoryStorage(TEST_MODELS.map((m) => m.name)),
+      undefined,
+    );
+    const ownership = await claimQueue({
+      persistence,
+      replica: 'parked',
+      locks: undefined,
+      fresh: CLIENT_ID,
+      owner: 'tab-1',
+      clock: () => 0,
+      timers,
+      onLost: () => undefined,
+      isIdle: () => true,
+      onAdopt: () => false,
+    });
+    let unauthenticated = 0;
+    const queue = new MutationQueue(ownership, persistence, {
+      fetch,
+      baseUrl: 'http://surface.test',
+      userId: USER_ID,
+      schemaHash: TEST_SCHEMA_HASH,
+      registry: FIXTURE_OPS,
+      timers,
+      random: () => 0,
+      clock: () => 0,
+      replicaAt: () => undefined,
+      onPush: () => undefined,
+      onRebuild: () => undefined,
+      onRejected: () => undefined,
+      onOutdated: () => undefined,
+      onUnauthenticated: () => (unauthenticated += 1),
+      onFenced: () => undefined,
+      csrfToken: () => undefined,
+    });
+    queue.setOnline(true);
+    void queue.dispatch(debugTouch, { id: id(1) });
+    await eventually(() => unauthenticated === 1);
+    void queue.dispatch(debugTouch, { id: id(2) });
+    timers.advance(60_000);
+    await idle();
+    expect(posts).toBe(1);
+    queue.setOnline(true); // the socket opened again
+    await eventually(() => timers.pending.includes(500));
+    timers.runNext();
+    await eventually(() => posts === 2);
+    await queue.stop();
+  });
+
+  it('sends nothing while the socket is closed with 4001, and keeps the queue (E10)', async () => {
+    const hub = seededHub();
+    const { store, timers } = liveStore(hub);
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.last.revoke();
+    void store.dispatch(debugTouch, { id: id(1) });
+    timers.advance(60_000);
+    await idle();
+    expect(hub.mutateHeaders).toHaveLength(0);
+    expect(store.pending.map((p) => p.seq)).toEqual([1]);
+    await store.close();
   });
 });
