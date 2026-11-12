@@ -55,4 +55,6 @@ O = Opus, S = Sonnet. The coordinator may move a slice to another track or model
 | 2026-11-12 | C | PLAN-012 S1 | p012-s1-shortcuts | S | started | |
 | 2026-11-12 | C | PLAN-012 S1 | main | S | merged | `dc39e53`. Review: 0 blockers, 1 major (an unfalsifiable property test), 5 minor, 2 nits; all fixed, mutation-checked. `BUILD_MILESTONE` stays M0 until S7 raises it. For PLAN-010 S2/S3: settings-row keys go through the engine (`settings-row` scope) with `settings-row-keys.test.tsx`; for S4: the Esc step via `useCommand('ui:escape', …, { level: 'page', when })`; for S6: fill `PROPERTY_COMMANDS` (section and refs required). |
 | 2026-11-12 | C | PLAN-012 S2 | p012-s2-ui | S | started | |
+| 2026-11-12 | A | PLAN-010 S1 | main | O | merged | `bb0128d`. Review: 0 blockers, 0 majors, 3 minor (fractional-key reserved-integer edge, boundary coverage), 2 nits; fixed. Migration `0010_workflow_labels_estimates` with a hand-appended `COLLATE "C"` line (Drizzle can't declare it): anyone regenerating on top keeps it. For PLAN-011 S3: jitter digits `0-9A-Za-z`, never ending in `0`; for S4 `mergeLabels`: use `applyLabelAdd`. |
+| 2026-11-12 | A | PLAN-011 S1 | p011-s1-foundations | O | started | |
 | 2026-11-12 | D | PLAN-014 S1 | p014-s1-files-schema | O | started | migration |
