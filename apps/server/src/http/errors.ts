@@ -6,7 +6,8 @@ import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from
 
 /**
  * Codes the HTTP layer answers before an operation runs, with their statuses (SPEC-003 §9): the
- * CSRF check (SPEC-001 Q7), the setup guard (Q5) and startup. The executor's own codes are
+ * CSRF check (SPEC-001 Q7), the setup guard (Q5), startup, and the upload route's disk floor
+ * (SPEC-014 §4.6). The executor's own codes are
  * `ERROR_CODES`; the OpenAPI `Error` response lists both.
  */
 export const ROUTE_ERROR_STATUS = {
@@ -15,6 +16,7 @@ export const ROUTE_ERROR_STATUS = {
   CSRF_INVALID: 403,
   SETUP_REQUIRED: 503,
   UNAVAILABLE: 503,
+  INSUFFICIENT_STORAGE: 507,
 } as const;
 
 export interface ErrorBody {

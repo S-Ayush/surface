@@ -82,7 +82,8 @@ export class UploadAbandoned extends Error {}
 
 /** The part of sharp this file uses; tests pass a fake. */
 export type SharpFactory = ((
-  input: Buffer,
+  /** The bytes, or a file's path (an attachment's header is read from disk, SPEC-014 §4.8). */
+  input: Buffer | string,
   options: { limitInputPixels: number | false; failOn: 'error' },
 ) => {
   rotate(): ReturnType<SharpFactory>;
@@ -184,5 +185,49 @@ export function imageProcessor(log: Pick<FastifyBaseLogger, 'error'>, load: Load
       }
     });
     return { bytes: output, mimeType: 'image/webp' };
+  };
+}
+
+export interface ImageDimensions {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Reads an uploaded image's width and height from its header on disk, decoding no pixels (SPEC-014
+ * §4.8: a JPEG's size can sit beyond its first 64 KB, so it is read once the body is written).
+ * Undefined when the header can't be read. If sharp can't load, every answer is undefined and the
+ * error is logged once (E10): uploads still work, without dimensions.
+ */
+export function dimensionReader(
+  log: Pick<FastifyBaseLogger, 'error'>,
+  load: LoadSharp = loadSharp,
+): (path: string) => Promise<ImageDimensions | undefined> {
+  let sharp: Promise<SharpFactory | undefined> | undefined;
+  const loaded = () =>
+    (sharp ??= load()
+      .then((factory) => {
+        factory.cache(false);
+        factory.concurrency(1);
+        return factory;
+      })
+      .catch((error: unknown) => {
+        log.error({ err: error }, 'sharp could not load; image dimensions are left empty');
+        return undefined;
+      }));
+  return async (path) => {
+    const factory = await loaded();
+    if (factory === undefined) return undefined;
+    try {
+      const { width, height } = await factory(path, {
+        limitInputPixels: false,
+        failOn: 'error',
+      }).metadata();
+      return width !== undefined && height !== undefined && width > 0 && height > 0
+        ? { width, height }
+        : undefined;
+    } catch {
+      return undefined;
+    }
   };
 }

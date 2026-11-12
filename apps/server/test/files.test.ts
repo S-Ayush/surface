@@ -4,6 +4,7 @@
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { userActor } from '@surface/domain';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import sharp from 'sharp';
@@ -58,6 +59,12 @@ class FakeFiles implements FileStore {
       row && (row.uploaderId === reader.userId || this.inUse.has(fileId)) ? row : undefined,
     );
   }
+  unclaimedUsage() {
+    return Promise.resolve({ files: 0, bytes: 0 });
+  }
+  reserveUpload() {
+    return Promise.resolve(true);
+  }
 }
 
 let png: Buffer;
@@ -98,6 +105,7 @@ function setup(
     blobs,
     log: { error: (_obj: object, message: string) => void errors.push(message) } as never,
     uploadMaxMb: options.uploadMaxMb ?? 25,
+    diskSpace: () => Promise.resolve(100 * 1024 ** 3),
     store: files,
     ...(options.sharpFails ? { loadSharp: () => Promise.reject(new Error('no binary')) } : {}),
   });
@@ -197,15 +205,13 @@ describe('POST /files/upload (ADR-0014; SPEC-001 §3.5)', () => {
     });
   });
 
-  it('refuses the issue-file purposes until their route exists, and previews always, storing nothing', async () => {
-    // A preview is only ever made by the server (SPEC-014 §4.4); attachments and inline files
-    // get their own streaming route with its caps in PLAN-014 S2.
+  it('never takes a preview, storing nothing', async () => {
+    // A preview is only ever made by the server (SPEC-014 §4.4). Attachments and inline files
+    // have their own streaming upload (`files-upload.test.ts`).
     const { upload, files } = setup();
-    for (const purpose of ['preview', 'attachment', 'inline']) {
-      const response = await upload(png, purpose);
-      expect({ purpose, status: response.statusCode }).toEqual({ purpose, status: 400 });
-      expect(response.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } });
-    }
+    const response = await upload(png, 'preview');
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } });
     expect(files.rows).toEqual([]);
   });
 
@@ -348,7 +354,7 @@ describe('image memory (SPEC-004 E10)', () => {
     const started: string[] = [];
     const gates: (() => void)[] = [];
     const calls = { cache: [] as unknown[], concurrency: [] as unknown[] };
-    const pipelineFor = (input: Buffer): ReturnType<SharpFactory> => {
+    const pipelineFor = (input: Buffer | string): ReturnType<SharpFactory> => {
       const pipeline: ReturnType<SharpFactory> = {
         rotate: () => pipeline,
         resize: () => pipeline,
@@ -365,7 +371,7 @@ describe('image memory (SPEC-004 E10)', () => {
       };
       return pipeline;
     };
-    const factory: SharpFactory = Object.assign((input: Buffer) => pipelineFor(input), {
+    const factory: SharpFactory = Object.assign((input: Buffer | string) => pipelineFor(input), {
       cache: (value: boolean) => {
         if (options.settingsThrow) throw new Error('no cache control');
         calls.cache.push(value);
@@ -517,5 +523,77 @@ describe('the local BlobStore (ADR-0014)', () => {
     expect(isBlobKey('../../etc/passwd')).toBe(false);
     expect(isBlobKey(`sha256/aa/aa/${hash}/../x`)).toBe(false);
     await expect(blobs.get('../../etc/passwd')).rejects.toThrow('Not a blob key.');
+  });
+
+  it('streams into a temporary file, then commits it under its hash (SPEC-014 §4.5)', async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'surface-blobs-'));
+    const blobs = localBlobStore(root);
+    const temp = await blobs.putStream(Readable.from([png.subarray(0, 10), png.subarray(10)]));
+    expect(temp).toEqual({
+      tempPath: expect.stringMatching(/\/tmp\/[0-9a-f-]{36}\.tmp$/) as unknown,
+      sha256: blobKey(png).split('/')[3],
+      key: blobKey(png),
+      size: png.length,
+    });
+    expect(await readdir(path.join(root, 'tmp'))).toHaveLength(1);
+    await blobs.commit(temp.tempPath, temp.key);
+    // A second commit of the same bytes renames over the key (no "already there" shortcut).
+    const again = await blobs.putStream(Readable.from([png]));
+    await blobs.commit(again.tempPath, again.key);
+    expect(await readdir(path.join(root, 'tmp'))).toEqual([]);
+    const read = await blobs.getStream(temp.key);
+    expect(read?.size).toBe(png.length);
+    const chunks: Buffer[] = [];
+    for await (const chunk of read?.stream ?? []) chunks.push(chunk as Buffer);
+    expect(Buffer.concat(chunks)).toEqual(png);
+    expect(await blobs.getStream(blobKey(Buffer.from('none')))).toBeUndefined();
+  });
+
+  it('hashes the patched bytes, and removes the temporary file when the source fails', async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'surface-blobs-'));
+    const blobs = localBlobStore(root);
+    const patched = await blobs.putStream(Readable.from([Buffer.from('hello world')]), () => ({
+      offset: 0,
+      bytes: Buffer.from('J'),
+    }));
+    expect(patched.key).toBe(blobKey(Buffer.from('Jello world')));
+    await blobs.discard(patched.tempPath);
+    await expect(
+      blobs.putStream(
+        (async function* () {
+          yield Buffer.from('half');
+          await Promise.resolve();
+          throw new Error('client went away');
+        })(),
+      ),
+    ).rejects.toThrow('client went away');
+    expect(await readdir(path.join(root, 'tmp'))).toEqual([]);
+  });
+
+  it('commits again without error when a retried transaction repeats the rename (review m2)', async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'surface-blobs-'));
+    for (const blobs of [localBlobStore(root), memoryBlobStore()]) {
+      const temp = await blobs.putStream(Readable.from([png]));
+      await blobs.commit(temp.tempPath, temp.key);
+      // The insert after the rename failed with 40001 and the transaction runs again.
+      await blobs.commit(temp.tempPath, temp.key);
+      expect(await blobs.get(temp.key)).toEqual(png);
+      // Without the blob under the key, a missing temporary file is still an error.
+      const lost = await blobs.putStream(Readable.from([Buffer.from('lost')]));
+      await blobs.discard(lost.tempPath);
+      await expect(blobs.commit(lost.tempPath, lost.key)).rejects.toThrow();
+    }
+  });
+
+  it('commits and discards only the temporary files it made', async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'surface-blobs-'));
+    const blobs = localBlobStore(root);
+    const key = blobKey(png);
+    await expect(blobs.commit(path.join(root, '..', 'etc-passwd.tmp'), key)).rejects.toThrow(
+      'Not a temporary upload.',
+    );
+    await expect(blobs.discard(path.join(root, 'tmp', '..', 'x.tmp'))).rejects.toThrow(
+      'Not a temporary upload.',
+    );
   });
 });

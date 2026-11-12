@@ -113,7 +113,7 @@ export function toOpenApi(
         Error: {
           // Every code an operation route can answer, the routes' own included (SPEC-003 §9).
           description:
-            'INVALID_INPUT 400, INVALID_REQUEST 400 (malformed JSON; 413 or 415 for a body too large or not JSON), UNAUTHENTICATED 401, FORBIDDEN 403, CSRF_INVALID 403 (a signed-in browser request without its CSRF token: refresh it and resend once), UNKNOWN_OPERATION 404, NOT_FOUND 404, CONFLICT 409, CLIENT_OUTDATED 426, RATE_LIMITED 429 (with Retry-After), INTERNAL 500, SETUP_REQUIRED 503 (the workspace is not set up yet), UNAVAILABLE 503 (the server is starting; with Retry-After)',
+            'INVALID_INPUT 400, INVALID_REQUEST 400 (malformed JSON; 413 or 415 for a body too large or not JSON), UNAUTHENTICATED 401, FORBIDDEN 403, CSRF_INVALID 403 (a signed-in browser request without its CSRF token: refresh it and resend once), UNKNOWN_OPERATION 404, NOT_FOUND 404, CONFLICT 409, CLIENT_OUTDATED 426, RATE_LIMITED 429 (with Retry-After), INTERNAL 500, SETUP_REQUIRED 503 (the workspace is not set up yet), UNAVAILABLE 503 (the server is starting; with Retry-After), INSUFFICIENT_STORAGE 507 (an upload would leave the server almost out of disk space)',
           content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
         },
       },

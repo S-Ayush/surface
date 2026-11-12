@@ -11,8 +11,10 @@ import type { Actor } from '@surface/domain';
 import { sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { LOCK_CLASSES } from '../db/locks.js';
 import type { Queryable } from '../db/pool.js';
 import { files, type FilePurpose } from '../db/schema/index.js';
+import { overCaps, type UnclaimedUsage } from './limits.js';
 
 export interface NewFile {
   readonly id: string;
@@ -39,6 +41,8 @@ export interface VisibleFile {
   readonly storageKey: string;
   readonly mimeType: string;
   readonly size: number;
+  /** The cleaned upload name (SPEC-014 §4.8), for the download's `Content-Disposition`. */
+  readonly name: string;
 }
 
 /**
@@ -76,7 +80,7 @@ export function fileReaderOf(
  */
 export function visibleFileQuery(fileId: string, reader: FileReader): SQL {
   return sql`SELECT f.id, f.purpose, f.uploader_id AS "uploaderId", f.storage_key AS "storageKey",
-                    f.mime_type AS "mimeType", f.size
+                    f.mime_type AS "mimeType", f.size, f.name
                FROM files f
                JOIN files s ON s.id = coalesce(f.preview_of, f.id)
               WHERE f.id = ${fileId}
@@ -117,6 +121,7 @@ interface VisibleRow {
   mimeType: string;
   /** `bigint`: node-postgres reads it as a string. */
   size: string | number;
+  name: string;
 }
 
 /** The file if `reader` may see it, else undefined (shown as not found, permissions §5). */
@@ -136,7 +141,51 @@ export async function visibleFile(
     storageKey: row.storageKey,
     mimeType: row.mimeType,
     size: Number(row.size),
+    name: row.name,
   };
+}
+
+/**
+ * The SPEC-014 §4.6 per-user caps: how many `attachment` and `inline` uploads of `userId` are
+ * unclaimed, and their bytes. Served by `files_unclaimed_uploader_idx`.
+ */
+export function unclaimedUsageQuery(userId: string): SQL {
+  return sql`SELECT count(*) AS files, coalesce(sum(size), 0) AS bytes
+               FROM files
+              WHERE uploader_id = ${userId}
+                AND issue_id IS NULL
+                AND purpose IN ('attachment', 'inline')`;
+}
+
+export async function unclaimedUsage(
+  db: Pick<Queryable, 'query'>,
+  userId: string,
+): Promise<UnclaimedUsage> {
+  const query = dialect.sqlToQuery(unclaimedUsageQuery(userId));
+  // `count` and `sum` of a `bigint` arrive as strings.
+  const { rows } = await db.query<{ files: string | number; bytes: string | number }>(
+    query.sql,
+    query.params,
+  );
+  const row = rows[0];
+  return { files: Number(row?.files ?? 0), bytes: Number(row?.bytes ?? 0) };
+}
+
+/**
+ * Whether one more upload of `incoming` bytes fits the uploader's caps, decided inside the insert's
+ * transaction under a per-uploader transaction lock (review M2). Parallel uploads all pass the
+ * check made before reading; here each waits for the one before to commit, so its row is counted.
+ */
+export async function reserveUpload(
+  db: Pick<Queryable, 'query'>,
+  userId: string,
+  incoming: number,
+): Promise<boolean> {
+  await db.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2))', [
+    LOCK_CLASSES.uploadCaps,
+    userId,
+  ]);
+  return !overCaps(await unclaimedUsage(db, userId), incoming);
 }
 
 export interface FileStore {
@@ -147,6 +196,10 @@ export interface FileStore {
     fileId: string,
     reader: FileReader,
   ): Promise<VisibleFile | undefined>;
+  /** `unclaimedUsage`: the uploader's unclaimed files for the per-user caps. */
+  unclaimedUsage(client: Queryable, userId: string): Promise<UnclaimedUsage>;
+  /** `reserveUpload`: the caps again, under the uploader's lock, in the insert's transaction. */
+  reserveUpload(client: Queryable, userId: string, incoming: number): Promise<boolean>;
 }
 
 export const PG_FILE_STORE: FileStore = {
@@ -154,4 +207,6 @@ export const PG_FILE_STORE: FileStore = {
     await drizzle({ client, casing: 'snake_case' }).insert(files).values(file);
   },
   visibleFile,
+  unclaimedUsage,
+  reserveUpload,
 };

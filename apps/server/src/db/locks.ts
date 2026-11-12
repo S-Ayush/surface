@@ -26,4 +26,6 @@ export const LOCKS = {
 export const LOCK_CLASSES = {
   /** One sign-in key (`account:…`, `ip:…`) at a time (PLAN-001 S3, `auth/attempts.ts`). */
   authAttempts: 0x5355_0001,
+  /** One upload's caps check and insert per uploader at a time (PLAN-014 S2, `files/store.ts`). */
+  uploadCaps: 0x5355_0002,
 } as const;

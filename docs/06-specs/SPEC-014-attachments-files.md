@@ -196,6 +196,10 @@ The pg-boss job `files-cleanup` runs hourly (`singletonKey`, so replicas don't r
 | Unclaimed bytes per user | 1 GB across `attachment` and `inline` uploads not yet claimed | `429 RATE_LIMITED`: "You have too many unsaved uploads. Attach or save them, or wait a day." |
 | Unclaimed files per user | 100 | the same |
 | Uploads per minute per user | 30 for `attachment` and `inline`; avatars and logos keep 10 (D18) | `429 RATE_LIMITED`, M0 message |
+| Uploads at once per user | 3 `attachment` or `inline` uploads streaming at the same time, checked before reading (in memory, per process, like the rate) | `429 RATE_LIMITED`: "You have 3 uploads in progress. Wait for one to finish, then try again." |
+| Idle upload | An `attachment` or `inline` upload that sends no data for 30 seconds is closed and its temporary file removed. The server sets no overall request timeout, since a large file on a slow link may take minutes. | The connection is destroyed (the server logs `408` with reason `idle`) |
+
+The unclaimed caps are checked before reading (from the declared length) and again inside the insert's transaction, under a per-uploader transaction advisory lock (`LOCK_CLASSES.uploadCaps`) with the real size: parallel uploads all pass the first check, and the lock makes each count the rows of those before it. Every refusal of an upload whose body may be unread, including a server error, answers with `Connection: close`.
 
 ### 4.7 Purge (SPEC-015)
 
@@ -205,13 +209,13 @@ An Admin purges an issue with "Permanently delete…" on its page in "Recently d
 
 - **Type** comes from the bytes, never from the browser: the M0 sniffer extended with PDF, ZIP (and the Office formats inside it, reported as ZIP), GZIP, and text (valid UTF-8 with no NUL bytes in the first 8 KB → `text/plain`). Everything else is `application/octet-stream`. SVG, HTML and XML count as text and are served as `text/plain` (D17). Only PNG, JPEG, GIF and WebP are images.
 - **Dimensions** come from `sharp(tempPath).metadata()` after the body is on disk (a JPEG's size can sit beyond its first 64 KB). It reads headers only, no decode.
-- **Location metadata is stripped** from `attachment` and `inline` images while streaming, with no decode and no loss of image data (D3): JPEG keeps its EXIF segment (orientation) with the GPS IFD overwritten in place, and drops XMP segments; PNG drops `eXIf` chunks and XMP `iTXt` chunks; WebP drops its `EXIF` and `XMP ` chunks and fixes the RIFF size. The hash is of the stored (stripped) bytes. Other files are stored as uploaded. A file sniffed as PNG, JPEG, GIF or WebP whose structure the stripper can't parse is refused (`400 INVALID_INPUT`, the M0 "unreadable image" message), never stored with its metadata (E25).
+- **Location metadata is stripped** from `attachment` and `inline` images while streaming, with no decode and no change to the primary image's pixels (D3, D27): JPEG keeps its EXIF segment (orientation) with every GPS IFD overwritten in place (pointed to from IFD0, IFD1 or the Exif sub-IFD), cleans the EXIF thumbnail in place (its own EXIF GPS cleared, its XMP and APP13 payloads zeroed, bytes after its end zeroed; a thumbnail it can't follow, or one nested more than two deep, is zeroed whole), drops XMP segments (standard and extended) and drops every Photoshop APP13 segment whole (its resources carry IPTC city and country, EXIF and XMP). Any APP1 starting `Exif` is treated as EXIF, as libvips reads it; PNG drops `eXIf` chunks and XMP text chunks (`XML:com.adobe.xmp` in `iTXt`, `zTXt` or `tEXt`: libvips writes it as `zTXt`), and ImageMagick's raw EXIF and XMP profiles (`Raw profile type exif`, `APP1`, `xmp`); WebP drops its `EXIF` and `XMP ` chunks, clears their VP8X flags and fixes the RIFF size; GIF drops its XMP application extension. Bytes after the image's end (JPEG EOI, PNG IEND, the RIFF size, GIF's trailer) are dropped: a second image appended there could carry its own location. That loses what some phones append there: MPF secondary images, Ultra HDR gain maps and Motion Photo video (D27). The parser's work is bounded by the bytes read (a step budget refuses a file made of thousands of 1-byte parts), and the disk gets one write per chunk read. The hash is of the stored (stripped) bytes. Other files are stored as uploaded. A file sniffed as PNG, JPEG, GIF or WebP whose structure the stripper can't parse is refused (`400 INVALID_INPUT`, the M0 "unreadable image" message), never stored with its metadata (E25). *(PNG text chunks other than `iTXt`, the raw profiles, GIF's XMP and the trailing bytes were added in PLAN-014 S2, 2026-11-12: the fixtures showed libvips stores XMP in `zTXt`, so `iTXt` alone left the location in place. APP13, the Exif sub-IFD, IFD1 and the thumbnail were added at its review, D27.)*
 - **Names:** the uploader's file name, from the `X-File-Name` header (percent-encoded UTF-8). Cleaning:
   1. A name that fails to percent-decode or isn't valid UTF-8 becomes `file`.
   2. Normalise to NFC.
   3. Keep only the part after the last `/` or `\`.
   4. Drop control characters (Cc) and format characters (Cf: bidi overrides such as U+202E, zero-width characters), so "invoice‮fdp.exe" can't pose as a PDF.
-  5. Trim spaces and dots at the ends; cut to 255 bytes, keeping the extension.
+  5. Trim spaces and dots at the ends (in linear time); cut to 255 bytes, keeping the extension.
   6. An empty result becomes `file`.
   
   Names never reach logs, which carry ids only, as in M0.
@@ -219,6 +223,7 @@ An Admin purges an issue with "Permanently delete…" on its page in "Recently d
   - the stored type as `Content-Type`; `text/plain` gets `; charset=utf-8`;
   - `Content-Disposition: inline` only for PNG, JPEG, GIF and WebP and previews, and only without `?download=1`;
   - `attachment; filename="<fallback>"; filename*=UTF-8''<percent-encoded name>` for everything else and on `?download=1`. The fallback replaces `"`, `\`, `/`, `;`, `%` and every non-ASCII character with `_`.
+  - `Content-Length` from the stored file. `HEAD` answers the same headers without opening the bytes, and so does a matching `If-None-Match` (`304` with `ETag` and `Cache-Control` only). Every file header is set only once the bytes are found, so a row without its bytes answers exactly like a missing file (PLAN-014 S2).
 - **Streaming:** the `attachment` and `inline` purposes get their own streaming body parser with the `UPLOAD_MAX_MB` limit; `avatar` and `logo` keep M0's buffering parser and their 2 MB limit. Nothing larger than 64 KB of a body is held in memory per request. Downloads stream from disk. This replaces M0's whole-buffer `get` for these purposes, so 25 MB files don't load into a 512 MB container's memory (SPEC-004 E10). The `BlobStore` interface gains `putStream` (to a temporary path), `commit(tempPath, key)` (the rename) and `getStream`.
 
 ### 4.9 Invariants
@@ -309,6 +314,8 @@ Three migrations (one in the spec before PLAN-014 S1; the plan splits it, §3 of
 | Deleted issue | "ENG-42 was deleted. Restore it to edit it." |
 | Disk floor | "The server is almost out of disk space. Ask an Admin to free some." |
 | Per-user unclaimed caps | "You have too many unsaved uploads. Attach or save them, or wait a day." |
+| Too many uploads at once (§4.6) | "You have 3 uploads in progress. Wait for one to finish, then try again." |
+| Missing or unknown `purpose` | "Say what the file is for: ?purpose=attachment, ?purpose=inline, ?purpose=avatar or ?purpose=logo." |
 | Image the stripper can't parse (§4.8) | "That image could not be read. Try saving it again as a PNG or JPEG." (M0's `IMAGE_UNREADABLE_MESSAGE`, reused) |
 | Offline (client-side, §3.6) | "Uploads need a connection. Try again when you're back online." |
 
@@ -423,9 +430,10 @@ No open questions. The proposed defaults were accepted at the M1 gate on 2026-11
 | D21 (was Q9) | Uploads with an API key or through MCP come in M6. The upload route takes sessions only in M1. MCP clients can add links. Accepted as proposed at the M1 gate. | 2026-11-12 |
 | D22 (was Q10) | Files have a single `issue_id` owner in M1. M3–M5 replace it with `owner_type` and `owner_id` when projects and documents get files. Accepted as proposed at the M1 gate. | 2026-11-12 |
 | D23 (was Q14) | The per-user caps (1 GB, 100 unclaimed files) and the 1 GB free-space floor are fixed constants in M1. Configurable quotas come with FR-OPS-08 (M7) and then follow architecture rule 7. Accepted as proposed at the M1 gate. | 2026-11-12 |
-| D24 (was Q16) | Only location metadata is stripped from uploaded images (GPS in EXIF, and XMP, which can hold it). Orientation and colour profiles stay, so photos display correctly. An "as uploaded" workspace setting can come later. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D24 (was Q16) | Only location metadata is stripped from uploaded images (GPS in EXIF, and XMP, which can hold it). Orientation and colour profiles stay, so photos display correctly. An "as uploaded" workspace setting can come later. Accepted as proposed at the M1 gate. Amended by D27. | 2026-11-12 |
 | D25 | A key limited to some teams (`teamIds` set) never reads an unclaimed upload, not even its owner's (§4.2, the matrix's key column; the SQL said so from PLAN-014 S1). So such a key can't pass its owner's upload to `attachment.createFile`, while the §4.3 inline claim, which checks the uploader and not visibility, still works for it. Moot in M1: uploads take sessions only (D21). M6 revisits it with key uploads. The M0 branch is not narrowed the same way: a narrowed key still reads its owner's avatar or logo that nothing uses yet (workspace-wide files, M0 rule). Coordinator decision at the PLAN-014 S1 review. | 2026-11-12 |
 | D26 | Seeing a file is not owning it. `FileRef` resolves any file the actor can see (§4.2), so another user's avatar in use resolves too. `user.updateProfile` and `workspace.update` set only the actor's own upload or the current avatar or logo; any other file answers `NOT_FOUND` exactly like an unknown id, so nobody can pin another user's file with the `RESTRICT` key (SPEC-003 §4). Coordinator decision at the PLAN-014 S1 review, following Linear. | 2026-11-12 |
+| D27 | Location stripping (§4.8) may drop image data that is not the primary image, amending D24 and §4.8's earlier "no loss of image data". Bytes after a JPEG's EOI are dropped, which loses MPF secondary images, Ultra HDR gain maps and Motion Photo video. Photoshop's APP13 is dropped whole (resources 0x0424 XMP, 0x0422 EXIF, IPTC city and country). GPS IFDs are cleared wherever EXIF points to them (IFD0, IFD1, the Exif sub-IFD 0x8769). The EXIF thumbnail (IFD1 tags 0x0201 offset, 0x0202 length) is cleaned in place: its EXIF GPS cleared, its XMP and APP13 zeroed, and a thumbnail that can't be parsed, or is nested more than two deep, zeroed whole. The primary image's pixels never change. Coordinator decision at the PLAN-014 S2 review. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 

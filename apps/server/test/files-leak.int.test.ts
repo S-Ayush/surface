@@ -15,6 +15,8 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
+import { CSRF_HEADER } from '@surface/sync-protocol';
+import { csrfToken } from '../src/auth/csrf.js';
 import { createSession, SESSION_COOKIE } from '../src/auth/session.js';
 import { SessionAuth } from '../src/auth/sessions.js';
 import { pgAuthStore } from '../src/auth/store.js';
@@ -42,6 +44,7 @@ let h: ExecutorHarness;
 let app: FastifyInstance;
 let dataDir: string;
 const cookies: Partial<Record<Who, string>> = {};
+const csrf: Partial<Record<Who, string>> = {};
 const ids: Record<string, string> = {};
 const etags: Record<string, string> = {};
 
@@ -124,6 +127,7 @@ beforeAll(async () => {
       now: new Date(),
     });
     cookies[name as Who] = `${SESSION_COOKIE}=${session.token}`;
+    csrf[name as Who] = csrfToken(testConfig().sessionSecret, session.id);
   }
 
   const config = testConfig({ dataDir });
@@ -253,6 +257,35 @@ describe('the SPEC-014 §4.2 matrix, cells without an issue (AC-5)', () => {
       await expectHidden('ben', label);
       await expectHidden('sam', label);
     }
+  });
+});
+
+describe('a file uploaded through the streaming route (PLAN-014 S2)', () => {
+  it('is its uploader’s alone until claimed, on every way of reading it', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/files/upload?purpose=attachment',
+      payload: 'bytes of uploaded',
+      headers: {
+        cookie: cookies.ada ?? '',
+        [CSRF_HEADER]: csrf.ada ?? '',
+        'content-type': 'application/octet-stream',
+        'x-file-name': 'plan.txt',
+      },
+    });
+    expect(response.statusCode).toBe(201);
+    const { result } = response.json<{ result: { id: string } }>();
+    ids['uploaded'] = result.id;
+    const { rows } = await h.pool.query<{ storage_key: string; issue_id: string | null }>(
+      'SELECT storage_key, issue_id FROM files WHERE id = $1',
+      [result.id],
+    );
+    expect(rows[0]?.issue_id).toBeNull();
+    const key = rows[0]?.storage_key ?? '';
+    etags['uploaded'] = `"${key.slice(key.lastIndexOf('/') + 1)}"`;
+    await expectVisible('ada', 'uploaded');
+    await expectHidden('ben', 'uploaded');
+    await expectHidden('sam', 'uploaded');
   });
 });
 

@@ -59,6 +59,7 @@ describe('the files store (ADR-0014)', () => {
         storageKey: 'k',
         mimeType: 'image/webp',
         size: '3000000000',
+        name: 'avatar.webp',
       },
     ]);
     const file = await PG_FILE_STORE.visibleFile(client, 'f', {
@@ -74,8 +75,10 @@ describe('the files store (ADR-0014)', () => {
       storageKey: 'k',
       mimeType: 'image/webp',
       size: 3_000_000_000,
+      name: 'avatar.webp',
     });
     expect(texts[0]).toContain('JOIN files s ON s.id = coalesce(f.preview_of, f.id)');
+    expect(texts[0]).toContain('f.name');
   });
 
   it('answers undefined for a file the reader can’t see', async () => {
@@ -83,5 +86,27 @@ describe('the files store (ADR-0014)', () => {
     await expect(
       PG_FILE_STORE.visibleFile(client, 'f', { userId: 'u', groups: [], keyTeamIds: null }),
     ).resolves.toBeUndefined();
+  });
+
+  it('reserves an upload under the uploader’s transaction lock, counting after it (review M2)', async () => {
+    const within = fakeClient([{ files: '99', bytes: '0' }]);
+    await expect(PG_FILE_STORE.reserveUpload(within.client, 'u', 10)).resolves.toBe(true);
+    // The lock first, so a parallel upload's insert is counted, never missed.
+    expect(within.texts[0]).toContain('pg_advisory_xact_lock');
+    expect(within.texts[1]).toContain('count(*)');
+    const full = fakeClient([{ files: '100', bytes: '0' }]);
+    await expect(PG_FILE_STORE.reserveUpload(full.client, 'u', 10)).resolves.toBe(false);
+  });
+
+  it('counts a user’s unclaimed attachment and inline uploads for the caps (SPEC-014 §4.6)', async () => {
+    const { client, texts } = fakeClient([{ files: '3', bytes: '3000000000' }]);
+    await expect(PG_FILE_STORE.unclaimedUsage(client, 'u')).resolves.toEqual({
+      files: 3,
+      bytes: 3_000_000_000,
+    });
+    // The shape of the partial index `files_unclaimed_uploader_idx`, so it serves the count.
+    expect(texts[0]?.replace(/\s+/g, ' ')).toContain(
+      "WHERE uploader_id = $1 AND issue_id IS NULL AND purpose IN ('attachment', 'inline')",
+    );
   });
 });
