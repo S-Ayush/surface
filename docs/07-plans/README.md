@@ -1,6 +1,7 @@
-# M0 Implementation Plans: Overview
+# Implementation Plans: Overview
 
-Status: **Ready** · Date: 2026-11-06 · Milestone: **M0 Foundations** · Specs: [06-specs](../06-specs/README.md) (all Accepted)
+M0 (§1–§5): Status **Ready** · Date: 2026-11-06 · Milestone **M0 Foundations** · Specs: [06-specs](../06-specs/README.md) (all Accepted).
+M1 (§7): Status **Draft** · Date: 2026-11-12 · Milestone **M1 Core issues** · Specs: SPEC-010 to SPEC-015 (Draft). The testing hold (§6) applies to both.
 
 ---
 
@@ -92,3 +93,119 @@ flowchart LR
 - **In "As built",** a slice says which held criteria it checked by hand.
 - **Timing assertions removed (2026-11-07, by decision of the user):** the "< 1 s" checks in the SPEC-004 AC-6 tests and the whole `sync-lock.perf.int.test.ts` (SPEC-002 §10) failed on a shared, loaded machine. AC-6's 1 s budget is checked by hand (SPEC-004 D7); the lock budget is read from its server metric (SPEC-002 D2). This is the one exception to "existing integration tests are kept".
 - **Lifting the hold:** write the tests named in the plans' ⏸ rows, then remove the markers and this section.
+
+## 7. M1 Core issues
+
+Exit (METHODOLOGY M1): **start dogfooding.** Surface's own backlog lives in Surface.
+
+### 7.1 Acceptance gate (before any M1 code)
+
+The M1 specs are Draft. Building starts after one docs PR that:
+- applies every row of each spec's "§12. Changes to accepted docs on acceptance" (PRD, METHODOLOGY, domain docs, glossary, events, sync-protocol, SPEC-002/003/005, design docs);
+- writes the ADRs the §12 tables name: one superseding ADR-0014 (files), purge without a `D` per content row (SPEC-015 Q2), the one-off document migration as a rule-2 exception (SPEC-013 D6), and any other §12 row marked "ADR: yes";
+- settles the open questions the user owns: testing-hold exceptions (SPEC-011 Q13, SPEC-014 Q15), description history (SPEC-011 Q18), the eager size budget (SPEC-011 Q15), the replica not deleted on sign-out (SPEC-012 Q3);
+- fixes the spec gaps found while planning (listed in the PR);
+- sets SPEC-010 to SPEC-015 to Accepted and the plans to Ready.
+
+### 7.2 Plans
+
+| Plan | Implements | Slices | Size |
+|---|---|---|---|
+| [PLAN-010](PLAN-010-workflow-labels-estimates.md) | SPEC-010 Workflow statuses, labels & estimates | 6 | ~16 d |
+| [PLAN-011](PLAN-011-issues-core.md) | SPEC-011 Issues core, content models, sync foundations | 9 (S5a, S5b) | ~33 d |
+| [PLAN-012](PLAN-012-issue-page-list-view.md) | SPEC-012 Issue page, composer, list, shortcuts, drafts | 7 | ~30 d |
+| [PLAN-013](PLAN-013-comments-reactions-editor.md) | SPEC-013 Comments, reactions & editor | 5 | ~17 d |
+| [PLAN-014](PLAN-014-attachments-files.md) | SPEC-014 Attachments & files | 6 (S4a, S4b) | ~16 d |
+| [PLAN-015](PLAN-015-recently-deleted-archive.md) | SPEC-015 Recently deleted & archive | 5 | ~11 d |
+
+Total: about **123 ideal days** (38 slices), plus about 2 days for the acceptance gate. That is roughly 14 weeks for two engineers or 10 weeks for three, using the tracks below. The critical path alone is about 41 ideal days, so more people don't shorten it below about 9 weeks.
+
+**Who builds the shared pieces:**
+- **PLAN-011:** the sync and registry foundations: `OptimisticStore` changes, `systemOnly` and `contentParent`, repo `updateWhere`/`deleteWhere` (with the unlogged content delete for purge), archive on the wire (protocol v0.7), `lockIssueForWrite`, content models (`/sync/content`, hydration, cache), `issueSlug` and the issue route, the label cascade helper, the archived-label refusal, and the `claimInlineFiles` seam.
+- **PLAN-012:** the shortcut engine changes, property commands, `ui.available`, the `Draft` model, the shared `packages/ui` components, the read-only issue page frame, and delete on a live issue (dialog, `Mod+Z`).
+- **PLAN-013:** `packages/editor` and `@surface/editor/schema`.
+- **PLAN-014:** the file byte protocol, the file jobs, and the real `claimInlineFiles` body.
+- **PLAN-015:** the issue lifecycle and its rule table, the purge-step registry (PLAN-013 and PLAN-014 append steps), the auto-close status refusal, and the restore, purge and archive UI.
+
+### 7.3 Dependency graph and tracks
+
+```mermaid
+flowchart LR
+  G[7.1 acceptance gate] --> P10S1[010·S1 domain]
+  subgraph TA[Track A: issues and sync]
+    P10S1 --> P11S1[011·S1 foundations] --> P11S2[011·S2 archive on wire] --> P11S3[011·S3 schema + lock] --> P11S4[011·S4 issue ops]
+    P11S4 --> P11S5a[011·S5a content protocol] --> P11S5b[011·S5b content client] --> P11S6[011·S6 description + history] --> P11S7[011·S7 cache] --> P11S8[011·S8 leak suite]
+  end
+  subgraph TB[Track B: editor and UI]
+    G --> P13S1[013·S1 editor schema] --> P13S2[013·S2 editor component]
+    G --> P12S1[012·S1 shortcut engine] --> P12S2[012·S2 domain + ui components]
+  end
+  subgraph TC[Track C: settings and files]
+    P10S1 --> P10S2[010·S2 statuses] --> P10S3[010·S3 labels] --> P10S4[010·S4 estimates]
+    G --> P14S1[014·S1 files schema] --> P14S2[014·S2 upload] --> P14S3[014·S3 byte protocol]
+  end
+  P13S1 --> P11S6
+  P11S2 --> P10S6[010·S6 label archive]
+  P11S4 --> P10S5[010·S5 issue halves] --> P11S8
+  P10S3 --> P10S5
+  P11S4 --> P12S3[012·S3 list + my issues]
+  P11S4 --> P15S1[015·S1 lifecycle] --> P15S3[015·S3 auto-archive/close]
+  P10S2 --> P15S1
+  P11S6 --> P12S4[012·S4 issue page]
+  P13S2 --> P12S4
+  P13S2 --> P12S5[012·S5 composer + drafts]
+  P11S6 --> P12S5
+  P11S5b --> P13S3[013·S3 comments] --> P13S4[013·S4 reactions]
+  P11S6 --> P14S4a[014·S4a attachments] --> P14S4b[014·S4b claim + previews]
+  P14S3 --> P14S4a
+  P13S1 --> P14S4b
+  P11S6 --> P15S2[015·S2 purge]
+  P15S1 --> P15S2
+  P12S4 --> P13S5[013·S5 comments UI]
+  P12S4 --> P14S5[014·S5 attachments UI]
+  P14S4b --> P14S5
+  P12S4 --> P15S4[015·S4 archive page]
+  P15S1 --> P12S6[012·S6 pickers + delete]
+  P12S5 --> P12S6
+  P12S6 --> P15S4
+  P13S5 & P14S5 & P15S4 & P12S6 & P11S7 --> P12S7[012·S7 M1 demo]
+  P15S2 & P15S3 & P15S4 --> P15S5[015·S5 leak + edges]
+```
+
+Each plan's header and slices list the exact dependencies; this graph shows the main ones.
+
+**Critical path:** 010·S1 → 011·S1–S6 (S5a, S5b) → 012·S4 → 012·S6 → 015·S4 → 012·S7, about 41 ideal days (012·S5 runs beside 012·S4).
+**Start at once after the gate:** 010·S1–S4, 012·S1–S2, 013·S1–S2, 014·S1–S3.
+
+### 7.4 Suggested sequence (two engineers)
+
+Engineer 1 takes issues, sync, lifecycle and the server side of comments and attachments (about 64 days); engineer 2 takes the editor, the UI, settings and files (about 63 days). Each row only starts slices whose dependencies are done in an earlier row.
+
+| Weeks | Engineer 1 (issues, sync, lifecycle) | Engineer 2 (editor, UI, settings, files) |
+|---|---|---|
+| 1 | Gate · 010·S1 · 011·S1 | Gate · 013·S1 |
+| 2–3 | 011·S2–S3 | 013·S2 · 012·S1 |
+| 4–5 | 011·S4 · 010·S6 | 012·S2 · 010·S2 |
+| 6–7 | 011·S5a–S5b | 010·S3–S4 · 014·S1 |
+| 8 | 011·S6 | 014·S2–S3 |
+| 9 | 010·S5 · 015·S1 | 012·S3 |
+| 10 | 013·S3 | 012·S4 |
+| 11 | 013·S4 · 015·S2 | 012·S5 |
+| 12 | 014·S4a–S4b | 013·S5 · 012·S6 |
+| 13 | 011·S7–S8 | 014·S5 · 015·S4 |
+| 14 | 015·S3 · 015·S5 | 012·S7 (M1 demo) |
+
+### 7.5 Conventions
+
+As §4. Branches are `p0NN-sN-topic` (e.g. `p011-s5-content`). The testing hold (§6) applies: leak tests and the sync property suite are written as usual, and every new content model, delta path and read operation adds its leak tests.
+
+### 7.6 M1 exit checklist
+
+- [ ] Acceptance gate merged (§7.1).
+- [ ] All ACs of SPEC-010 to SPEC-015 have passing tests, except those held under §6.
+- [ ] Sync property suite green on main with issues, content models, archive and restore in the generator.
+- [ ] Private-team leak suite covers every new model, `/sync/content`, `GET /files/:id` and every new read operation.
+- [ ] **Dogfood demo (by hand while e2e is held):** create, triage, edit, comment on, attach to, delete and restore issues by keyboard only, across two tabs and offline. PLAN-012 S7.
+- [ ] Surface's own backlog moved into Surface, and the team uses it daily.
+- [ ] Release `v0.2.0` image published.
+- [ ] Retro held. PRD and METHODOLOGY updated with what we learned.
