@@ -12,6 +12,11 @@ const base = defineConfig({
     include: ['src/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}'],
     // Integration tests (real Postgres) run separately via `test:int`.
     exclude: ['**/node_modules/**', '**/dist/**', '**/*.int.test.{ts,tsx}'],
+    // Property tests run thousands of cases. Several gate runs in parallel (M1's
+    // parallel tracks) push them past Vitest's 5 s default although they pass in
+    // 1–2 s alone. A hung test still fails, after 30 s. Timing budgets belong in
+    // dedicated perf checks, not in the default timeout (plans README §6).
+    testTimeout: 30_000,
     // Unit tests may not reach the network: mock or fake every outside service.
     setupFiles: [fileURLToPath(new URL('./vitest-no-network.js', import.meta.url))],
   },
