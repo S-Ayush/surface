@@ -29,7 +29,7 @@ import {
   registerFileRoutes,
   UPLOADS_PER_MINUTE,
 } from '../src/files/routes.js';
-import type { FileStore, NewFile } from '../src/files/store.js';
+import type { FileReader, FileStore, NewFile } from '../src/files/store.js';
 import { registerSecurityHeaders } from '../src/http/security-headers.js';
 
 const ADA = '01930000-0000-7000-8000-00000000ada1';
@@ -52,10 +52,10 @@ class FakeFiles implements FileStore {
     this.rows.push(file);
     return Promise.resolve();
   }
-  readable(_client: unknown, fileId: string, userId: string) {
+  visibleFile(_client: unknown, fileId: string, reader: FileReader) {
     const row = this.rows.find((file) => file.id === fileId);
     return Promise.resolve(
-      row && (row.uploaderId === userId || this.inUse.has(fileId)) ? row : undefined,
+      row && (row.uploaderId === reader.userId || this.inUse.has(fileId)) ? row : undefined,
     );
   }
 }
@@ -197,6 +197,18 @@ describe('POST /files/upload (ADR-0014; SPEC-001 §3.5)', () => {
     });
   });
 
+  it('refuses the issue-file purposes until their route exists, and previews always, storing nothing', async () => {
+    // A preview is only ever made by the server (SPEC-014 §4.4); attachments and inline files
+    // get their own streaming route with its caps in PLAN-014 S2.
+    const { upload, files } = setup();
+    for (const purpose of ['preview', 'attachment', 'inline']) {
+      const response = await upload(png, purpose);
+      expect({ purpose, status: response.statusCode }).toEqual({ purpose, status: 400 });
+      expect(response.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } });
+    }
+    expect(files.rows).toEqual([]);
+  });
+
   it('limits each user to UPLOADS_PER_MINUTE uploads, before decoding (S9 security review L3)', async () => {
     const { upload, files, as } = setup();
     for (let i = 0; i < UPLOADS_PER_MINUTE; i += 1)
@@ -264,6 +276,56 @@ describe('GET /files/:id (ADR-0014)', () => {
     expect(hidden.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
     files.inUse.add(result.id);
     expect((await get(result.id)).statusCode).toBe(200);
+  });
+
+  it('checks visibility before the ETag, so a matching If-None-Match never confirms a hidden file (SPEC-014 §4.2)', async () => {
+    const { upload, get, as } = setup();
+    const { result } = (await upload(png)).json<{ result: { id: string } }>();
+    const etag = (await get(result.id)).headers.etag;
+    as(session(BEN, 'member'));
+    const hidden = await get(result.id, { 'if-none-match': etag });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.headers.etag).toBeUndefined();
+  });
+
+  it('applies the same rule to HEAD and ?download=1', async () => {
+    const { upload, as } = setup();
+    const { result } = (await upload(png)).json<{ result: { id: string } }>();
+    const head = (url: string) => app!.inject({ method: 'HEAD', url });
+    expect((await head(`/files/${result.id}`)).statusCode).toBe(200);
+    expect(
+      (await app!.inject({ method: 'GET', url: `/files/${result.id}?download=1` })).statusCode,
+    ).toBe(200);
+    as(session(BEN, 'member'));
+    expect((await head(`/files/${result.id}`)).statusCode).toBe(404);
+    expect(
+      (await app!.inject({ method: 'GET', url: `/files/${result.id}?download=1` })).statusCode,
+    ).toBe(404);
+  });
+
+  it('reads as the session’s user with every group it may see, never narrowed by a key', async () => {
+    const { files, get } = setup({
+      who: {
+        id: 's',
+        userId: ADA,
+        workspaceId: 'w',
+        actor: userActor({
+          userId: ADA,
+          role: 'member',
+          memberships: [{ teamId: 'sec', private: true }],
+        }),
+      },
+    });
+    const readers: FileReader[] = [];
+    const visible = files.visibleFile.bind(files);
+    files.visibleFile = (client, fileId, reader) => {
+      readers.push(reader);
+      return visible(client, fileId, reader);
+    };
+    await get('01930000-0000-7000-8000-000000000000');
+    expect(readers).toEqual([
+      { userId: ADA, groups: ['workspace', `user:${ADA}`, 'team:sec'], keyTeamIds: null },
+    ]);
   });
 
   it('is 404 for an unknown or malformed id, and 401 without a session', async () => {

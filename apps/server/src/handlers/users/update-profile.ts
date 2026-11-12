@@ -11,6 +11,7 @@ import { eq, sql } from 'drizzle-orm';
 import { users } from '../../db/schema/index.js';
 import { handler, type HandlerContext } from '../../executor/context.js';
 import { SurfaceError } from '../../executor/errors.js';
+import { refNotFound } from '../../executor/refs/sources.js';
 import { isUniqueViolation, resolved } from '../teams/shared.js';
 import { userOutput } from '../members/shared.js';
 import { actorUserId } from './self.js';
@@ -52,14 +53,17 @@ export default handler(userUpdateProfile, async (ctx, input) => {
   }
   if (input.avatar === null && current.avatarFileId !== null) changes.avatarFileId = null;
   if (input.avatar !== undefined && input.avatar !== null) {
-    // Resolved by the executor: a file the actor uploaded, or the avatar already set.
+    // Resolved by the executor: any file the actor can see (SPEC-014 §4.2). Only your own upload
+    // or your current avatar is yours to set; taking another user's would pin their file with
+    // the RESTRICT key. Anything else answers like an unknown id (SPEC-003 §4).
     const file = resolved(ctx.refs['avatar'], 'avatar');
     if (file.id !== current.avatarFileId) {
+      if (file['uploaderId'] !== userId) throw refNotFound('FileRef', input.avatar, ['avatar']);
       if (file['purpose'] !== 'avatar') {
         throw fieldError(
           'INVALID_INPUT',
           'avatar',
-          'That image was uploaded as a logo. Upload it again as your avatar.',
+          'That file isn’t an avatar. Upload it again as your avatar.',
         );
       }
       changes.avatarFileId = file.id;

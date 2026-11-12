@@ -105,6 +105,7 @@ The M0 `files` table gains:
 | `size` | Widened from `integer` to `bigint`, so files over 2 GB fit (`UPLOAD_MAX_MB` allows up to 10,240). |
 | `width`, `height` | Raster images only |
 | `preview_of uuid null` | For a preview, the file it shows. `ON DELETE RESTRICT`: a source can't be deleted while its preview row exists. Every deleter removes previews explicitly first, under the byte protocol (§4.5 step 4), so their keys reach `blob_release`. A cascade would delete preview rows without the key lock or a `blob_release` row. |
+| Checks | `(purpose = 'preview') = (preview_of IS NOT NULL)`: a preview always names its source, and nothing else does. `detached_at IS NULL OR purpose = 'attachment'`: only an attachment can be detached. (Added in PLAN-014 S1, 2026-11-12.) |
 | Index | `files(storage_key)` (byte protocol, §4.5), `files(issue_id)`, `files(preview_of)`, `files(uploader_id) WHERE issue_id IS NULL AND purpose IN ('attachment','inline')` (per-user caps, §4.6) |
 
 A preview's `uploader_id` is its source's uploader (the column is `NOT NULL`, and the system actor has no user id). File rows are never synced (SPEC-001 D12 stands). Clients learn what they need from Attachment rows and from the `src` in documents.
@@ -117,7 +118,9 @@ A preview's `uploader_id` is its source's uploader (the column is `NOT NULL`, an
    (s.purpose IN ('avatar','logo')                        -- M0 rule, unchanged
       AND <M0 avatar/logo predicate on s>)
 OR (s.purpose IN ('attachment','inline')
-      AND s.issue_id IS NULL AND s.uploader_id = me)      -- unclaimed: its uploader only
+      AND s.issue_id IS NULL AND s.uploader_id = me       -- unclaimed: its uploader only,
+      AND f.preview_of IS NULL                            -- never through a preview,
+      AND <key teamIds> IS NULL)                          -- nor a key limited to some teams
 OR (s.purpose IN ('attachment','inline')
       AND s.issue_id IS NOT NULL
       AND s.detached_at IS NULL
@@ -127,7 +130,7 @@ OR (s.purpose IN ('attachment','inline')
                     AND (<key teamIds> IS NULL OR i.team_id = ANY(<key teamIds>))))
 ```
 
-A preview of an unclaimed file is visible to nobody (previews are only made after claiming, §4.4). Everything not visible is `404 NOT_FOUND`, byte-identical to a missing file apart from `correlationId` (permissions §5).
+A preview of an unclaimed file is visible to nobody (previews are only made after claiming, §4.4). An unclaimed upload belongs to no team, so a key limited to some teams never reads one (the matrix's key column; the last two conditions of the unclaimed branch were added on 2026-11-12 in PLAN-014 S1, so the SQL says what the matrix and AC-5 already required). Everything not visible is `404 NOT_FOUND`, byte-identical to a missing file apart from `correlationId` (permissions §5).
 
 **Visibility matrix** (tested by the leak suite, AC-5; each cell on `GET`, `HEAD`, `GET` with a matching `If-None-Match`, and `?download=1`):
 
@@ -229,7 +232,7 @@ An Admin purges an issue with "Permanently delete…" on its page in "Recently d
 
 ### 4.10 Migration
 
-One migration:
+Three migrations (one in the spec before PLAN-014 S1; the plan splits it, §3 of PLAN-014): S1's generated migration (`files` changes and `blob_release`), S1's hand-written one (the avatar and logo foreign keys, which the Drizzle schema can't declare without an import cycle), and S4a's (`attachments` and the `files.issue_id` foreign key, once `issues` exists). Together they make:
 
 - `files`: the purpose check widened; `issue_id` (FK to `issues`, no cascade: purge deletes file rows explicitly), `detached_at`, `width`, `height`, `preview_of` (FK to `files`, `ON DELETE RESTRICT`, §4.1); `size` to `bigint`; the indexes of §4.2.
 - `blob_release(storage_key text primary key, released_at timestamptz(3) not null default now())`.
@@ -421,6 +424,8 @@ No open questions. The proposed defaults were accepted at the M1 gate on 2026-11
 | D22 (was Q10) | Files have a single `issue_id` owner in M1. M3–M5 replace it with `owner_type` and `owner_id` when projects and documents get files. Accepted as proposed at the M1 gate. | 2026-11-12 |
 | D23 (was Q14) | The per-user caps (1 GB, 100 unclaimed files) and the 1 GB free-space floor are fixed constants in M1. Configurable quotas come with FR-OPS-08 (M7) and then follow architecture rule 7. Accepted as proposed at the M1 gate. | 2026-11-12 |
 | D24 (was Q16) | Only location metadata is stripped from uploaded images (GPS in EXIF, and XMP, which can hold it). Orientation and colour profiles stay, so photos display correctly. An "as uploaded" workspace setting can come later. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D25 | A key limited to some teams (`teamIds` set) never reads an unclaimed upload, not even its owner's (§4.2, the matrix's key column; the SQL said so from PLAN-014 S1). So such a key can't pass its owner's upload to `attachment.createFile`, while the §4.3 inline claim, which checks the uploader and not visibility, still works for it. Moot in M1: uploads take sessions only (D21). M6 revisits it with key uploads. The M0 branch is not narrowed the same way: a narrowed key still reads its owner's avatar or logo that nothing uses yet (workspace-wide files, M0 rule). Coordinator decision at the PLAN-014 S1 review. | 2026-11-12 |
+| D26 | Seeing a file is not owning it. `FileRef` resolves any file the actor can see (§4.2), so another user's avatar in use resolves too. `user.updateProfile` and `workspace.update` set only the actor's own upload or the current avatar or logo; any other file answers `NOT_FOUND` exactly like an unknown id, so nobody can pin another user's file with the `RESTRICT` key (SPEC-003 §4). Coordinator decision at the PLAN-014 S1 review, following Linear. | 2026-11-12 |
 
 ## 12. Changes to accepted docs on acceptance
 

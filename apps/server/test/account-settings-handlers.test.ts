@@ -18,7 +18,7 @@ import type { SessionSelection } from '../src/auth/store.js';
 import { sessions, userCredentials, users, workspace } from '../src/db/schema/index.js';
 import type { DomainEvent, HandlerContext } from '../src/executor/context.js';
 import { teamIdOf } from '../src/executor/key-scope.js';
-import { lookup } from '../src/executor/refs/sources.js';
+import { lookup, refNotFound, type ResolveActor } from '../src/executor/refs/sources.js';
 import listSessions from '../src/handlers/sessions/list.js';
 import revokeOthers from '../src/handlers/sessions/revoke-others.js';
 import revokeSession from '../src/handlers/sessions/revoke.js';
@@ -32,6 +32,7 @@ const SESSION = '01930000-0000-7000-8000-0000000005e1';
 const OTHER_SESSION = '01930000-0000-7000-8000-0000000005e2';
 const FILE = '01930000-0000-7000-8000-0000000000f1';
 const LOGO = '01930000-0000-7000-8000-0000000000f2';
+const BEN = '01930000-0000-7000-8000-00000000be01';
 const NOW = new Date('2026-11-12T10:00:00Z');
 const OLD_PASSWORD = 'an old enough passphrase';
 const DIALECT = new PgDialect({ casing: 'snake_case' });
@@ -272,7 +273,7 @@ describe('user.updateProfile (SPEC-001 §3.5, AC-15)', () => {
   });
 
   it('sets the avatar to a file the executor resolved, and removes it with null', async () => {
-    const set = fakeCtx({ refs: { avatar: { id: FILE, purpose: 'avatar' } } });
+    const set = fakeCtx({ refs: { avatar: { id: FILE, purpose: 'avatar', uploaderId: ADA } } });
     await updateProfile.run(set.ctx, { avatar: FILE });
     expect(set.updates).toEqual([{ model: 'User', id: ADA, changes: { avatarFileId: FILE } }]);
 
@@ -281,13 +282,40 @@ describe('user.updateProfile (SPEC-001 §3.5, AC-15)', () => {
     expect(removed.updates).toEqual([{ model: 'User', id: ADA, changes: { avatarFileId: null } }]);
   });
 
-  it('refuses a file uploaded as a logo as the avatar', async () => {
-    const { ctx, updates } = fakeCtx({ refs: { avatar: { id: LOGO, purpose: 'logo' } } });
-    await expect(updateProfile.run(ctx, { avatar: LOGO })).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
-      details: { issues: [{ path: ['avatar'] }] },
+  it('refuses someone else’s avatar file exactly like an unknown id, writing nothing', async () => {
+    // FileRef resolves any avatar in use (SPEC-014 §4.2), but taking one would pin the other
+    // user's file with the RESTRICT key: only your own upload or your current avatar is yours.
+    const { ctx, updates } = fakeCtx({
+      refs: { avatar: { id: FILE, purpose: 'avatar', uploaderId: BEN } },
     });
+    const refused = await updateProfile.run(ctx, { avatar: FILE }).catch((error: unknown) => error);
+    const unknown = refNotFound('FileRef', FILE, ['avatar']);
+    expect(refused).toMatchObject({ code: 'NOT_FOUND', message: unknown.message });
+    expect(refused).toMatchObject({ details: unknown.details });
     expect(updates).toEqual([]);
+  });
+
+  it('keeps your current avatar whoever uploaded it, writing nothing', async () => {
+    const { ctx, updates } = fakeCtx({
+      user: { avatarFileId: FILE },
+      refs: { avatar: { id: FILE, purpose: 'avatar', uploaderId: BEN } },
+    });
+    await updateProfile.run(ctx, { avatar: FILE });
+    expect(updates).toEqual([]);
+  });
+
+  it('refuses a file that isn’t an avatar, saying so whatever it is', async () => {
+    for (const purpose of ['logo', 'attachment', 'inline']) {
+      const { ctx, updates } = fakeCtx({
+        refs: { avatar: { id: LOGO, purpose, uploaderId: ADA } },
+      });
+      await expect(updateProfile.run(ctx, { avatar: LOGO })).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+        message: 'That file isn’t an avatar. Upload it again as your avatar.',
+        details: { issues: [{ path: ['avatar'] }] },
+      });
+      expect(updates).toEqual([]);
+    }
   });
 
   it('checks each field with the domain rules before anything runs', () => {
@@ -533,7 +561,9 @@ describe('session.list, session.revoke, session.revokeOthers (SPEC-001 §3.5, AC
 
 describe('workspace.update with a logo (SPEC-001 §3.6; PLAN-001 S6)', () => {
   it('sets the logo to an uploaded logo file and emits the change', async () => {
-    const { ctx, updates, events } = fakeCtx({ refs: { logo: { id: LOGO, purpose: 'logo' } } });
+    const { ctx, updates, events } = fakeCtx({
+      refs: { logo: { id: LOGO, purpose: 'logo', uploaderId: ADA } },
+    });
     const result = workspaceUpdateOp.output.parse(await updateWorkspace.run(ctx, { logo: LOGO }));
     expect(result.logoFileId).toBe(LOGO);
     expect(updates).toEqual([
@@ -554,8 +584,9 @@ describe('workspace.update with a logo (SPEC-001 §3.6; PLAN-001 S6)', () => {
     expect(removed.updates).toEqual([
       { model: 'Workspace', id: WORKSPACE.id, changes: { logoFileId: null } },
     ]);
+    // The current logo, even uploaded by another Admin.
     const same = fakeCtx({
-      refs: { logo: { id: LOGO, purpose: 'logo' } },
+      refs: { logo: { id: LOGO, purpose: 'logo', uploaderId: BEN } },
       workspace: { logoFileId: LOGO },
     });
     await updateWorkspace.run(same.ctx, { name: 'Acme', logo: LOGO });
@@ -563,13 +594,29 @@ describe('workspace.update with a logo (SPEC-001 §3.6; PLAN-001 S6)', () => {
     expect(same.events).toEqual([]);
   });
 
-  it('refuses an avatar file as the logo', async () => {
-    const { ctx, updates } = fakeCtx({ refs: { logo: { id: FILE, purpose: 'avatar' } } });
-    await expect(updateWorkspace.run(ctx, { logo: FILE })).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
-      details: { issues: [{ path: ['logo'] }] },
+  it('refuses a logo file someone else uploaded exactly like an unknown id, writing nothing', async () => {
+    const { ctx, updates } = fakeCtx({
+      refs: { logo: { id: LOGO, purpose: 'logo', uploaderId: BEN } },
     });
+    const refused = await updateWorkspace.run(ctx, { logo: LOGO }).catch((error: unknown) => error);
+    const unknown = refNotFound('FileRef', LOGO, ['logo']);
+    expect(refused).toMatchObject({ code: 'NOT_FOUND', message: unknown.message });
+    expect(refused).toMatchObject({ details: unknown.details });
     expect(updates).toEqual([]);
+  });
+
+  it('refuses a file that isn’t a logo, saying so whatever it is', async () => {
+    for (const purpose of ['avatar', 'attachment', 'inline']) {
+      const { ctx, updates } = fakeCtx({
+        refs: { logo: { id: FILE, purpose, uploaderId: ADA } },
+      });
+      await expect(updateWorkspace.run(ctx, { logo: FILE })).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+        message: 'That file isn’t a logo. Upload it again as the logo.',
+        details: { issues: [{ path: ['logo'] }] },
+      });
+      expect(updates).toEqual([]);
+    }
   });
 });
 
@@ -585,7 +632,7 @@ describe('SessionRef and FileRef (SPEC-003 §4; PLAN-001 S6)', () => {
     };
   }
   const actor = { kind: 'user' as const, userId: ADA, groups: ['workspace'] };
-  const at = (found: ReturnType<typeof db>, path: string, who = actor) => ({
+  const at = (found: ReturnType<typeof db>, path: string, who: ResolveActor = actor) => ({
     db: found as never,
     actor: who,
     path: [path],
@@ -618,19 +665,40 @@ describe('SessionRef and FileRef (SPEC-003 §4; PLAN-001 S6)', () => {
     expect(none.calls).toEqual([]);
   });
 
-  it('resolves a file you uploaded or the one in use, never someone else’s unused upload', async () => {
-    const found = db([{ id: FILE, purpose: 'avatar' }]);
+  it('resolves a file through the one visibility rule of GET /files/:id (SPEC-014 §4.2)', async () => {
+    const found = db([{ id: FILE, purpose: 'avatar', uploaderId: BEN }]);
+    // With its uploader: the handlers that set an avatar or logo take only their own (review).
     await expect(lookup('FileRef', FILE, at(found, 'avatar'))).resolves.toEqual({
       id: FILE,
       purpose: 'avatar',
+      uploaderId: BEN,
     });
-    expect(found.calls[0]?.[0]).toMatch(
-      /uploader_id = \$2 OR id = \(SELECT avatar_file_id FROM users WHERE id = \$2\) OR id = \(SELECT logo_file_id FROM workspace LIMIT 1\)/,
-    );
+    const [text, params] = found.calls[0] ?? [];
+    expect(text).toContain('JOIN files s ON s.id = coalesce(f.preview_of, f.id)');
+    expect(text).toContain('s.issue_id IS NULL AND s.uploader_id = $3');
+    expect(params).toEqual([FILE, ADA, ADA]);
     await expect(lookup('FileRef', FILE, at(db([]), 'avatar'))).rejects.toMatchObject({
       code: 'NOT_FOUND',
       message: `File "${FILE}" not found. Upload the image with POST /files/upload and use the id it returns.`,
     });
+  });
+
+  it('never resolves an unclaimed upload for a key limited to some teams, and nothing for the system', async () => {
+    const found = db([]);
+    const narrowed = {
+      ...actor,
+      kind: 'api' as const,
+      apiKey: { id: 'k', scope: 'read_write' as const, teamIds: ['t'], allowDestructive: false },
+    };
+    await expect(lookup('FileRef', FILE, at(found, 'avatar', narrowed))).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(found.calls[0]?.[0]).not.toContain('s.issue_id IS NULL');
+    const none = db([{ id: FILE, purpose: 'avatar' }]);
+    await expect(
+      lookup('FileRef', FILE, at(none, 'avatar', { kind: 'system', groups: [] } as never)),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(none.calls).toEqual([]);
   });
 
   it('are workspace-wide, so an API key’s team limit doesn’t narrow them', () => {

@@ -18,6 +18,7 @@ import {
   type RefType,
 } from '@surface/domain';
 import type { Queryable } from '../../db/pool.js';
+import { fileReaderOf, visibleFile } from '../../files/store.js';
 import { SurfaceError, type ErrorCandidate } from '../errors.js';
 
 /** What resolution needs from the actor: `me`, the groups for visibility, and key narrowing. */
@@ -305,27 +306,21 @@ async function lookupSession(value: string, ctx: LookupContext): Promise<RefEnti
 }
 
 /**
- * An uploaded file the actor may name (PLAN-001 S6, ADR-0014): one they uploaded, or the one
- * already in use as their avatar or the workspace logo (saving a form unchanged). Anyone else's
- * upload that nothing uses yet is not found, so ids can't be probed or borrowed.
+ * A file the actor can see (PLAN-001 S6, PLAN-014 S1; SPEC-014 §4.2): the same rule as
+ * `GET /files/:id`, after key narrowing, so any avatar or logo in use resolves, and someone
+ * else's upload that nothing uses yet doesn't. Seeing isn't owning: handlers that store a file id
+ * also check `uploaderId` (`user.updateProfile`, `workspace.update`; SPEC-003 §4), so another
+ * user's file can't be borrowed. An actor without a user (the system) reads no file here.
  */
 async function lookupFile(value: string, ctx: LookupContext): Promise<RefEntity> {
   const ref = parseIdRef(value);
-  const userId = ctx.actor.userId;
-  const { rows } =
-    ref?.by === 'id' && userId !== undefined
-      ? await ctx.db.query<{ id: string; purpose: string }>(
-          `SELECT id, purpose FROM files
-            WHERE id = $1
-              AND (uploader_id = $2
-                   OR id = (SELECT avatar_file_id FROM users WHERE id = $2)
-                   OR id = (SELECT logo_file_id FROM workspace LIMIT 1))`,
-          [ref.id, userId],
-        )
-      : { rows: [] };
-  const row = rows[0];
-  if (row === undefined) throw refNotFound('FileRef', value, ctx.path);
-  return { id: row.id, purpose: row.purpose };
+  const reader = fileReaderOf(ctx.actor);
+  const file =
+    ref?.by === 'id' && reader !== undefined
+      ? await visibleFile(ctx.db, ref.id, reader)
+      : undefined;
+  if (file === undefined) throw refNotFound('FileRef', value, ctx.path);
+  return { id: file.id, purpose: file.purpose, uploaderId: file.uploaderId };
 }
 
 async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRow> {

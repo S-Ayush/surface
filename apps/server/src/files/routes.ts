@@ -7,9 +7,10 @@
  *   and the answer is its id: setting it as the avatar or logo is an operation
  *   (`user.updateProfile`, `workspace.update`), so synced rows change only through the repo.
  *   A logo needs an Admin. CSRF is the app-wide check for cookie-authenticated POSTs (Q7).
- * - `GET /files/:id` answers the bytes to a signed-in user who may see them (`store.ts`): a file
- *   anyone else can't see is `404`, like a missing one. Every request is checked; the browser
- *   revalidates with the ETag (`no-cache`), and the bytes of an id never change.
+ * - `GET /files/:id` (and `HEAD`) answers the bytes to a signed-in user who may see them
+ *   (`visibleFile` in `store.ts`, SPEC-014 §4.2): a file they can't see is `404`, like a
+ *   missing one. Every request is checked; the browser revalidates with the ETag (`no-cache`),
+ *   and the bytes of an id never change.
  *
  * Both need a session, and answer `503` until setup is done (SPEC-001 Q5, the setup guard).
  */
@@ -22,7 +23,6 @@ import type {
 } from 'fastify';
 import { z } from 'zod';
 import type { SessionAuth } from '../auth/sessions.js';
-import { FILE_PURPOSES } from '../db/schema/index.js';
 import { uuidv7 } from '../db/uuidv7.js';
 import { tokenBucket } from '../executor/rate-limit.js';
 import type { WithTransaction } from '../executor/transaction.js';
@@ -40,7 +40,7 @@ import {
   UnreadableImage,
   type LoadSharp,
 } from './image.js';
-import { PG_FILE_STORE, type FileStore } from './store.js';
+import { fileReaderOf, PG_FILE_STORE, type FileStore } from './store.js';
 
 export const FILES_PATH = '/files';
 /**
@@ -89,7 +89,14 @@ export interface FileRouteDeps {
   readonly loadSharp?: LoadSharp;
 }
 
-const Query = z.object({ purpose: z.enum(FILE_PURPOSES) });
+/**
+ * What this route takes. Narrower than `FILE_PURPOSES`: `attachment` and `inline` get their own
+ * streaming upload with the SPEC-014 §4.6 caps in PLAN-014 S2, and a `preview` is only ever made
+ * by the server (§4.4), never uploaded.
+ */
+export const UPLOAD_PURPOSES = ['avatar', 'logo'] as const;
+
+const Query = z.object({ purpose: z.enum(UPLOAD_PURPOSES) });
 const Params = z.object({ id: z.uuid() });
 
 const EXTENSIONS: Record<string, string> = {
@@ -254,8 +261,12 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       if (session === undefined) return signedOut(request, reply);
       const params = Params.safeParse(request.params);
       if (!params.success) return notFound(request, reply);
+      // SPEC-014 §4.2: one rule for every read, checked before the ETag, so a 304 never
+      // confirms a file the reader can't see. Sessions only in M1 (D21): no key narrowing yet.
+      const reader = fileReaderOf(session.actor);
+      if (reader === undefined) return notFound(request, reply);
       const file = await deps.withTransaction((client) =>
-        store.readable(client, params.data.id.toLowerCase(), session.userId),
+        store.visibleFile(client, params.data.id.toLowerCase(), reader),
       );
       if (file === undefined) return notFound(request, reply);
       const etag = `"${file.storageKey.slice(file.storageKey.lastIndexOf('/') + 1)}"`;

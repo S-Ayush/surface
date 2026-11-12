@@ -78,6 +78,20 @@
       "when": 1794492433599,
       "tag": "0010_workflow_labels_estimates",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794493697395,
+      "tag": "0011_files_issue_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794493697941,
+      "tag": "0012_avatar_logo_file_fks",
+      "breakpoints": true
     }
   ]
 }

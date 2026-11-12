@@ -45,8 +45,8 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
-/** Millisecond instants, like every synced instant (SPEC-003 §7.4, database rules). */
-const instant = () => timestamp({ withTimezone: true, precision: 3 });
+/** Millisecond instants, like every instant (SPEC-003 §7.4, database rules). Shared by `files.ts`. */
+export const instant = () => timestamp({ withTimezone: true, precision: 3 });
 const audit = () => ({
   createdAt: instant().notNull().defaultNow(),
   updatedAt: instant().notNull().defaultNow(),

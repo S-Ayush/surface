@@ -31,12 +31,57 @@ describe('the files store (ADR-0014)', () => {
     );
   });
 
-  it('reads a file its uploader, or anyone once in use, may see', async () => {
+  it('inserts the issue-file columns too (SPEC-014 §4.2)', async () => {
     const { client, texts } = fakeClient();
-    await PG_FILE_STORE.readable(client, 'f', 'u');
-    expect(texts[0]).toContain('"storage_key"');
-    expect(texts[0]).toContain('"uploader_id" = $');
-    expect(texts[0]).toContain('"avatar_file_id" = "files"."id"');
-    expect(texts[0]).toContain('"logo_file_id" = "files"."id"');
+    await PG_FILE_STORE.insert(client, {
+      id: '01930000-0000-7000-8000-0000000000f2',
+      storageKey: `sha256/bb/bb/${'b'.repeat(64)}`,
+      purpose: 'preview',
+      name: 'preview.webp',
+      mimeType: 'image/webp',
+      size: 3_000_000_000,
+      uploaderId: '01930000-0000-7000-8000-00000000ada1',
+      issueId: null,
+      width: 800,
+      height: 600,
+      previewOf: '01930000-0000-7000-8000-0000000000f1',
+    });
+    expect(texts[0]).toContain('"issue_id"');
+    expect(texts[0]).toContain('"width", "height", "preview_of"');
+  });
+
+  it('reads a file through the one visibility statement, as numbers', async () => {
+    const { client, texts } = fakeClient([
+      {
+        id: 'f',
+        purpose: 'avatar',
+        uploaderId: 'u',
+        storageKey: 'k',
+        mimeType: 'image/webp',
+        size: '3000000000',
+      },
+    ]);
+    const file = await PG_FILE_STORE.visibleFile(client, 'f', {
+      userId: 'u',
+      groups: ['workspace'],
+      keyTeamIds: null,
+    });
+    // `bigint` arrives as a string from node-postgres; files over 2 GB still read as numbers.
+    expect(file).toEqual({
+      id: 'f',
+      purpose: 'avatar',
+      uploaderId: 'u',
+      storageKey: 'k',
+      mimeType: 'image/webp',
+      size: 3_000_000_000,
+    });
+    expect(texts[0]).toContain('JOIN files s ON s.id = coalesce(f.preview_of, f.id)');
+  });
+
+  it('answers undefined for a file the reader can’t see', async () => {
+    const { client } = fakeClient([]);
+    await expect(
+      PG_FILE_STORE.visibleFile(client, 'f', { userId: 'u', groups: [], keyTeamIds: null }),
+    ).resolves.toBeUndefined();
   });
 });
