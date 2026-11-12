@@ -97,6 +97,14 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'menu-min-width': px(200),
   'popover-max-width': px(360),
   'toast-width': px(360),
+  // Property picker and issue rows (SPEC-012 §3.3, §3.5).
+  'picker-width': px(280),
+  'picker-list-max-height': px(320),
+  'dot-size': px(8),
+  'row-id-width': px(64),
+  'row-estimate-width': px(40),
+  'row-date-width': px(64),
+  'row-created-width': px(80),
 
   // Radius (§2.5)
   'radius-xs': px(4),

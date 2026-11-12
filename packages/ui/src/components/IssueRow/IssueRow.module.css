@@ -1,0 +1,126 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0 var(--space-16);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: var(--text-base-size);
+  line-height: var(--text-base-line);
+  cursor: pointer;
+}
+
+.root:hover,
+.root[data-focused] {
+  background: var(--bg-hover);
+}
+
+.root:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.cell {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.priority {
+  width: var(--control-sm);
+}
+
+.identifier {
+  width: var(--row-id-width);
+  color: var(--text-tertiary);
+  font-feature-settings: var(--font-features-numeric);
+  font-size: var(--text-sm-size);
+  white-space: nowrap;
+}
+
+.status {
+  width: var(--control-sm);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+}
+
+.titleText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.labels {
+  justify-content: flex-end;
+  max-width: 30%;
+  overflow: hidden;
+}
+
+.labelsButton {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.estimate {
+  width: var(--row-estimate-width);
+  justify-content: flex-end;
+}
+
+.date {
+  width: var(--row-date-width);
+  justify-content: flex-end;
+}
+
+.overdue {
+  color: var(--danger);
+}
+
+/* A stored value the team's scale no longer allows: styled as off-scale (SPEC-010 §4.3). */
+.offScale {
+  color: var(--warning);
+  font-style: italic;
+}
+
+.assignee {
+  width: var(--control-sm);
+  justify-content: center;
+}
+
+.noAssignee {
+  width: var(--avatar-sm);
+  height: var(--avatar-sm);
+  border: var(--border-width) dashed var(--border-strong);
+  border-radius: var(--radius-full);
+}
+
+.created {
+  width: var(--row-created-width);
+  justify-content: flex-end;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm-size);
+  white-space: nowrap;
+}
+
+.compact {
+  padding: 0 var(--space-12);
+  gap: var(--space-6);
+}
+
+.compact .identifier {
+  width: auto;
+}
+
+.root[data-pending] .identifier {
+  font-style: italic;
+}

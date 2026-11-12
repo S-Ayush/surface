@@ -1,0 +1,24 @@
+.root {
+  /* The hue arrives as `color`; the glyphs read it through this property. */
+  --status-color: currentcolor;
+  display: inline-block;
+  flex: none;
+  width: var(--icon-md);
+  height: var(--icon-md);
+  vertical-align: middle;
+}
+
+.stroke {
+  stroke: var(--status-color);
+}
+
+.fill {
+  fill: var(--status-color);
+}
+
+/* The check, cross or bars sit on the filled disc. */
+.mark {
+  fill: none;
+  stroke: var(--on-label);
+  stroke-width: 1.5;
+}

@@ -83,3 +83,37 @@ export {
 } from './components/Popover/Popover.js';
 export type { PopoverContentProps, PopoverProps } from './components/Popover/Popover.js';
 export { ToastRegion } from './components/Toast/Toast.js';
+
+// Issue list and page components (PLAN-012 S2)
+export { StatusIcon } from './components/StatusIcon/StatusIcon.js';
+export type { StatusIconProps } from './components/StatusIcon/StatusIcon.js';
+export { PriorityIcon } from './components/PriorityIcon/PriorityIcon.js';
+export type { PriorityIconProps } from './components/PriorityIcon/PriorityIcon.js';
+export { LabelChip } from './components/LabelChip/LabelChip.js';
+export type { LabelChipProps } from './components/LabelChip/LabelChip.js';
+export { PropertyPill } from './components/PropertyPill/PropertyPill.js';
+export type { PropertyPillProps } from './components/PropertyPill/PropertyPill.js';
+export { PropertyPicker } from './components/PropertyPicker/PropertyPicker.js';
+export type {
+  PropertyPickerOption,
+  PropertyPickerProps,
+} from './components/PropertyPicker/PropertyPicker.js';
+export { DatePicker } from './components/DatePicker/DatePicker.js';
+export type { DatePickerProps } from './components/DatePicker/DatePicker.js';
+export { GroupHeader } from './components/GroupHeader/GroupHeader.js';
+export type { GroupHeaderProps } from './components/GroupHeader/GroupHeader.js';
+export { IssueRow } from './components/IssueRow/IssueRow.js';
+export type { IssueRowProperty, IssueRowProps } from './components/IssueRow/IssueRow.js';
+export { EditableTitle, TITLE_MAX_LENGTH } from './components/EditableTitle/EditableTitle.js';
+export type { EditableTitleProps } from './components/EditableTitle/EditableTitle.js';
+export { VirtualList } from './components/VirtualList/VirtualList.js';
+export type {
+  VirtualItemProps,
+  VirtualListHandle,
+  VirtualListProps,
+} from './components/VirtualList/VirtualList.js';
+export {
+  GROUP_HEADER_HEIGHT,
+  ROW_HEIGHT,
+  ROW_HEIGHT_COMPACT,
+} from './components/VirtualList/window.js';

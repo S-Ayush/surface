@@ -1,0 +1,10 @@
+.scroller {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.grid {
+  position: relative;
+  width: 100%;
+}

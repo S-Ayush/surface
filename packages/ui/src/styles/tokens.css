@@ -82,6 +82,13 @@
   --menu-min-width: 200px;
   --popover-max-width: 360px;
   --toast-width: 360px;
+  --picker-width: 280px;
+  --picker-list-max-height: 320px;
+  --dot-size: 8px;
+  --row-id-width: 64px;
+  --row-estimate-width: 40px;
+  --row-date-width: 64px;
+  --row-created-width: 80px;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;

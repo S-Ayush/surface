@@ -1,0 +1,33 @@
+.root {
+  display: inline-block;
+  flex: none;
+  width: var(--icon-md);
+  height: var(--icon-md);
+  vertical-align: middle;
+}
+
+.on {
+  fill: var(--text-secondary);
+}
+
+.off {
+  fill: var(--border-strong);
+}
+
+.none {
+  fill: none;
+  stroke: var(--text-tertiary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.urgent {
+  fill: var(--label-orange);
+}
+
+.bang {
+  fill: none;
+  stroke: var(--on-label);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}

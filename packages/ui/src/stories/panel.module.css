@@ -1,0 +1,17 @@
+/* A stand-in for the Popover surface that hosts a picker in the stories. */
+.panel {
+  display: inline-block;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-e1);
+  color: var(--text-primary);
+  font-size: var(--text-base-size);
+  line-height: var(--text-base-line);
+}
+
+.listBox {
+  height: calc(10 * var(--row-height));
+  width: 100%;
+  border: var(--border-width) solid var(--border-subtle);
+}
