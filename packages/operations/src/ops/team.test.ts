@@ -63,6 +63,7 @@ function fakeStore(): OptimisticStore & { rows: Map<string, Map<string, StoreRow
         Object.entries(fields).every(([field, value]) => row[field] === value),
       ),
     archive: () => undefined,
+    unarchive: () => undefined,
     remove: (model, ref) => {
       const row = find(model, ref);
       const id = row?.['id'];

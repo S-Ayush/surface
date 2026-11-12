@@ -144,7 +144,8 @@ export class OverlayEngine {
           else rows.set(id, state.row);
         }
       }
-      return [...rows.values()];
+      // Ordered by id, so a replay finds the same rows in the same order (SPEC-011 §6.3, AC-7).
+      return [...rows.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     };
     // References see base plus the mutations so far, never the screen (review m3).
     const view: RefSource = {
@@ -163,6 +164,8 @@ export class OverlayEngine {
       const current = id === undefined ? undefined : read(model, id);
       return id === undefined || !current ? undefined : { id, current };
     };
+    const declaresArchivedAt = (model: string) =>
+      this.#pool.model(model).fields['archivedAt'] !== undefined;
     const write = (model: string, data: unknown, archived: boolean) => {
       const row = decodeRow(this.#pool, model, data);
       layer.set(rowKey(model, row.id), { row, archived });
@@ -184,9 +187,25 @@ export class OverlayEngine {
         write(model, { ...found.current.row, ...changes, id: found.id }, found.current.archived);
       },
       insert: (model, row) => write(model, row, false),
+      // SPEC-011 §6.3: the flag and, for a model that declares it, `archivedAt` move together.
       archive: (model, ref) => {
         const found = live(model, ref);
-        if (found) layer.set(rowKey(model, found.id), { ...found.current, archived: true });
+        if (found === undefined) return;
+        if (!declaresArchivedAt(model)) {
+          layer.set(rowKey(model, found.id), { ...found.current, archived: true });
+          return;
+        }
+        const archivedAt = mutation.now.toISOString();
+        write(model, { ...found.current.row, archivedAt, id: found.id }, true);
+      },
+      unarchive: (model, ref) => {
+        const found = live(model, ref);
+        if (found === undefined) return;
+        if (!declaresArchivedAt(model)) {
+          layer.set(rowKey(model, found.id), { ...found.current, archived: false });
+          return;
+        }
+        write(model, { ...found.current.row, archivedAt: null, id: found.id }, false);
       },
       remove: (model, ref) => {
         const found = live(model, ref);

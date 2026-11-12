@@ -102,6 +102,14 @@ describe('rule 4: reference types', () => {
     expect(rules([mutation('team.touch', z.object({ id: z.uuid() }), true)])).toEqual([]);
   });
 
+  it('exempts systemOnly ops, which only jobs call (SPEC-003 §11)', () => {
+    const { ui: _ui, ...rest } = mutation('team.touch', z.object({ id: z.uuid(), team: z.uuid() }));
+    const op = { ...rest, examples: [{ id: uuid, team: uuid }] };
+    expect(rules([{ ...op, systemOnly: true }])).toEqual([]);
+    // The same input on a public op is flagged, so the exemption is what passes it.
+    expect(rules([op]).map(([rule]) => rule)).toEqual([4, 4]);
+  });
+
   it('flags ids elsewhere, nested and in arrays', () => {
     const input = z.object({
       id: z.uuid(),
@@ -285,6 +293,14 @@ describe('rule 8: breaking changes against the snapshot', () => {
 
   it('ignores internal operations, which are never released', () => {
     expect(catalogSnapshot([{ ...v1, internal: true }])).toEqual({ operations: {} });
+  });
+
+  it('ignores systemOnly operations, which are never released', () => {
+    expect(catalogSnapshot([{ ...v1, systemOnly: true }])).toEqual({ operations: {} });
+    // A systemOnly op may change freely: no caller outside the server depends on it.
+    expect(
+      rules([{ ...v1, systemOnly: true, kind: 'query' }], [{ ...v1, systemOnly: true }]),
+    ).toEqual([]);
   });
 });
 

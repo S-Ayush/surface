@@ -2,7 +2,8 @@
  * The operation executor (SPEC-003 §6): every state change and every query from the web
  * client, the HTTP API and MCP runs through `execute()` (CLAUDE.md rule 1).
  *
- *  1–2  look up the operation (internal ones only for users outside production)
+ *  1–2  look up the operation (internal ones only for users outside production, `systemOnly`
+ *       ones only for the system actor)
  *  3    API-key scope                         → FORBIDDEN
  *  4    rate limit                            → RATE_LIMITED
  *  5    validate input                        → INVALID_INPUT
@@ -181,8 +182,8 @@ export type ExecuteResult =
 
 export interface Executor {
   /**
-   * Operations the actor may call: internal ones only where allowed, and only what an API
-   * key's scope permits (`GET /api/ops`, SPEC-003 §9).
+   * Operations the actor may call: internal ones only where allowed, never `systemOnly` ones,
+   * and only what an API key's scope permits (`GET /api/ops`, SPEC-003 §9).
    */
   operations(actor: Actor): AnyOperation[];
   execute(
@@ -244,8 +245,11 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     deps.syncedModels ??
     (defaultModels ??= serverSyncRegistry({}).models.map((model) => model.name));
 
+  // A `systemOnly` op exists for the system actor alone, in every environment (SPEC-003 §6 step 2).
   const callable = (def: AnyOperation, actor: Actor) =>
-    !def.internal || (deps.allowInternal && actor.kind === 'user');
+    def.systemOnly === true
+      ? actor.kind === 'system'
+      : !def.internal || (deps.allowInternal && actor.kind === 'user');
 
   /** Steps 3–5: nothing here touches the database. `beforeInput` is step 4, the rate limit. */
   function prepare(
@@ -563,9 +567,11 @@ export function createExecutor(deps: ExecutorDeps): Executor {
 
   return {
     operations: (actor) =>
-      deps.registry
-        .list()
-        .filter((op) => callable(op, actor) && keyScopeProblem(op, actor) === undefined),
+      deps.registry.list().filter(
+        // `GET /api/ops` never lists a `systemOnly` op, whoever asks (SPEC-003 §9).
+        (op) =>
+          op.systemOnly !== true && callable(op, actor) && keyScopeProblem(op, actor) === undefined,
+      ),
 
     async execute(opName, rawInput, actor, options = {}) {
       const started = performance.now();

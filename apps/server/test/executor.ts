@@ -131,12 +131,17 @@ async function auditSyncedWrites(pool: pg.Pool): Promise<void> {
 }
 
 /** Fails a mutation that wrote a synced row its repo didn't log (a write around the repo). */
-export const repoWritesOnly: PostHandlerCheck = async ({ op, tx, changes }) => {
+export const repoWritesOnly: PostHandlerCheck = async ({ op, tx, repo, changes }) => {
   if (op.kind === 'query') return; // read-only: nothing to audit
   const { rows } = await tx.execute<{ tbl: string; id: string }>(sql`
     SELECT DISTINCT tbl, id::text AS id FROM ${sql.identifier(FIXTURE_SCHEMA)}.write_audit
     WHERE tx = pg_current_xact_id_if_assigned()`);
   const logged = new Set(changes.map((c) => `${tableOfModel.get(c.model)}:${c.id}`));
+  // ADR-0022: content rows purged without a `D`. The repo's flush, after this check, fails the
+  // transaction unless each one's parent is deleted with a logged `D` in it too.
+  for (const { model, ids } of repo.unloggedDeletes()) {
+    for (const id of ids) logged.add(`${tableOfModel.get(model)}:${id}`);
+  }
   const unlogged = rows.filter((r) => !logged.has(`${r.tbl}:${r.id}`));
   if (unlogged.length > 0) {
     const rowList = unlogged.map((r) => `${r.tbl} ${r.id}`).join(', ');

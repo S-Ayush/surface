@@ -3,7 +3,13 @@
  * reaches a row a pending mutation read or wrote, the overlay is recomputed
  * from the new base, so the screen shows their change with ours on top.
  */
-import { describe, expect, it } from 'vitest';
+import { defineModel, str, timestamp } from '@surface/domain/model';
+import { defineOperation } from '@surface/operations';
+import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+import type { OverlayMutation } from '../src/overlay.js';
+import { OverlayEngine } from '../src/overlay.js';
+import { ObjectPool } from '../src/pool.js';
 import { FakeHub } from './support/hub.js';
 import { clientItems, eventually, liveStore, serverItems, until } from './support/live.js';
 import { DebugItem, id } from './support/models.js';
@@ -82,5 +88,121 @@ describe('the overlay over a changing base', () => {
     expect(store.pool.get(DebugItem, id(1))).toBe(before);
     expect(store.pool.get(DebugItem, id(2))?.counter).toBe(99);
     await store.close();
+  });
+});
+
+/** A model that archives through a declared `archivedAt` (SPEC-011 §5.5), like Label from S2. */
+const Shelf = defineModel('Shelf', {
+  load: 'eager',
+  fields: { name: str(), archivedAt: timestamp().nullable() },
+});
+
+const archiveFixture = (verb: 'archive' | 'unarchive', summary: string) =>
+  defineOperation({
+    name: `debug.${verb}Fixture`,
+    kind: 'mutation',
+    domain: 'debug',
+    summary,
+    description: 'Archives or unarchives a row of any model through the store. For overlay tests.',
+    keywords: [`${verb} row`, 'overlay fixture'],
+    input: z.object({ model: z.string(), id: z.uuid() }),
+    output: z.object({}),
+    examples: [{ model: 'Shelf', id: id(1) }],
+    permission: () => true,
+    destructive: false,
+    internal: true,
+    optimistic(store, input) {
+      store[verb](input.model, input.id);
+    },
+  });
+const archiveRow = archiveFixture('archive', 'Archive a row (fixture)');
+const unarchiveRow = archiveFixture('unarchive', 'Unarchive a row (fixture)');
+
+describe('store.archive and store.unarchive (SPEC-011 §6.3)', () => {
+  const now = new Date('2026-11-12T10:00:00.000Z');
+  const step = (key: string, op: OverlayMutation['op'], model: string, n: number) => ({
+    key,
+    op,
+    input: { model, id: id(n) },
+    now,
+  });
+
+  function setup() {
+    const pool = new ObjectPool([Shelf, DebugItem]);
+    pool.loadBase('Shelf', [
+      {
+        row: { id: id(1), name: 'Live', archivedAt: null, groups: ['workspace'] },
+        archived: false,
+      },
+      {
+        row: {
+          id: id(2),
+          name: 'Old',
+          archivedAt: '2026-01-01T00:00:00.000Z',
+          groups: ['workspace'],
+        },
+        archived: true,
+      },
+    ]);
+    pool.loadBase('DebugItem', [
+      { row: { id: id(3), title: 'Item', counter: 1, groups: ['workspace'] }, archived: true },
+      { row: { id: id(4), title: 'Item', counter: 4, groups: ['workspace'] }, archived: false },
+    ]);
+    return { pool, engine: new OverlayEngine(pool, () => undefined) };
+  }
+
+  it('archive sets archivedAt to the mutation time on a model that declares it', () => {
+    const { pool, engine } = setup();
+    engine.push(step('c:1', archiveRow, 'Shelf', 1));
+    expect(pool.get(Shelf, id(1))).toMatchObject({
+      $archived: true,
+      archivedAt: '2026-11-12T10:00:00.000Z',
+      name: 'Live',
+    });
+  });
+
+  it('unarchive clears the flag and sets archivedAt to null on a model that declares it', () => {
+    const { pool, engine } = setup();
+    engine.push(step('c:1', unarchiveRow, 'Shelf', 2));
+    expect(pool.get(Shelf, id(2))).toMatchObject({
+      $archived: false,
+      archivedAt: null,
+      name: 'Old',
+    });
+  });
+
+  it('archive and unarchive change only the flag on a model without archivedAt', () => {
+    const { pool, engine } = setup();
+    const shown = vi.spyOn(pool, 'setOverlay');
+    engine.rebuild([
+      step('c:1', unarchiveRow, 'DebugItem', 3),
+      step('c:2', archiveRow, 'DebugItem', 4),
+    ]);
+    const unarchived = pool.get(DebugItem, id(3));
+    const archived = pool.get(DebugItem, id(4));
+    expect(unarchived?.$archived).toBe(false);
+    expect(archived?.$archived).toBe(true);
+    expect(unarchived).toMatchObject({ title: 'Item', counter: 1 });
+    expect(archived).toMatchObject({ title: 'Item', counter: 4 });
+    // The overlay rows are the base rows: nothing but the flag changed.
+    expect(shown.mock.calls).toEqual([
+      ['DebugItem', id(3), { row: pool.baseOf('DebugItem', id(3))?.row, archived: false }],
+      ['DebugItem', id(4), { row: pool.baseOf('DebugItem', id(4))?.row, archived: true }],
+    ]);
+  });
+
+  it('an unarchive after an archive in the queue leaves the row live, and a rebuild agrees', () => {
+    const { pool, engine } = setup();
+    const list = [step('c:1', archiveRow, 'Shelf', 1), step('c:2', unarchiveRow, 'Shelf', 1)];
+    engine.rebuild(list);
+    expect(pool.get(Shelf, id(1))).toMatchObject({ $archived: false, archivedAt: null });
+    engine.rebuild(list);
+    expect(pool.get(Shelf, id(1))).toMatchObject({ $archived: false, archivedAt: null });
+  });
+
+  it('does nothing for a row the store does not hold', () => {
+    const { pool, engine } = setup();
+    engine.push(step('c:1', unarchiveRow, 'Shelf', 9));
+    expect(pool.get(Shelf, id(9))).toBeUndefined();
   });
 });

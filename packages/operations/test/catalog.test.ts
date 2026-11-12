@@ -1,7 +1,7 @@
 // AC-1 (catalog and OpenAPI side): both are generated from the definitions alone.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { catalogEntry, defineOperation, toOpenApi } from '../src/index.js';
+import { catalogEntry, defineOperation, isPublicOperation, toOpenApi } from '../src/index.js';
 import { teamList, teamUpdate } from './fixtures.js';
 
 interface Tree {
@@ -64,6 +64,20 @@ describe('catalogEntry', () => {
     });
     expect(entry.input.team).toMatchObject({ type: 'TeamRef', required: true });
     expect(entry).not.toHaveProperty('deprecated');
+  });
+});
+
+describe('isPublicOperation', () => {
+  it('leaves internal and systemOnly operations out of the catalog (SPEC-003 §3.1)', () => {
+    const { ui: _ui, ...withoutUi } = teamUpdate;
+    const job = defineOperation({ ...withoutUi, name: 'team.sweep', systemOnly: true });
+    expect(isPublicOperation(teamUpdate)).toBe(true);
+    expect(isPublicOperation(treeOp)).toBe(false);
+    expect(isPublicOperation(job)).toBe(false);
+    expect([teamUpdate, teamList, treeOp, job].filter(isPublicOperation)).toEqual([
+      teamUpdate,
+      teamList,
+    ]);
   });
 });
 

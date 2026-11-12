@@ -44,6 +44,7 @@ function fakeStore(preferences: StoreRow | undefined) {
     },
     find: () => [],
     archive: () => undefined,
+    unarchive: () => undefined,
     remove: () => undefined,
   };
   return { store, writes, row: () => rows.get(ME) };

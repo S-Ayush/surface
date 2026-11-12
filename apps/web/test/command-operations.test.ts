@@ -3,7 +3,7 @@
 import { observable, runInAction } from 'mobx';
 import { describe, expect, it, vi } from 'vitest';
 import type { Actor } from '@surface/domain';
-import { registry as realRegistry } from '@surface/operations';
+import { createRegistry, registry as realRegistry, type AnyOperation } from '@surface/operations';
 import type { Command } from '../src/command-menu/model.js';
 import { rankCommands } from '../src/command-menu/ranking.js';
 import { track, watch } from '../src/command-menu/reactive.js';
@@ -24,6 +24,7 @@ import {
   teamTarget,
   ENG,
   DES,
+  leaveWorkspace,
 } from './command-fixtures.js';
 
 const teamRefs: OperationCommand['refs'] = (ctx) =>
@@ -96,6 +97,20 @@ describe('AC-2: permission filtering', () => {
     const names = menuOperations(fixtureRegistry).map((op) => op.name);
     expect(names).not.toContain('debug.uiFixture');
     expect(names).not.toContain('team.renameOld');
+  });
+
+  it('never offers a systemOnly operation, even one that carries ui (SPEC-003 §3.1)', () => {
+    // `defineOperation` refuses ui on a systemOnly op; a plain object stands in for a definition
+    // that slipped past it.
+    const job: AnyOperation = { ...leaveWorkspace, name: 'user.sweepFixture', systemOnly: true };
+    const registry = createRegistry([leaveWorkspace, job]);
+    expect(menuOperations(registry).map((op) => op.name)).toEqual(['user.exportData']);
+    const source = operationSource(registry, new CommandRegistry(() => undefined), {
+      'user.exportData': { run: vi.fn() },
+      'user.sweepFixture': { run: vi.fn() },
+    });
+    const ctx = context({ actor: admin });
+    expect(offered(source(ctx), ctx)).toEqual(['op:user.exportData']);
   });
 
   it('hides a command that opens a form until its feature registers the form', () => {

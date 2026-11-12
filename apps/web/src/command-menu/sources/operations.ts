@@ -32,11 +32,17 @@ export type OperationCommand = {
   | { readonly opens: CommandId }
 );
 
-/** Operations the menu lists: with `ui`, not internal, not deprecated. */
+/** Operations the menu lists: with `ui`, not internal or `systemOnly`, not deprecated. */
 export function menuOperations(registry: OperationRegistry): AnyOperation[] {
   return registry
     .list()
-    .filter((op) => op.ui !== undefined && op.internal !== true && op.deprecated === undefined);
+    .filter(
+      (op) =>
+        op.ui !== undefined &&
+        op.internal !== true &&
+        op.systemOnly !== true &&
+        op.deprecated === undefined,
+    );
 }
 
 export function matchesContext(contexts: readonly UiContext[], target: CommandTarget): boolean {

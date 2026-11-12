@@ -100,6 +100,14 @@ module.exports = {
       to: { path: '^apps/server/' },
     },
     {
+      name: 'bulk-only-from-repo',
+      comment:
+        "sync/bulk.ts builds the repo layer's bulk writes; only sync/repo.ts runs them, logging each row (CLAUDE.md rule 2, PLAN-011 S1).",
+      severity: 'error',
+      from: { path: '^apps/server/src/', pathNot: '^apps/server/src/sync/(repo|bulk)\\.ts$' },
+      to: { path: '^apps/server/src/sync/bulk\\.ts$' },
+    },
+    {
       name: 'nothing-imports-tests',
       comment: 'tests/ holds cross-boundary test harnesses (ADR-0016); nothing may depend on them.',
       severity: 'error',

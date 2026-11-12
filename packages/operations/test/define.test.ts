@@ -112,6 +112,27 @@ describe('defineOperation', () => {
     ]);
   });
 
+  it('refuses contentParent() on a query (SPEC-003 §3.1)', () => {
+    expect(problemsOf({ contentParent: () => ({ model: 'Issue', id: 'x' }) })).toEqual([
+      'queries cannot have contentParent(): only mutations write content',
+    ]);
+  });
+
+  it('accepts contentParent() and systemOnly on a mutation', () => {
+    const parent = { model: 'Issue', id: '0192f0c1-7e5a-7b3c-9d4e-1f2a3b4c5d6e' };
+    const { ui: _ui, ...withoutUi } = teamUpdate;
+    const op = defineOperation({ ...withoutUi, contentParent: () => parent, systemOnly: true });
+    expect(op.systemOnly).toBe(true);
+    expect(op.contentParent?.({ team: 'ENG' })).toEqual(parent);
+  });
+
+  it('refuses a systemOnly value other than true, and ui on a systemOnly op', () => {
+    expect(problemsOf({ systemOnly: false })).toEqual(['systemOnly must be true or left out']);
+    expect(problemsOf({ systemOnly: true, ui: { title: 'Sweep', contexts: ['global'] } })).toEqual([
+      'a systemOnly operation is hidden from the command menu, so it cannot have ui',
+    ]);
+  });
+
   it('reports every problem at once, naming the operation', () => {
     expect(() =>
       defineOperation({ ...valid, name: 'Bad', summary: '' } as unknown as typeof valid),
@@ -157,6 +178,13 @@ describe('defineOperation types', () => {
         ...valid,
         // @ts-expect-error -- queries cannot have optimistic()
         optimistic: () => undefined,
+      }),
+    ).toThrow(OperationDefinitionError);
+    expect(() =>
+      defineOperation({
+        ...valid,
+        // @ts-expect-error -- queries cannot have contentParent()
+        contentParent: () => ({ model: 'Issue', id: 'x' }),
       }),
     ).toThrow(OperationDefinitionError);
   });

@@ -63,9 +63,27 @@ export interface OperationDef<
    * `replayMessage`, which says how to get a new one (SPEC-003 §6 step 6; PLAN-001 S9).
    */
   readonly secretOutput?: { readonly replayMessage: string };
-  /** Hidden from the API, the catalog and MCP (`debug.*`). */
+  /**
+   * Content mutations only: the content parent (an Issue) the mutation writes under. Client
+   * dispatch awaits that parent's hydration before running `optimistic` (SPEC-011 §5.3 step 6;
+   * wired in PLAN-011 S5b). Refused on a query.
+   */
+  contentParent?(input: z.output<In>): ContentParentRef;
+  /** Hidden from the API, the catalog and MCP (`debug.*`). Dev-only debug operations. */
   readonly internal?: boolean;
+  /**
+   * Callable only by the `system` actor (jobs), in every environment. Hidden from the API, the
+   * catalog, OpenAPI, MCP and the command menu, and exempt from lint rule 2's seed run and rule 4
+   * (SPEC-003 §3.1, §11).
+   */
+  readonly systemOnly?: true;
   readonly deprecated?: Deprecation;
+}
+
+/** The content parent a mutation writes under (SPEC-003 §3.1, SPEC-011 §5.3), e.g. an Issue. */
+export interface ContentParentRef {
+  readonly model: string;
+  readonly id: string;
 }
 
 /** Any operation, for registries and generic code. */
@@ -78,9 +96,12 @@ export type ParsedInputOf<Op extends AnyOperation> = z.output<Op['input']>;
 /** What a successful call returns before `fields` shaping. */
 export type OutputOf<Op extends AnyOperation> = z.output<Op['output']>;
 
-/** Queries never write, so a query with `optimistic` is a type error as well as a runtime one. */
+/**
+ * Queries never write, so a query with `optimistic` or `contentParent` is a type error as well as
+ * a runtime one.
+ */
 type KindRules<Kind extends OperationKind> = Kind extends 'query'
-  ? { readonly optimistic?: never }
+  ? { readonly optimistic?: never; readonly contentParent?: never }
   : unknown;
 
 export const OPERATION_NAME_PATTERN = /^[a-z][a-zA-Z]*\.[a-z][a-zA-Z]*$/;
@@ -159,6 +180,16 @@ export function definitionChecks(def: AnyOperation): DefinitionCheck[] {
   }
   if (kind === 'query' && def.optimistic !== undefined) {
     add(7, 'queries cannot have optimistic(): only mutations change the store');
+  }
+  if (kind === 'query' && def.contentParent !== undefined) {
+    add(7, 'queries cannot have contentParent(): only mutations write content');
+  }
+  const systemOnly: unknown = def.systemOnly;
+  if (systemOnly !== undefined && systemOnly !== true) {
+    add(7, 'systemOnly must be true or left out');
+  }
+  if (systemOnly === true && def.ui !== undefined) {
+    add(7, 'a systemOnly operation is hidden from the command menu, so it cannot have ui');
   }
   return problems;
 }

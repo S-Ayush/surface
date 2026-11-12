@@ -12,6 +12,19 @@ import { LOCKS } from '../db/locks.js';
 import { syncLog, syncState } from '../db/schema/index.js';
 import { SurfaceError } from '../executor/errors.js';
 import {
+  chunked,
+  columnOf,
+  deleteWhereStatements,
+  unloggedDeleteProblem,
+  unloggedParent,
+  updateWhereProblem,
+  updateWhereStatements,
+  type ContentParent,
+  type ModelShape,
+  type UnloggedDelete,
+} from './bulk.js';
+import {
+  isModelName,
   SYNCED_MODELS,
   type ArchivableModel,
   type ModelInsert,
@@ -19,6 +32,9 @@ import {
   type ModelPatch,
   type ModelRow,
 } from './models.js';
+
+export { SYNC_LOG_CHUNK } from './bulk.js';
+export type { UnloggedDelete } from './bulk.js';
 
 /** The channel the hub listens on (SPEC-002 §4.3). */
 export const SYNC_CHANNEL = 'sync';
@@ -57,6 +73,34 @@ export interface Repo {
   unarchive<M extends ArchivableModel>(model: M, id: string): Promise<ModelRow<M>>;
   /** Hard delete (trash purge, INV-21). */
   purge(model: ModelName, id: string): Promise<void>;
+  /**
+   * Bulk update (SPEC-011 §5.1), for cascades: locks the rows in ascending id, updates them in
+   * chunks and logs one `U` per row with its **stored** groups, so it reads no other row (no team
+   * read after an issue lock, SPEC-011 §4.8). It refuses a patch that touches a field the groups
+   * derive from (`teamId`). `updatedAt` is set only with `touchUpdatedAt` (cascades pass false).
+   * An empty patch writes nothing and logs each row again, as stored. Ids with no row are
+   * skipped. Returns the ids of the rows it logged, in ascending order.
+   */
+  updateWhere<M extends ModelName>(
+    model: M,
+    ids: readonly string[],
+    patch: ModelPatch<M>,
+    options: { readonly touchUpdatedAt: boolean },
+  ): Promise<string[]>;
+  /**
+   * Bulk delete (SPEC-011 §5.1): deletes the rows whose `field` (a uuid column) is one of `ids`,
+   * in chunks, and logs one `D` per row. Returns the deleted ids in ascending order.
+   *
+   * `log: false` logs nothing: the one unlogged repo write (ADR-0022), for purging an issue's
+   * content. It is refused unless `model` is a content model matched on its parent field, and
+   * `flush` fails the transaction unless each parent is deleted, with a logged `D`, in it too.
+   */
+  deleteWhere<M extends ModelName>(
+    model: M,
+    field: keyof ModelRow<M> & string,
+    ids: readonly string[],
+    options?: { readonly log?: boolean },
+  ): Promise<string[]>;
   /** Changes buffered so far. */
   changes(): readonly RowChange[];
 }
@@ -70,14 +114,41 @@ export interface Flushed {
 
 /** The executor's handle on the repo: the handler view plus the end-of-transaction flush. */
 export interface TransactionRepo extends Repo {
-  /** Step 11: appends the buffered changes to `sync_log`. Takes no lock when nothing changed. */
+  /**
+   * Step 11: appends the buffered changes to `sync_log`, in chunks of `SYNC_LOG_CHUNK` rows under
+   * one lock and one `sync_state` bump. Takes no lock when nothing changed. First asserts the
+   * unlogged-delete rule (ADR-0022), and throws if it is broken.
+   */
   flush(origin: ChangeOrigin): Promise<Flushed>;
+  /** The `deleteWhere(…, { log: false })` calls so far, for the test write audit (SPEC-002 AC-12). */
+  unloggedDeletes(): readonly UnloggedDelete[];
+}
+
+function isContentParent(value: unknown): value is ContentParent {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof Reflect.get(value, 'model') === 'string' &&
+    typeof Reflect.get(value, 'field') === 'string'
+  );
+}
+
+/**
+ * A synced model's load strategy and, for a content model, its parent. `parent` is declared by
+ * `defineModel` from PLAN-011 S5a; until then no model has one, so no unlogged delete can pass.
+ */
+export function modelShape(model: string): ModelShape | undefined {
+  if (!isModelName(model)) return undefined;
+  const { def } = SYNCED_MODELS[model];
+  const parent: unknown = Reflect.get(def, 'parent');
+  return { load: def.load, ...(isContentParent(parent) ? { parent } : {}) };
 }
 
 export type RepoFactory = (db: NodePgDatabase, now: Date) => TransactionRepo;
 
 export const syncRepo: RepoFactory = (db, now) => {
   const buffered: RowChange[] = [];
+  const unlogged: UnloggedDelete[] = [];
   const push = (change: RowChange) => void buffered.push(change);
 
   /** Writes and logs a row whose groups may have changed (update, archive, unarchive). */
@@ -156,9 +227,68 @@ export const syncRepo: RepoFactory = (db, now) => {
       push({ action: 'D', model, id, groups: deleted.groups });
     },
 
+    async updateWhere(model, ids, patch, { touchUpdatedAt }) {
+      const problem = updateWhereProblem(model, patch);
+      if (problem !== undefined) throw new Error(problem);
+      const { table } = SYNCED_MODELS[model];
+      const statements = updateWhereStatements(db, table, ids, patch, { touchUpdatedAt, now });
+      const rows: { readonly id: string; readonly syncGroups: string[] }[] = [];
+      for (const chunk of statements) {
+        const locked = await chunk.lock;
+        if (chunk.update === undefined) {
+          rows.push(...locked);
+          continue;
+        }
+        // RETURNING follows no order: sort, so the log is in id order like the locks.
+        const updated = await chunk.update;
+        rows.push(...updated.sort(byId));
+      }
+      for (const row of rows) {
+        push({
+          action: 'U',
+          model,
+          id: row.id,
+          row: loggedRow(model, row),
+          groups: row.syncGroups,
+        });
+      }
+      return rows.map((row) => row.id);
+    },
+
+    async deleteWhere(model, field, ids, options = {}) {
+      const log = options.log ?? true;
+      const { table } = SYNCED_MODELS[model];
+      const found = columnOf(table, field);
+      if ('problem' in found) throw new Error(`deleteWhere(${model}): ${model} ${found.problem}`);
+      if (!log) {
+        const allowed = unloggedParent(model, modelShape(model), field);
+        if ('problem' in allowed) throw new Error(allowed.problem);
+      }
+      const deleted: { id: string; groups: string[] }[] = [];
+      for (const chunk of deleteWhereStatements(db, table, found.column, ids)) {
+        deleted.push(...(await chunk.delete));
+      }
+      deleted.sort(byId);
+      if (log) {
+        for (const row of deleted) push({ action: 'D', model, id: row.id, groups: row.groups });
+      } else {
+        unlogged.push({
+          model,
+          field,
+          parentIds: [...new Set(ids.map((id) => id.toLowerCase()))],
+          ids: deleted.map((row) => row.id),
+        });
+      }
+      return deleted.map((row) => row.id);
+    },
+
     changes: () => [...buffered],
+    unloggedDeletes: () => [...unlogged],
 
     async flush(origin) {
+      // ADR-0022: the content deletes that logged nothing must sit next to their parent's `D`.
+      const problem = unloggedDeleteProblem(unlogged, buffered, modelShape);
+      if (problem !== undefined) throw new Error(problem);
       if (buffered.length === 0) return {};
       await db.execute(sql`SELECT pg_advisory_xact_lock(${LOCKS.sync}::bigint)`);
       const lockedAt = performance.now();
@@ -175,18 +305,18 @@ export const syncRepo: RepoFactory = (db, now) => {
         });
       if (!state) throw new Error('sync_state has no row. Migration 0005 seeds it');
       const first = state.lastSyncId - buffered.length + 1;
-      await db.insert(syncLog).values(
-        buffered.map((c, i) => ({
-          syncId: first + i,
-          model: c.model,
-          modelId: c.id,
-          action: c.action,
-          data: c.row ?? null,
-          groups: [...c.groups],
-          clientId: origin.clientId ?? null,
-          clientSeq: origin.seq ?? null,
-        })),
-      );
+      const rows = buffered.map((c, i) => ({
+        syncId: first + i,
+        model: c.model,
+        modelId: c.id,
+        action: c.action,
+        data: c.row ?? null,
+        groups: [...c.groups],
+        clientId: origin.clientId ?? null,
+        clientSeq: origin.seq ?? null,
+      }));
+      // Chunks keep each statement under Postgres's 65,535 bind parameters (SPEC-011 §5.1).
+      for (const chunk of chunked(rows)) await db.insert(syncLog).values(chunk);
       return { lastSyncId: state.lastSyncId, lockedAt };
     },
   };
@@ -236,6 +366,10 @@ export function loggedRow(
     }
   }
   return out;
+}
+
+function byId(a: { readonly id: string }, b: { readonly id: string }): number {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {

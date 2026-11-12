@@ -17,6 +17,7 @@ function fakeStore(signedIn = true) {
     insert: () => undefined,
     find: () => [],
     archive: () => undefined,
+    unarchive: () => undefined,
     remove: () => undefined,
   };
   return { store, patches };

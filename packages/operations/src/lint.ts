@@ -7,6 +7,7 @@
  */
 import { SURFACE_REF_KEY } from '@surface/domain';
 import { z } from 'zod';
+import { isPublicOperation } from './catalog.js';
 import { definitionChecks, type AnyOperation } from './define.js';
 import { connectionOf, listInput } from './list.js';
 import { toCompactSchema, toJsonSchema, type CompactField, type JsonSchema } from './schema.js';
@@ -94,10 +95,13 @@ export function parseSnapshot(json: unknown): CatalogSnapshot {
   return parsed.data;
 }
 
-/** The snapshot of the public operations (internal ones are never released), sorted by name. */
+/**
+ * The snapshot of the public operations (internal and `systemOnly` ones are never released),
+ * sorted by name.
+ */
 export function catalogSnapshot(operations: readonly AnyOperation[]): CatalogSnapshot {
   const entries = operations
-    .filter((op) => !op.internal)
+    .filter(isPublicOperation)
     .map((op): [string, SnapshotEntry] => [op.name, snapshotEntry(op)])
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return { operations: Object.fromEntries(entries) };
@@ -182,10 +186,11 @@ function optimisticForUi(op: AnyOperation, add: Add): void {
 /**
  * A raw uuid names another entity in a form people and AI can't type; reference types accept
  * keys, identifiers and "me" too (§4). Exempt: a `create*` op's own top-level `id` (a
- * client-generated id, E7), and internal ops, which only tests call.
+ * client-generated id, E7), internal ops, which only tests call, and `systemOnly` ops, which
+ * only jobs call (SPEC-003 §11).
  */
 function referenceTypes(op: AnyOperation, add: Add): void {
-  if (op.internal) return;
+  if (!isPublicOperation(op)) return;
   const ownId = verbOf(op).startsWith('create') ? 'id' : undefined;
   for (const path of rawUuidPaths(toJsonSchema(op.input, 'input'))) {
     if (path === ownId) continue;

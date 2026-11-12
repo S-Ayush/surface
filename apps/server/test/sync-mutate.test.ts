@@ -209,7 +209,10 @@ function fakeDatabase() {
     archive: () => Promise.reject(new Error('not used')),
     unarchive: () => Promise.reject(new Error('not used')),
     purge: () => Promise.reject(new Error('not used')),
+    updateWhere: () => Promise.reject(new Error('not used')),
+    deleteWhere: () => Promise.reject(new Error('not used')),
     changes: () => [],
+    unloggedDeletes: () => [],
     flush: () => {
       const state = inTx();
       if (state.unflushed === 0) return Promise.resolve({});

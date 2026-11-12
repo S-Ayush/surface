@@ -4,7 +4,12 @@
  * public operation. All three are generated from the registry: no per-operation code (AC-1).
  */
 import type { Actor } from '@surface/domain';
-import { catalogEntry, toOpenApi, type OperationRegistry } from '@surface/operations';
+import {
+  catalogEntry,
+  isPublicOperation,
+  toOpenApi,
+  type OperationRegistry,
+} from '@surface/operations';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { HTTP_STATUS, type OperationError } from '../executor/errors.js';
@@ -37,10 +42,7 @@ export function registerOpsRoutes(app: FastifyInstance, deps: OpsRoutesDeps): vo
   let openApi: string | undefined;
   app.get('/api/openapi.json', async (_request, reply) => {
     openApi ??= JSON.stringify(
-      toOpenApi(
-        deps.registry.list().filter((op) => !op.internal),
-        { version: deps.version },
-      ),
+      toOpenApi(deps.registry.list().filter(isPublicOperation), { version: deps.version }),
     );
     return reply.type('application/json').send(openApi);
   });

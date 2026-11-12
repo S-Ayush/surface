@@ -1,9 +1,15 @@
-// Executor building blocks that need no database: suggestions, ids, retry detection, errors.
+// Executor building blocks that need no database: suggestions, ids, retry detection, errors,
+// and who may call a `systemOnly` operation (against a connection that answers nothing).
+import { systemActor, userActor, type Actor } from '@surface/domain';
+import { createRegistry, defineOperation, registry, toOpenApi } from '@surface/operations';
+import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
-import { registry, toOpenApi } from '@surface/operations';
+import { z } from 'zod';
+import type { Pool } from '../src/db/pool.js';
 import { uuidv7 } from '../src/db/uuidv7.js';
+import { handler } from '../src/executor/context.js';
 import { ERROR_CODES, HTTP_STATUS } from '../src/executor/errors.js';
-import { missingHandlers } from '../src/executor/execute.js';
+import { createExecutor, missingHandlers } from '../src/executor/execute.js';
 import { editDistance, nearestNames } from '../src/executor/suggest.js';
 import { isRetryable } from '../src/executor/transaction.js';
 import { HANDLERS } from '../src/handlers/index.js';
@@ -94,5 +100,69 @@ describe('error codes', () => {
 describe('handlers', () => {
   it('exist for every operation in the registry', () => {
     expect(missingHandlers(registry, HANDLERS)).toEqual([]);
+  });
+});
+
+describe('a systemOnly operation (SPEC-003 §6 step 2)', () => {
+  const sweep = defineOperation({
+    name: 'issue.sweepFixture',
+    kind: 'mutation',
+    domain: 'issue',
+    summary: 'Sweep issues (fixture)',
+    description: 'Test fixture: a job-only operation that does nothing.',
+    keywords: ['sweep issues', 'job fixture'],
+    input: z.object({}),
+    output: z.object({ ran: z.boolean() }),
+    permission: () => true,
+    destructive: false,
+    examples: [{}],
+    systemOnly: true,
+  });
+  const client = {
+    query: () => Promise.resolve({ rows: [], rowCount: 0 }),
+    release() {},
+  };
+  // Only `connect`, `query` and `release` are used; pg's overloads are more than a stand-in can match.
+  const pool = { connect: () => Promise.resolve(client) } as unknown as Pool;
+  const executor = (allowInternal: boolean) =>
+    createExecutor({
+      pool,
+      registry: createRegistry([sweep]),
+      handlers: [handler(sweep, () => Promise.resolve({ ran: true }))],
+      log: pino({ level: 'silent' }),
+      allowInternal,
+      syncedModels: [],
+    });
+  const apiKey = { id: 'k1', scope: 'read_write', teamIds: [], allowDestructive: true } as const;
+  const admin = { userId: 'u1', role: 'admin', memberships: [] } as const;
+  const people: [string, Actor][] = [
+    ['user', userActor(admin)],
+    ['api', userActor({ ...admin, via: { kind: 'api', apiKey } })],
+    ['mcp', userActor({ ...admin, via: { kind: 'mcp', apiKey } })],
+  ];
+
+  it.each(people)(
+    'is UNKNOWN_OPERATION for a %s actor, in production and outside it',
+    async (_, actor) => {
+      for (const allowInternal of [false, true]) {
+        const outcome = await executor(allowInternal).execute('issue.sweepFixture', {}, actor);
+        expect(outcome).toMatchObject({ ok: false, error: { code: 'UNKNOWN_OPERATION' } });
+        // The suggestions never name it either.
+        expect(JSON.stringify(outcome)).not.toContain('sweepFixture"');
+        expect(executor(allowInternal).operations(actor)).toEqual([]);
+      }
+    },
+  );
+
+  it('runs for the system actor, and is never listed, even for it', async () => {
+    for (const allowInternal of [false, true]) {
+      const outcome = await executor(allowInternal).execute(
+        'issue.sweepFixture',
+        {},
+        systemActor(),
+      );
+      expect(outcome).toMatchObject({ ok: true, result: { ran: true } });
+      expect(executor(allowInternal).operations(systemActor())).toEqual([]);
+    }
   });
 });

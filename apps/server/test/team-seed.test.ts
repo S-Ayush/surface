@@ -21,6 +21,8 @@ function recordingRepo() {
     archive: fail,
     unarchive: fail,
     purge: fail,
+    updateWhere: fail,
+    deleteWhere: fail,
     changes: () => [],
   };
   return { repo, inserts };

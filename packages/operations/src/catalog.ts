@@ -21,6 +21,15 @@ export interface CatalogEntry {
   readonly deprecated?: { readonly since: string; readonly replacedBy: string };
 }
 
+/**
+ * Whether an operation is part of the public catalog: what OpenAPI, the released snapshot, MCP
+ * and the seed contract test cover. Internal (`debug.*`) and `systemOnly` operations never are
+ * (SPEC-003 §3.1, §9).
+ */
+export function isPublicOperation(def: AnyOperation): boolean {
+  return def.internal !== true && def.systemOnly !== true;
+}
+
 const entries = new WeakMap<AnyOperation, CatalogEntry>();
 
 export function catalogEntry(def: AnyOperation): CatalogEntry {
@@ -45,7 +54,10 @@ export function catalogEntry(def: AnyOperation): CatalogEntry {
 
 export const MAX_CLIENT_MUTATION_ID_LENGTH = 200;
 
-/** The OpenAPI document: one `POST /api/ops/<name>` path per operation given. */
+/**
+ * The OpenAPI document: one `POST /api/ops/<name>` path per operation given. `GET
+ * /api/openapi.json` passes the public ones (`isPublicOperation`).
+ */
 export function toOpenApi(
   operations: readonly AnyOperation[],
   info: { readonly version: string },

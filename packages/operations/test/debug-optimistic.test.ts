@@ -20,6 +20,7 @@ function memoryStore(): OptimisticStore & { rows: Map<string, StoreRow> } {
     insert: (_model, row) => void rows.set(row.id, row),
     find: () => [],
     archive: () => undefined,
+    unarchive: () => undefined,
     remove: (_model, id) => void rows.delete(id),
   };
 }

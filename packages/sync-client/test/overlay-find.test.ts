@@ -136,6 +136,45 @@ describe('store.find in optimistic()', () => {
     expect(seen[1]).toEqual([]);
   });
 
+  it('returns rows ordered by id across base, earlier mutations and its own writes (AC-7)', () => {
+    seen = [];
+    const pool = new ObjectPool([Member]);
+    // Base rows loaded out of id order, so iteration order is not id order.
+    pool.loadBase('Member', [
+      { row: { id: id(40), teamId: TEAM, userId: ME, groups: ['workspace'] }, archived: false },
+      { row: { id: id(10), teamId: TEAM, userId: IRIS, groups: ['workspace'] }, archived: false },
+      { row: { id: id(30), teamId: TEAM, userId: ME, groups: ['workspace'] }, archived: true },
+    ]);
+    const engine = new OverlayEngine(pool, () => ME);
+    const all = defineOperation({
+      ...fixture,
+      name: 'team.joinAndListFixture',
+      summary: 'Join a team and list its members (fixture)',
+      description:
+        'Inserts a membership, then finds every membership of the team. For overlay tests.',
+      keywords: ['list members', 'ordered find'],
+      input: z.object({ id: z.uuid(), teamId: z.uuid(), userId: z.uuid() }),
+      examples: [{ id: id(300), teamId: TEAM, userId: ME }],
+      optimistic(store, input) {
+        store.insert('Member', { ...input, groups: ['workspace'] });
+        seen.push(store.find('Member', { teamId: input.teamId }));
+      },
+    });
+    const list = [
+      mutation('c:1', join, { id: id(50), teamId: TEAM, userId: IRIS }),
+      mutation('c:2', join, { id: id(5), teamId: TEAM, userId: IRIS }),
+      mutation('c:3', all, { id: id(20), teamId: TEAM, userId: IRIS }),
+    ];
+    engine.rebuild(list);
+    const ordered = [id(5), id(10), id(20), id(30), id(40), id(50)];
+    expect(ids(seen[2])).toEqual(ordered);
+    const first = seen;
+    seen = [];
+    engine.rebuild(list);
+    expect(ids(seen[2])).toEqual(ordered);
+    expect(seen).toEqual(first);
+  });
+
   it('makes a change to any row of the searched model rebuild the overlay', () => {
     const { engine } = setup();
     engine.rebuild([mutation('c:1', leave, { teamId: TEAM, userId: IRIS })]);
