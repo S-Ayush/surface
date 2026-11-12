@@ -162,7 +162,7 @@ export function MembersScreen(_props: ScreenProps) {
       <ul className={styles.list} aria-label="Members">
         {members.map((member) => (
           <li key={member.id} className={styles.row}>
-            <Avatar name={member.name} />
+            <Avatar name={member.name} {...(member.avatarUrl ? { src: member.avatarUrl } : {})} />
             <span className={styles.rowMain}>
               <span className={styles.rowTitle}>
                 {member.name}

@@ -3,6 +3,7 @@
 // confirmed save drops the edit (the field then shows the synced name), a refusal shows its
 // message, and offline the edit stays with a note until the queued change is sent.
 import { workspaceUpdate } from '@surface/operations';
+import type { SettingsApi } from '../files/api.js';
 import { submitMutation, type MutationStore } from '../teams/submit.js';
 
 /** Why `name` can't be the workspace's name, in the operation's own words; undefined if it can. */
@@ -36,4 +37,30 @@ export async function saveWorkspaceName(
     case 'failed':
       return { kind: 'error', message: result.message };
   }
+}
+
+export type LogoChange = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+/**
+ * Uploads `file` as the workspace logo (PLAN-001 S6) and sets it. `workspace.update` predicts
+ * nothing (D6), so the new logo shows once the server confirms it.
+ */
+export async function changeLogo(
+  api: Pick<SettingsApi, 'upload'>,
+  store: MutationStore,
+  file: Blob,
+): Promise<LogoChange> {
+  const uploaded = await api.upload(file, 'logo');
+  if (!uploaded.ok) return uploaded;
+  return logoOutcome(await submitMutation(store, workspaceUpdate, { logo: uploaded.id }));
+}
+
+export async function removeLogo(store: MutationStore): Promise<LogoChange> {
+  return logoOutcome(await submitMutation(store, workspaceUpdate, { logo: null }));
+}
+
+function logoOutcome(result: Awaited<ReturnType<typeof submitMutation>>): LogoChange {
+  return result.kind === 'rejected' || result.kind === 'failed'
+    ? { ok: false, message: result.message }
+    : { ok: true };
 }

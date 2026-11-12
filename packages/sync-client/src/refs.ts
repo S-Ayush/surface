@@ -82,7 +82,12 @@ export function createClientRefResolver(
         // Invites are never in the replica: the server resolves them (PLAN-001 S5).
         case 'InviteRef':
           return NOT_FOUND;
-        // Their models arrive with later milestones; until then nothing matches.
+        // Sessions are server-side only (`session.list`), so the server resolves them (PLAN-001 S6).
+        case 'SessionRef':
+          return NOT_FOUND;
+        // Their models arrive with later milestones; until then nothing matches. Files are
+        // server-only in M0 (avatars, the logo: PLAN-001 S6) and may sync with attachments (M1).
+        case 'FileRef':
         case 'IssueRef':
         case 'ProjectRef':
         case 'CycleRef':

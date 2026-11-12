@@ -38,14 +38,7 @@ const SPEC_001_OPERATIONS: readonly (readonly [string, Kind])[] = [
  * Not built yet, with the PLAN-001 slice that adds each (session E). Remove an entry in the change
  * that registers the operation.
  */
-const PENDING: Readonly<Record<string, string>> = {
-  'user.me': 'S6',
-  'user.updateProfile': 'S6',
-  'user.changePassword': 'S6',
-  'session.list': 'S6',
-  'session.revoke': 'S6',
-  'session.revokeOthers': 'S6',
-};
+const PENDING: Readonly<Record<string, string>> = {};
 
 /**
  * Command-menu entries PLAN-001 S9 names (SPEC-005 §4.1). A title ends with "…" when the command
@@ -78,6 +71,13 @@ describe('SPEC-001 operations (AC-16)', () => {
 
   it('flags team.removeMember as destructive, for API keys (SPEC-001 §6.2)', () => {
     expect(registered.get('team.removeMember')?.destructive).toBe(true);
+  });
+
+  it('flags what can log a person out everywhere as destructive, for API keys (S6 review)', () => {
+    expect(registered.get('session.revokeOthers')?.destructive).toBe(true);
+    expect(registered.get('user.changePassword')?.destructive).toBe(true);
+    // One session, named by id, is not "everywhere".
+    expect(registered.get('session.revoke')?.destructive).toBe(false);
   });
 
   it.each(Object.entries(PENDING))(

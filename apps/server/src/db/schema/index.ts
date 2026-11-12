@@ -6,3 +6,4 @@ export * from './idempotency.js';
 export * from './sync.js';
 export * from './workspace.js';
 export * from './auth.js';
+export * from './files.js';

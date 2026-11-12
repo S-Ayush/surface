@@ -3,6 +3,7 @@
  * Handlers write only through `ctx.repo`, emit events with `ctx.emit()`, take time from
  * `ctx.now()`, and never commit, retry or call the network.
  */
+import type { AttemptStore } from '../auth/attempts.js';
 import type { AuditEvent, AuditFields } from '../auth/audit.js';
 import type { Actor, ResolvedRefs } from '@surface/domain';
 import type { AnyOperation, ParsedInputOf } from '@surface/operations';
@@ -100,6 +101,14 @@ export interface HandlerContext {
    * Admin's reset link (`user.createResetLink`, PLAN-001 S4), later invites (S5).
    */
   readonly links: HandlerLinks;
+  /**
+   * The sign-in lockout's store (AC-6, `auth/attempts.ts`), for a handler that checks a password
+   * (`user.changePassword`, PLAN-001 S6 review). It works on its own pool connection, outside this
+   * transaction, so a wrong guess stays counted after the refusal rolls the operation back.
+   * Reserve, then check: a right password calls `succeeded`, so a retried attempt (E5) counts
+   * nothing. An executor built without one (tests) fails a handler that uses it.
+   */
+  readonly attempts: AttemptStore;
 }
 
 export interface Handler<Op extends AnyOperation = AnyOperation> {

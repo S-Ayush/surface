@@ -120,6 +120,16 @@ describe('client reference resolvers', () => {
     expect(resolver.resolve('InviteRef', ENG).status).toBe('notFound');
   });
 
+  it('never resolves a session on the client: sessions are server-side only', () => {
+    const { resolver } = fixture();
+    expect(resolver.resolve('SessionRef', ENG).status).toBe('notFound');
+  });
+
+  it('resolves no file on the client until a File model syncs', () => {
+    const { resolver } = fixture();
+    expect(resolver.resolve('FileRef', ENG).status).toBe('notFound');
+  });
+
   it('follows the replica as it changes', () => {
     const { pool, name } = fixture();
     pool.applyBase([{ kind: 'delete', model: 'Team', id: DES }]);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   CycleRef,
+  FileRef,
   InviteRef,
   IssueRef,
   LabelRef,
@@ -11,6 +12,7 @@ import {
   parseNamedRef,
   parseTeamRef,
   parseUserRef,
+  SessionRef,
   scopedTo,
   StatusRef,
   SURFACE_REF_KEY,
@@ -61,6 +63,14 @@ describe('parsing reference formats (SPEC-003 §4)', () => {
     expect(InviteRef.safeParse(ID).success).toBe(true);
     expect(InviteRef.safeParse('ada@example.com').error?.issues[0]?.message).toBe(
       'Use an invite id from invite.list',
+    );
+    expect(SessionRef.safeParse(ID).success).toBe(true);
+    expect(SessionRef.safeParse('laptop').error?.issues[0]?.message).toBe(
+      'Use a session id from session.list',
+    );
+    expect(FileRef.safeParse(ID).success).toBe(true);
+    expect(FileRef.safeParse('avatar.png').error?.issues[0]?.message).toBe(
+      'Use a file id from POST /files/upload',
     );
   });
 

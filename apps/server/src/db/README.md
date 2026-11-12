@@ -5,18 +5,19 @@ records what each table is for sync purposes.
 
 ## Sync scope
 
-| Table                                                                                                | Scope                                                         | Written by                                                  |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
-| `debug_items`                                                                                        | **Synced** (internal fixture model, PLAN-002)                 | `sync/repo.ts` only                                         |
-| `workspace`, `users`, `user_preferences`, `teams`, `team_memberships`, `workflow_statuses`, `labels` | **Synced** (PLAN-001 S1)                                      | `sync/repo.ts` only                                         |
-| `user_credentials`, `sessions`, `invites`, `magic_link_tokens`, `password_reset_tokens`              | Server-only (PLAN-001 S1): password hashes and tokens         | auth handlers (PLAN-001 S3–S5)                              |
-| `team_issue_counters`                                                                                | Server-only (PLAN-001 S1): the last issue number per team     | issue creation (M1), by upsert                              |
-| `setup_state`                                                                                        | Server-only: one row, seeded by migration `0007`              | first-run setup (PLAN-001 S2)                               |
-| `sync_log`                                                                                           | Sync infrastructure: the change log clients sync from         | `sync/repo.ts` `flush` only, under `LOCKS.sync`             |
-| `sync_state`                                                                                         | Sync infrastructure: one row, the last assigned sync id       | `sync/repo.ts` `flush` only                                 |
-| `client_mutations`                                                                                   | Sync infrastructure: exactly-once bookkeeping per sync client | `/sync/mutate` (PLAN-002 S5), in the mutation's transaction |
-| `event_outbox`                                                                                       | Server-only                                                   | the executor (step 11) and jobs                             |
-| `api_idempotency`                                                                                    | Server-only                                                   | the executor (step 6) and the prune job                     |
+| Table                                                                                                | Scope                                                                                   | Written by                                                  |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `debug_items`                                                                                        | **Synced** (internal fixture model, PLAN-002)                                           | `sync/repo.ts` only                                         |
+| `workspace`, `users`, `user_preferences`, `teams`, `team_memberships`, `workflow_statuses`, `labels` | **Synced** (PLAN-001 S1)                                                                | `sync/repo.ts` only                                         |
+| `user_credentials`, `sessions`, `invites`, `magic_link_tokens`, `password_reset_tokens`              | Server-only (PLAN-001 S1): password hashes and tokens                                   | auth handlers (PLAN-001 S3–S5)                              |
+| `team_issue_counters`                                                                                | Server-only (PLAN-001 S1): the last issue number per team                               | issue creation (M1), by upsert                              |
+| `setup_state`                                                                                        | Server-only: one row, seeded by migration `0007`                                        | first-run setup (PLAN-001 S2)                               |
+| `files`                                                                                              | Server-only (PLAN-001 S6): uploaded avatars and the logo; bytes in `<DATA_DIR>/uploads` | `files/routes.ts` (`files/store.ts`)                        |
+| `sync_log`                                                                                           | Sync infrastructure: the change log clients sync from                                   | `sync/repo.ts` `flush` only, under `LOCKS.sync`             |
+| `sync_state`                                                                                         | Sync infrastructure: one row, the last assigned sync id                                 | `sync/repo.ts` `flush` only                                 |
+| `client_mutations`                                                                                   | Sync infrastructure: exactly-once bookkeeping per sync client                           | `/sync/mutate` (PLAN-002 S5), in the mutation's transaction |
+| `event_outbox`                                                                                       | Server-only                                                                             | the executor (step 11) and jobs                             |
+| `api_idempotency`                                                                                    | Server-only                                                                             | the executor (step 6) and the prune job                     |
 
 ## The `sync_groups` convention
 

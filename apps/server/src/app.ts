@@ -3,6 +3,7 @@
  * so tests can build an app and drive it with `inject()`.
  */
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { OperationRegistry } from '@surface/operations';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
@@ -11,6 +12,8 @@ import { buildInfo, defaultWebDir, type BuildInfo } from './build-info.js';
 import type { AttemptStore } from './auth/attempts.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { registerAccountRoutes } from './handlers/account/routes.js';
+import { localBlobStore } from './files/blob-store.js';
+import { registerFileRoutes } from './files/routes.js';
 import type { SessionAuth } from './auth/sessions.js';
 import type { AuthStore } from './auth/store.js';
 import type { EmailOutbox } from './jobs/email.js';
@@ -147,6 +150,17 @@ export async function buildApp({
         withTransaction: auth.withTransaction,
         ...(auth.closeSessions ? { closeSessions: auth.closeSessions } : {}),
         ...(auth.now ? { now: auth.now } : {}),
+      });
+    }
+    // Avatars and the logo (PLAN-001 S6, session E; ADR-0014): bytes on the uploads volume.
+    if (auth.withTransaction) {
+      registerFileRoutes(app, {
+        auth: auth.auth,
+        lifecycle,
+        withTransaction: auth.withTransaction,
+        blobs: localBlobStore(path.join(config.dataDir, 'uploads')),
+        log: logger,
+        uploadMaxMb: config.uploadMaxMb,
       });
     }
   }

@@ -22,6 +22,8 @@ import { userCreateResetLink } from './account.js';
 import { userGet, userList, userSetRole } from './member.js';
 import { workspaceGet, workspaceUpdate } from './workspace.js';
 import { inviteCreate, inviteList, inviteRevoke } from './invite.js';
+import { userChangePassword, userMe, userUpdateProfile } from './profile.js';
+import { sessionList, sessionRevoke, sessionRevokeOthers } from './session.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -30,6 +32,8 @@ export * from './account.js';
 export * from './member.js';
 export * from './workspace.js';
 export * from './invite.js';
+export * from './profile.js';
+export * from './session.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -62,6 +66,14 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   inviteCreate,
   inviteList,
   inviteRevoke,
+  userMe,
+  userUpdateProfile,
+  // Revoke one, then the others, then change the password (which ends the others too): the
+  // examples run in this order on one seed, and each needs the seed's second session first.
+  sessionList,
+  sessionRevoke,
+  sessionRevokeOthers,
+  userChangePassword,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

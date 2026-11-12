@@ -196,7 +196,7 @@ erDiagram
 
 ### 4.9 Attachment / File
 - **Attachment:** `issueId`, `kind` (`file` | `link`), `fileId?`, `url?`, `title`, `creatorId`.
-- **File:** `storageKey` 🔒, `name`, `mimeType`, `size`, `uploaderId`. Bytes live on the uploads volume and are served via an authorised URL.
+- **File:** `storageKey` 🔒, `name`, `mimeType`, `size`, `uploaderId`. Bytes live on the uploads volume and are served via an authorised URL. In M0 a File is server-only and has a `purpose` (`avatar` or `logo`); avatars and the logo are stored as one 256 px WebP (SPEC-001 D12).
 
 ### 4.10 IssueHistory
 | Field | Type | Notes |

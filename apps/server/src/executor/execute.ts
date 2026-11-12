@@ -68,6 +68,12 @@ import { nearestNames } from './suggest.js';
 import { inTransaction, isRetryable, jitterBackoff, postgresCode } from './transaction.js';
 import { NO_EMAIL, type EmailOutbox } from '../jobs/email.js';
 import { handlerLinks } from '../mail/link-tokens.js';
+import type { AttemptStore } from '../auth/attempts.js';
+
+const NO_ATTEMPT_STORE: AttemptStore = {
+  reserve: () => Promise.reject(new Error('ctx.attempts needs the executor’s attempts store')),
+  succeeded: () => Promise.reject(new Error('ctx.attempts needs the executor’s attempts store')),
+};
 
 /** Step 10: automations and invariant checks, run after the handler inside the transaction. */
 export type PostHandlerCheck = (state: {
@@ -108,6 +114,8 @@ export interface ExecutorDeps {
   readonly syncedModels?: readonly string[];
   /** `SURFACE_URL`, for the links handlers issue (`ctx.links`). Without it, issuing one fails. */
   readonly publicUrl?: string;
+  /** The sign-in lockout's store, for `ctx.attempts`. Without it, using it fails. */
+  readonly attempts?: AttemptStore;
 }
 
 interface TransactionOutcome {
@@ -328,6 +336,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         return ids.length;
       },
       links: handlerLinks(client, deps.publicUrl, now),
+      attempts: deps.attempts ?? NO_ATTEMPT_STORE,
     };
     const raw = await handler.run(ctx, input);
 

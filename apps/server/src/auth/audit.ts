@@ -12,6 +12,7 @@ import type { FastifyBaseLogger } from 'fastify';
 export type AuditEvent =
   | 'auth.login'
   | 'auth.login_failed'
+  | 'auth.password_changed'
   | 'auth.password_reset'
   | 'auth.password_reset_failed'
   | 'user.invited'

@@ -90,6 +90,8 @@ Inputs accept **human-friendly references**. The executor resolves them to rows 
 | `CycleRef` | uuid · number · `"current"` · `"next"` · `"previous"` (scoped to a team) | Cycle |
 | `ProjectRef`, `InitiativeRef`, `DocumentRef`, `ViewRef` | uuid · exact name (error if ambiguous) | entity |
 | `InviteRef` | uuid only (from `invite.list`) | Invite. Server-only (SPEC-001 §5): the client resolver answers `NOT_FOUND`, and `invite.*` are Admin-only (PLAN-001 S5) |
+| `SessionRef` | uuid only (from `session.list`) | Session: only the actor's own, unexpired. Server-only: the client resolver answers `NOT_FOUND` (PLAN-001 S6) |
+| `FileRef` | uuid only (from `POST /files/upload`) | File: one the actor uploaded, the actor's current avatar, or the workspace logo; anything else is `NOT_FOUND`. Server-only in M0 (SPEC-001 D12) |
 
 Resolver rules:
 - **Ambiguous** names → `INVALID_INPUT` with candidates (`"2 projects named 'Launch': …"`).

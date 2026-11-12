@@ -2,6 +2,7 @@
 // like features/teams/model.ts: reading them in an observing component tracks what is used, so a
 // role change or a new member in another tab shows here as its delta lands.
 import { leavesNoAdmin, type UserRole } from '@surface/domain';
+import { fileUrl } from '../files/url.js';
 
 type Live = { readonly $archived?: boolean };
 
@@ -13,6 +14,8 @@ export type MemberUserRow = Live & {
   readonly role: UserRole;
   readonly active: boolean;
   readonly createdAt: Date | string;
+  /** The uploaded avatar (PLAN-001 S6); absent in rows from before it. */
+  readonly avatarFileId?: string | null;
 };
 export type MemberTeamRow = Live & { readonly id: string; readonly key: string };
 export type MemberMembershipRow = Live & { readonly teamId: string; readonly userId: string };
@@ -25,6 +28,8 @@ export type MemberListItem = {
   readonly displayName: string;
   readonly email: string;
   readonly role: UserRole;
+  /** Where the avatar loads from; undefined shows initials. */
+  readonly avatarUrl: string | undefined;
   /** Team keys, sorted. */
   readonly teams: readonly string[];
   readonly joined: Date;
@@ -65,6 +70,7 @@ export function memberList(
       id: user.id,
       name: user.name,
       displayName: user.displayName,
+      avatarUrl: fileUrl(user.avatarFileId),
       email: user.email,
       role: user.role,
       teams: (teamsOf.get(user.id) ?? []).sort((a, b) => a.localeCompare(b, 'en')),

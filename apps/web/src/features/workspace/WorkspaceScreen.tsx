@@ -1,12 +1,15 @@
 // Settings → Workspace, Admins only (SPEC-001 §3.6, §7; PLAN-001 S7): the workspace's name, which
-// the sidebar and the browser tab show. Saving waits for the server (save.ts); the logo comes
-// with file uploads (PLAN-001 S6).
+// the sidebar and the browser tab show, and its logo (PLAN-001 S6). Saving waits for the server
+// (save.ts).
 import { Workspace } from '@surface/domain/model';
 import { Button, Input, Spinner } from '@surface/ui';
 import { useCallback, useState, type FormEvent } from 'react';
 import { useApp, useObserved } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
-import { saveWorkspaceName, workspaceNameProblem } from './save.js';
+import { useSettingsApi } from '../files/api.js';
+import { ImagePicker } from '../files/ImagePicker.js';
+import { fileUrl } from '../files/url.js';
+import { changeLogo, removeLogo, saveWorkspaceName, workspaceNameProblem } from './save.js';
 import styles from './workspace.module.css';
 
 export { QUEUED_NOTE, workspaceNameProblem } from './save.js';
@@ -21,7 +24,8 @@ export function WorkspaceScreen(_props: ScreenProps) {
     useCallback(() => {
       const store = app.store;
       if (store === null || store.status !== 'ready') return undefined;
-      return store.pool.all(Workspace)[0]?.name ?? null;
+      const row = store.pool.all(Workspace)[0];
+      return row === undefined ? null : { name: row.name, logoFileId: row.logoFileId };
     }, [app]),
   );
   if (saved === undefined) {
@@ -40,7 +44,51 @@ export function WorkspaceScreen(_props: ScreenProps) {
       </div>
     );
   }
-  return <WorkspaceForm saved={saved} />;
+  return (
+    <div className={styles.screen}>
+      <LogoSection name={saved.name} logoFileId={saved.logoFileId} />
+      <WorkspaceForm saved={saved.name} />
+    </div>
+  );
+}
+
+function LogoSection({
+  name,
+  logoFileId,
+}: {
+  readonly name: string;
+  readonly logoFileId: string | null;
+}) {
+  const app = useApp();
+  const api = useSettingsApi();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+
+  const run = async (
+    change: (store: NonNullable<typeof app.store>) => Promise<{ ok: boolean; message?: string }>,
+  ) => {
+    const store = app.store;
+    if (store === null || busy) return;
+    setBusy(true);
+    setError(undefined);
+    const result = await change(store);
+    setBusy(false);
+    if (!result.ok) setError(result.message);
+  };
+
+  return (
+    <ImagePicker
+      label="logo"
+      alt="The workspace logo"
+      name={name}
+      src={fileUrl(logoFileId)}
+      square
+      busy={busy}
+      error={error}
+      onPick={(file) => void run((store) => changeLogo(api, store, file))}
+      onRemove={() => void run((store) => removeLogo(store))}
+    />
+  );
 }
 
 function WorkspaceForm({ saved }: { readonly saved: string }) {

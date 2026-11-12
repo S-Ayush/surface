@@ -16,6 +16,8 @@ import { TeamGeneralScreen } from './teams/TeamGeneralScreen.js';
 import { TeamMembersScreen } from './teams/TeamMembersScreen.js';
 import { TeamsScreen } from './teams/TeamsScreen.js';
 import { WorkspaceScreen } from './workspace/WorkspaceScreen.js';
+import { ProfileScreen } from './profile/ProfileScreen.js';
+import { SecurityScreen } from './security/SecurityScreen.js';
 
 export const SCREENS: ScreenRegistry = {
   'settings/account/preferences': PreferencesScreen,
@@ -29,4 +31,6 @@ export const SCREENS: ScreenRegistry = {
   'settings/members': MembersScreen,
   'settings/workspace': WorkspaceScreen,
   invite: InviteScreen,
+  'settings/account/profile': ProfileScreen,
+  'settings/account/security': SecurityScreen,
 };

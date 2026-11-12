@@ -22,6 +22,12 @@ import workspaceUpdate from './workspace/update.js';
 import inviteCreate from './invites/create.js';
 import inviteList from './invites/list.js';
 import inviteRevoke from './invites/revoke.js';
+import userMe from './users/me.js';
+import userUpdateProfile from './users/update-profile.js';
+import userChangePassword from './users/change-password.js';
+import sessionList from './sessions/list.js';
+import sessionRevoke from './sessions/revoke.js';
+import sessionRevokeOthers from './sessions/revoke-others.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -48,4 +54,10 @@ export const HANDLERS: readonly Handler[] = [
   inviteCreate,
   inviteList,
   inviteRevoke,
+  userMe,
+  userUpdateProfile,
+  userChangePassword,
+  sessionList,
+  sessionRevoke,
+  sessionRevokeOthers,
 ];

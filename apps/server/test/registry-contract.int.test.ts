@@ -4,6 +4,7 @@
 import type { Actor } from '@surface/domain';
 import { debugEcho, debugTouch, registry, type AnyOperation } from '@surface/operations';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { pgAttemptStore } from '../src/auth/attempts.js';
 import { createExecutor, type Executor } from '../src/executor/execute.js';
 import { HANDLERS } from '../src/handlers/index.js';
 import { createTestDatabase, silentLog, type TestDatabase } from './db.js';
@@ -26,6 +27,8 @@ function executor(allowInternal: boolean): Executor {
     allowInternal,
     // For the links handlers issue (`ctx.links`, e.g. `user.createResetLink`).
     publicUrl: 'https://surface.example.com',
+    // The sign-in lockout `user.changePassword` checks the current password against (AC-6).
+    attempts: pgAttemptStore(db.pool),
   });
 }
 

@@ -309,12 +309,127 @@ Implements: [SPEC-001](../06-specs/SPEC-001-workspace-auth-members-teams.md) · 
 > - **Checked by hand** (dev stack, `e.localhost:5175`): with curl, create with and without an email, E3, `invite.list`, accept (joined ENG, events and `sync_log` written, the browser's time zone stored, as ICU's canonical name), E4 for a used, a revoked and an unknown link, E5 (`IRIS` → "Try IRIS2."), a link-only invite needing an email and refusing a taken one, tokens redacted in the request log. In Chrome: the invite page (display name followed the name, inline password and E5 errors, joined and landed home, the used link shows E4), and as the Admin the modal (E3 under the email, Admin + ENG, link shown with the no-SMTP note, Copy), the pending list and Revoke, and "Invite member…" from the command menu, from another page and from Members itself; no console errors. With SMTP pointed at the test fake SMTP server: the invite was emailed (`emailed: true`), the mail's link was the one returned, and accepting it worked; the audit lines held ids only. Not checked: a send that fails after its retries (S4's job tests cover the error log).
 > - **For S6:** `InviteRef` is the pattern for a session reference (domain ref, `sources.ts`, `teamIdOf` null, the client's `NOT_FOUND` case); `displayNameProblem` is ready for `user.updateProfile`; the sign-in helpers are in `account/sign-in.ts`.
 
-### S6: Account settings · M
+### S6: Account settings · M · ✅ Done 2026-11-12
 - Ops `user.me`, `user.updateProfile` (with `optimistic`), `user.changePassword` (revokes other sessions), `session.list`, `session.revoke`, `session.revokeOthers`.
 - **Minimal `BlobStore`** (ADR-0014, local volume) plus `POST /files` and `GET /files/:id` for **avatars only** in M0: size ≤ 2 MB, image sniffing, square crop, thumbnails via sharp. It is generalised for attachments in M1.
 - Web: Settings → Account → Profile and Security pages.
 - Settings → Workspace: the **logo** (moved here from S7 on 2026-11-07: it needs this slice's `POST /files`). `workspace.update` gains `logoFileId`.
 - **Tests:** AC-15 (a profile change appears live in another user's client), session revoke closes the socket (with S3).
+
+> **As built (2026-11-12, session E).** Built on `e0b0f06`, rebased onto `6e5498e`. One migration, `0009_files.sql` (the `files` table; migration lock taken through the coordinator). One new dependency, **sharp 0.35.5** in `apps/server`, which the slice named. sharp is loaded lazily, on the first upload. If it can't load, uploads answer `503` and an error is logged (review fix 3).
+> - **Ops**:
+>   - `packages/operations/src/ops/profile.ts`:
+>     - `user.me` (query): returns the `User`.
+>     - `user.updateProfile`: input `{name?, displayName?, avatar?: FileRef | null, timezone?}`. Its `optimistic` patches your own `User` row with the trimmed name and display name and the canonical time zone, as the server will write them.
+>     - `user.changePassword`: input `{currentPassword, newPassword}`, returns `{endedSessions}`. Flagged `destructive`.
+>   - `ops/session.ts`, domain `user`:
+>     - `session.list`: a list op (`listInput` → `connectionOf(Session)`, registry lint rule 6). The fields are `{id, userAgent, ip, createdAt, lastUsedAt, current}`.
+>     - `session.revoke {session: SessionRef}` returns `{revoked}`.
+>     - `session.revokeOthers` returns `{revoked: n}`. Flagged `destructive`: run with an API key (M6), which has no session to keep, it logs the person out everywhere (review fix 5).
+>   - `workspace.update` takes `logo?: FileRef | null` beside `name`.
+>   - New domain refs, following S5's `InviteRef` pattern:
+>     - `SessionRef`: only the actor's own unexpired session.
+>     - `FileRef`: only a file the actor uploaded, the actor's current avatar, or the workspace logo.
+>     - Both are workspace-wide (`key-scope` null). Both are `NOT_FOUND` on the client (D's `refs.ts`).
+> - **Handlers**:
+>   - `handlers/users/`: `me`, `update-profile`, `change-password`, and a `self.ts` helper.
+>     - `update-profile` locks the row and writes only the fields that changed.
+>     - E5 gives a suggestion on `displayName`. You may change the case of your own display name. A unique-index race also answers CONFLICT.
+>     - The avatar must be a file uploaded as an `avatar`.
+>     - `change-password` checks the current password against the sign-in lockout (AC-6). A wrong one counts as a failed sign-in of the account (`accountKey(email)`, shared with `POST /auth/login`). While the account is locked it answers `RATE_LIMITED` with `retryAfter` and checks nothing. It reserves through `ctx.attempts` before the check (the sign-in store, on its own connection, so a refusal's attempt survives the rollback) and clears the account's failures on success.
+>     - A wrong current password is `INVALID_INPUT` on `currentPassword`. The handler locks the credentials row, hashes the new password, ends every other session through `ctx.closeSessions` (E10), and records the audit line `auth.password_changed` (`userId` only). Neither password reaches a log.
+>   - `handlers/sessions/`: `list`, `revoke`, `revoke-others`.
+>     - Revoking deletes the row in the operation's transaction. Sockets close with `4001` only after the commit (AC-8, S3's executor context).
+>   - `workspace/update.ts`: sets name and/or logo; the logo must be a `logo` file. It emits `workspace.updated` with only the changed fields.
+>   - `handlers/memory-list.ts`: paging for lists held in memory, extracted from S5's invite list model, which now uses it.
+> - **Files** (`apps/server/src/files/`):
+>   - `blob-store.ts`:
+>     - `BlobStore {put, get, delete, stat}` on `<DATA_DIR>/uploads`.
+>     - Keys are content addressed (`sha256/ab/cd/<hash>`) and checked before any file system call.
+>     - It writes a temporary file, then renames it.
+>     - `memoryBlobStore` is for tests.
+>   - `image.ts`:
+>     - Sniffs PNG, JPEG, GIF and WebP from the bytes.
+>     - sharp then rotates the image by EXIF, crops it to a 256 × 256 square from the centre, and writes WebP at quality 85. Metadata (EXIF, GPS) is dropped.
+>   - `store.ts`: the `files` rows (server-only).
+>   - `routes.ts`, registered from `app.ts` (A agreed):
+>     - `POST /files/upload?purpose=avatar|logo` takes the raw bytes as the body. It answers `201 {id, url, mimeType, size}`.
+>     - `413` above `min(2 MB, UPLOAD_MAX_MB)`, checked from `Content-Length` before the body is read.
+>     - `400` for a missing purpose, a type that isn't an image, or bytes that don't decode.
+>     - `401` signed out. `403` without CSRF, and for a logo uploaded by a Member. `503` until the server is ready, and when sharp can't load ("Image uploads are unavailable on this server…").
+>     - `GET /files/:id` serves the stored type, `inline`, with `Content-Security-Policy: default-src 'none'; sandbox`, `nosniff`, an `ETag` (`304` when it matches) and `private, no-cache`.
+>     - `GET /files/:id` is `404` for an unknown id, and for someone else's upload that nothing uses yet.
+> - **Deviations** (spec updated):
+>   1. The upload path is `POST /files/upload`, not `POST /files`. The dev Vite proxy matches `^/(api|auth|files)/`, so `/files?purpose=` never reached the server. A path under `/files/` needs no change to C's `vite.config.ts`.
+>   2. `files` is server-only in M0, not a synced entity. Avatars and the logo reach clients as `users.avatar_file_id` and `workspace.logo_file_id`, which already sync (SPEC-001 D12).
+>   3. Only the 256 px WebP is stored, not the original plus thumbnails. One size fits every avatar and logo use in M0; attachments (M1) will keep originals.
+>   4. The inputs are named `avatar` and `logo` and take a `FileRef`, not a raw `avatarFileId` / `logoFileId` (registry lint rule 4: no raw uuids in input). The synced columns keep their names.
+>   5. `session.list` is a list op with the standard list input, not a bare array (lint rule 6).
+> - **Web**:
+>   - `features/files/`: upload, `fileUrl`, `postOperation`, a `SettingsApi` context, and `ImagePicker`.
+>   - `features/profile/`: `ProfileScreen`. Only changed fields are sent, trimmed. Each field is checked in the browser with the operation's own rules. A server `CONFLICT` (E5) shows on the display name; any other refusal shows on the form. A change made offline stays queued, with a note.
+>   - `features/security/`:
+>     - the password form: current password, then the new one twice;
+>     - the sessions list: device names from the User-Agent, "this device" without Revoke, Revoke all others, one revoke at a time, and stale loads dropped.
+>   - Workspace gains a logo section. Members shows avatars.
+>   - Routes `settings/account/profile` and `settings/account/security` are in `features/screens.ts`.
+> - **Others' files** (agreed, logged in session-e2):
+>   - A's: `app.ts`, `executor/refs/sources.ts` and `key-scope.ts`, and `test/seed.ts` (a seed password and session, so the registry contract test can run `changePassword` and `session.revoke`). Review fixes, A agreed: `executor/context.ts` and `execute.ts` (`ctx.attempts`, from the optional `ExecutorDeps.attempts`; without it, using it fails), `server.ts` (one `pgAttemptStore` for sign-in and the executor), and `auth/audit.ts` (the `auth.password_changed` event).
+>   - D's: `sync-client/src/refs.ts` and its test.
+> - **Tests**:
+>   - `operations/src/ops/profile.test.ts` (3).
+>   - `server/test/account-settings-handlers.test.ts` (30). Its fake transaction records each filter as the SQL it renders, so the tests check that `session.list` and `user.changePassword`'s read and write are scoped to the actor. Removing either filter fails them (checked).
+>   - `server/test/files.test.ts` (15, with the real sharp; no network).
+>   - `server/test/files-store.test.ts` (2: the SQL's snake_case columns and visibility clauses). This test was written first, to catch a hand-check bug: the store's own drizzle client lacked `casing`.
+>   - `web/test/account-settings.test.tsx` (28).
+>   - `domain` and `sync-client` ref tests.
+>   - The registry contract test (integration, existing) runs every new example against the seed. Its executor now gets `attempts: pgAttemptStore(db.pool)`, which `user.changePassword` needs.
+> - **Checked by hand** (dev stack, `e.localhost:5175`, migration `0009` applied):
+>   - **Sessions:**
+>     - `session.list` marked this session.
+>     - **AC-8:** `session.revoke` closed the revoked session's socket with `4001`, and its next request was `401`. Revoking it again, or another user naming it, was `NOT_FOUND`.
+>   - **Uploads:**
+>     - Refused: no CSRF `403`; an SVG sent as PNG `400`; 3 MB `413`; a Member's logo `403`; signed out `401`.
+>     - Stored: a 256 × 256 WebP without EXIF. `GET` gave the headers above, and `304` on a matching ETag.
+>     - Someone else's unused upload: `404`, and `NOT_FOUND` in `updateProfile`. It became readable once set as an avatar.
+>   - **In Chrome:**
+>     - avatar upload on Profile;
+>     - E5 on the display name field;
+>     - avatars on Members;
+>     - **AC-15**: another user's name change and avatar removal through the API appeared on Members live, without a reload;
+>     - logo upload on Workspace;
+>     - the Security list and Revoke.
+>   - **`changePassword`:**
+>     - The wrong current password showed on its field.
+>     - The right one ended the 2 other sessions (`401`) and kept this one. The new password signed in.
+>     - Neither password appears in the server log.
+> - **Review fixes (2026-11-12, slice-reviewer: 0 blockers, 3 majors, 5 minor, 6 nits).** All addressed except minor 8, which is handed off.
+>   1. The handler tests' fake transaction ignored `where`, so nothing checked that `session.list` and the password write were scoped to the actor. It now records each filter's SQL, and two tests check it.
+>   2. `user.changePassword` let a stolen session guess the current password with no lockout. Wrong guesses now count against the account's sign-in lockout (above).
+>   3. When sharp couldn't load, the original was stored with its metadata (a photo's location) for the whole workspace to read, against SPEC-001 §6.1. Uploads are now refused with `503`. The Risks row claimed CI checks sharp on both architectures, but CI builds `linux/amd64` only: corrected, and a check that sharp loads in the image is handed to A.
+>   4. D12 was still a proposal while the slice was marked done: approved by the user (2026-11-12).
+>   5. `session.revokeOthers` and `user.changePassword` are now flagged `destructive` (above), before the catalog snapshot fixes them.
+>   6. Content-addressed blobs can be shared by several `files` rows: noted for the cleanup job (below).
+>   7. A test name claimed the after-commit socket close, which S3's executor test covers: renamed.
+>   8. Not fixed here. A sync rejection carries only `{code, message}` (`MutationOutcome` in `sync-client`), so the profile form can't show a refusal on the field the server names. Handed off to D (an `issues` field on rejections). Until then the browser checks each field first, and only E5 comes from the server alone.
+>   - Nits:
+>     - SPEC-001 §6.1 is now "HTTP routes (outside the registry)".
+>     - The logo's alt text is "The workspace logo".
+>     - `ImagePicker` and Profile have their own stylesheets (`files/image-picker.module.css`, `profile/profile.module.css`) instead of Security's.
+>     - The identity map `NAMES` is gone from `files/routes.ts`.
+>     - The audit line for a password change is now in the handler (§10).
+> - **Follow-ups:**
+>   - **C:** `Sidebar`/`AvatarMenu` should show the avatar and logo, with `src` set from `fileUrl(avatarFileId)` (handoff in session-e2). The dev proxy regex could also match `/files` without the slash.
+>   - **A:** check that sharp loads in the built image (the Docker build stage or `surface doctor`), and on arm64 if images are built for it.
+>   - **D and A (review finding 8):** let a form show a server refusal on its field. The wire drops `issues` today, so this has three parts:
+>     1. D adds an optional `issues: [{path, message}]` to sync-protocol's mutation error (additive, with a change-log row).
+>     2. A puts the executor's issues into the mutate result and the stored `client_mutations` result, so a resend keeps them.
+>     3. D carries them through `Rejection` and `MutationOutcome`; then `profile/save.ts` uses them.
+>     D's user schedules it. It doesn't block S6.
+>   - **Later:**
+>     - clean up unused and replaced files (a job). Blobs are content addressed, so several `files` rows can share one: delete a blob only when no row has its `storage_key`;
+>     - decide whether a password change should void open reset links (today they stay valid for their hour);
+>     - `users.avatar_file_id` and `workspace.logo_file_id` have no FK to `files` (S1 columns; adding one is a migration for M1's attachments).
 
 ### S7: Members (Admin) · S · ✅ Done 2026-11-07
 - Ops `user.list`, `user.get`, `user.setRole` (INV-01 guard, E6), `workspace.get`, `workspace.update`.
@@ -491,7 +606,11 @@ Additive tables only. A rollback before any release is a code revert. After a re
 | E9, E10 (S4: links, reset) | `server/test/link-tokens.test.ts` (newest link only, hash stored, single use, active users, cooldown) + `server/test/account-routes.test.ts` (an older link refused; reset ends every session and closes their sockets) + ⏸ held (integration): the SQL, checked by hand (S4) |
 | AC-6 | `server/test/auth-routes.test.ts` "after 5 failures in 15 minutes refuses even the right password…" + `server/test/auth-attempts.test.ts` (unit parts, S3) + ⏸ held (integration) `server/test/login-lockout.int.test.ts` (checked by hand in S3, across a restart) |
 | AC-7 | `server/test/auth-routes.test.ts` "signs in with the right password…" and "sets HttpOnly on the session cookie only…" + `server/test/setup-routes.test.ts` (unit parts) + ⏸ held (integration) `server/test/session-cookie.int.test.ts` (checked by hand in S3) |
-| AC-8 | `server/test/auth-routes.test.ts` "ends the session, closes its sockets, and the next request is 401" (unit part, sign-out) + ⏸ held (e2e) `e2e/session-revoke.spec.ts` (sign-out checked by hand in S3; `session.revoke` comes with the account slice) |
+| AC-8 | `server/test/auth-routes.test.ts` "ends the session, closes its sockets, and the next request is 401" (unit part, sign-out) + ⏸ held (e2e) `e2e/session-revoke.spec.ts` (sign-out checked by hand in S3; `session.revoke` checked by hand in S6) |
+| AC-8 (S6: `session.*`) | `server/test/account-settings-handlers.test.ts` "revoke ends exactly the session the executor resolved", "revokeOthers keeps this session", "lists only your own sessions that haven’t expired", "resolves only your own live session, by id", "is NOT_FOUND for anyone else's session…" + `web/test/account-settings.test.tsx` "the sessions list" + ⏸ held (e2e) as above |
+| E10 (S6: `user.changePassword`) | `server/test/account-settings-handlers.test.ts` "checks the current password, sets the new one and ends the other sessions", "refuses a wrong current password on its field, changing nothing" + `web/test/account-settings.test.tsx` "changing your password" + "reads and writes only your own credentials" |
+| AC-6 (S6: wrong current password) | `server/test/account-settings-handlers.test.ts` "counts a wrong current password as a failed sign-in of the account (AC-6)", "clears the account’s failures once the current password is right", "refuses while the account is locked, without checking the password" |
+| Files (S6, ADR-0014) | `server/test/files.test.ts` (size, sniffing, crop to WebP, Admin-only logo, 401/404 visibility, headers), `server/test/files-store.test.ts`, `server/test/account-settings-handlers.test.ts` "resolves a file you uploaded or the one in use, never someone else's unused upload" |
 | AC-8, E10 (handlers ending sessions, S3 follow-up) | `server/test/executor-context.test.ts` (deleted in the operation's transaction, sockets closed after the commit only, the committed attempt only) + `server/test/auth-store.test.ts` (`deleteUserSessions`, unit part) + ⏸ held (integration) `server/test/session-delete.int.test.ts`: only the user's own sessions end, a foreign or malformed id ends nothing (checked by hand in the follow-up) |
 | AC-9 | `server/test/password-hash.test.ts` + `domain/src/auth.test.ts` (minimum length) (S2) |
 | AC-10 | `server/test/last-admin-guard.test.ts` (S7: the rule, a property test over role-change sequences, the handler's lock, refusal and no-op) + `web/test/members-screens.test.tsx` (the last Admin's Member option disabled, with the reason) (+ `server/test/set-role.int.test.ts`, ⏸ held; concurrent demotions checked by hand in S7) |
@@ -503,7 +622,7 @@ Additive tables only. A rollback before any release is a code revert. After a re
 | Private-team leak (S9, permissions.md §5 item 6) | `server/test/sync-groups.int.test.ts` "a member removed from private team X while connected" and "a client reconnecting after a private team membership changed while it was away" (not held: leak tests), `server/test/sync-hub.test.ts` "group changes", `server/test/sync-hub-source.test.ts` |
 | SPEC-001 §10 audit lines (S9) | `server/test/auth-routes.test.ts` "logs each sign-in as an audit line…", `server/test/setup-routes.test.ts` "logs the first Admin joining by id…", `server/test/executor-context.test.ts` "ctx.audit" (an operation's line only after its commit, through the operations API and sync) |
 | AC-14 | Unit parts (S7): `server/test/last-admin-guard.test.ts` (`user.setRole`, `workspace.update` Admin-only; reads for anyone), `server/test/link-tokens.test.ts` (`user.createResetLink`), `server/test/invite-handlers.test.ts` (`invite.*` Admin-only, S5), `web/test/settings-page.test.tsx` (not-found for Members) + ⏸ held (integration + e2e) `server/test/admin-permissions.int.test.ts`, `e2e/admin-routes.spec.ts` (checked by hand in S7) |
-| AC-15 | ⏸ held (e2e) `e2e/profile-realtime.spec.ts` |
+| AC-15 | Unit parts (S6): `operations/src/ops/profile.test.ts` (the optimistic patch), `server/test/account-settings-handlers.test.ts` "writes only the changed fields to the synced user row…", `web/test/account-settings.test.tsx` "saving your profile" + ⏸ held (e2e) `e2e/profile-realtime.spec.ts` (checked by hand in S6) |
 | AC-3, AC-4 (S5: invites) | Unit parts: `server/test/invite-handlers.test.ts` (the link returned with and without SMTP, `emailed` = queued, D7), `server/test/invite-routes.test.ts` (accepting creates the account and signs in, once), `web/test/invites.test.tsx` (the link always shown, worded by `emailed`) + ⏸ held (e2e) as above (checked by hand in S5, with the test fake SMTP server for AC-4) |
 | E3, E4, E5 (S5) | `server/test/invite-handlers.test.ts` (E3 on create, on the `email` field), `server/test/invite-routes.test.ts` (E3 and E5 on accept, E4 for used, revoked, expired and unknown links alike, a unique-index race; the concurrent claim checked by reading the SQL, integration held), `domain/src/display-name.test.ts` (D9, suggestions), `web/test/invites.test.tsx` (each refusal on its field) |
 | Private-team leak (S5) | `server/test/invite-leak.int.test.ts` (not held: permissions.md §5; creating, listing and revoking, D10) |
@@ -516,4 +635,4 @@ Additive tables only. A rollback before any release is a code revert. After a re
 | A timing side channel on login | A dummy argon2 verify for unknown emails, and a timing test with tolerance |
 | SMTP variability (TLS modes, providers) | `SMTP_URL` supports `smtp://` with STARTTLS and `smtps://`. `surface doctor` tests the connection. Documented examples for common free providers. |
 | Lockout abused to lock out real users (DoS) | Lockouts are per account **and** IP. Lockouts are short (15 min), and an Admin reset link always works. |
-| The avatar pipeline (sharp) bloats the image or breaks arm64 builds | Prebuilt sharp binaries for both architectures are verified in CI. A fallback stores the original without a thumbnail if sharp fails. |
+| The avatar pipeline (sharp) bloats the image or breaks arm64 builds | sharp's prebuilt `@img/*` binaries are used. The unit tests run the real sharp; CI builds the image for `linux/amd64` only. If sharp can't load, uploads are refused with `503` and an error is logged: storing the original would keep its metadata (S6 review). A check that sharp loads in the built image is with A (S6 follow-ups). |

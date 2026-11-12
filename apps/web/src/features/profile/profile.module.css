@@ -1,0 +1,47 @@
+/* Settings → Account → Profile (SPEC-001 §3.5; PLAN-001 S6). Plain and functional until
+   SPEC-005's design pass, in the Security screen's style; tokens only. */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  max-width: var(--content-max-width);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.heading {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-md-size);
+  font-weight: var(--text-md-weight);
+  line-height: var(--text-md-line);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.formError {
+  margin: 0;
+  color: var(--danger);
+}

@@ -2,11 +2,12 @@
  * Workspace operations (SPEC-001 §3.6, §6.2; PLAN-001 S7). Anyone reads the workspace's name;
  * only Admins change it (permissions.md §3.1).
  *
- * - The logo comes with file uploads (PLAN-001 S6, ADR-0014): `logoFileId` is read-only until
- *   then.
+ * - The logo is a file uploaded with `POST /files/upload?purpose=logo` (PLAN-001 S6, ADR-0014), set
+ *   here by its id (`FileRef`), or removed with null.
  * - `workspace.update` predicts nothing: the client store finds rows by id or reference, and the
  *   workspace has no reference type. Settings → Workspace waits for the server instead.
  */
+import { FileRef } from '@surface/domain';
 import { z } from 'zod';
 import { defineOperation } from '../define.js';
 import { Timestamp } from './shared.js';
@@ -45,13 +46,13 @@ export const workspaceUpdate = defineOperation({
   name: 'workspace.update',
   kind: 'mutation',
   domain: 'workspace',
-  summary: 'Rename the workspace',
+  summary: 'Rename the workspace or change its logo',
   description:
-    'Changes the workspace’s name, shown in the sidebar, the browser tab and emails. Admins only.',
-  keywords: ['rename workspace', 'change workspace name', 'workspace settings'],
-  input: z.object({ name: WorkspaceName }),
+    'Changes the workspace’s name, shown in the sidebar, the browser tab and emails, or its logo: a file id from POST /files/upload, or null to remove it. Only the given fields change. Admins only.',
+  keywords: ['rename workspace', 'change workspace name', 'workspace logo', 'workspace settings'],
+  input: z.object({ name: WorkspaceName.optional(), logo: FileRef.nullable().optional() }),
   output: WorkspaceSchema,
   permission: (p) => p.admin(),
   destructive: false,
-  examples: [{ name: 'Acme' }],
+  examples: [{ name: 'Acme' }, { logo: null }],
 });

@@ -25,6 +25,8 @@ export const REF_TYPES = [
   'DocumentRef',
   'ViewRef',
   'InviteRef',
+  'SessionRef',
+  'FileRef',
 ] as const;
 
 export type RefType = (typeof REF_TYPES)[number];
@@ -40,6 +42,8 @@ export const AVAILABLE_REF_TYPES: ReadonlySet<RefType> = new Set([
   'StatusRef',
   'LabelRef',
   'InviteRef',
+  'SessionRef',
+  'FileRef',
 ]);
 
 /** First milestone where an unavailable reference type can be resolved. */
@@ -55,6 +59,8 @@ export const REF_AVAILABLE_FROM: Readonly<Record<RefType, string>> = {
   DocumentRef: 'M3',
   ViewRef: 'M2',
   InviteRef: 'M0',
+  SessionRef: 'M0',
+  FileRef: 'M0',
 };
 
 /**
@@ -229,6 +235,28 @@ export const InviteRef = refString(
   'Invite id, from invite.list',
   parseIdRef,
   'Use an invite id from invite.list',
+);
+
+/**
+ * One of your own sessions, by id from session.list (PLAN-001 S6). Ids only: sessions have
+ * nothing people type. Another user's session is NOT_FOUND. Server-only, like InviteRef.
+ */
+export const SessionRef = refString(
+  'SessionRef',
+  'Session id, from session.list',
+  parseIdRef,
+  'Use a session id from session.list',
+);
+
+/**
+ * An uploaded file, by the id `POST /files/upload` returned (ADR-0014; PLAN-001 S6: avatars and the
+ * workspace logo). Ids only, and only a file you uploaded resolves. Server-only, like InviteRef.
+ */
+export const FileRef = refString(
+  'FileRef',
+  'File id, from POST /files/upload',
+  parseIdRef,
+  'Use a file id from POST /files/upload',
 );
 
 export const CycleRef = z

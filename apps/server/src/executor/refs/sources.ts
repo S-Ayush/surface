@@ -51,6 +51,10 @@ export async function lookup(
       return lookupLabel(stringValue(value), ctx);
     case 'InviteRef':
       return lookupInvite(stringValue(value), ctx);
+    case 'SessionRef':
+      return lookupSession(stringValue(value), ctx);
+    case 'FileRef':
+      return lookupFile(stringValue(value), ctx);
     case 'IssueRef':
     case 'CycleRef':
     case 'ProjectRef':
@@ -104,6 +108,10 @@ export function refNotFound(
         return `Label "${value}" not found in ${teamKey ? `${teamKey} or the workspace labels` : 'the workspace labels'}. Use a label name or a label id.`;
       case 'InviteRef':
         return `Invite "${value}" not found. Use an invite id from invite.list.`;
+      case 'SessionRef':
+        return `Session "${value}" not found. Use a session id from session.list.`;
+      case 'FileRef':
+        return `File "${value}" not found. Upload the image with POST /files/upload and use the id it returns.`;
       case 'IssueRef':
       case 'CycleRef':
       case 'ProjectRef':
@@ -273,6 +281,51 @@ async function lookupInvite(value: string, ctx: LookupContext): Promise<RefEntit
   const row = rows[0];
   if (row === undefined) throw refNotFound('InviteRef', value, ctx.path);
   return { id: row.id };
+}
+
+/**
+ * One of the actor's own live sessions (PLAN-001 S6). Another user's session, an ended one, or
+ * any session for an actor without a user (the system actor) is not found: nobody learns which
+ * session ids exist.
+ */
+async function lookupSession(value: string, ctx: LookupContext): Promise<RefEntity> {
+  const ref = parseIdRef(value);
+  const userId = ctx.actor.userId;
+  const { rows } =
+    ref?.by === 'id' && userId !== undefined
+      ? await ctx.db.query<{ id: string; userId: string }>(
+          `SELECT id, user_id AS "userId" FROM sessions
+            WHERE id = $1 AND user_id = $2 AND expires_at > now()`,
+          [ref.id, userId],
+        )
+      : { rows: [] };
+  const row = rows[0];
+  if (row === undefined) throw refNotFound('SessionRef', value, ctx.path);
+  return { id: row.id, userId: row.userId };
+}
+
+/**
+ * An uploaded file the actor may name (PLAN-001 S6, ADR-0014): one they uploaded, or the one
+ * already in use as their avatar or the workspace logo (saving a form unchanged). Anyone else's
+ * upload that nothing uses yet is not found, so ids can't be probed or borrowed.
+ */
+async function lookupFile(value: string, ctx: LookupContext): Promise<RefEntity> {
+  const ref = parseIdRef(value);
+  const userId = ctx.actor.userId;
+  const { rows } =
+    ref?.by === 'id' && userId !== undefined
+      ? await ctx.db.query<{ id: string; purpose: string }>(
+          `SELECT id, purpose FROM files
+            WHERE id = $1
+              AND (uploader_id = $2
+                   OR id = (SELECT avatar_file_id FROM users WHERE id = $2)
+                   OR id = (SELECT logo_file_id FROM workspace LIMIT 1))`,
+          [ref.id, userId],
+        )
+      : { rows: [] };
+  const row = rows[0];
+  if (row === undefined) throw refNotFound('FileRef', value, ctx.path);
+  return { id: row.id, purpose: row.purpose };
 }
 
 async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRow> {

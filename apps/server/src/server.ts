@@ -69,6 +69,8 @@ export async function startServer(
   const migrations = options.migrations ?? loadMigrations();
   const lifecycle = new Lifecycle();
   const pool = createPool(config.databaseUrl, logger);
+  // One lockout store for sign-in and for handlers that check a password (AC-6; PLAN-001 S6).
+  const attempts = pgAttemptStore(pool);
 
   // Hooks run in registration order: the job worker stops before the pool its handlers use.
   let jobs: Jobs | undefined;
@@ -140,7 +142,7 @@ export async function startServer(
     auth: {
       auth: sessions,
       store: authStore,
-      attempts: pgAttemptStore(pool),
+      attempts,
       closeSessions,
       email,
       withTransaction: transactionRunner(pool),
@@ -160,6 +162,7 @@ export async function startServer(
           email,
           closeSessions,
           publicUrl: config.publicUrl,
+          attempts,
           syncedModels: sync.models.map((model) => model.name),
           ...(metrics ? { metrics } : {}),
         }),

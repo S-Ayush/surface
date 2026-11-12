@@ -1,0 +1,55 @@
+/* The avatar or logo picker (PLAN-001 S6), shared by Profile and Workspace; tokens only. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+/* The avatar or logo as it will show, larger than in lists. */
+.image {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+}
+
+.preview {
+  width: calc(var(--space-16) * 4);
+  height: calc(var(--space-16) * 4);
+  object-fit: cover;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+}
+
+.previewSquare {
+  border-radius: var(--radius-md);
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.imageActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.formError {
+  margin: 0;
+  color: var(--danger);
+}
+
+.fileInput {
+  display: none;
+}
