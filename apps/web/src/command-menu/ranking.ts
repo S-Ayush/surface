@@ -52,14 +52,45 @@ export function rankCommands(
 ): RankedSection[] {
   const bySection = new Map<Section, RankedCommand[]>();
   const seen = new Set<string>();
+  type Entry = {
+    command: Command;
+    applies: boolean;
+    match: NonNullable<ReturnType<typeof matchCommand>>;
+  };
+  const entries: Entry[] = [];
   for (const command of commands) {
     if (seen.has(command.id) || !isOffered(command, ctx)) continue;
     seen.add(command.id);
     const match = matchCommand(query, command.title, command.keywords);
     if (match === null) continue;
-    const applies = safely(() => command.appliesTo?.(ctx) ?? false, false);
-    const section: Section = applies ? 'suggested' : command.section;
-    const score = match.score * (applies ? 2 : 1) * frecency.boost(command.id);
+    entries.push({
+      command,
+      applies: safely(() => command.appliesTo?.(ctx) ?? false, false),
+      match,
+    });
+  }
+  const scoreOf = (entry: Entry, base: number) =>
+    base * (entry.applies ? 2 : 1) * frecency.boost(entry.command.id);
+  // SPEC-012 §3.8, AC-16: a destructive command ranks first only when its title matches the query
+  // better than any other command does. Otherwise it drops out of Suggested into its own section,
+  // so a keyword match ("deleted") never puts "Delete issue" under the cursor.
+  const bestOther = Math.max(
+    0,
+    ...entries
+      .filter((entry) => entry.command.destructive !== true)
+      .map((e) => scoreOf(e, e.match.score)),
+  );
+  for (const entry of entries) {
+    const { command, match } = entry;
+    let section: Section = entry.applies ? 'suggested' : command.section;
+    let score = scoreOf(entry, match.score);
+    if (command.destructive === true) {
+      const titleScore = matchCommand(query, command.title)?.score ?? 0;
+      if (scoreOf(entry, titleScore) <= bestOther) {
+        section = command.section;
+        score = Math.min(match.score * frecency.boost(command.id), bestOther * 0.99);
+      }
+    }
     const list = bySection.get(section) ?? [];
     list.push({ command, section, score, indices: match.indices });
     bySection.set(section, list);

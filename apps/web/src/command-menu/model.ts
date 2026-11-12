@@ -82,6 +82,11 @@ export type Command = {
   readonly when?: (ctx: CommandContext) => boolean;
   /** Whether it acts on the current target, for Suggested and the ×2 ranking boost (§4.2). */
   readonly appliesTo?: (ctx: CommandContext) => boolean;
+  /**
+   * A command that destroys data (Delete issue). It never ranks first for a keyword-only match
+   * (SPEC-012 §3.8, AC-16): only when its title matches the query better than any other command.
+   */
+  readonly destructive?: boolean;
   readonly run?: (ctx: CommandContext) => void | Promise<void>;
   readonly page?: (ctx: CommandContext) => CommandPage;
 };

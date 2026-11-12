@@ -10,6 +10,12 @@ export type Chord = {
   readonly shift: boolean;
   /** An upper-case letter ("K"), another printable character ("?", ",", "1") or a named key. */
   readonly key: string;
+  /**
+   * The physical key (`event.code`) this chord matches, when the chord is position-based
+   * (SPEC-012 §4.2): digits, every chord with Alt, Shift with a non-letter, and letters with
+   * Mod or Ctrl. Absent for chords that match what the key types (`event.key`).
+   */
+  readonly code?: string;
 };
 
 /** The parts of a KeyboardEvent the engine reads, so it can be tested without a DOM. */
@@ -65,6 +71,38 @@ const isModifier = (part: string): part is Modifier =>
   MODIFIER_ORDER.some((modifier) => modifier === part);
 const isAsciiLetter = (key: string) => /^[A-Za-z]$/.test(key);
 
+/** `event.code` of the printable characters a position-based chord may name (US physical keys). */
+const SYMBOL_CODES: Readonly<Record<string, string>> = {
+  '.': 'Period',
+  ',': 'Comma',
+  "'": 'Quote',
+  '\\': 'Backslash',
+  ';': 'Semicolon',
+  '/': 'Slash',
+  '-': 'Minus',
+  '=': 'Equal',
+  '[': 'BracketLeft',
+  ']': 'BracketRight',
+  '`': 'Backquote',
+};
+
+type Flags = Pick<Chord, 'mod' | 'ctrl' | 'alt' | 'shift'>;
+
+/**
+ * The physical key a chord matches, `undefined` when it matches what the key types, and `null`
+ * for a position-based chord on a character with no known key (SPEC-012 §4.2, SPEC-005 E3).
+ */
+function codeFor(key: string, flags: Flags): string | null | undefined {
+  if (NAMED_KEYS.has(key)) return undefined;
+  if (isAsciiLetter(key)) {
+    // Mod, Ctrl and Alt change `event.key` (Option+T types "†"), so the position is what counts.
+    return flags.mod || flags.ctrl || flags.alt ? `Key${key}` : undefined;
+  }
+  if (/^[0-9]$/.test(key)) return `Digit${key}`;
+  if (flags.alt || flags.shift) return SYMBOL_CODES[key] ?? null;
+  return undefined;
+}
+
 /** Parses one chord. Throws on notation the matcher cannot honour, so the registry fails at load. */
 export function toChord(text: string): Chord {
   const parts = parseChord(text);
@@ -84,16 +122,15 @@ export function toChord(text: string): Chord {
   else if ([...named].length === 1 && !isModifier(named)) key = named;
   else throw new Error(`Unknown key "${last}" in "${text}"`);
   const has = (modifier: Modifier) => modifiers.includes(modifier);
-  // Shift changes the character a symbol key types ("Shift+/" is "?" on US layouts, not on others),
-  // so a symbol is written as the character itself: "?", not "Shift+/".
-  // Shift and Option/AltGr change the character a symbol key types ("Shift+/" is "?" on US layouts,
-  // not on others), and the matcher ignores them for symbols. So a symbol is written as the character
-  // itself ("?", not "Shift+/"), and Alt+<symbol> cannot be told apart from the plain symbol.
-  if ((has('Shift') || has('Alt')) && key.length === 1 && !isAsciiLetter(key)) {
-    const modifier = has('Shift') ? 'Shift' : 'Alt';
-    throw new Error(`Write the character instead of ${modifier}+${key} in "${text}" (E3)`);
-  }
-  return { mod: has('Mod'), ctrl: has('Ctrl'), alt: has('Alt'), shift: has('Shift'), key };
+  const code = codeFor(key, {
+    mod: has('Mod'),
+    ctrl: has('Ctrl'),
+    alt: has('Alt'),
+    shift: has('Shift'),
+  });
+  if (code === null) throw new Error(`No physical key is known for "${last}" in "${text}"`);
+  const flags = { mod: has('Mod'), ctrl: has('Ctrl'), alt: has('Alt'), shift: has('Shift') };
+  return code === undefined ? { ...flags, key } : { ...flags, key, code };
 }
 
 /** "Mod+Shift+K": modifiers in a fixed order, so equal chords have equal text. */
@@ -129,23 +166,37 @@ function letterOf(event: KeyInput): string | undefined {
   return undefined;
 }
 
+/** Whether the chord matches by position (`event.code`) rather than by typed character. */
+export const matchesByCode = (chord: Chord): boolean => chord.code !== undefined;
+
 /**
- * Whether a keydown is this chord (SPEC-005 E3, as built in PLAN-005 S5):
- * - letters with Mod, Ctrl or Alt match the key's position (`event.code`), because those modifiers
- *   change `event.key` (Option+Shift+T types "ˇ" on macOS) and non-Latin layouts type other letters;
- * - other letters and printable characters match what the key types (`event.key`), so `?` works on
- *   any layout; for characters, Shift, Option and AltGr are part of typing them and are not compared;
+ * Whether a keydown is this chord (SPEC-005 E3, as built in PLAN-005 S5 and changed by SPEC-012 §4.2):
+ * - position-based chords (`chord.code`: digits, anything with Alt, Shift with a non-letter,
+ *   letters with Mod or Ctrl) match `event.code` with exact modifiers, because those modifiers
+ *   change `event.key` and layouts move punctuation around;
+ * - other letters and printable characters match what the key types (`event.key`), so `?` and `#`
+ *   work on any layout; for characters, Shift, Option and AltGr are part of typing them and are
+ *   not compared;
  * - named keys (Esc, Enter, arrows, F-keys) match `event.key` with exact modifiers.
+ * The engine tries chords that match by `event.key` first (see `matchesByCode`).
  */
 export function matchesChord(event: KeyInput, chord: Chord, platform: Platform): boolean {
   const wantMeta = platform === 'mac' && chord.mod;
   const wantCtrl = chord.ctrl || (platform !== 'mac' && chord.mod);
   if (event.metaKey !== wantMeta) return false;
 
+  if (chord.code !== undefined) {
+    return (
+      event.ctrlKey === wantCtrl &&
+      event.altKey === chord.alt &&
+      event.shiftKey === chord.shift &&
+      event.code === chord.code
+    );
+  }
+
   if (isAsciiLetter(chord.key)) {
     if (event.ctrlKey !== wantCtrl || event.altKey !== chord.alt) return false;
     if (event.shiftKey !== chord.shift) return false;
-    if (chord.mod || chord.ctrl || chord.alt) return event.code === `Key${chord.key}`;
     return letterOf(event) === chord.key;
   }
 

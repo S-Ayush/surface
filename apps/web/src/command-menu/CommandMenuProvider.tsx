@@ -12,8 +12,9 @@ import { Frecency } from './frecency.js';
 import type { CommandContext, CommandSource, CommandTarget, TeamSummary } from './model.js';
 import { appSource } from './sources/app.js';
 import { OPEN_TEAM, navigationSource, teamsPage } from './sources/navigation.js';
-import { OPERATION_COMMANDS } from '../features/commands.js';
+import { OPERATION_COMMANDS, PROPERTY_COMMANDS } from '../features/commands.js';
 import { operationSource, type OperationCommand } from './sources/operations.js';
+import { propertySource, type PropertyCommand } from './sources/properties.js';
 
 export type CommandMenuProviderProps = {
   children: ReactNode;
@@ -26,6 +27,7 @@ export type CommandMenuProviderProps = {
   route?: () => string;
   registry?: OperationRegistry;
   implementations?: Readonly<Record<string, OperationCommand>>;
+  properties?: readonly PropertyCommand[];
 };
 
 const NO_TEAMS = (): readonly TeamSummary[] => [];
@@ -59,6 +61,7 @@ function MenuHost({
   route,
   registry = defaultRegistry,
   implementations = OPERATION_COMMANDS,
+  properties = PROPERTY_COMMANDS,
 }: Omit<CommandMenuProviderProps, 'children'>) {
   const commands = useCommandRegistry();
   const target = useCurrentTarget();
@@ -67,10 +70,11 @@ function MenuHost({
   const sources = useMemo<readonly CommandSource[]>(
     () => [
       operationSource(registry, commands, implementations),
+      propertySource(registry, properties),
       navigationSource,
       appSource(commands),
     ],
-    [registry, commands, implementations],
+    [registry, commands, implementations, properties],
   );
   const context = useCallback(
     (current: CommandTarget): CommandContext => ({

@@ -42,12 +42,12 @@ export function toastHints(platform: Platform): EngineDeps['hints'] {
       });
       toast({ id: HINT_TOAST_ID, message: `${lead}… ${options.join(', ')}`, duration: Infinity });
     },
-    unavailable(binding) {
+    unavailable(binding, reason) {
       // A toast raised over an overlay would wait until it closes, long after the key press.
       if (overlayManager.topLayer() !== undefined) return;
       toast({
         id: HINT_TOAST_ID,
-        message: `${commandTitle(binding.command)} isn't available here`,
+        message: reason ?? `${commandTitle(binding.command)} isn't available here`,
         duration: UNAVAILABLE_HINT_MS,
       });
     },
@@ -127,7 +127,11 @@ export function useCommandRegistry(): CommandRegistry {
   return useShortcutContext().commands;
 }
 
-/** Activates a page scope (shortcuts.md §2: `inbox`, `triage`) while the page is mounted. */
+/**
+ * Activates a page scope (shortcuts.md §2: `inbox`, `triage`, `issue-page`) while the page is
+ * mounted. Component scopes (`list`, `issue`, `comment`, `settings-row`, `editor`) are not set
+ * here: the focused element carries `data-shortcut-scope`, which the engine reads.
+ */
 export function usePageScope(scope: Scope): void {
   const { scopes } = useShortcutContext();
   useEffect(() => scopes.push(scope), [scopes, scope]);

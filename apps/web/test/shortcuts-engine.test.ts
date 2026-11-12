@@ -471,3 +471,179 @@ describe('Esc and unavailable commands', () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe('SPEC-012 §4.2: whileTyping, Ctrl, platform and fall-through', () => {
+  const field = element('input', { type: 'text' });
+  const area = element('textarea');
+  const editable = element('div', { contentEditable: true });
+  const binding = (
+    overrides: Partial<Parameters<typeof shortcut>[0]> & { id: string; keys: string },
+  ) =>
+    shortcut({
+      scope: 'global',
+      command: 'help:shortcuts',
+      group: 'Test',
+      milestone: 'M0',
+      ...overrides,
+    });
+
+  it.each([
+    ['input', field],
+    ['textarea', area],
+    ['contenteditable', editable],
+  ])(
+    'a whileTyping: false Mod chord does not fire in a %s, and fires elsewhere (E16)',
+    (_, target) => {
+      const { commands, press } = setup({
+        bindings: [binding({ id: 'x.delete', keys: 'Mod+Backspace', whileTyping: false })],
+      });
+      const run = vi.fn();
+      commands.register('help:shortcuts', { run });
+      const chord = { key: 'Backspace', code: 'Backspace', metaKey: true };
+      expect(press(chord, target)).toEqual({ taken: false, prevented: false });
+      expect(run).not.toHaveBeenCalled();
+      expect(press(chord).taken).toBe(true);
+      expect(run).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('a Mod chord without whileTyping still fires while typing (the default, as before)', () => {
+    const { commands, press } = setup({ bindings: [binding({ id: 'x.k', keys: 'Mod+J' })] });
+    const run = vi.fn();
+    commands.register('help:shortcuts', { run });
+    press({ key: 'j', code: 'KeyJ', metaKey: true }, field);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('whileTyping: true lets a plain key fire in a field; an Alt chord does not by default (E14)', () => {
+    const { commands, press } = setup({
+      bindings: [
+        binding({ id: 'x.enter', keys: 'Enter', whileTyping: true }),
+        binding({ id: 'x.alt', keys: 'Alt+T', command: 'toggle:sidebar' }),
+      ],
+    });
+    const enter = vi.fn();
+    const alt = vi.fn();
+    commands.register('help:shortcuts', { run: enter });
+    commands.register('toggle:sidebar', { run: alt });
+    press({ key: 'Enter', code: 'Enter' }, area);
+    press({ key: '†', code: 'KeyT', altKey: true }, area);
+    expect(enter).toHaveBeenCalledOnce();
+    expect(alt).not.toHaveBeenCalled();
+    press({ key: '†', code: 'KeyT', altKey: true });
+    expect(alt).toHaveBeenCalledOnce();
+  });
+
+  it('a platform: mac binding does not exist on other platforms', () => {
+    const bindings = [binding({ id: 'x.mac', keys: 'Ctrl+M', platform: 'mac' })];
+    const mac = setup({ platform: 'mac', bindings });
+    const other = setup({ platform: 'other', bindings });
+    const run = vi.fn();
+    mac.commands.register('help:shortcuts', { run });
+    other.commands.register('help:shortcuts', { run });
+    const chord = { key: 'm', code: 'KeyM', ctrlKey: true };
+    expect(other.press(chord)).toEqual({ taken: false, prevented: false });
+    expect(run).not.toHaveBeenCalled();
+    expect(mac.press(chord).taken).toBe(true);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('Ctrl+Shift+1 is the Control key on macOS and Cmd+Shift+1 does not fire it', () => {
+    const { commands, press } = setup({
+      bindings: [binding({ id: 'x.team1', keys: 'Ctrl+Shift+1' })],
+    });
+    const run = vi.fn();
+    commands.register('help:shortcuts', { run });
+    press({ key: '!', code: 'Digit1', metaKey: true, shiftKey: true });
+    expect(run).not.toHaveBeenCalled();
+    press({ key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true });
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('falls through to a less specific binding whose command is available (editor Mod+Enter)', () => {
+    const issuePage = binding({
+      id: 'x.save',
+      keys: 'Mod+Enter',
+      scope: 'issue-page',
+      command: 'issue-page:save-description',
+    });
+    const editor = binding({
+      id: 'x.toggle',
+      keys: 'Mod+Enter',
+      scope: 'editor',
+      command: 'editor:toggle-checklist-item',
+      shadows: ['x.save'],
+    });
+    const { commands, press, hints } = setup({
+      bindings: [issuePage, editor],
+      pageScopes: ['issue-page'],
+    });
+    const save = vi.fn();
+    const toggle = vi.fn();
+    commands.register('issue-page:save-description', { run: save });
+    let inChecklist = false;
+    commands.register('editor:toggle-checklist-item', { run: toggle, when: () => inChecklist });
+    const target = element('div', {
+      attrs: { 'data-shortcut-scope': 'editor' },
+      contentEditable: true,
+    });
+    const chord = { key: 'Enter', code: 'Enter', metaKey: true };
+    press(chord, target);
+    expect(save).toHaveBeenCalledOnce();
+    inChecklist = true;
+    press(chord, target);
+    expect(toggle).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledOnce();
+    expect(hints.unavailable).not.toHaveBeenCalled();
+  });
+
+  it('says why a command is unavailable when its handler gives a reason (SPEC-005 §5)', () => {
+    const { commands, press, hints } = setup({
+      bindings: [binding({ id: 'x.status', keys: 'S', scope: 'issue', command: 'issue:status' })],
+    });
+    commands.register('issue:status', {
+      run: () => undefined,
+      when: () => false,
+      reason: () => 'ENG-42 is archived. Restore it to edit it.',
+    });
+    const target = element('div', { attrs: { 'data-shortcut-scope': 'issue' } });
+    expect(press(keys.letter('S'), target)).toEqual({ taken: true, prevented: true });
+    expect(hints.unavailable).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'x.status' }),
+      'ENG-42 is archived. Restore it to edit it.',
+    );
+  });
+
+  it('the new scopes activate from a focused element or the page scope stack', () => {
+    const { commands, press } = setup({
+      bindings: [
+        binding({ id: 'x.reply', keys: 'R', scope: 'comment', command: 'comment:reply' }),
+        binding({
+          id: 'x.row',
+          keys: 'E',
+          scope: 'settings-row',
+          command: 'settings-row:edit-name',
+        }),
+        binding({ id: 'x.next', keys: 'J', scope: 'issue-page', command: 'issue-page:next' }),
+      ],
+      pageScopes: ['issue-page'],
+    });
+    const reply = vi.fn();
+    const edit = vi.fn();
+    const next = vi.fn();
+    commands.register('comment:reply', { run: reply });
+    commands.register('settings-row:edit-name', { run: edit });
+    commands.register('issue-page:next', { run: next });
+    press(keys.letter('R'), element('div', { attrs: { 'data-shortcut-scope': 'comment' } }));
+    press(keys.letter('E'), element('li', { attrs: { 'data-shortcut-scope': 'settings-row' } }));
+    press(keys.letter('J'));
+    expect([reply.mock.calls.length, edit.mock.calls.length, next.mock.calls.length]).toEqual([
+      1, 1, 1,
+    ]);
+    // Neither component scope is active without focus inside it.
+    press(keys.letter('R'));
+    press(keys.letter('E'));
+    expect(reply).toHaveBeenCalledOnce();
+    expect(edit).toHaveBeenCalledOnce();
+  });
+});

@@ -97,3 +97,33 @@ describe('ScopeStack', () => {
     expect(stack.current()).toEqual(['triage']);
   });
 });
+
+describe('SPEC-012 §4.2: the Esc chain and unavailable reasons', () => {
+  it('a page-level Esc step that does not apply falls to the next step (back to the list, then the app)', () => {
+    const registry = new CommandRegistry(() => undefined);
+    const app = vi.fn();
+    const backToList = vi.fn();
+    let onIssuePage = true;
+    registry.register('ui:escape', { run: app });
+    registry.register('ui:escape', { run: backToList, when: () => onIssuePage }, 'page');
+    registry.run('ui:escape');
+    expect(backToList).toHaveBeenCalledOnce();
+    onIssuePage = false;
+    registry.run('ui:escape');
+    expect(app).toHaveBeenCalledOnce();
+  });
+
+  it('gives the handler’s reason only while the command is unavailable', () => {
+    const registry = new CommandRegistry(() => undefined);
+    let archived = true;
+    registry.register('issue:status', {
+      run: () => undefined,
+      when: () => !archived,
+      reason: () => 'ENG-42 is archived. Restore it to edit it.',
+    });
+    expect(registry.reason('issue:status')).toBe('ENG-42 is archived. Restore it to edit it.');
+    archived = false;
+    expect(registry.reason('issue:status')).toBeUndefined();
+    expect(registry.reason('issue:rename')).toBeUndefined();
+  });
+});

@@ -5,7 +5,7 @@ import type { Platform } from '@surface/ui';
 import { CommandRegistry } from '../src/commands/registry.js';
 import type { KeyInput } from '../src/shortcuts/chord.js';
 import { ShortcutEngine, type EngineDeps, type TargetLike } from '../src/shortcuts/engine.js';
-import { SHORTCUTS, type Scope, type Shortcut } from '../src/shortcuts/registry.js';
+import { SHORTCUTS, inBuild, type Scope, type Shortcut } from '../src/shortcuts/registry.js';
 
 type FakeElement = TargetLike & {
   readonly attrs: Readonly<Record<string, string>>;
@@ -114,7 +114,7 @@ export function setup(
   const state = { layer: options.layer, overlayEscape: options.overlayEscape ?? false };
   const deps: EngineDeps = {
     platform: options.platform ?? 'mac',
-    bindings: options.bindings ?? SHORTCUTS,
+    bindings: options.bindings ?? inBuild(SHORTCUTS),
     commands,
     overlay: {
       topLayer: () => (state.layer === undefined ? undefined : { kind: state.layer }),

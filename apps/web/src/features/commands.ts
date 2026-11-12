@@ -5,6 +5,7 @@
 // only, and on a rebase conflict keep both sides. test/command-operations.test.ts fails while an
 // operation with `ui` metadata has no entry, or an entry names no operation.
 import type { OperationCommand } from '../command-menu/sources/operations.js';
+import type { PropertyCommand } from '../command-menu/sources/properties.js';
 import { INVITE_COMMANDS } from './invites/commands.js';
 import { TEAM_COMMANDS } from './teams/commands.js';
 
@@ -12,3 +13,9 @@ export const OPERATION_COMMANDS: Readonly<Record<string, OperationCommand>> = {
   ...TEAM_COMMANDS,
   ...INVITE_COMMANDS,
 };
+
+/**
+ * Property commands (SPEC-012 §3.8), from `features/issues/commands.ts` when PLAN-012 S6 adds it.
+ * Shared registry file, append-only: spread your own list here.
+ */
+export const PROPERTY_COMMANDS: readonly PropertyCommand[] = [];

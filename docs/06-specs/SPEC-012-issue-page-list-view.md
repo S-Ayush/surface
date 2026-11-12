@@ -277,6 +277,7 @@ One new synced model, `Draft`, and two new operations, `draft.save` and `draft.d
 4. **New scopes** `issue-page`, `comment`, `settings-row` (§3.6), with the overlap and specificity tables.
 5. **`Esc` chain** (`ui:escape`): editor popover → leave the text field or editor (title: cancel the edit) → M2 selection → on the issue page, back to the source list.
 6. **Last-delete memory** for the global `Mod+Z` (§3.11): one slot in the web app's memory, set by `issue.delete`, read by the command; it is not engine state.
+7. *As built (PLAN-012 S1):* **fall-through.** If the most specific binding's command is unavailable, the engine runs the next binding (by scope order) whose command is available, and shows the "not available here" hint only when none is. `whileTyping: true` lets a plain key fire in a text field (`Enter` in a comment, `Alt+Shift+.` and `Alt+↑`/`↓` in the editor); `false` blocks any chord there; unset keeps the default.
 
 ### 4.3 The `Draft` model and its operations
 

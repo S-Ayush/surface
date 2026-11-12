@@ -3,7 +3,7 @@
 import { spokenShortcut, keyLabels, type Platform } from '@surface/ui';
 import { commandTitle } from '../commands/catalog.js';
 import type { Milestone } from './milestone.js';
-import { inBuild, type Shortcut } from './registry.js';
+import { forPlatform, inBuild, type Shortcut } from './registry.js';
 
 export type HelpRow = {
   readonly id: string;
@@ -41,7 +41,7 @@ export function helpGroups(
   const queryWords = query.split(' ').filter(Boolean);
   const queryKeys = compact(query);
   const groups = new Map<string, HelpRow[]>();
-  for (const binding of inBuild(bindings, options.milestone)) {
+  for (const binding of forPlatform(inBuild(bindings, options.milestone), options.platform)) {
     const title = commandTitle(binding.command);
     if (query !== '') {
       const text = words(`${title} ${binding.group}`);

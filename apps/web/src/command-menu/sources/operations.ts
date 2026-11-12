@@ -3,7 +3,7 @@
 // permission pre-check passes (the shared predicates, on the signed-in actor). The server still
 // decides: the pre-check only hides what would be refused.
 import { bindPredicates, userActor, type ResolvedRefs } from '@surface/domain';
-import type { AnyOperation, OperationRegistry, UiContext } from '@surface/operations';
+import type { AnyOperation, OperationRegistry, OperationUi, UiContext } from '@surface/operations';
 import type { CommandId } from '../../commands/catalog.js';
 import { CommandRegistry } from '../../commands/registry.js';
 import type {
@@ -45,6 +45,19 @@ export function matchesContext(contexts: readonly UiContext[], target: CommandTa
   );
 }
 
+/**
+ * `ui.available(target, store)` (SPEC-003 §3.1): no predicate means available; a throwing one
+ * hides the command, like a broken `when`. A global target has no entities, so it always applies.
+ */
+export function isAvailableHere(available: OperationUi['available'], ctx: CommandContext): boolean {
+  if (available === undefined || ctx.target.kind === 'global') return true;
+  try {
+    return available({ kind: ctx.target.kind, ids: ctx.target.ids }, ctx.store);
+  } catch {
+    return false;
+  }
+}
+
 /** The pre-check: false without a signed-in actor or when the predicates refuse. */
 export function permits(op: AnyOperation, ctx: CommandContext, refs: ResolvedRefs): boolean {
   if (ctx.actor === null) return false;
@@ -75,6 +88,7 @@ export function operationSource(
         ...(ui.shortcut && isBound(ui.shortcut) ? { shortcuts: [ui.shortcut] } : {}),
         when: (ctx) =>
           matchesContext(ui.contexts, ctx.target) &&
+          isAvailableHere(ui.available, ctx) &&
           permits(op, ctx, impl.refs?.(ctx) ?? {}) &&
           ('opens' in impl ? commands.isAvailable(impl.opens) : true),
         // Acts on the target itself: a global command applies only when there is no target.

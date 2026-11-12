@@ -14,6 +14,8 @@ export type CommandHandler = {
   run: () => void | Promise<void>;
   /** Whether the command applies right now (context and permission). Defaults to true. */
   when?: () => boolean;
+  /** Why it does not apply right now, shown by the shortcut hint ("ENG-42 is archived. …"). */
+  reason?: () => string | undefined;
 };
 
 type Entry = { readonly handler: CommandHandler; readonly rank: number; readonly order: number };
@@ -49,24 +51,29 @@ export class CommandRegistry {
     runInAction(() => this.#revision.set(this.#revision.get() + 1));
   }
 
+  /**
+   * The handler for a command: the highest-ranked one that applies right now, so a page's Esc step
+   * that does not apply here falls to the next step (SPEC-012 §4.2 "Esc chain"). If none applies,
+   * the highest-ranked one, so its `reason` can explain why.
+   */
   #handler(id: CommandId): CommandHandler | undefined {
     this.#revision.get();
-    let best: Entry | undefined;
-    for (const entry of this.#handlers.get(id) ?? []) {
-      if (
-        best === undefined ||
-        entry.rank > best.rank ||
-        (entry.rank === best.rank && entry.order > best.order)
-      ) {
-        best = entry;
-      }
-    }
-    return best?.handler;
+    const entries = [...(this.#handlers.get(id) ?? [])].sort(
+      (a, b) => b.rank - a.rank || b.order - a.order,
+    );
+    return (entries.find((entry) => entry.handler.when?.() ?? true) ?? entries[0])?.handler;
   }
 
   isAvailable(id: CommandId): boolean {
     const handler = this.#handler(id);
     return handler !== undefined && (handler.when?.() ?? true);
+  }
+
+  /** Why the command is unavailable now, when its handler says (SPEC-005 §5 "not available here"). */
+  reason(id: CommandId): string | undefined {
+    const handler = this.#handler(id);
+    if (handler === undefined || (handler.when?.() ?? true)) return undefined;
+    return handler.reason?.();
   }
 
   /**
@@ -98,6 +105,8 @@ export class CommandRegistry {
 export type CommandOptions = {
   /** Whether the command applies right now. Read on every key press, so it can change freely. */
   when?: () => boolean;
+  /** Why the command is unavailable, for the shortcut hint (read only while `when` is false). */
+  reason?: () => string | undefined;
   /** Defaults to `app`. A page that overrides a shell command passes `page`. */
   level?: CommandLevel;
 };
@@ -109,9 +118,9 @@ export function useCommandHandler(
   run: () => void | Promise<void>,
   options: CommandOptions = {},
 ): void {
-  const latest = useRef({ run, when: options.when });
+  const latest = useRef({ run, when: options.when, reason: options.reason });
   useEffect(() => {
-    latest.current = { run, when: options.when };
+    latest.current = { run, when: options.when, reason: options.reason };
   });
   const level = options.level ?? 'app';
   // Registered once per id and level: changing `run` or `when` never re-registers, so it never
@@ -120,7 +129,11 @@ export function useCommandHandler(
     () =>
       registry.register(
         id,
-        { run: () => latest.current.run(), when: () => latest.current.when?.() ?? true },
+        {
+          run: () => latest.current.run(),
+          when: () => latest.current.when?.() ?? true,
+          reason: () => latest.current.reason?.(),
+        },
         level,
       ),
     [registry, id, level],

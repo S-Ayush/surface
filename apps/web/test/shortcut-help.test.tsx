@@ -68,7 +68,7 @@ describe('AC-8: the help overlay', () => {
       </PlatformProvider>,
     );
     expect(html).toContain('aria-label="Search shortcuts"');
-    for (const entry of SHORTCUTS) expect(html).toContain(commandTitle(entry.command));
+    for (const entry of inBuild(SHORTCUTS)) expect(html).toContain(commandTitle(entry.command));
     expect(html).toMatch(/<h3[^>]*>General<\/h3>/);
     expect(html).toContain('Command K');
   });
@@ -88,5 +88,32 @@ describe('inBuild', () => {
   it('is what the engine is given: bindings up to the build milestone', () => {
     expect(inBuild([...SHORTCUTS, later]).map((entry) => entry.id)).not.toContain('test.later');
     expect(inBuild([...SHORTCUTS, later], 'M1').map((entry) => entry.id)).toContain('test.later');
+  });
+});
+
+describe('SPEC-012: Mod+/ and platform-only keys', () => {
+  const ids = (groups: ReturnType<typeof helpGroups>) =>
+    groups.flatMap((group) => group.rows.map((row) => row.id));
+
+  it('lists Mod+/ next to ? as the shortcut help', () => {
+    const rows = helpGroups(SHORTCUTS, { platform: 'mac' }).flatMap((group) => group.rows);
+    expect(rows.filter((row) => row.title === 'Keyboard shortcuts').map((row) => row.keys)).toEqual(
+      [['?'], ['Mod+/']],
+    );
+  });
+
+  it('shows the macOS-only keys on macOS and hides them elsewhere', () => {
+    const mac = ids(helpGroups(SHORTCUTS, { platform: 'mac', milestone: 'M1' }));
+    const other = ids(helpGroups(SHORTCUTS, { platform: 'other', milestone: 'M1' }));
+    for (const id of ['issuePage.comment', 'issuePage.focusDescription', 'issuePage.linkUrl']) {
+      expect(mac).toContain(id);
+      expect(other).not.toContain(id);
+    }
+    expect(other).toContain('issuePage.attachFile');
+  });
+
+  it('shows every M1 binding for the platform in help once the build reaches M1', () => {
+    const shown = new Set(ids(helpGroups(SHORTCUTS, { platform: 'mac', milestone: 'M1' })));
+    for (const entry of SHORTCUTS) expect(shown.has(entry.id), entry.id).toBe(true);
   });
 });

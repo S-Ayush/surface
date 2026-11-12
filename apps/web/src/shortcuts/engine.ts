@@ -3,8 +3,15 @@
 // handles sequences ("G S", 1 s) and suppresses plain keys while the user types.
 import type { Platform } from '@surface/ui';
 import type { CommandId } from '../commands/catalog.js';
-import { MODIFIER_KEYS, isCommandChord, matchesChord, type Chord, type KeyInput } from './chord.js';
-import { SCOPES, type Scope, type Shortcut } from './registry.js';
+import {
+  MODIFIER_KEYS,
+  isCommandChord,
+  matchesByCode,
+  matchesChord,
+  type Chord,
+  type KeyInput,
+} from './chord.js';
+import { SCOPES, forPlatform, type Scope, type Shortcut } from './registry.js';
 
 /** shortcuts.md rule 3: a sequence must be finished within 1 s. */
 export const SEQUENCE_TIMEOUT_MS = 1000;
@@ -31,7 +38,12 @@ export type KeyEventLike = KeyInput & {
 export type EngineDeps = {
   platform: Platform;
   bindings: readonly Shortcut[];
-  commands: { isAvailable(id: CommandId): boolean; run(id: CommandId): boolean };
+  commands: {
+    isAvailable(id: CommandId): boolean;
+    run(id: CommandId): boolean;
+    /** Why the command is unavailable right now ("ENG-42 is archived. Restore it to edit it."). */
+    reason?(id: CommandId): string | undefined;
+  };
   overlay: {
     topLayer(): { readonly kind: 'modal' | 'popover' | 'menu' } | undefined;
     isOverlayEscape(event: object): boolean;
@@ -42,7 +54,7 @@ export type EngineDeps = {
     /** A sequence started: list what can follow ("G… S: Go to settings"). */
     sequence(prefix: readonly string[], next: readonly Shortcut[]): void;
     /** The binding's command does not apply here. */
-    unavailable(binding: Shortcut): void;
+    unavailable(binding: Shortcut, reason?: string): void;
     clear(): void;
   };
   timers?: {
@@ -103,11 +115,14 @@ type Pending = { readonly candidates: readonly Shortcut[]; readonly index: numbe
 
 export class ShortcutEngine {
   readonly #deps: EngineDeps;
+  /** The bindings that exist on this platform (a `platform: 'mac'` binding is dropped elsewhere). */
+  readonly #bindings: readonly Shortcut[];
   readonly #timers: NonNullable<EngineDeps['timers']>;
   #pending: Pending | null = null;
 
   constructor(deps: EngineDeps) {
     this.#deps = deps;
+    this.#bindings = forPlatform(deps.bindings, deps.platform);
     this.#timers = deps.timers ?? {
       set: (callback, ms) => setTimeout(callback, ms),
       clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -142,23 +157,29 @@ export class ShortcutEngine {
     if (pending !== null) {
       this.#cancel();
       // Every key of a sequence passes the same gate as the first (AC-5, overlay capture).
-      const next = pending.candidates.filter((binding) => {
-        const chord = binding.chords[pending.index];
-        return chord !== undefined && this.#accepts(binding, chord, event, context);
-      });
+      const next = this.#preferKeyMatches(
+        pending.candidates.filter((binding) => {
+          const chord = binding.chords[pending.index];
+          return chord !== undefined && this.#accepts(binding, chord, event, context);
+        }),
+        pending.index,
+      );
       if (next.length > 0) return this.#advance(event, next, pending.index + 1);
       // Not a continuation: the sequence ends and the key is read on its own.
     }
 
-    const candidates = context.scopes.flatMap((scope) =>
-      this.#deps.bindings.filter((binding) => {
-        const first = binding.chords[0];
-        return (
-          binding.scope === scope &&
-          first !== undefined &&
-          this.#accepts(binding, first, event, context)
-        );
-      }),
+    const candidates = this.#preferKeyMatches(
+      context.scopes.flatMap((scope) =>
+        this.#bindings.filter((binding) => {
+          const first = binding.chords[0];
+          return (
+            binding.scope === scope &&
+            first !== undefined &&
+            this.#accepts(binding, first, event, context)
+          );
+        }),
+      ),
+      0,
     );
     if (candidates.length === 0) return false;
     return this.#advance(event, candidates, 1);
@@ -185,13 +206,30 @@ export class ShortcutEngine {
   }
 
   /**
+   * SPEC-012 §4.2: `event.key` matches are tried before `event.code` matches, so AZERTY `Ctrl+.`
+   * (typed as Ctrl+Shift+Comma) runs `Mod+.`, never `Mod+Shift+,`. Scope order is kept.
+   */
+  #preferKeyMatches(candidates: readonly Shortcut[], index: number): readonly Shortcut[] {
+    const byKey = candidates.filter((binding) => {
+      const chord = binding.chords[index];
+      return chord !== undefined && !matchesByCode(chord);
+    });
+    return byKey.length > 0 ? byKey : candidates;
+  }
+
+  /**
    * Whether this chord of the binding may fire for this key: its scope is active, and, while typing
-   * or (for global bindings) over an overlay, it is a Mod chord or Esc.
+   * or (for global bindings) over an overlay, it is a Mod chord or Esc. `whileTyping` overrides
+   * that per binding (SPEC-012 §4.2): `false` never fires in a text field, `true` always may.
    */
   #accepts(binding: Shortcut, chord: Chord, event: KeyEventLike, context: KeyContext): boolean {
     if (!context.scopes.includes(binding.scope)) return false;
     const plain = !isCommandChord(chord) && chord.key !== 'Escape';
-    if (plain && (context.typing || (context.overlay && binding.scope === 'global'))) return false;
+    if (context.typing) {
+      if (binding.whileTyping === false) return false;
+      if (plain && binding.whileTyping !== true) return false;
+    }
+    if (plain && context.overlay && binding.scope === 'global') return false;
     return matchesChord(event, chord, this.#deps.platform);
   }
 
@@ -199,7 +237,12 @@ export class ShortcutEngine {
     // The most specific scope wins; the conflict test keeps one scope's bindings unambiguous.
     const best = candidates[0];
     if (best === undefined) return false;
-    if (best.chords.length === index) return this.#run(event, best);
+    if (best.chords.length === index) {
+      return this.#run(
+        event,
+        candidates.filter((binding) => binding.chords.length === index),
+      );
+    }
     const longer = candidates.filter((binding) => binding.chords.length > index);
     event.preventDefault();
     const timer = this.#timers.set(() => this.#cancel(), SEQUENCE_TIMEOUT_MS);
@@ -209,15 +252,26 @@ export class ShortcutEngine {
     return true;
   }
 
-  #run(event: KeyEventLike, binding: Shortcut): boolean {
-    if (binding.native === true) return false;
-    if (this.#deps.commands.run(binding.command)) {
-      event.preventDefault();
-      return true;
+  /**
+   * Runs the first binding (most specific scope first) whose command is available, so a binding
+   * that does not apply here (Mod+Enter outside a checklist item) falls through to the next scope.
+   * If none is available the most specific one gives the "not available here" hint.
+   */
+  #run(event: KeyEventLike, bindings: readonly Shortcut[]): boolean {
+    const best = bindings[0];
+    if (best === undefined || best.native === true) return false;
+    for (const binding of bindings) {
+      if (binding.native === true) continue;
+      if (this.#deps.commands.run(binding.command)) {
+        event.preventDefault();
+        return true;
+      }
     }
-    if (binding.quiet === true) return false;
+    if (best.quiet === true) return false;
     event.preventDefault();
-    this.#deps.hints.unavailable(binding);
+    const reason = this.#deps.commands.reason?.(best.command);
+    if (reason === undefined) this.#deps.hints.unavailable(best);
+    else this.#deps.hints.unavailable(best, reason);
     return true;
   }
 

@@ -162,3 +162,67 @@ describe('fuzzy matching', () => {
     expect(title?.score ?? 0).toBeGreaterThan(keyword?.score ?? 0);
   });
 });
+
+describe('SPEC-012 AC-16: a destructive command never ranks first on a keyword match', () => {
+  const ctx = context();
+  const command = (overrides: Partial<Command> & Pick<Command, 'id' | 'title'>): Command => ({
+    section: 'settings',
+    ...overrides,
+  });
+  const deleteIssue = command({
+    id: 'issue:delete',
+    title: 'Delete issue',
+    keywords: ['remove', 'deleted', 'trash'],
+    destructive: true,
+    appliesTo: () => true,
+  });
+  const restore = command({
+    id: 'issue:restore',
+    title: 'Restore issue',
+    keywords: ['deleted', 'undelete'],
+    appliesTo: () => true,
+  });
+  const firstId = (sections: ReturnType<typeof rankCommands>) => sections[0]?.items[0]?.command.id;
+
+  it('puts Restore issue ahead of Delete issue for the keyword "deleted"', () => {
+    expect(firstId(rankCommands([deleteIssue, restore], 'deleted', ctx, noBoost))).toBe(
+      'issue:restore',
+    );
+    expect(firstId(rankCommands([restore, deleteIssue], 'deleted', ctx, noBoost))).toBe(
+      'issue:restore',
+    );
+  });
+
+  it('does not rank it first for a keyword-only match even when it would score best', () => {
+    const rename = command({ id: 'issue:rename', title: 'Rename issue', appliesTo: () => true });
+    const sections = rankCommands([deleteIssue, rename], 'trash', ctx, noBoost);
+    // Only the destructive command matches: it is still found.
+    expect(firstId(sections)).toBe('issue:delete');
+    const both = rankCommands(
+      [deleteIssue, command({ id: 'nav:trash', title: 'Go to trash', section: 'navigation' })],
+      'trash',
+      ctx,
+      noBoost,
+    );
+    expect(both.flatMap((section) => section.items).map((item) => item.command.id)).toEqual([
+      'nav:trash',
+      'issue:delete',
+    ]);
+  });
+
+  it('ranks it first when its title matches better than any other command', () => {
+    const sections = rankCommands([restore, deleteIssue], 'delete issue', ctx, noBoost);
+    expect(firstId(sections)).toBe('issue:delete');
+  });
+
+  it('never ranks it first for an empty query', () => {
+    expect(firstId(rankCommands([deleteIssue, restore], '', ctx, noBoost))).toBe('issue:restore');
+  });
+
+  it('leaves non-destructive commands as they were', () => {
+    const plain = { ...deleteIssue, destructive: false };
+    expect(firstId(rankCommands([restore, plain], 'delete issue', ctx, noBoost))).toBe(
+      'issue:delete',
+    );
+  });
+});
