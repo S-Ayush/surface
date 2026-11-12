@@ -26,6 +26,10 @@ export function teamOutput(row: ModelRow<'Team'>): TeamOutput {
     timezone: row.timezone,
     private: row.private,
     defaultStatusId: row.defaultStatusId,
+    estimateScale: row.estimateScale,
+    estimateExtended: row.estimateExtended,
+    estimateAllowZero: row.estimateAllowZero,
+    estimateCountUnestimatedAsOne: row.estimateCountUnestimatedAsOne,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

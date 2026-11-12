@@ -11,6 +11,9 @@ export const NEW_TEAM_SETTINGS: {
   readonly private: boolean;
   readonly triageEnabled: boolean;
   readonly estimateScale: EstimateScale;
+  readonly estimateExtended: boolean;
+  readonly estimateAllowZero: boolean;
+  readonly estimateCountUnestimatedAsOne: boolean;
   readonly cyclesEnabled: boolean;
   readonly cycleDurationWeeks: number;
   readonly cycleCooldownWeeks: number;
@@ -27,6 +30,9 @@ export const NEW_TEAM_SETTINGS: {
   private: false,
   triageEnabled: false,
   estimateScale: 'off',
+  estimateExtended: false,
+  estimateAllowZero: false,
+  estimateCountUnestimatedAsOne: true,
   cyclesEnabled: false,
   cycleDurationWeeks: 2,
   cycleCooldownWeeks: 0,

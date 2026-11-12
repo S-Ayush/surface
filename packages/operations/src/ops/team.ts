@@ -11,6 +11,7 @@
  */
 import {
   COLOR_HUES,
+  ESTIMATE_SCALES,
   NEW_TEAM_SETTINGS,
   canEndMembership,
   RESERVED_TEAM_KEYS,
@@ -69,6 +70,11 @@ export const TeamSchema = z.object({
   timezone: z.string(),
   private: z.boolean(),
   defaultStatusId: z.uuid(),
+  /** Estimate settings (SPEC-010 §4.3); `team.setEstimates` (PLAN-010 S4) changes them. */
+  estimateScale: z.enum(ESTIMATE_SCALES),
+  estimateExtended: z.boolean(),
+  estimateAllowZero: z.boolean(),
+  estimateCountUnestimatedAsOne: z.boolean(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

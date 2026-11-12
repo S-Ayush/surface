@@ -2,13 +2,21 @@
 // and the server must agree on the model list (one schema hash), every declared field must have
 // a column of a matching type and nullability (or the client store rejects the row), and no
 // server-only column may be declared.
+import { readdirSync, readFileSync } from 'node:fs';
 import type { FieldKind } from '@surface/domain/model';
 import { PRODUCTION_MODELS } from '@surface/domain/model';
 import { computeSchemaHash } from '@surface/sync-protocol';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
-import { sessions, teamIssueCounters, userCredentials } from '../src/db/schema/index.js';
+import {
+  labels,
+  sessions,
+  teamIssueCounters,
+  teams,
+  userCredentials,
+  workflowStatuses,
+} from '../src/db/schema/index.js';
 import { SYNCED_MODELS } from '../src/sync/models.js';
 import { loggedRow } from '../src/sync/repo.js';
 import { GROUPS_FIELD, syncRegistry } from '../src/sync/registry.js';
@@ -78,6 +86,36 @@ describe.each(PRODUCTION_MODELS.map((def) => [def.name, def] as const))('%s', (n
 
   it('carries its groups to the client exactly when it belongs to a team', () => {
     expect(GROUPS_FIELD in def.fields).toBe(entry.teamColumn !== null);
+  });
+});
+
+// PLAN-010 S1, SPEC-010 §4.5: the estimate options and label groups' type are synced columns
+// with the spec's defaults (the per-model checks above cover type and nullability), and status
+// positions compare in byte order.
+describe('SPEC-010 columns', () => {
+  const column = (table: Parameters<typeof getTableConfig>[0], name: string) =>
+    getTableConfig(table).columns.find((c) => c.name === name);
+
+  it('default the estimate options to off, off and on', () => {
+    expect(column(teams, 'estimateExtended')?.default).toBe(false);
+    expect(column(teams, 'estimateAllowZero')?.default).toBe(false);
+    expect(column(teams, 'estimateCountUnestimatedAsOne')?.default).toBe(true);
+  });
+
+  it('make a label group single-select by default', () => {
+    expect(column(labels, 'exclusive')?.default).toBe(true);
+  });
+
+  it('give status positions the C collation in a migration, since Drizzle cannot declare it', () => {
+    expect(column(workflowStatuses, 'position')?.columnType).toBe('PgText');
+    const dir = new URL('../migrations/', import.meta.url);
+    const sql = readdirSync(dir)
+      .filter((file) => file.endsWith('.sql'))
+      .map((file) => readFileSync(new URL(file, dir), 'utf8'))
+      .join('\n');
+    expect(sql).toContain(
+      'ALTER TABLE "workflow_statuses" ALTER COLUMN "position" SET DATA TYPE text COLLATE "C";',
+    );
   });
 });
 

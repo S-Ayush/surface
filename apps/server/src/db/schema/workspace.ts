@@ -254,6 +254,10 @@ export const teams = pgTable(
     /** INV-05: a status of this team (deferrable FK, custom migration). */
     defaultStatusId: uuid().notNull(),
     estimateScale: text().$type<EstimateScale>().notNull().default('off'),
+    // SPEC-010 §4.3, §4.5: the estimate options.
+    estimateExtended: boolean().notNull().default(false),
+    estimateAllowZero: boolean().notNull().default(false),
+    estimateCountUnestimatedAsOne: boolean().notNull().default(true),
     cyclesEnabled: boolean().notNull().default(false),
     cycleDurationWeeks: integer().notNull().default(2),
     cycleCooldownWeeks: integer().notNull().default(0),
@@ -329,7 +333,11 @@ export const workflowStatuses = pgTable(
     category: text().$type<StatusCategory>().notNull(),
     color: text().$type<ColorHue>().notNull().default('gray'),
     description: text(),
-    /** Fractional-index key: order within the category (domain-model §1). */
+    /**
+     * Fractional-index key: order within the category (domain-model §1). `COLLATE "C"` (byte
+     * order, the order of `fractionalKeyBetween`, SPEC-010 §4.1) is set by hand in migration
+     * 0010: Drizzle can't declare a column collation.
+     */
     position: text().notNull(),
     syncGroups: syncGroups(),
     ...audit(),
@@ -360,6 +368,8 @@ export const labels = pgTable(
     description: text(),
     parentId: uuid().references((): AnyPgColumn => labels.id),
     isGroup: boolean().notNull().default(false),
+    /** Groups only: single-select (SPEC-010 §4.2). */
+    exclusive: boolean().notNull().default(true),
     syncGroups: syncGroups(),
     ...audit(),
     archivedAt: instant(),

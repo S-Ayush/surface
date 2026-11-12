@@ -72,6 +72,11 @@ export const Team = defineModel('Team', {
     triageEnabled: bool(),
     defaultStatusId: uuid(),
     estimateScale: enumOf(ESTIMATE_SCALES),
+    /** Estimate options (SPEC-010 §4.3): two larger values, 0 as a real value, and how M3
+     *  cycle statistics count unestimated issues. */
+    estimateExtended: bool(),
+    estimateAllowZero: bool(),
+    estimateCountUnestimatedAsOne: bool(),
     cyclesEnabled: bool(),
     cycleDurationWeeks: int(),
     cycleCooldownWeeks: int(),
@@ -132,6 +137,8 @@ export const Label = defineModel('Label', {
     description: str().nullable(),
     parentId: uuid().nullable(),
     isGroup: bool(),
+    /** Groups only: single-select (SPEC-010 §4.2, INV-07). Default true. */
+    exclusive: bool(),
     groups: array(str()),
     ...audit,
   },
