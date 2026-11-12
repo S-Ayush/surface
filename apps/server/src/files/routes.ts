@@ -32,7 +32,10 @@ import { unavailable } from '../handlers/account/sign-in.js';
 import type { BlobStore } from './blob-store.js';
 import {
   imageProcessor,
+  ImagesBusy,
   ImagesUnavailable,
+  ImageTooLarge,
+  UploadAbandoned,
   sniffImage,
   UnreadableImage,
   type LoadSharp,
@@ -63,6 +66,13 @@ export const UPLOADS_PER_MINUTE = 10;
 
 export const IMAGES_UNAVAILABLE_MESSAGE =
   'Image uploads are unavailable on this server. Ask an Admin to check the server log.';
+/** SPEC-001 §6.1: the pixel limit (`MAX_INPUT_PIXELS`), refused from the header. */
+export const IMAGE_PIXELS_MESSAGE =
+  'Images must be 25 megapixels or smaller, like 5000 × 5000. Choose a smaller image.';
+/** SPEC-004 E10: the decode queue is full. */
+export const IMAGES_BUSY_MESSAGE =
+  'The server is busy with other images. Try again in a few seconds.';
+const IMAGES_BUSY_RETRY_SECONDS = 5;
 
 /** A file is never run as a page, even if a browser guessed its type (A's conditions, S6). */
 const FILE_CSP = "default-src 'none'; sandbox";
@@ -192,10 +202,19 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
         }
         let image;
         try {
-          image = await process(body);
+          // A client that went away while waiting isn't decoded (SPEC-004 E10).
+          image = await process(body, () => request.socket.destroyed);
         } catch (error) {
+          if (error instanceof ImageTooLarge) {
+            return refuse(request, reply, 400, 'INVALID_INPUT', IMAGE_PIXELS_MESSAGE);
+          }
           if (error instanceof UnreadableImage) {
             return refuse(request, reply, 400, 'INVALID_INPUT', IMAGE_UNREADABLE_MESSAGE);
+          }
+          if (error instanceof ImagesBusy || error instanceof UploadAbandoned) {
+            // Nobody reads the answer to an abandoned upload; the busy one says when to retry.
+            void reply.header('retry-after', String(IMAGES_BUSY_RETRY_SECONDS));
+            return refuse(request, reply, 503, 'UNAVAILABLE', IMAGES_BUSY_MESSAGE);
           }
           if (error instanceof ImagesUnavailable) {
             return refuse(request, reply, 503, 'UNAVAILABLE', IMAGES_UNAVAILABLE_MESSAGE);

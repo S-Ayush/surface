@@ -94,11 +94,17 @@ LABEL org.opencontainers.image.title="Surface" \
       org.opencontainers.image.revision="${SURFACE_COMMIT}" \
       org.opencontainers.image.source="${SURFACE_SOURCE}"
 
+# MALLOC_ARENA_MAX=2: glibc otherwise keeps a memory arena per thread, and many image
+# decodes at once (sharp, libvips) grew native memory until a 512 MB container was
+# OOM-killed (SPEC-004 E10, D10). Two arenas cap that. Setting it also lifts sharp's own
+# one-thread default on glibc, so apps/server/src/files/image.ts must keep calling
+# sharp.concurrency(1).
 ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/data \
     SURFACE_WEB_DIR=/app/web \
-    SURFACE_COMMIT=${SURFACE_COMMIT}
+    SURFACE_COMMIT=${SURFACE_COMMIT} \
+    MALLOC_ARENA_MAX=2
 
 # uploads/ and backups/ are named volumes in compose; /data itself stays writable
 # under a read-only root filesystem (AC-4).

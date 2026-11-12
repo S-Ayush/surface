@@ -10,8 +10,18 @@ import sharp from 'sharp';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { ResolvedSession } from '../src/auth/sessions.js';
 import { blobKey, isBlobKey, localBlobStore, memoryBlobStore } from '../src/files/blob-store.js';
-import { sniffImage } from '../src/files/image.js';
 import {
+  imageProcessor,
+  ImagesBusy,
+  ImagesUnavailable,
+  MAX_CONCURRENT_IMAGES,
+  MAX_WAITING_IMAGES,
+  sniffImage,
+  UploadAbandoned,
+  type SharpFactory,
+} from '../src/files/image.js';
+import {
+  IMAGE_PIXELS_MESSAGE,
   IMAGE_TOO_LARGE_MESSAGE,
   IMAGE_TYPE_MESSAGE,
   IMAGE_UNREADABLE_MESSAGE,
@@ -262,6 +272,136 @@ describe('GET /files/:id (ADR-0014)', () => {
     expect((await get('..%2F..%2Fetc%2Fpasswd')).statusCode).toBe(404);
     as(undefined);
     expect((await get('01930000-0000-7000-8000-000000000000')).statusCode).toBe(401);
+  });
+});
+
+describe('image memory (SPEC-004 E10)', () => {
+  /**
+   * A fake sharp: every image is 100 × 100, and a decode finishes only when the test releases it.
+   * It records the order decodes start in (by the input's text) and how many run at once.
+   */
+  function gatedSharp(options: { settingsThrow?: boolean } = {}) {
+    let inFlight = 0;
+    let most = 0;
+    const started: string[] = [];
+    const gates: (() => void)[] = [];
+    const calls = { cache: [] as unknown[], concurrency: [] as unknown[] };
+    const pipelineFor = (input: Buffer): ReturnType<SharpFactory> => {
+      const pipeline: ReturnType<SharpFactory> = {
+        rotate: () => pipeline,
+        resize: () => pipeline,
+        webp: () => pipeline,
+        metadata: () => Promise.resolve({ width: 100, height: 100 }),
+        toBuffer: async () => {
+          started.push(input.toString());
+          inFlight += 1;
+          most = Math.max(most, inFlight);
+          await new Promise<void>((resolve) => gates.push(resolve));
+          inFlight -= 1;
+          return Buffer.from('webp');
+        },
+      };
+      return pipeline;
+    };
+    const factory: SharpFactory = Object.assign((input: Buffer) => pipelineFor(input), {
+      cache: (value: boolean) => {
+        if (options.settingsThrow) throw new Error('no cache control');
+        calls.cache.push(value);
+      },
+      concurrency: (value: number) => void calls.concurrency.push(value),
+    });
+    return {
+      factory,
+      calls,
+      started,
+      most: () => most,
+      inFlight: () => gates.length,
+      release: () => gates.shift()?.(),
+    };
+  }
+
+  function processorWith(fake: ReturnType<typeof gatedSharp>, errors: string[] = []) {
+    return imageProcessor(
+      { error: (_obj: object, message: string) => void errors.push(message) } as never,
+      () => Promise.resolve(fake.factory),
+    );
+  }
+
+  /** Lets queued promise callbacks run, so started decodes reach their gate. */
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it(`decodes at most ${MAX_CONCURRENT_IMAGES} images at once, the rest in arrival order`, async () => {
+    const fake = gatedSharp();
+    const process = processorWith(fake);
+    const all = Promise.all([0, 1, 2, 3, 4].map((i) => process(Buffer.from(String(i)))));
+    for (let done = 0; done < 5; done++) {
+      await settle();
+      expect(fake.inFlight()).toBe(Math.min(MAX_CONCURRENT_IMAGES, 5 - done));
+      fake.release();
+    }
+    expect(await all).toHaveLength(5);
+    expect(fake.most()).toBe(MAX_CONCURRENT_IMAGES);
+    expect(fake.started).toEqual(['0', '1', '2', '3', '4']);
+  });
+
+  it(`refuses an upload when ${MAX_WAITING_IMAGES} are already waiting, and finishes the others`, async () => {
+    const fake = gatedSharp();
+    const process = processorWith(fake);
+    const accepted = Array.from({ length: MAX_CONCURRENT_IMAGES + MAX_WAITING_IMAGES }, (_, i) =>
+      process(Buffer.from(String(i))),
+    );
+    await settle();
+    await expect(process(Buffer.from('one too many'))).rejects.toBeInstanceOf(ImagesBusy);
+    for (let i = 0; i < accepted.length; i++) {
+      await settle();
+      fake.release();
+    }
+    expect(await Promise.all(accepted)).toHaveLength(accepted.length);
+  });
+
+  it('skips the decode of an upload whose client went away while it waited', async () => {
+    const fake = gatedSharp();
+    const process = processorWith(fake);
+    let gone = false;
+    const first = [process(Buffer.from('a')), process(Buffer.from('b'))];
+    const waiting = process(Buffer.from('left'), () => gone);
+    await settle();
+    gone = true;
+    fake.release();
+    await expect(waiting).rejects.toBeInstanceOf(UploadAbandoned);
+    fake.release();
+    await Promise.all(first);
+    expect(fake.started).toEqual(['a', 'b']);
+  });
+
+  it('turns off the operation cache and uses one libvips thread per image', async () => {
+    const fake = gatedSharp();
+    const one = processorWith(fake)(Buffer.from('img'));
+    await settle();
+    fake.release();
+    await one;
+    expect(fake.calls).toEqual({ cache: [false], concurrency: [1] });
+  });
+
+  it('refuses uploads, with a log line, when sharp can’t be set up', async () => {
+    const errors: string[] = [];
+    const process = processorWith(gatedSharp({ settingsThrow: true }), errors);
+    await expect(process(Buffer.from('img'))).rejects.toBeInstanceOf(ImagesUnavailable);
+    expect(errors).toEqual(['sharp could not load; image uploads are refused']);
+  });
+
+  it('refuses an image over 25 MP from its header, saying how big it may be', async () => {
+    const solid = (width: number, height: number) =>
+      sharp({ create: { width, height, channels: 3, background: '#c33' } })
+        .png()
+        .toBuffer();
+    const { upload } = setup();
+    expect((await upload(await solid(5000, 5000))).statusCode).toBe(201);
+    const over = await upload(await solid(5001, 5000));
+    expect(over.statusCode).toBe(400);
+    expect(over.json()).toMatchObject({
+      error: { code: 'INVALID_INPUT', message: IMAGE_PIXELS_MESSAGE },
+    });
   });
 });
 
