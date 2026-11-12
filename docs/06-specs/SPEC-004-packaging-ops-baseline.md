@@ -153,7 +153,7 @@ All configuration is through environment variables, validated at startup with a 
 | `BACKUP_SCHEDULE`, `BACKUP_RETENTION` | | — | Effective in M7 |
 | `PORT`, `HOST` | | 3000, 0.0.0.0 | Listen address *inside* the container. The host-side binding is `SURFACE_BIND`/`SURFACE_PORT` in compose. |
 | `SURFACE_WEB_DIR` | | `apps/web/dist` | Location of the built web app. Set by the image; rarely changed. |
-| `DATA_DIR` | | `/data` | Writable volume for uploads and backups. Set by the image. A relative path is resolved against the working directory. `surface doctor` checks it (E5, E6). |
+| `DATA_DIR` | | `/data` | Writable volume for uploads and backups. Set by the image. A relative path is resolved against the working directory. Startup (E5, §8) and `surface doctor` (E5, E6) check it and its `uploads` folder. |
 | `NODE_ENV` | | production | `development` is set by `pnpm dev` |
 
 `SURFACE_COMMIT` is baked into the image at build time and reported by `/readyz` logs and `surface version`. It is not user configuration. All problems are reported at once, and secret values (`SESSION_SECRET`, passwords in `DATABASE_URL` and `SMTP_URL`) are never echoed in errors.
@@ -163,7 +163,7 @@ All configuration is through environment variables, validated at startup with a 
 ## 8. Process lifecycle
 
 **Startup** (`surface serve`):
-1. Load and validate config (fail fast).
+1. Load and validate config (fail fast). Then, once listening, check that `DATA_DIR` and its `uploads` folder (created when missing) are writable directories, by writing and removing a probe file in each (E5, added 2026-11-12), before the database wait.
 2. Connect to the DB with retry for up to 60 s, logging "waiting for database…". Wrong credentials, a `pg_hba.conf` rejection (with a hint about `?sslmode=require`) or a missing database fail at once, with the server's reason and never the password.
 3. Check the Postgres version (≥ 17) and that the ICU collation `und-x-icu` exists (text filters lowercase with it, SPEC-003 §7.4). An unsupported server exits with instructions before anything is changed.
 4. Under `pg_advisory_lock(LOCKS.migrations)`, so concurrent replicas wait their turn:
@@ -207,7 +207,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | Collations | A required ICU collation (`und-x-icu`) is missing, so the server was built without ICU (§8 step 3, E8). Same message as startup. | |
 | Extensions | `pg_trgm` unavailable, or not installed and the user may not create it (prints the SQL to run) (E8) | |
 | Migrations | Applied by a newer Surface (E7), or an applied migration was edited | Pending (applied at startup or by `surface migrate`) |
-| Data directory | `DATA_DIR` missing, not a directory, or not writable (E5, names uid 10001) | |
+| Data directory | `DATA_DIR` missing, not a directory, or not writable; or its `uploads` folder exists and isn't a writable directory (E5, names uid 10001). Same messages as startup. | |
 | Disk space | Under 100 MB free on `DATA_DIR` (E6) | Under 1 GB free |
 | Email (SMTP) | When `SMTP_URL` is set: no connection, or no `220` greeting within 5 s. Credentials are not tested. | |
 | Public URL | | `GET <SURFACE_URL>/healthz` from this host fails, redirects (reported with its target, never followed), or is not Surface (E3), or plain `http` on a non-local host |
@@ -236,7 +236,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | E2 | Two app replicas start at once | The migration lock serializes them. The second sees "migrations current". |
 | E3 | `SURFACE_URL` doesn't match the browser origin | Login fails CSRF/origin checks. `doctor` and the troubleshooting doc explain it, and the server logs a warning on mismatched `Origin` headers. |
 | E4 | The reverse proxy strips WebSocket upgrades | The client shows "Live updates unavailable, check proxy config" after 3 failed upgrade attempts, with a link to the docs |
-| E5 | The `/data` volume isn't writable | Exit at startup with a message about volume permissions (uid 10001). The startup check lands with the first feature that writes to `/data` (uploads, M2); until then `surface doctor` reports it. |
+| E5 | The `/data` volume isn't writable | Exit at startup with a message about volume permissions (uid 10001): `DATA_DIR` missing, not a directory, or not writable, then the same for `DATA_DIR/uploads`, where uploads are stored (its own volume in the compose files; created when missing). `surface doctor` reports the same facts with the same messages. It runs before the database wait (§8), in every role. `DATA_DIR/backups` isn't checked: the server doesn't write it in v1 (the manual backup runs `pg_dump` in the database container). Added 2026-11-12 with the first feature that writes to `/data` (uploads, PLAN-001 S6; D9). |
 | E6 | Disk is full | Uploads fail with a clear error. `doctor` reports it. The DB's own disk errors surface as `INTERNAL` with logs. |
 | E7 | Downgrading the image after a migration | The server detects a DB schema newer than the code and exits: "Database was migrated by a newer Surface (x.y). Restore a backup or upgrade." |
 | E8 | Postgres < 17, a server built without ICU (no `und-x-icu`), or `pg_trgm` unavailable on a managed DB | Exit with explicit instructions |
@@ -277,6 +277,7 @@ Usage: `docker compose exec app surface doctor`. Exit codes: `0` success, `1` th
 | D6 | (2026-11-06, PLAN-004 S10, revised after review) What does `TRUST_PROXY=true` trust? | Exactly one hop, and only from a private address: the peer that connects to the server is the proxy if its address is loopback, private, link-local or shared (`127/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `100.64/10`, `::1`, `fc00::/7`, `fe80::/10`, IPv4-mapped included); nothing before it is trusted. Fastify's `trustProxy: true` trusts every hop, so the client address became the left-most `X-Forwarded-For` entry, which the client writes, and per-IP sign-in limits (ADR-0007) could be bypassed. A hop count (`1`) trusts nobody in the installed Fastify (5.12.8), and Fastify's docs call a hop-only trust function unsafe when the server can be reached directly: a forgotten `SURFACE_BIND` would let anyone on the internet set their address. With the address check, only a client on the LAN or VPN can, which is why installs without a proxy still set `TRUST_PROXY=false`. A proxy that connects from a public address isn't trusted (fail closed: every user shows the proxy's address). Behind two proxies (a CDN, then nginx) the address is the outer proxy's (the CDN's), so all users would share one address for sign-in limits; not supported in v1. **Added 2026-11-07 (PLAN-001 S9 security review L3):** Docker can forward outside clients from its own private gateway address (rootless Docker, Docker Desktop and Colima, IPv6 clients through `docker-proxy`), and they are then trusted. So with `TRUST_PROXY=true` the published port must be private (`SURFACE_BIND`), as `reverse-proxy.md` and `.env.example` now say. The server can't see how compose publishes its port, so `doctor` doesn't check this. |
 | D7 | (2026-11-07, by decision of the user) Should tests assert wall-clock budgets? | No. The AC-6 tests (`config-exit.test.ts`, `cli.test.ts`) check the exit code and the message only. Their "< 1 s" checks failed when several sessions shared the machine (about 1.08 s at load average 12) and passed when run alone, so they measured the machine, not the code. The 1 s budget stays in AC-6 and is checked by hand. |
 | D8 | (2026-11-12, PLAN-005 S9 handoff, ADR-0019) What changes for the offline app cache? | The server sends the worker `sw.js` with `no-cache`, like `index.html`, so no cache keeps an old one and it never takes the assets' year-long policy (§5). E9 names what plain `http://` loses: offline reloads, Web Locks, the clipboard. No CSP change: `worker-src` falls back to `script-src 'self'`. |
+| D9 | (2026-11-12, before PLAN-001 S6 uploads) What does the server add before it stores files? | The E5 startup check, which was waiting for the first feature that writes to `/data`: startup now stops on a `DATA_DIR` or `DATA_DIR/uploads` (its own volume in compose) that is missing, not a directory or not writable, with `surface doctor`'s message, before the database wait, so a bad volume is found at deploy and not at the first upload. The check and its messages live in `src/data-dir.ts`, shared by startup and doctor. And `X-Content-Type-Options: nosniff` on every response (§15), so a stored file is never sniffed into a script or a page. Tests and the testing entry use the OS temp directory; `pnpm dev` (`scripts/dev.mjs`) already creates `data/`, and a bare `surface serve` on a fresh checkout says to create it. |
 
 ## 15. Security headers (PLAN-004 S9)
 
@@ -298,4 +299,5 @@ Every response, the JSON API and errors included, carries this `Content-Security
 - A library that probes for `eval` (Zod checks whether it can compile schemas) is refused, and falls back. Turn the probe off rather than allow `'unsafe-eval'`.
 - A library that injects a `<style>` element is blocked by `style-src 'self'`. Import its CSS through Vite instead (TipTap: `injectCSS: false`).
 - Responses Fastify writes without routing (the 503 while closing, malformed-request errors) skip the hook. None of them is HTML.
+- `X-Content-Type-Options: nosniff` is sent on every response too (2026-11-12, D9): browsers use the sent type and never guess one from the bytes, so a stored file can't run as a script or a page.
 - The cookie flags in the architecture's security row come with auth (PLAN-001 S3). HSTS (`Strict-Transport-Security: max-age=31536000`, without `includeSubDomains` or `preload`) is sent on every response when `SURFACE_URL` is https (PLAN-001 S9). Browsers ignore it over plain http, so it is right behind a TLS-terminating proxy too.

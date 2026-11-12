@@ -3,11 +3,8 @@
  * applies migrations or leaves files behind. Network probes go only to the
  * operator's own database, SMTP server and SURFACE_URL, each with a timeout.
  */
-import { randomBytes } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
-import { open, stat, statfs, unlink } from 'node:fs/promises';
+import { statfs } from 'node:fs/promises';
 import net from 'node:net';
-import path from 'node:path';
 import tls from 'node:tls';
 import { checkCollations, REQUIRED_COLLATIONS, REQUIRED_EXTENSIONS } from '../../db/checks.js';
 import { migrationStatus, type Migration } from '../../db/migrate.js';
@@ -15,7 +12,6 @@ import type { Pool } from '../../db/pool.js';
 import { StartupError } from '../../startup-error.js';
 import {
   describeError,
-  type DataDirFacts,
   type ExtensionFacts,
   type MigrationFacts,
   type PublicUrlOutcome,
@@ -102,54 +98,8 @@ export async function migrationFacts(pool: Pool, migrations: Migration[]): Promi
 }
 
 // ---------------------------------------------------------------------------
-// Data directory and disk
+// Disk (the data directory is `src/data-dir.ts`, shared with startup)
 // ---------------------------------------------------------------------------
-
-export async function dataDirFacts(dir: string): Promise<DataDirFacts> {
-  try {
-    const info = await stat(dir);
-    if (!info.isDirectory()) return { path: dir, state: 'not-directory' };
-  } catch (error) {
-    switch ((error as { code?: unknown }).code) {
-      case 'ENOENT':
-        return { path: dir, state: 'missing' };
-      case 'ENOTDIR': // a parent is a file: /etc/hosts/data
-        return { path: dir, state: 'not-directory' };
-      case 'EACCES': // a parent directory can't be searched
-        return {
-          path: dir,
-          state: 'not-writable',
-          reason: describeError(error),
-          uid: process.getuid?.(),
-        };
-      default:
-        throw error;
-    }
-  }
-
-  // Write a real file: permission bits alone miss read-only mounts and ACLs.
-  const probe = path.join(dir, `.surface-doctor-${randomBytes(6).toString('hex')}`);
-  let created = false;
-  try {
-    const handle = await open(
-      probe,
-      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY,
-    );
-    created = true;
-    await handle.close();
-    return { path: dir, state: 'writable' };
-  } catch (error) {
-    return {
-      path: dir,
-      state: 'not-writable',
-      reason: describeError(error).replace(probe, dir),
-      uid: process.getuid?.(),
-    };
-  } finally {
-    // Doctor leaves nothing behind, even if closing the file failed.
-    if (created) await unlink(probe).catch(() => undefined);
-  }
-}
 
 export interface DiskFacts {
   freeBytes: number;

@@ -124,6 +124,19 @@ describe('content security policy on responses', () => {
     expect(new Set(policies)).toEqual(new Set([contentSecurityPolicy([ALERT.hash])]));
   });
 
+  it('tells browsers never to guess a type, on every response: page, asset, API error and health', async () => {
+    t = await testApp({ webDir: fakeWebDir() });
+    const values = await Promise.all(
+      [
+        { url: '/team/ENG', headers: { accept: 'text/html' } },
+        { url: '/assets/index-abc123.js' },
+        { url: '/api/nope' },
+        { url: '/healthz' },
+      ].map(async (request) => (await t.app.inject(request)).headers['x-content-type-options']),
+    );
+    expect(values).toEqual(['nosniff', 'nosniff', 'nosniff', 'nosniff']);
+  });
+
   it('sends HSTS for a year on every response when SURFACE_URL is https (PLAN-001 S9)', async () => {
     t = await testApp({
       webDir: fakeWebDir(page()),

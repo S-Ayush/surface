@@ -23,7 +23,13 @@ export const VALID_ENV = {
 } as const;
 
 export function testConfig(overrides: Partial<Config> = {}): Config {
-  return { ...loadConfig({ ...VALID_ENV }), webDir: '/nonexistent-web-dir', ...overrides };
+  // The OS temp directory exists and is writable, so a started server passes the E5 check.
+  return {
+    ...loadConfig({ ...VALID_ENV }),
+    webDir: '/nonexistent-web-dir',
+    dataDir: tmpdir(),
+    ...overrides,
+  };
 }
 
 /** Collects log lines as parsed JSON objects. */

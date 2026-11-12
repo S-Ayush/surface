@@ -8,7 +8,7 @@ paths:
 Spec: `docs/06-specs/SPEC-004-packaging-ops-baseline.md` (config, lifecycle, logging, health). PLAN-004 "As built" notes describe the current structure.
 
 - **Structure:** `app.ts` builds the Fastify instance and has no side effects (no listen, no signals), so tests use `buildApp()` + `inject()`. `server.ts` (`serve()`) owns startup order. `main.ts` validates config before importing anything heavy.
-- **Startup order** (SPEC-004 §8): listen → wait for DB → check Postgres version → (under the migrations lock) extensions + migrate, via `prepareDatabase()` → setup token → workers/hub → `lifecycle.markReady()`. `/readyz` must be 503 until the end of that sequence.
+- **Startup order** (SPEC-004 §8): listen → `DATA_DIR` and its `uploads` folder writable (E5, `src/data-dir.ts`) → wait for DB → check Postgres version → (under the migrations lock) extensions + migrate, via `prepareDatabase()` → setup token → workers/hub → `lifecycle.markReady()`. `/readyz` must be 503 until the end of that sequence.
 - **Startup failures** the operator must fix throw `StartupError` (`src/startup-error.ts`) with a message saying what to do. `serve()` logs it as one fatal line and exits 1. Use `startServer()` in tests.
 - **Configuration:** only `loadConfig()` reads `process.env`. To add a variable, update the schema in `config.ts`, `test/config.test.ts`, `.env.example` and the SPEC-004 §7 table in the same change. Error messages name the variable and the fix, and never echo the value of a secret.
 - **Lifecycle:** resources that need cleanup register `lifecycle.onShutdown('connections' | 'resources', name, fn)`. Things that gate readiness register `lifecycle.addReadinessCheck(name, fn)`. Don't add ad-hoc `process.on('SIGTERM')` handlers.

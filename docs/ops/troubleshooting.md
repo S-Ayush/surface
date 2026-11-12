@@ -204,21 +204,25 @@ nginx, add the `Upgrade`/`Connection` headers and `proxy_read_timeout 1h`: see
 
 ### Data directory not writable
 
-Doctor reports `Surface cannot write to /data (…)`. Surface runs as uid 10001 and
-writes uploads and backups under `/data`.
+Surface exits at startup with one of these lines, and `surface doctor` reports the same (SPEC-004
+E5). Surface runs as uid 10001 and stores uploads in `/data/uploads`, its own volume in the
+compose files; startup checks `/data` and `/data/uploads`.
 
-The named volumes in the compose files get the right owner automatically. If you replaced them
-with bind mounts to host directories, give those directories to uid 10001:
+- `Surface cannot write to /data/uploads (…)` (or `/data`): the volume isn't writable by uid
+  10001. The named volumes in the compose files get the right owner automatically. If you
+  replaced them with bind mounts to host directories, give those directories to uid 10001:
 
-```sh
-sudo chown -R 10001:10001 /srv/surface/uploads /srv/surface/backups
-```
+  ```sh
+  sudo chown -R 10001:10001 /srv/surface/uploads /srv/surface/backups
+  ```
 
-Doctor checks `/data` itself, not each volume below it. To check the uploads volume directly:
+- `/data does not exist. Mount a volume there, or point DATA_DIR at an existing directory.`: a
+  `DATA_DIR` you set points nowhere (the image creates `/data`). Outside Docker, create the
+  directory first.
+- `… is not a directory. …`: `DATA_DIR`, or `uploads` inside it, is a file. Point `DATA_DIR` at a
+  directory, or remove the file.
 
-```sh
-docker compose exec app sh -c 'touch /data/uploads/.write-test && rm /data/uploads/.write-test && echo writable'
-```
+Startup creates a missing `uploads` folder. `backups` isn't checked: the server doesn't write it.
 
 ### Low disk space
 

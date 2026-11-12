@@ -9,6 +9,7 @@ import { ConfigError, loadConfig, type Config } from '../../config.js';
 import { REQUIRED_COLLATIONS } from '../../db/checks.js';
 import { loadMigrations, type Migration } from '../../db/migrate.js';
 import { createPool, databaseLocation } from '../../db/pool.js';
+import { dataDirFacts, uploadsDir } from '../../data-dir.js';
 import { REDACTED } from '../../logger.js';
 import { EXIT, type CliIo } from '../io.js';
 import {
@@ -31,7 +32,6 @@ import {
 } from './checks.js';
 import {
   collationProblem,
-  dataDirFacts,
   diskFacts,
   extensionFacts,
   migrationFacts,
@@ -152,7 +152,18 @@ function databaseChecks(
 function storageChecks(config: Config, disk: DiskProbe): Promise<CheckResult[]> {
   return group(['dataDir', 'disk'], async (report) => {
     const dir = await dataDirFacts(config.dataDir);
-    report(dataDirCheck(dir));
+    let result = dataDirCheck(dir);
+    if (dir.state === 'writable') {
+      // The uploads folder is its own volume in compose (SPEC-004 E5). Startup creates it when
+      // missing, so only one that exists can be a problem.
+      const uploads = await dataDirFacts(uploadsDir(config.dataDir));
+      if (uploads.state === 'writable') {
+        result = dataDirCheck({ path: `${config.dataDir} and ${uploads.path}`, state: 'writable' });
+      } else if (uploads.state !== 'missing') {
+        result = dataDirCheck(uploads);
+      }
+    }
+    report(result);
     if (dir.state === 'missing' || dir.state === 'not-directory') {
       report(skip('disk', 'skipped: needs the data directory'));
       return;

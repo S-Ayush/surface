@@ -16,6 +16,7 @@
  * part of the build (`tsconfig.build.json` includes `src` only).
  */
 import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
 import { pino, type Logger } from 'pino';
@@ -275,7 +276,8 @@ function testServerConfig(databaseUrl: string, setupToken: string): Config {
     NODE_ENV: 'test',
   });
   // Port 0 (any free port) is outside `PORT`'s range check, so it is set after validation.
-  return { ...config, port: 0, webDir: '/nonexistent-web-dir' };
+  // DATA_DIR must exist and be writable (SPEC-004 E5).
+  return { ...config, port: 0, webDir: '/nonexistent-web-dir', dataDir: tmpdir() };
 }
 
 /**

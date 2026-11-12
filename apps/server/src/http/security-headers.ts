@@ -8,6 +8,9 @@
  * http to this host for a year, so a network attacker can't strip TLS from a later visit. Not
  * `includeSubDomains` or `preload`: the install owns its host only. Browsers ignore the header
  * over http, so sending it behind a TLS-terminating proxy is right (PLAN-001 S9, review L1).
+ *
+ * `X-Content-Type-Options: nosniff`: browsers use the type the server sends and never guess one
+ * from the bytes, so a stored file (uploads, PLAN-001 S6) can't run as a script or a page.
  */
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -50,8 +53,8 @@ export function contentSecurityPolicy(scriptHashes: readonly string[]): string {
 export const HSTS = 'max-age=31536000';
 
 /**
- * Sends the policy on every response, the JSON API included (an error page is a page too), and
- * HSTS when `https` (the public URL is https).
+ * Sends the policy and `nosniff` on every response, the JSON API included (an error page is a page
+ * too), and HSTS when `https` (the public URL is https).
  */
 export function registerSecurityHeaders(
   app: FastifyInstance,
@@ -63,6 +66,7 @@ export function registerSecurityHeaders(
   );
   app.addHook('onSend', async (_request, reply) => {
     reply.header('content-security-policy', policy);
+    reply.header('x-content-type-options', 'nosniff');
     if (https) reply.header('strict-transport-security', HSTS);
   });
 }

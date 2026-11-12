@@ -6,6 +6,7 @@
  */
 import { assertSupportedVersion } from '../../db/checks.js';
 import { permanentProblem } from '../../db/pool.js';
+import { dataDirProblem, type DataDirFacts } from '../../data-dir.js';
 import { StartupError } from '../../startup-error.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skip';
@@ -166,36 +167,12 @@ export function migrationsCheck(facts: MigrationFacts): CheckResult {
 // Data directory (E5) and disk space (E6)
 // ---------------------------------------------------------------------------
 
-export type DataDirFacts =
-  | { path: string; state: 'writable' }
-  | { path: string; state: 'missing' | 'not-directory' }
-  | { path: string; state: 'not-writable'; reason: string; uid: number | undefined };
-
-/** The image runs as this user (SPEC-004 §5). */
-export const IMAGE_UID = 10001;
-
+/** Startup's E5 check, as a doctor line: the same facts and messages (`src/data-dir.ts`). */
 export function dataDirCheck(facts: DataDirFacts): CheckResult {
-  switch (facts.state) {
-    case 'writable':
-      return ok('dataDir', `${facts.path} is writable`);
-    case 'missing':
-      return fail(
-        'dataDir',
-        `${facts.path} does not exist. Mount a volume there (the compose file does), or point DATA_DIR at an existing directory.`,
-      );
-    case 'not-directory':
-      return fail('dataDir', `${facts.path} is not a directory. Point DATA_DIR at a directory.`);
-    case 'not-writable': {
-      const who =
-        facts.uid === undefined || facts.uid === IMAGE_UID
-          ? `uid ${IMAGE_UID}, the user in the Surface image`
-          : `uid ${facts.uid}, the user running Surface here; the image uses ${IMAGE_UID}`;
-      return fail(
-        'dataDir',
-        `Surface cannot write to ${facts.path} (${facts.reason}). Make the volume writable by ${who}, e.g. chown -R ${IMAGE_UID}:${IMAGE_UID} on the host directory.`,
-      );
-    }
-  }
+  const problem = dataDirProblem(facts);
+  return problem === undefined
+    ? ok('dataDir', `${facts.path} is writable`)
+    : fail('dataDir', problem);
 }
 
 const MiB = 1024 ** 2;

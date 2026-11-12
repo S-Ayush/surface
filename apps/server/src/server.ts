@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import { buildApp } from './app.js';
 import { buildInfo, type BuildInfo } from './build-info.js';
+import { checkDataDir } from './data-dir.js';
 import type { Config } from './config.js';
 import { loadMigrations, migrationStatus, type Migration } from './db/migrate.js';
 import { createPool, waitForDatabase, type Pool } from './db/pool.js';
@@ -171,6 +172,10 @@ export async function startServer(
   await app.listen({ port: config.port, host: config.host });
 
   const ready = (async () => {
+    // SPEC-004 E5: a data volume Surface can't write to (DATA_DIR or its uploads folder) stops
+    // startup with `surface doctor`'s message, before the database wait, not at the first upload.
+    await checkDataDir(config.dataDir);
+
     await waitForDatabase(pool, {
       log: logger,
       databaseUrl: config.databaseUrl,

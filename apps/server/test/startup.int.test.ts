@@ -3,6 +3,7 @@
 // E2: concurrent replicas. E7: newer schema. E8: incompatible database.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -248,6 +249,8 @@ describe('surface serve', () => {
           PORT: String(await freePort()),
           HOST: '127.0.0.1',
           SURFACE_WEB_DIR: '/nonexistent-web-dir',
+          // Writable, so startup gets past the E5 check to the database.
+          DATA_DIR: tmpdir(),
         },
         timeout: 20_000,
       },
