@@ -27,10 +27,20 @@ describe('normalize', () => {
     expect(normalize(doc(p(), p()))).toEqual(doc(p()));
   });
 
-  it('trims text blocks and the whitespace around hard breaks, and drops edge hard breaks', () => {
-    expect(normalize(doc(p(br, text('  a  '), br, text(' b '), br)))).toEqual(
-      doc(p(text('a'), br, text('b'))),
+  it('trims text blocks and the spaces and tabs that start a line, and drops edge hard breaks', () => {
+    expect(normalize(doc(p(br, text('  a  '), br, text(' \tb '), br)))).toEqual(
+      doc(p(text('a  '), br, text('b'))),
     );
+  });
+
+  it('keeps a no-break or ideographic space after a hard break, which Markdown keeps too', () => {
+    const d = doc(p(text('a'), br, text('\u00a0b'), br, text('\u3000c')));
+    expect(normalize(d)).toEqual(d);
+  });
+
+  it('keeps spaces inside inline code at the start of a line', () => {
+    const d = doc(p(text(' a', { type: 'code' }), br, text('  ', { type: 'code' })));
+    expect(normalize(d)).toEqual(d);
   });
 
   it('turns a hard break in a heading into a space, and line breaks in text into spaces', () => {
@@ -87,7 +97,12 @@ describe('normalize', () => {
     );
   });
 
-  it('throws on an invalid document', () => {
+  it('throws on an invalid document, attributes and link rule included', () => {
     expect(() => normalize({ type: 'doc', content: [{ type: 'table' }] })).toThrow();
+    const link = { type: 'link', attrs: { href: 'javascript:alert(1)' } };
+    expect(() => normalize(doc(p(text('x', link))))).toThrow(/link/);
+    const code = { type: 'codeBlock', attrs: { language: 'js`\n# injected' } };
+    expect(() => normalize(doc(code))).toThrow(/language/);
+    expect(() => normalize(doc(p(text('a\0'))))).toThrow(/NUL/);
   });
 });

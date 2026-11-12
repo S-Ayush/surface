@@ -210,6 +210,10 @@ describe('markdownToDoc', () => {
     expect(roundTrip(roundTrip('+ * *'))).toBe('- * -');
   });
 
+  it('reads NUL and broken Unicode as U+FFFD, so what it reads is always valid', () => {
+    expect(markdownToDoc('a\0b \uD800c d\uDC00')).toEqual(doc(p(text('a\uFFFDb \uFFFDc d\uFFFD'))));
+  });
+
   it('keeps hard breaks and turns soft breaks into spaces', () => {
     expect(markdownToDoc('one\\\ntwo\nthree')).toEqual(
       doc(p(text('one'), { type: 'hardBreak' }, text('two three'))),

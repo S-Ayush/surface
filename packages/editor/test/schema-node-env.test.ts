@@ -2,13 +2,28 @@
 // PLAN-013 S1: the headless entry runs in plain Node with no DOM globals (SPEC-013 AC-10), from
 // source and as built for the server image (PLAN-013 risk: the schema entry fails in the image).
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as entry from '../src/schema/index.js';
 
 const PACKAGE_DIR = fileURLToPath(new URL('..', import.meta.url));
-const BUILT_ENTRY = fileURLToPath(new URL('../dist/schema/index.js', import.meta.url));
+const SOURCE_DIR = fileURLToPath(new URL('../src/schema/', import.meta.url));
+const BUILT_DIR = fileURLToPath(new URL('../dist/schema/', import.meta.url));
+const BUILT_ENTRY = `${BUILT_DIR}index.js`;
+const REBUILD = 'run `pnpm --filter @surface/editor build` (`pnpm test` builds first)';
+
+/** Source files whose built file is missing or older than they are. */
+function staleBuilds(): string[] {
+  return readdirSync(SOURCE_DIR)
+    .filter((name) => name.endsWith('.ts'))
+    .filter((name) => {
+      const built = `${BUILT_DIR}${name.replace(/\.ts$/, '.js')}`;
+      return (
+        !existsSync(built) || statSync(built).mtimeMs < statSync(`${SOURCE_DIR}${name}`).mtimeMs
+      );
+    });
+}
 
 const MARKDOWN = '# Title\n\nSome **bold** text and a [link](https://example.com).';
 const EXPECTED = {
@@ -32,11 +47,10 @@ describe('@surface/editor/schema in Node', () => {
   });
 
   it('imports and runs as built, by package name, in a plain Node process like the server', () => {
-    // `pnpm test` builds first (packages/editor/turbo.json). Running Vitest directly needs
-    // `pnpm --filter @surface/editor build`.
-    expect(existsSync(BUILT_ENTRY), `${BUILT_ENTRY} is missing: build the package first`).toBe(
-      true,
-    );
+    // `pnpm test` builds first (packages/editor/turbo.json). Running Vitest directly after
+    // changing src/schema needs a build, or this would test old code.
+    expect(existsSync(BUILT_ENTRY), `${BUILT_ENTRY} is missing: ${REBUILD}`).toBe(true);
+    expect(staleBuilds(), `dist/schema is older than these sources: ${REBUILD}`).toEqual([]);
     // No --conditions flag: Node resolves `@surface/editor/schema` to dist/, as in the image.
     const script = `
       const entry = await import('@surface/editor/schema');

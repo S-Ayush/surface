@@ -102,6 +102,21 @@ export function surfaceEslint({ rootDir }) {
       },
     },
     {
+      // SPEC-013 §4.4, AC-10: the headless schema entry runs on the server. Its build has DOM
+      // *types* (TipTap's declarations need them), so the compiler can't catch DOM globals; this
+      // does. Node APIs are caught by the build (no Node types) and `editor-schema-headless`.
+      files: ['packages/editor/src/schema/**/*.ts'],
+      rules: {
+        'no-restricted-globals': [
+          'error',
+          ...['window', 'document', 'navigator', 'DOMParser', 'self', 'location'].map((name) => ({
+            name,
+            message: 'The editor schema entry runs on the server, with no DOM.',
+          })),
+        ],
+      },
+    },
+    {
       // AC-12 (SPEC-002): synced tables are written only by the repo layer.
       files: ['apps/server/src/**/*.ts'],
       ignores: ['apps/server/src/sync/repo.ts'],

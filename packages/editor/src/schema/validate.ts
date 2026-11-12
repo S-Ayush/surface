@@ -7,7 +7,7 @@
 import type { DocNodeJSON } from '@surface/domain';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { Mark } from '@tiptap/pm/model';
-import { fileIdOfSrc, isAllowedHref } from './links.js';
+import { fileIdOfSrc, isAllowedHref, isCodeLanguage, isWellFormedText } from './links.js';
 import { nodeJSON, schema } from './schema.js';
 
 export type DocPath = (string | number)[];
@@ -37,20 +37,28 @@ export const DOC_MESSAGES = {
   emptyText: "Text can't be empty. Remove the empty text part.",
   codeWithMarks: "Inline code can't have other formatting. Remove the other formatting.",
   tooDeep: `The text is nested more than ${MAX_DEPTH} levels deep. Flatten its lists or quotes.`,
+  brokenText: "Text can't contain NUL characters or broken Unicode. Remove them.",
 } as const;
+
+/** A name from the caller, cut to 40 characters, for a message (never echo a whole payload). */
+function shown(name: string): string {
+  return name.length > 40 ? `${name.slice(0, 40)}…` : name;
+}
 
 const NODE_KEYS = new Set(['type', 'attrs', 'content', 'marks', 'text']);
 const MARK_KEYS = new Set(['type', 'attrs']);
-const LANGUAGE = /^[A-Za-z0-9_+#.-]{1,40}$/;
 
 type AttrCheck = (value: unknown) => string | null;
 
 const optionalString =
   (what: string, max: number): AttrCheck =>
-  (value) =>
-    value === null || (typeof value === 'string' && value.length <= max)
-      ? null
-      : `${what} must be text of at most ${max} characters.`;
+  (value) => {
+    if (value === null) return null;
+    if (typeof value !== 'string' || value.length > max) {
+      return `${what} must be text of at most ${max} characters.`;
+    }
+    return isWellFormedText(value) ? null : DOC_MESSAGES.brokenText;
+  };
 
 /** Allowed attributes per node and mark, with the check of each value (SPEC-013 §4.4). */
 const ATTRS: Record<string, Record<string, AttrCheck>> = {
@@ -65,7 +73,7 @@ const ATTRS: Record<string, Record<string, AttrCheck>> = {
   },
   codeBlock: {
     language: (value) =>
-      value === null || (typeof value === 'string' && LANGUAGE.test(value))
+      value === null || (typeof value === 'string' && isCodeLanguage(value))
         ? null
         : 'Code language must be a short name like typescript, or null.',
   },
@@ -77,14 +85,19 @@ const ATTRS: Record<string, Record<string, AttrCheck>> = {
   file: {
     src: (value) =>
       typeof value === 'string' && fileIdOfSrc(value) !== null ? null : DOC_MESSAGES.badFile,
-    name: (value) =>
-      typeof value === 'string' && value.length > 0 && value.length <= 1000
-        ? null
-        : 'File name must be text of 1 to 1000 characters.',
+    name: (value) => {
+      if (typeof value !== 'string' || value.length === 0 || value.length > 1000) {
+        return 'File name must be text of 1 to 1000 characters.';
+      }
+      return isWellFormedText(value) ? null : DOC_MESSAGES.brokenText;
+    },
   },
   link: {
-    href: (value) =>
-      typeof value === 'string' && isAllowedHref(value) ? null : DOC_MESSAGES.badLink,
+    href: (value) => {
+      if (typeof value !== 'string' || !isAllowedHref(value)) return DOC_MESSAGES.badLink;
+      // `new URL` accepts a lone surrogate (it encodes U+FFFD); the stored string can't hold it.
+      return isWellFormedText(value) ? null : DOC_MESSAGES.brokenText;
+    },
   },
 };
 
@@ -118,7 +131,10 @@ class Checker {
       // Own keys only: `constructor` or `__proto__` from the caller must not reach a check.
       const check = Object.hasOwn(allowed, key) ? allowed[key] : undefined;
       if (check === undefined) {
-        this.add([...path, 'attrs', key], `"${owner}" has no attribute "${key}". Remove it.`);
+        this.add(
+          [...path, 'attrs', key],
+          `"${owner}" has no attribute "${shown(key)}". Remove it.`,
+        );
         continue;
       }
       const problem = check(value);
@@ -148,12 +164,14 @@ class Checker {
       if (!Object.hasOwn(schema.marks, type)) {
         this.add(
           [...markPath, 'type'],
-          `Unknown formatting "${type}". Use bold, italic, underline, strikethrough, code or links, or send Markdown.`,
+          `Unknown formatting "${shown(type)}". Use bold, italic, underline, strikethrough, code or links, or send Markdown.`,
         );
         return;
       }
       for (const key of Object.keys(mark)) {
-        if (!MARK_KEYS.has(key)) this.add([...markPath, key], `Unknown field "${key}". Remove it.`);
+        if (!MARK_KEYS.has(key)) {
+          this.add([...markPath, key], `Unknown field "${shown(key)}". Remove it.`);
+        }
       }
       this.attrs(type, mark['attrs'], markPath);
     });
@@ -176,12 +194,13 @@ class Checker {
     if (!Object.hasOwn(schema.nodes, type)) {
       this.add(
         [...path, 'type'],
-        `Unknown block or element "${type}". Use only what the Surface editor makes, or send Markdown.`,
+        `Unknown block or element "${shown(type)}". Use only what the Surface editor makes, or send Markdown.`,
       );
       return;
     }
     for (const key of Object.keys(node)) {
-      if (!NODE_KEYS.has(key)) this.add([...path, key], `Unknown field "${key}". Remove it.`);
+      if (!NODE_KEYS.has(key))
+        this.add([...path, key], `Unknown field "${shown(key)}". Remove it.`);
     }
     if (type === 'image' || type === 'file') this.fileReferences++;
     this.attrs(type, node['attrs'], path);
@@ -190,6 +209,7 @@ class Checker {
     const text = node['text'];
     if (type === 'text') {
       if (typeof text !== 'string' || text.length === 0) this.add(path, DOC_MESSAGES.emptyText);
+      else if (!isWellFormedText(text)) this.add([...path, 'text'], DOC_MESSAGES.brokenText);
       if (node['content'] !== undefined) this.add([...path, 'content'], 'Text has no content.');
       return;
     }

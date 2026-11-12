@@ -14,10 +14,21 @@ const RULES = ['editor-schema-headless', 'server-editor-schema-only'];
 
 function loadConfig(): IConfiguration {
   const config: unknown = createRequire(import.meta.url)(join(ROOT, '.dependency-cruiser.cjs'));
-  if (typeof config !== 'object' || config === null || !('forbidden' in config)) {
-    throw new Error('.dependency-cruiser.cjs has no forbidden rules');
-  }
-  return config as IConfiguration;
+  if (!isConfiguration(config)) throw new Error('.dependency-cruiser.cjs has no forbidden rules');
+  return config;
+}
+
+function isConfiguration(value: unknown): value is IConfiguration {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'forbidden' in value &&
+    Array.isArray(value.forbidden)
+  );
+}
+
+function isCruiseResult(value: unknown): value is ICruiseResult {
+  return typeof value === 'object' && value !== null && 'summary' in value;
 }
 
 const config = loadConfig();
@@ -38,8 +49,8 @@ async function violations(baseDir: string, paths: string[]): Promise<string[]> {
   });
   const output: unknown =
     typeof result.output === 'string' ? JSON.parse(result.output) : result.output;
-  const summary = (output as ICruiseResult).summary;
-  return summary.violations.map((v) => `${v.rule.name}: ${v.from} → ${v.to}`);
+  if (!isCruiseResult(output)) throw new Error('dependency-cruiser returned no summary');
+  return output.summary.violations.map((v) => `${v.rule.name}: ${v.from} → ${v.to}`);
 }
 
 describe('editor boundary rules', () => {
@@ -63,6 +74,18 @@ describe('editor boundary rules', () => {
       dir = await realpath(await mkdtemp(join(tmpdir(), 'surface-editor-boundaries-')));
       await file('packages/editor/src/index.ts', 'export const editor = 1;\n');
       await file('packages/editor/src/schema/ok.ts', 'export const ok = 1;\n');
+      // Two packages: one the rule allows, one it doesn't (StarterKit would add extensions).
+      for (const name of ['@tiptap/core', '@tiptap/starter-kit']) {
+        await file(
+          `node_modules/${name}/package.json`,
+          JSON.stringify({ name, version: '0.0.0', main: 'index.js' }),
+        );
+        await file(`node_modules/${name}/index.js`, 'export const pkg = 1;\n');
+      }
+      await file(
+        'packages/editor/src/schema/packages.ts',
+        "import { pkg as core } from '@tiptap/core';\nimport { pkg as kit } from '@tiptap/starter-kit';\nexport const both = [core, kit];\n",
+      );
       await file(
         'packages/editor/src/schema/bad.ts',
         "import { readFileSync } from 'node:fs';\nimport { editor } from '../index.js';\nimport { ok } from './ok.js';\nexport const bad = [readFileSync, editor, ok];\n",
@@ -77,10 +100,11 @@ describe('editor boundary rules', () => {
       if (dir !== '') await rm(dir, { recursive: true, force: true });
     });
 
-    it('report a Node API and the React entry in the schema folder, and the server reaching past the schema entry', async () => {
+    it('report a Node API, an npm package outside the list and the React entry in the schema folder, and the server reaching past the schema entry', async () => {
       expect((await violations(dir, ['packages', 'apps'])).sort()).toEqual([
         'editor-schema-headless: packages/editor/src/schema/bad.ts → fs',
         'editor-schema-headless: packages/editor/src/schema/bad.ts → packages/editor/src/index.ts',
+        'editor-schema-headless: packages/editor/src/schema/packages.ts → node_modules/@tiptap/starter-kit/index.js',
         'server-editor-schema-only: apps/server/src/uses-editor.ts → packages/editor/src/index.ts',
       ]);
     }, 60_000);

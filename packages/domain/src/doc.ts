@@ -3,7 +3,7 @@
  * editor (SPEC-013 §4.4, D2). The schema itself lives in `@surface/editor/schema`; optimistic
  * code never parses documents beyond `EMPTY_DOC` (SPEC-013 §6.2).
  */
-import { utf8Bytes } from './sha1.js';
+import { utf8Length } from './sha1.js';
 import { uuidv5 } from './uuid.js';
 
 /** A mark in a stored document (ProseMirror JSON). */
@@ -44,7 +44,7 @@ export const DOC_MAX_BYTES = {
 /** UTF-8 size of a value's JSON, as `DOC_MAX_BYTES` measures it. */
 export function docJsonBytes(value: unknown): number {
   const json = JSON.stringify(value);
-  return json === undefined ? 0 : utf8Bytes(json).length;
+  return json === undefined ? 0 : utf8Length(json);
 }
 
 /** Namespace of `reactionId`'s UUIDv5 names. Never change it: stored reaction ids depend on it. */

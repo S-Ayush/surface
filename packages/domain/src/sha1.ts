@@ -35,6 +35,27 @@ export function utf8Bytes(text: string): Uint8Array {
   return Uint8Array.from(out);
 }
 
+/**
+ * The length of `utf8Bytes(text)`, counted without encoding (`docJsonBytes` runs on every save
+ * of up to 200 KB). A lone surrogate counts as U+FFFD, 3 bytes.
+ */
+export function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      const low = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        bytes += 4;
+        i++;
+      } else bytes += 3;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
 function rotl(x: number, n: number): number {
   return (x << n) | (x >>> (32 - n));
 }

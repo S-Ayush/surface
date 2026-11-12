@@ -84,14 +84,17 @@ RUN set -eux; \
 COPY --from=build /out /app
 # Native binaries are per CPU and libc (SPEC-004 §5): load them here, on the platform being
 # built, so an image whose uploads would answer 503 (sharp missing, PLAN-001 S6) or whose
-# sign-in would fail (argon2) is never built. Writes nothing.
+# sign-in would fail (argon2) is never built. The built editor schema entry is loaded too, so an
+# image without packages/editor/dist is never built either (PLAN-013 S1). Writes nothing.
 WORKDIR /app
 RUN node --input-type=module -e "\
 const { default: sharp } = await import('sharp'); \
 await sharp({ create: { width: 1, height: 1, channels: 3, background: '#000' } }).webp().toBuffer(); \
 const { hash } = await import('@node-rs/argon2'); \
 await hash('surface-image-check'); \
-console.log('native modules ok:', process.arch, 'sharp', sharp.versions.sharp, 'libvips', sharp.versions.vips);"
+const { validateDoc, markdownToDoc } = await import('@surface/editor/schema'); \
+if (!validateDoc(markdownToDoc('**image check**')).ok) throw new Error('editor schema check failed'); \
+console.log('native modules ok:', process.arch, 'sharp', sharp.versions.sharp, 'libvips', sharp.versions.vips, '; editor schema ok');"
 RUN ln -s /app/bin/surface.js /usr/local/bin/surface \
  && mkdir -p /data/uploads /data/backups \
  && chown -R 10001:10001 /data

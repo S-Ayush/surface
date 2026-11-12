@@ -25,7 +25,8 @@ import {
   piecesFromTokens,
   serializeInline,
 } from './inline.js';
-import { normalize } from './normalize.js';
+import { isCodeLanguage, wellFormedText } from './links.js';
+import { normalize, normalizeShape } from './normalize.js';
 
 // ---------------------------------------------------------------------------------------------
 // Writing
@@ -150,7 +151,10 @@ function blocks(nodes: readonly DocNodeJSON[]): string {
     .join('\n\n');
 }
 
-/** Markdown for a valid document. Underline is dropped (CommonMark has none; AC-25). */
+/**
+ * Markdown for a valid document. Underline is dropped (CommonMark has none; AC-25). Throws on an
+ * invalid document (`normalize` validates), so nothing unchecked reaches a fence or a link.
+ */
 export function docToMarkdown(doc: DocNodeJSON): string {
   const normalized = normalize(doc);
   const content = normalized.content ?? [];
@@ -264,13 +268,11 @@ function itemContent(content: DocNodeJSON[]): DocNodeJSON[] {
   return content[0]?.type === 'paragraph' ? content : [{ type: 'paragraph' }, ...content];
 }
 
-const LANGUAGE = /^[A-Za-z0-9_+#.-]{1,40}$/;
-
 function codeBlock(token: Token): DocNodeJSON {
   // markdown-it keeps the newline that ends the last line.
   const code = token.content.endsWith('\n') ? token.content.slice(0, -1) : token.content;
   const word = token.info.trim().split(/\s+/)[0] ?? '';
-  const language = LANGUAGE.test(word) ? word : null;
+  const language = isCodeLanguage(word) ? word : null;
   return withContent(
     { type: 'codeBlock', attrs: { language } },
     code === '' ? [] : [{ type: 'text', text: code }],
@@ -310,9 +312,13 @@ function paragraphs(tokens: readonly Token[]): DocNodeJSON[] {
   return nodes;
 }
 
-/** A document from Markdown, normalized. Never fails: what it can't map stays as text. */
+/**
+ * A document from Markdown, normalized. Never fails: what it can't map stays as text, and NUL and
+ * lone surrogates become U+FFFD. The result can still be too deep or too long for `validateDoc`,
+ * which the caller runs. Time is linear in the input; callers cap its length first.
+ */
 export function markdownToDoc(markdown: string): DocNodeJSON {
-  const tokens = md.parse(markdown, {});
+  const tokens = md.parse(wellFormedText(markdown), {});
   const content = filled(new Reader(tokens).blocks(null));
-  return normalize({ type: 'doc', content });
+  return normalizeShape({ type: 'doc', content });
 }

@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { DOC_MAX_BYTES, DOC_SCHEMA_VERSION, docJsonBytes, EMPTY_DOC, reactionId } from './doc.js';
-import { sha1, utf8Bytes } from './sha1.js';
+import { sha1, utf8Bytes, utf8Length } from './sha1.js';
 import { uuidv5 } from './uuid.js';
 
 const V5 = z.uuid({ version: 'v5' });
@@ -64,6 +64,16 @@ describe('sha1 and utf8Bytes', () => {
       // Well-formed strings only (encodeURIComponent throws on a lone surrogate, covered above).
       fc.property(fc.string({ unit: 'grapheme', maxLength: 50 }), (text) => {
         expect(Array.from(utf8Bytes(text))).toEqual(reference(text));
+      }),
+      PROPERTY_OPTIONS,
+    );
+  });
+
+  it('counts UTF-8 bytes without encoding, lone surrogates as U+FFFD', () => {
+    expect(utf8Length('a\uD800b\uDC00')).toBe(utf8Bytes('a\uD800b\uDC00').length);
+    fc.assert(
+      fc.property(fc.string({ unit: 'binary', maxLength: 50 }), (text) => {
+        expect(utf8Length(text)).toBe(utf8Bytes(text).length);
       }),
       PROPERTY_OPTIONS,
     );

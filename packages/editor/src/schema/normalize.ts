@@ -3,14 +3,18 @@
  * `markdownToDoc(docToMarkdown(d))` equals `normalize(d)` (AC-8). The rules, in order:
  *
  * - underline marks are removed, and adjacent text with equal marks is merged;
- * - in text (not code), line breaks become spaces and NUL becomes U+FFFD (as markdown-it reads
- *   them); in code blocks, CR and CRLF become LF and NUL becomes U+FFFD;
+ * - in text, line breaks (CR, LF, CRLF) become spaces, as markdown-it reads them; in code blocks,
+ *   CR and CRLF become LF;
  * - hard breaks and file chips carry no marks; a hard break in a heading becomes a space;
- * - in paragraphs and headings, whitespace at the start and end is trimmed, whitespace next to
- *   a hard break is removed, and hard breaks at the start and end are removed;
+ * - in paragraphs and headings, spaces and tabs at the start of a line after a hard break are
+ *   removed (Markdown drops them; a no-break space stays), then whitespace and hard breaks at the
+ *   start and end of the block. Whitespace inside inline code is never removed;
  * - bold, italic or strikethrough that Markdown can't write where it is (CommonMark's flanking
  *   rules: for example `**` can't close after punctuation when a letter follows) is removed from
- *   the character next to the delimiter that fails, until every delimiter works;
+ *   the character next to each delimiter that fails, all of them in one pass, until every
+ *   delimiter works and the block reads back the same. A block that still doesn't after
+ *   `MAX_EMPHASIS_PASSES` passes loses all its bold, italic and strikethrough. Each pass is
+ *   linear in the block, so normalizing is linear in the document (PLAN-013 S1 review, B1);
  * - an image's empty alt text is null; line breaks in alt text and file names become spaces;
  * - in the document, a block quote and a list item: runs of empty paragraphs collapse to one,
  *   and empty paragraphs at the start and end are removed. A document or block quote left empty
@@ -18,7 +22,8 @@
  *   first block is something else);
  * - adjacent lists of the same kind are merged.
  *
- * The input must be valid (`validateDoc`); the output is valid and in canonical JSON form.
+ * `normalize` validates first and throws on an invalid document. The output is valid and in
+ * canonical JSON form.
  */
 import type { DocNodeJSON } from '@surface/domain';
 import type { Delimiter, InlineItem } from './inline.js';
@@ -32,40 +37,51 @@ import {
   serializeInline,
 } from './inline.js';
 import { nodeJSON, schema, stringAttr } from './schema.js';
+import { validateDoc } from './validate.js';
 
 const LIST_TYPES = new Set(['bulletList', 'orderedList', 'taskList']);
 
-/** Text outside code, as markdown-it reads it. */
-export function cleanText(text: string): string {
-  return text.replace(/\r\n?|\n/g, ' ').replace(/\0/g, '�');
+/** Passes of the emphasis repair per block, the last one stripping and checking (B1). */
+export const MAX_EMPHASIS_PASSES = 8;
+
+/** For tests: the most passes one block has taken since `max` was last reset. */
+export const EMPHASIS_PASSES = { max: 0 };
+
+/** Text outside code blocks, as markdown-it reads it (it also turns NUL into U+FFFD). */
+function cleanText(text: string): string {
+  return text.replace(/\r\n?|\n/g, ' ');
 }
 
 function cleanCode(text: string): string {
-  return text.replace(/\r\n?/g, '\n').replace(/\0/g, '�');
+  return text.replace(/\r\n?/g, '\n');
 }
 
-const isWhitespace = (item: InlineItem | undefined): boolean =>
-  item?.kind === 'char' && /^\s$/u.test(item.ch);
+const isCode = (item: InlineItem): boolean =>
+  item.kind === 'char' && item.marks.some((mark) => mark.type === 'code');
 
-/** Trim the edges of a text block and the whitespace around its hard breaks. */
-function trimItems(items: InlineItem[]): InlineItem[] {
-  let result = items;
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const next = result.filter((item, i) => {
-      const atEdge = i === 0 || i === result.length - 1;
-      if (item.kind === 'break' && atEdge) return false;
-      if (!isWhitespace(item)) return true;
-      if (atEdge) return false;
-      return result[i - 1]?.kind !== 'break' && result[i + 1]?.kind !== 'break';
-    });
-    if (next.length !== result.length) {
-      result = next;
-      changed = true;
-    }
+/** A space or tab that Markdown drops at the start of a line. */
+const isLineSpace = (item: InlineItem): boolean =>
+  item.kind === 'char' && (item.ch === ' ' || item.ch === '\t') && !isCode(item);
+
+/** What markdown-it trims at the edges of a block (JavaScript's `trim`), and hard breaks. */
+const isEdge = (item: InlineItem | undefined): boolean =>
+  item !== undefined &&
+  (item.kind === 'break' || (item.kind === 'char' && /^\s$/u.test(item.ch) && !isCode(item)));
+
+/** Drop spaces and tabs that start a line, then trim the edges of the block. Linear. */
+function trimItems(items: readonly InlineItem[]): InlineItem[] {
+  const kept: InlineItem[] = [];
+  let lineStart = false;
+  for (const item of items) {
+    if (lineStart && isLineSpace(item)) continue;
+    lineStart = item.kind === 'break';
+    kept.push(item);
   }
-  return result;
+  let start = 0;
+  let end = kept.length;
+  while (start < end && isEdge(kept[start])) start++;
+  while (end > start && isEdge(kept[end - 1])) end--;
+  return kept.slice(start, end);
 }
 
 function withoutMark(item: InlineItem, type: string | null): InlineItem {
@@ -78,12 +94,16 @@ function withoutMark(item: InlineItem, type: string | null): InlineItem {
   };
 }
 
+const hasEmphasis = (item: InlineItem | undefined): boolean =>
+  item?.kind === 'char' && item.marks.some((mark) => EMPHASIS.has(mark.type));
+
 /**
- * The first emphasis delimiter that markdown-it would not read as opening (or closing) its mark,
+ * Every emphasis delimiter that markdown-it would not read as opening (or closing) its mark,
  * using markdown-it's own `scanDelims`, so the rule is exactly CommonMark's.
  */
-function failingDelimiter(text: string, delimiters: readonly Delimiter[]): Delimiter | null {
+function failingDelimiters(text: string, delimiters: readonly Delimiter[]): Delimiter[] {
   const state = new md.inline.State(text, md, {}, []);
+  const failing: Delimiter[] = [];
   let i = 0;
   while (i < delimiters.length) {
     const first = delimiters[i];
@@ -98,44 +118,59 @@ function failingDelimiter(text: string, delimiters: readonly Delimiter[]): Delim
     }
     const scan = state.scanDelims(first.start, true);
     for (const delimiter of run) {
-      if (delimiter.role === 'open' ? !scan.can_open : !scan.can_close) return delimiter;
+      if (delimiter.role === 'open' ? !scan.can_open : !scan.can_close) failing.push(delimiter);
     }
     i += run.length;
   }
-  return null;
+  return failing;
 }
 
-/** Remove the emphasis Markdown can't express (the flanking rule above). */
+/** Indexes where the block reads back differently, or null when it reads back the same. */
+function mismatches(items: readonly InlineItem[], text: string, heading: boolean): number[] | null {
+  const back = parseInline(text, heading ? 'heading' : 'paragraph');
+  if (back.length === items.length) {
+    const differ = items.flatMap((item, i) => (sameItem(item, back[i]) ? [] : [i]));
+    return differ.length > 0 ? differ : null;
+  }
+  // Delimiters left over as text shift everything after them: only the first difference counts.
+  const first = items.findIndex((item, i) => !sameItem(item, back[i]));
+  return [first < 0 ? items.length - 1 : first];
+}
+
+function countPass(pass: number): void {
+  EMPHASIS_PASSES.max = Math.max(EMPHASIS_PASSES.max, pass);
+}
+
+/** Remove the emphasis Markdown can't express (the flanking rule above), in bounded passes. */
 function fixEmphasis(start: InlineItem[], heading: boolean): InlineItem[] {
   let items = start;
-  // Each pass removes at least one mark, so this ends; the bound is a safety net.
-  for (let pass = 0; pass < 10_000; pass++) {
+  for (let pass = 1; pass < MAX_EMPHASIS_PASSES; pass++) {
+    countPass(pass);
     const { text, delimiters } = serializeInline(items, { heading });
-    const failing = failingDelimiter(text, delimiters);
-    if (failing !== null) {
+    const failing = failingDelimiters(text, delimiters);
+    if (failing.length > 0) {
+      const drop = new Map<number, (string | null)[]>();
+      for (const { index, mark } of failing) drop.set(index, [...(drop.get(index) ?? []), mark]);
       items = items.map((item, i) =>
-        i === failing.index ? withoutMark(item, failing.mark) : item,
+        (drop.get(i) ?? []).reduce<InlineItem>((out, mark) => withoutMark(out, mark), item),
       );
       continue;
     }
-    const back = parseInline(text, heading ? 'heading' : 'paragraph');
-    const mismatch = items.findIndex((item, i) => !sameItem(item, back[i]));
-    if (mismatch < 0 && back.length === items.length) return items;
+    const differ = mismatches(items, text, heading);
+    if (differ === null) return items;
     // Delimiters that each flank correctly can still pair up differently (CommonMark's "rule of
-    // 3"). Drop the emphasis where the reading first differs, or everywhere as a last resort.
-    const at = mismatch < 0 ? items.length - 1 : mismatch;
-    const target = items[at];
-    const hasEmphasis = (item: InlineItem | undefined) =>
-      item?.kind === 'char' && item.marks.some((mark) => EMPHASIS.has(mark.type));
-    if (hasEmphasis(target)) {
-      items = items.map((item, i) => (i === at ? withoutMark(item, null) : item));
-    } else if (items.some(hasEmphasis)) {
-      items = items.map((item) => withoutMark(item, null));
-    } else {
-      throw new Error('Markdown round trip failed for plain text: an escaping bug.');
-    }
+    // 3"). Drop the emphasis where the reading differs; if none is there, strip the block below.
+    const targets = new Set(differ.filter((i) => hasEmphasis(items[i])));
+    if (targets.size === 0) break;
+    items = items.map((item, i) => (targets.has(i) ? withoutMark(item, null) : item));
   }
-  return items;
+  // The last pass: no bold, italic or strikethrough at all, which always reads back the same.
+  countPass(MAX_EMPHASIS_PASSES);
+  const plain = items.map((item) => withoutMark(item, null));
+  if (mismatches(plain, serializeInline(plain, { heading }).text, heading) !== null) {
+    throw new Error('Markdown round trip failed without emphasis: an escaping bug.');
+  }
+  return plain;
 }
 
 function normalizeInline(content: readonly DocNodeJSON[], heading: boolean): DocNodeJSON[] {
@@ -214,8 +249,23 @@ function normalizeNode(node: DocNodeJSON): DocNodeJSON {
   }
 }
 
-/** The normalized form of a valid document (see the rules above). Throws on an invalid one. */
-export function normalize(doc: DocNodeJSON): DocNodeJSON {
+/**
+ * The normalized form of a document our Markdown reader built: its shape follows the schema and
+ * the link, file and language rules by construction, so only ProseMirror's content check runs.
+ * It may still be too deep or too long; `markdownToDoc`'s caller validates the result.
+ */
+export function normalizeShape(doc: DocNodeJSON): DocNodeJSON {
   const canonical = nodeJSON(schema.nodeFromJSON(doc));
   return nodeJSON(schema.nodeFromJSON(normalizeNode(canonical)));
+}
+
+/** The normalized form of a valid document (the rules above). Throws on an invalid one. */
+export function normalize(doc: DocNodeJSON): DocNodeJSON {
+  const valid = validateDoc(doc);
+  if (!valid.ok) {
+    const [first] = valid.problems;
+    const where = JSON.stringify(first?.path ?? []);
+    throw new TypeError(`normalize needs a valid document: ${first?.message ?? ''} (at ${where})`);
+  }
+  return normalizeShape(valid.doc);
 }

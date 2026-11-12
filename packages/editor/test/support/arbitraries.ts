@@ -1,7 +1,7 @@
 /**
  * fast-check arbitraries for valid documents (SPEC-013 §4.4): every node, mark and attribute of
  * the schema, headings 1–4 and underline included, with text that is hard to write as Markdown
- * (syntax characters, whitespace, line breaks, NUL, emoji). Shared by the validate and Markdown
+ * (syntax characters, whitespace, line breaks, Unicode punctuation, emoji). Shared by the validate and Markdown
  * property tests.
  */
 import type { DocMarkJSON, DocNodeJSON } from '@surface/domain';
@@ -18,16 +18,24 @@ const fileId = fc.constantFrom(
 );
 export const fileSrc = fileId.map((id) => `/files/${id}`);
 
-/** Characters that Markdown reads as syntax, whitespace of every kind, and wide characters. */
+/**
+ * Characters that Markdown reads as syntax, whitespace of every kind (ASCII, no-break, em and
+ * ideographic spaces), Unicode punctuation (which counts for CommonMark's flanking rules) and
+ * wide characters. No NUL or lone surrogates: valid documents can't hold them (M2).
+ */
 const TRICKY = [
   ...'abcxyzABZ019 ',
   ...'*_~`[]()<>&#!.-+=|:;\\/"\'{}^$%@?,',
   '\t',
   '\n',
   '\r',
-  '\0',
-  ' ',
-  ' ',
+  '\u00a0',
+  '\u2003',
+  '\u3000',
+  '“',
+  '”',
+  '—',
+  '…',
   'é',
   '中',
   '👍',
@@ -95,7 +103,11 @@ const inlineNode: fc.Arbitrary<DocNodeJSON> = fc.oneof(
   },
 );
 
-const inline = fc.array(inlineNode, { maxLength: 6 });
+/** Inline content: mostly short, sometimes long enough for many delimiter runs in one line. */
+const inline = fc.oneof(
+  { weight: 3, arbitrary: fc.array(inlineNode, { maxLength: 6 }) },
+  { weight: 1, arbitrary: fc.array(inlineNode, { minLength: 7, maxLength: 16 }) },
+);
 
 const withContent = (node: DocNodeJSON, content: DocNodeJSON[]): DocNodeJSON =>
   content.length > 0 ? { ...node, content } : node;
@@ -169,6 +181,103 @@ const { block } = fc.letrec<{ block: DocNodeJSON; blocks: DocNodeJSON[]; item: D
       .map(([first, rest]) => ({ type: 'listItem', content: [first, ...rest] })),
   }),
 );
+
+const CONTAINERS = ['blockquote', 'bulletList', 'orderedList', 'taskList'] as const;
+
+/**
+ * A paragraph inside a chain of up to 30 block quotes and lists, deeper than markdown-it's
+ * default nesting limit of 20 and within `validateDoc`'s 64 levels (M1).
+ */
+export const deepDoc: fc.Arbitrary<DocNodeJSON> = fc
+  .tuple(fc.array(fc.constantFrom(...CONTAINERS), { minLength: 1, maxLength: 30 }), paragraph)
+  .map(([chain, inner]) => {
+    // doc, paragraph and text take 3 levels; a quote takes 1, a list and its item 2.
+    let depth = 3;
+    let node = inner;
+    for (const kind of chain) {
+      const cost = kind === 'blockquote' ? 1 : 2;
+      if (depth + cost > 64) break;
+      depth += cost;
+      if (kind === 'blockquote') node = { type: 'blockquote', content: [node] };
+      else {
+        const first: DocNodeJSON = { type: 'paragraph', content: [{ type: 'text', text: 'x' }] };
+        const item: DocNodeJSON =
+          kind === 'taskList'
+            ? { type: 'taskItem', attrs: { checked: false }, content: [first, node] }
+            : { type: 'listItem', content: [first, node] };
+        node = { type: kind, content: [item] };
+      }
+    }
+    return { type: 'doc', content: [node] };
+  });
+
+const WORD_CHARS = [...'abcXYZ019', '\u00e9', '\u4e2d'];
+const word = fc.string({ unit: fc.constantFrom(...WORD_CHARS), minLength: 1, maxLength: 4 });
+
+type Group =
+  string | { readonly mark: string; readonly children: readonly Group[]; readonly gap: string };
+
+const { group } = fc.letrec<{ group: Group }>((tie) => ({
+  group: fc.oneof(
+    { depthSize: 'small', withCrossShrink: true },
+    { weight: 2, arbitrary: word },
+    {
+      weight: 1,
+      arbitrary: fc.record({
+        mark: fc.constantFrom('bold', 'italic', 'strike'),
+        // A word first and last: a run never starts or ends together with a run inside it.
+        children: fc
+          .tuple(word, fc.array(tie('group'), { maxLength: 2 }), word)
+          .map(([first, middle, last]) => [first, ...middle, last]),
+        gap: fc.constantFrom(' ', ''),
+      }),
+    },
+  ),
+}));
+
+/** Two groups side by side get a space: their delimiters would merge into one run. */
+const gapBetween = (before: Group | undefined, after: Group, gap: string): string =>
+  gap === '' && typeof before === 'object' && typeof after === 'object' ? ' ' : gap;
+
+function flatten(node: Group, marks: readonly string[], out: DocNodeJSON[]): void {
+  const textOf = (value: string, on: readonly string[]): DocNodeJSON =>
+    on.length > 0
+      ? { type: 'text', text: value, marks: on.map((type) => ({ type })) }
+      : { type: 'text', text: value };
+  if (typeof node === 'string') {
+    out.push(textOf(node, marks));
+    return;
+  }
+  const inner = marks.includes(node.mark) ? marks : [...marks, node.mark];
+  node.children.forEach((child, i) => {
+    const gap = gapBetween(node.children[i - 1], child, node.gap);
+    if (i > 0 && gap !== '') out.push(textOf(gap, inner));
+    flatten(child, inner, out);
+  });
+}
+
+/**
+ * A paragraph of words where bold, italic and strikethrough nest properly, every run starts and
+ * ends on a letter or digit, and each delimiter is next to a letter, a digit, a space or the edge
+ * of the block: emphasis Markdown can always write (M3). Not included, because CommonMark can't
+ * write them:
+ * - a run that starts or ends at the same character as a run inside it, within a word (`a` +
+ *   bold-and-struck `b` + struck `c`): the inner delimiter counts as punctuation for the outer
+ *   one's flanking rule;
+ * - two runs that touch (`**a a**` then `*b*`): their delimiters merge into `***`, and the "rule
+ *   of 3" can pair them differently.
+ */
+export const nestedEmphasis: fc.Arbitrary<DocNodeJSON> = fc
+  .tuple(fc.array(group, { minLength: 1, maxLength: 6 }), fc.constantFrom(' ', ''))
+  .map(([groups, gap]) => {
+    const content: DocNodeJSON[] = [];
+    groups.forEach((g, i) => {
+      const between = gapBetween(groups[i - 1], g, gap);
+      if (i > 0 && between !== '') content.push({ type: 'text', text: between });
+      flatten(g, [], content);
+    });
+    return { type: 'doc', content: [{ type: 'paragraph', content }] };
+  });
 
 /** Any valid document. */
 export const doc: fc.Arbitrary<DocNodeJSON> = fc

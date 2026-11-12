@@ -47,9 +47,22 @@ function taskItems(state: StateCore): void {
   }
 }
 
+/**
+ * markdown-it's nesting limit. Its commonmark preset stops at 20 levels and silently drops what
+ * is deeper. A stored document may nest 64 levels (`validateDoc`), and each level of JSON is at
+ * most one level here, so 100 reads every document `validateDoc` accepts in full, and reads a
+ * deeper text far enough for `validateDoc` to refuse it as too deep instead of losing its end.
+ */
+const MAX_NESTING = 100;
+
 function createMarkdownIt() {
   // Raw HTML is text (never markup), bare URLs stay text, quotes stay as typed.
-  const md = new MarkdownIt('commonmark', { html: false, linkify: false, typographer: false });
+  const md = new MarkdownIt('commonmark', {
+    html: false,
+    linkify: false,
+    typographer: false,
+    maxNesting: MAX_NESTING,
+  });
   md.enable('strikethrough');
   // Links are checked by the link rule and stored exactly as written: no percent-encoding.
   md.normalizeLink = (url) => url;
@@ -238,21 +251,39 @@ export function serializeInline(
   items: readonly InlineItem[],
   options: { readonly heading?: boolean } = {},
 ): SerializedInline {
-  let out = '';
-  let lineStart = 0;
+  // Linear in the length of the block: parts are joined once, and the escaping rules that depend
+  // on the line so far read two flags instead of the line.
+  const parts: string[] = [];
+  let length = 0;
+  /** Nothing written on the current line yet. */
+  let lineEmpty = true;
+  /** The current line so far is ASCII digits only (and not empty). */
+  let lineDigits = false;
   let bareBang = false;
   const delimiters: Delimiter[] = [];
   const stack: DocMarkJSON[] = [];
 
   const emit = (text: string) => {
-    out += text;
+    parts.push(text);
+    length += text.length;
     const newline = text.lastIndexOf('\n');
-    if (newline >= 0) lineStart = out.length - text.length + newline + 1;
+    if (newline >= 0) {
+      lineEmpty = true;
+      lineDigits = false;
+    }
+    for (let i = newline + 1; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      lineDigits = (lineEmpty || lineDigits) && code >= 0x30 && code <= 0x39;
+      lineEmpty = false;
+    }
     bareBang = false;
   };
   const emitBracket = () => {
-    // `![` would start an image.
-    if (bareBang) out = `${out.slice(0, -1)}\\!`;
+    // `![` would start an image. The `!` is the last part written (`emitChar` writes it alone).
+    if (bareBang) {
+      parts[parts.length - 1] = '\\!';
+      length += 1;
+    }
     emit('[');
   };
   const runEnd = (mark: DocMarkJSON, from: number): number => {
@@ -271,7 +302,7 @@ export function serializeInline(
     }
     const delimiter = DELIMITER[mark.type] ?? '';
     delimiters.push({
-      start: out.length,
+      start: length,
       char: delimiter === '~~' ? '~' : '*',
       length: delimiter.length,
       role: 'open',
@@ -291,7 +322,7 @@ export function serializeInline(
     }
     const delimiter = DELIMITER[mark.type] ?? '';
     delimiters.push({
-      start: out.length,
+      start: length,
       char: delimiter === '~~' ? '~' : '*',
       length: delimiter.length,
       role: 'close',
@@ -301,12 +332,11 @@ export function serializeInline(
     emit(delimiter);
   };
   const emitChar = (ch: string, ahead: () => string) => {
-    const line = out.slice(lineStart);
     let escape = ALWAYS_ESCAPED.has(ch);
     if (ch === '&') escape = ENTITY_AHEAD.test(ahead());
-    else if (ch === '#') escape = options.heading === true || line === '';
-    else if (ESCAPED_AT_LINE_START.has(ch)) escape = line === '';
-    else if (ch === '.' || ch === ')') escape = /^\d+$/.test(line);
+    else if (ch === '#') escape = options.heading === true || lineEmpty;
+    else if (ESCAPED_AT_LINE_START.has(ch)) escape = lineEmpty;
+    else if (ch === '.' || ch === ')') escape = lineDigits;
     emit(escape ? `\\${ch}` : ch);
     bareBang = ch === '!';
   };
@@ -355,7 +385,7 @@ export function serializeInline(
     i++;
   }
   while (stack.length > 0) close(items.length - 1);
-  return { text: out, delimiters };
+  return { text: parts.join(''), delimiters };
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -11,7 +11,7 @@
  * expect; the headless entry never calls them.
  */
 import { Mark, mergeAttributes, Node } from '@tiptap/core';
-import { fileIdOfSrc, isAllowedHref } from './links.js';
+import { fileIdOfSrc, isAllowedHref, isCodeLanguage } from './links.js';
 
 export const Document = Node.create({
   name: 'doc',
@@ -128,7 +128,7 @@ export const CodeBlock = Node.create({
       rendered: false,
       parseHTML: (element: HTMLElement) => {
         const name = /language-(\S+)/.exec(element.firstElementChild?.className ?? '')?.[1];
-        return name ?? null;
+        return name !== undefined && isCodeLanguage(name) ? name : null;
       },
     },
   }),
@@ -197,7 +197,7 @@ export const File = Node.create({
   ],
   renderHTML: ({ node }) => [
     'a',
-    { 'data-type': 'file', href: node.attrs['src'] as string },
+    { 'data-type': 'file', href: String(node.attrs['src']) },
     String(node.attrs['name']),
   ],
   renderText: ({ node }) => String(node.attrs['name']),

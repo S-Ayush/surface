@@ -298,6 +298,49 @@ describe('validateDoc refuses, with the path of the problem', () => {
     const json = doc(...Array.from({ length: 100 }, () => ({ type: 'table' })));
     expect(problems(json)).toHaveLength(20);
   });
+
+  it('NUL characters and lone surrogates in text and attributes, which Postgres refuses (E6)', () => {
+    const json = doc(
+      paragraph(
+        { type: 'text', text: 'a\0b' },
+        { type: 'text', text: 'broken \uD800 pair', marks: [{ type: 'bold' }] },
+        { type: 'file', attrs: { src: FILE, name: 'name\uDC00.pdf' } },
+        {
+          type: 'text',
+          text: 'link',
+          marks: [{ type: 'link', attrs: { href: 'https://example.com/\uD83D' } }],
+        },
+      ),
+      { type: 'image', attrs: { src: FILE, alt: 'alt\0' } },
+      { type: 'codeBlock', content: [{ type: 'text', text: 'code\0' }] },
+    );
+    expect(problems(json)).toEqual([
+      { path: ['content', 0, 'content', 0, 'text'], message: DOC_MESSAGES.brokenText },
+      { path: ['content', 0, 'content', 1, 'text'], message: DOC_MESSAGES.brokenText },
+      { path: ['content', 0, 'content', 2, 'attrs', 'name'], message: DOC_MESSAGES.brokenText },
+      {
+        path: ['content', 0, 'content', 3, 'marks', 0, 'attrs', 'href'],
+        message: DOC_MESSAGES.brokenText,
+      },
+      { path: ['content', 1, 'attrs', 'alt'], message: DOC_MESSAGES.brokenText },
+      { path: ['content', 2, 'content', 0, 'text'], message: DOC_MESSAGES.brokenText },
+    ]);
+    // A surrogate pair is one character, not broken.
+    expect(validateDoc(doc(paragraph({ type: 'text', text: '👍' }))).ok).toBe(true);
+  });
+
+  it('echoes at most 40 characters of a name it does not know', () => {
+    const long = 'x'.repeat(500);
+    for (const message of problems(
+      doc({ type: long }, paragraph({ type: 'text', text: 'a', marks: [{ type: long }] }), {
+        type: 'heading',
+        attrs: { [long]: 1 },
+      }),
+    ).map((problem) => problem.message)) {
+      expect(message).not.toContain('x'.repeat(41));
+      expect(message).toContain('x'.repeat(40));
+    }
+  });
 });
 
 describe('isAllowedHref', () => {
