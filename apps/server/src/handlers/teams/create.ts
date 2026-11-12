@@ -40,7 +40,6 @@ export default handler(teamCreate, async (ctx, input) => {
       color: input.color ?? NEW_TEAM_SETTINGS.color,
       timezone: input.timezone ?? creator?.timezone ?? NEW_TEAM_SETTINGS.timezone,
       defaultStatusId: workflow.defaultStatusId,
-      syncGroups: [],
     });
   } catch (error) {
     // Another team took the key since we looked.

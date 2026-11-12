@@ -35,13 +35,16 @@ const SPEC_001_OPERATIONS: readonly (readonly [string, Kind])[] = [
 ];
 
 /**
- * Command-menu entries PLAN-001 S9 names (SPEC-005 §4.1). A title ends with "…" when the command
- * opens a form or picker.
+ * Command-menu entries PLAN-001 S9 names (SPEC-005 §4.1), and the two the S8 follow-up added once
+ * leave and remove could predict (2026-11-12). A title ends with "…" when the command opens a
+ * form or picker.
  */
 const COMMANDS: readonly (readonly [string, string])[] = [
   ['team.create', 'Create team…'],
   ['team.join', 'Join team'],
   ['team.update', 'Rename team…'],
+  ['team.leave', 'Leave team…'],
+  ['team.removeMember', 'Remove member…'],
   ['invite.create', 'Invite member…'],
 ];
 

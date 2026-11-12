@@ -29,7 +29,7 @@ import {
   withName,
   type CreateTeamForm,
 } from './create-team.js';
-import { submitMutation } from './submit.js';
+import { submitMutation, useShowsRejection } from './submit.js';
 import styles from './teams.module.css';
 
 export type CreateTeamDialogProps = {
@@ -63,6 +63,7 @@ export function CreateTeamDialog({ open, onOpenChange }: CreateTeamDialogProps) 
   // Whether the dialog is still open when an answer arrives: closed meanwhile, the change still
   // goes through (it was queued), but the dialog no longer acts on it (no jump to the team).
   const openNow = useRef(open);
+  const mounted = useShowsRejection();
   useEffect(() => {
     openNow.current = open;
   }, [open]);
@@ -90,7 +91,10 @@ export function CreateTeamDialog({ open, onOpenChange }: CreateTeamDialogProps) 
     const id = uuidv7();
     setCreatingId(id);
     const input = createTeamInput(form, id);
-    const result = await submitMutation(store, teamCreate, input);
+    // The dialog shows a refusal inline while it is open; closed meanwhile, the shell's toast does.
+    const result = await submitMutation(store, teamCreate, input, {
+      showsRejection: () => mounted() && openNow.current,
+    });
     if (!openNow.current) return;
     setBusy(false);
     setCreatingId(undefined);

@@ -7,7 +7,8 @@
 #   docker build -f docker/Dockerfile -t surface:local .
 #
 # Every stage runs on the target platform, so native production dependencies
-# (none yet; argon2 arrives with PLAN-001) are installed for the right CPU.
+# (sharp for images, @node-rs/argon2 for passwords) are installed for the right
+# CPU, and the runtime stage checks that both load there.
 
 ARG NODE_IMAGE=node:24-bookworm-slim
 
@@ -81,6 +82,16 @@ RUN set -eux; \
 
 # Application files belong to root, so the running process cannot modify them.
 COPY --from=build /out /app
+# Native binaries are per CPU and libc (SPEC-004 §5): load them here, on the platform being
+# built, so an image whose uploads would answer 503 (sharp missing, PLAN-001 S6) or whose
+# sign-in would fail (argon2) is never built. Writes nothing.
+WORKDIR /app
+RUN node --input-type=module -e "\
+const { default: sharp } = await import('sharp'); \
+await sharp({ create: { width: 1, height: 1, channels: 3, background: '#000' } }).webp().toBuffer(); \
+const { hash } = await import('@node-rs/argon2'); \
+await hash('surface-image-check'); \
+console.log('native modules ok:', process.arch, 'sharp', sharp.versions.sharp, 'libvips', sharp.versions.vips);"
 RUN ln -s /app/bin/surface.js /usr/local/bin/surface \
  && mkdir -p /data/uploads /data/backups \
  && chown -R 10001:10001 /data

@@ -79,12 +79,12 @@ export const SYNCED_MODELS = {
     /**
      * Who may see a row (permissions.md §2), from the row and, for models whose groups derive
      * from another row (an issue's team), the transaction. Debug items carry their groups as
-     * data, so tests can put them anywhere.
+     * data, so tests can put them anywhere; none given, nobody sees the row.
      */
     groupsOf: (
-      row: { readonly syncGroups: readonly string[] },
+      row: { readonly syncGroups?: readonly string[] },
       _tx: NodePgDatabase,
-    ): readonly string[] | Promise<readonly string[]> => row.syncGroups,
+    ): readonly string[] | Promise<readonly string[]> => row.syncGroups ?? [],
     /**
      * The column naming the row's team (the team's own `id` for Team), or `null` for
      * workspace-wide models. Reads by a key limited to some teams filter on it in SQL,
@@ -168,8 +168,13 @@ export type ModelName = keyof typeof SYNCED_MODELS;
 export type ModelTable<M extends ModelName> = (typeof SYNCED_MODELS)[M]['table'];
 /** A full row as the repo returns it. */
 export type ModelRow<M extends ModelName> = ModelTable<M>['$inferSelect'];
-/** Columns a handler supplies on insert. The repo overwrites `syncGroups` with `groupsOf(row)`. */
-export type ModelInsert<M extends ModelName> = ModelTable<M>['$inferInsert'];
+/**
+ * Columns a handler supplies on insert. `syncGroups` is optional: the repo always overwrites it
+ * with `groupsOf(row)`, so only the DebugItem fixture, whose groups are data, reads it.
+ */
+export type ModelInsert<M extends ModelName> = Omit<ModelTable<M>['$inferInsert'], 'syncGroups'> & {
+  readonly syncGroups?: readonly string[];
+};
 /**
  * Columns a handler may change; the id and timestamps are the repo's. A value may be a SQL
  * expression (`sql\`${t.counter} + 1\``) for updates that must not lose concurrent writes.

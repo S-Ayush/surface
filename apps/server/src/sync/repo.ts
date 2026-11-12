@@ -34,7 +34,7 @@ export interface RowChange {
   readonly action: SyncAction;
   readonly model: ModelName;
   readonly id: string;
-  /** The full row after the change; absent for D. */
+  /** The row after the change, as logged (`loggedRow`: declared fields only); absent for D. */
   readonly row?: Readonly<Record<string, unknown>>;
   /** Who may see this change. */
   readonly groups: readonly string[];
@@ -117,7 +117,7 @@ export const syncRepo: RepoFactory = (db, now) => {
       // can see it get the full row next (sync-protocol §6). Consecutive ids, one transaction.
       push({ action: 'D', model, id, groups: before.groups });
     }
-    push({ action, model, id, row, groups });
+    push({ action, model, id, row: loggedRow(model, row), groups });
     return row;
   }
 
@@ -131,7 +131,7 @@ export const syncRepo: RepoFactory = (db, now) => {
           .values({ ...values, syncGroups: [...groups], createdAt: now, updatedAt: now })
           .returning();
         if (!row) throw new Error(`insert into ${model} returned no row`);
-        push({ action: 'I', model, id: row.id, row, groups });
+        push({ action: 'I', model, id: row.id, row: loggedRow(model, row), groups });
         return row;
       } catch (error) {
         if (isPrimaryKeyViolation(error)) {
@@ -213,6 +213,29 @@ export async function pruneSyncLog(db: NodePgDatabase, before: Date): Promise<nu
     ),
   );
   return result.rowCount ?? 0;
+}
+
+/** Columns every synced row may carry besides its model's fields (SPEC-002 §4.1). */
+const BOOKKEEPING = ['id', 'syncGroups', 'archivedAt'] as const;
+
+/**
+ * The row a change logs (`RowChange.row`, then `sync_log.data`): the model's declared fields, the
+ * id and the sync bookkeeping, nothing else. Synced tables hold no undeclared column today
+ * (`workspace-models.test.ts`, PLAN-001 S1); this keeps the next one, a secret or a counter, out
+ * of the log even if it slips into a synced table. The handler still gets the full row.
+ */
+export function loggedRow(
+  model: ModelName,
+  row: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const fields = SYNCED_MODELS[model].def.fields;
+  const out: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(row)) {
+    if (Object.hasOwn(fields, field) || BOOKKEEPING.some((kept) => kept === field)) {
+      out[field] = value;
+    }
+  }
+  return out;
 }
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {

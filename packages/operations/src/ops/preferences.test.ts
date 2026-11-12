@@ -42,6 +42,7 @@ function fakeStore(preferences: StoreRow | undefined) {
       writes.push('insert');
       rows.set(row.id, UserPreferences.rowSchema.parse(row));
     },
+    find: () => [],
     archive: () => undefined,
     remove: () => undefined,
   };

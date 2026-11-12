@@ -42,7 +42,7 @@ it('gives views a pool they cannot write to', () => {
   expectTypeOf(store.pool).not.toHaveProperty('setOverlay');
 });
 
-it('types dispatch by the operation: its input in, an outcome out', () => {
+it('types dispatch by the operation: its input and options in, an outcome out', () => {
   const store = new api.SyncStore({
     models: TEST_MODELS,
     workspaceId: 'ws',
@@ -52,6 +52,7 @@ it('types dispatch by the operation: its input in, an outcome out', () => {
   type Dispatch = (
     op: typeof debugRename,
     input: { id: string; title: string },
+    options?: api.DispatchOptions,
   ) => Promise<api.MutationOutcome>;
   expectTypeOf<Parameters<typeof store.dispatch<typeof debugRename>>>().toEqualTypeOf<
     Parameters<Dispatch>

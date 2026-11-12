@@ -1,6 +1,6 @@
 // Settings → Teams (SPEC-001 §3.7, §7): every team the user can see, with its member count and a
-// Join or Leave button, and "Create team". Joins show at once (optimistic); a leave shows when the
-// server confirms it (no prediction yet, PLAN-001 S8 "As built").
+// Join or Leave button, and "Create team". Joins and leaves show at once (optimistic); a refusal
+// rolls back.
 import { canEndMembership } from '@surface/domain';
 import { teamJoin } from '@surface/operations';
 import { Badge, Button, EmptyState, Skeleton } from '@surface/ui';

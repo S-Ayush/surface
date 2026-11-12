@@ -40,7 +40,6 @@ export function teamWorkflow(teamId: string): TeamWorkflow {
       // Fractional-index keys (domain-model §1): a0, a1, … order statuses within a category.
       position: `a${n}`,
       // Computed by the repo with `groupsOf`; the column has no default, so the type wants one.
-      syncGroups: [],
     };
   });
   if (defaultStatusId === undefined) {
@@ -69,7 +68,6 @@ export async function seedWorkspaceLabels(repo: Repo): Promise<ModelRow<'Label'>
         teamId: null,
         name: label.name,
         color: label.color,
-        syncGroups: [],
       }),
     );
   }

@@ -4,7 +4,8 @@
 import { EventEmitter } from 'node:events';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import { setupInputSchema } from '../src/setup/input.js';
+import { displayNameProblem } from '@surface/domain';
+import { displayNameFor, setupInputSchema } from '../src/setup/input.js';
 import { pgSetupStore } from '../src/setup/store.js';
 import { hashSetupToken } from '../src/setup/token.js';
 
@@ -75,6 +76,20 @@ function storeWith(client: FakeClient) {
 
 const writes = (client: FakeClient) =>
   client.statements.filter((s) => /^\s*(INSERT|UPDATE|DELETE)/i.test(s));
+
+describe('displayNameFor (the Admin’s handle, SPEC-001 D9)', () => {
+  it('follows the shared rule: the first word of the name, then the email, else admin', () => {
+    expect(displayNameFor('Ada Lovelace', 'ada@example.com')).toBe('ada');
+    expect(displayNameFor('李', 'li.wei@example.com')).toBe('liwei');
+    expect(displayNameFor('李', '李@example.com')).toBe('admin');
+    for (const [name, email] of [
+      ['Zoë Ng', 'zoe@example.com'],
+      ['A'.repeat(80), 'x@example.com'],
+    ] as const) {
+      expect(displayNameProblem(displayNameFor(name, email))).toBeUndefined();
+    }
+  });
+});
 
 describe('pgSetupStore.complete', () => {
   it('refuses a token that is not the current one, writing nothing (AC-1)', async () => {

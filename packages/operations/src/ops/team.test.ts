@@ -58,6 +58,10 @@ function fakeStore(): OptimisticStore & { rows: Map<string, Map<string, StoreRow
       const row = find(model, ref);
       if (row) put(model, { ...row, ...changes });
     },
+    find: (model, fields) =>
+      [...table(model).values()].filter((row) =>
+        Object.entries(fields).every(([field, value]) => row[field] === value),
+      ),
     archive: () => undefined,
     remove: (model, ref) => {
       const row = find(model, ref);
@@ -220,8 +224,73 @@ describe('membership optimistic updates', () => {
     expect(memberships(store)).toEqual([]);
   });
 
-  it('leave and removeMember wait for the server: the store finds memberships by id only', () => {
-    expect(Object.hasOwn(teamLeave, 'optimistic')).toBe(false);
-    expect(Object.hasOwn(teamRemoveMember, 'optimistic')).toBe(false);
+  it('leave hides my membership, and only mine', () => {
+    const store = seeded();
+    teamJoin.optimistic?.(store, { team: 'ENG' });
+    teamAddMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    teamLeave.optimistic?.(store, { team: 'ENG' });
+    expect(memberships(store)).toEqual([`${ENG}/${IRIS}`]);
+    // Again, as a replay or a second click: nothing more to hide.
+    teamLeave.optimistic?.(store, { team: 'ENG' });
+    expect(memberships(store)).toEqual([`${ENG}/${IRIS}`]);
+  });
+
+  it('removeMember hides the named user’s membership, and a non-member changes nothing', () => {
+    const store = seeded();
+    teamJoin.optimistic?.(store, { team: 'ENG' });
+    teamAddMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    teamRemoveMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    expect(memberships(store)).toEqual([`${ENG}/${ME}`]);
+    teamRemoveMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    expect(memberships(store)).toEqual([`${ENG}/${ME}`]);
+  });
+
+  it('the last member of a public team may leave (E12)', () => {
+    const store = seeded();
+    teamJoin.optimistic?.(store, { team: 'ENG' });
+    teamLeave.optimistic?.(store, { team: 'ENG' });
+    expect(memberships(store)).toEqual([]);
+  });
+
+  it('keep a private team’s last member, as the server refuses (E12, D3)', () => {
+    const store = seeded();
+    teamJoin.optimistic?.(store, { team: 'ENG' });
+    store.patch('Team', 'ENG', { private: true });
+    teamLeave.optimistic?.(store, { team: 'ENG' });
+    teamRemoveMember.optimistic?.(store, { team: 'ENG', user: 'me' });
+    expect(memberships(store)).toEqual([`${ENG}/${ME}`]);
+    // With someone else in it, the membership ends.
+    teamAddMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    teamLeave.optimistic?.(store, { team: 'ENG' });
+    expect(memberships(store)).toEqual([`${ENG}/${IRIS}`]);
+  });
+
+  it('show nothing for a private team I am not in, as the server answers NOT_FOUND', () => {
+    const store = seeded();
+    teamAddMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    store.patch('Team', 'ENG', { private: true });
+    teamJoin.optimistic?.(store, { team: 'ENG' });
+    teamAddMember.optimistic?.(store, { team: 'ENG', user: 'me' });
+    teamRemoveMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    expect(memberships(store)).toEqual([`${ENG}/${IRIS}`]);
+  });
+
+  it('show nothing more for a private team once I have left it', () => {
+    const store = seeded();
+    teamJoin.optimistic?.(store, { team: 'ENG' });
+    teamAddMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    store.patch('Team', 'ENG', { private: true });
+    teamLeave.optimistic?.(store, { team: 'ENG' });
+    teamAddMember.optimistic?.(store, { team: 'ENG', user: 'me' });
+    teamRemoveMember.optimistic?.(store, { team: 'ENG', user: 'iris@example.com' });
+    expect(memberships(store)).toEqual([`${ENG}/${IRIS}`]);
+  });
+
+  it('leave and removeMember do nothing for a team the store lacks', () => {
+    const store = seeded();
+    teamJoin.optimistic?.(store, { team: 'ENG' });
+    teamLeave.optimistic?.(store, { team: 'SEC' });
+    teamRemoveMember.optimistic?.(store, { team: 'SEC', user: 'me' });
+    expect(memberships(store)).toEqual([`${ENG}/${ME}`]);
   });
 });

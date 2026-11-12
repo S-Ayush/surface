@@ -146,7 +146,7 @@ export async function insertMembership(
   userId: string,
 ): Promise<void> {
   try {
-    await ctx.repo.insert('TeamMembership', { id: uuidv7(), teamId, userId, syncGroups: [] });
+    await ctx.repo.insert('TeamMembership', { id: uuidv7(), teamId, userId });
   } catch (error) {
     // Defence for writers that don't lock the team first (setup, invites): never INTERNAL.
     if (isUniqueViolation(error, 'team_memberships_team_user_key')) {

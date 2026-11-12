@@ -23,9 +23,10 @@ export function displayNameProblem(displayName: string): string | undefined {
 
 /**
  * A handle from someone's name or email, to start from (`Ada Lovelace` → `ada`): the first word,
- * lowercase, without accents or symbols; else the email's local part; else "member".
+ * lowercase, without accents or symbols; else the email's local part; else `fallback`, which must
+ * itself be a valid display name ("member" for an invitee, "admin" at setup).
  */
-export function displayNameFrom(name: string, email = ''): string {
+export function displayNameFrom(name: string, email = '', fallback = 'member'): string {
   const handle = (source: string) =>
     source
       .normalize('NFKD')
@@ -33,7 +34,7 @@ export function displayNameFrom(name: string, email = ''): string {
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '')
       .slice(0, DISPLAY_NAME_MAX_LENGTH);
-  return handle(name.trim().split(/\s+/)[0] ?? '') || handle(email.split('@')[0] ?? '') || 'member';
+  return handle(name.trim().split(/\s+/)[0] ?? '') || handle(email.split('@')[0] ?? '') || fallback;
 }
 
 /**

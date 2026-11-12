@@ -74,6 +74,18 @@ export type MutationOutcome =
   | { readonly status: 'confirmed' }
   | { readonly status: 'rejected'; readonly error: RejectionError };
 
+/** Per-dispatch choices (`dispatch(op, input, options)`). */
+export interface DispatchOptions {
+  /**
+   * Whether the app's `onRejected` handler (the shell's toast) should hear of a rejection. Asked
+   * at the moment of the rejection: a form that shows the refusal on its own field answers
+   * `false` while it is still waiting for it, and `true` once it stopped (closed, or queued
+   * offline), so the user hears of it exactly once. Default, and when it throws: `true`. Not
+   * kept across a reload: a mutation sent again from storage is reported.
+   */
+  readonly reportRejection?: () => boolean;
+}
+
 /** A mutation the server rejected (SPEC-002 §3.5): for the toast, the inspector and forms. */
 export interface Rejection extends RejectionError {
   readonly op: string;
@@ -117,7 +129,8 @@ export interface QueueOptions {
   /** The overlay changed: one mutation added on top, or the list changed. */
   readonly onPush: (mutation: OverlayMutation) => void;
   readonly onRebuild: () => void;
-  readonly onRejected: (rejection: Rejection) => void;
+  /** `report`: whether the app's handler should hear of it (`DispatchOptions.reportRejection`). */
+  readonly onRejected: (rejection: Rejection, report: boolean) => void;
   readonly onOutdated: () => void;
   /**
    * `401`: no session, or another user's (SPEC-002 E14). The queue has parked;
@@ -149,6 +162,17 @@ interface Entry {
   /** Epoch ms of the last send, kept when `sent` is reset: a lost response may still commit. */
   sentAt: number | undefined;
   readonly settle: (outcome: MutationOutcome) => void;
+  readonly reportRejection?: () => boolean;
+}
+
+/** Whether the app hears of this entry's rejection; a caller's bug never silences it. */
+function reportable(entry: Entry): boolean {
+  if (entry.reportRejection === undefined) return true;
+  try {
+    return entry.reportRejection();
+  } catch {
+    return true;
+  }
 }
 
 /** A refusal of the CSRF token, not of the batch (SPEC-001 §6.1). */
@@ -213,7 +237,11 @@ export class MutationQueue {
   }
 
   /** SPEC-002 §3.3. Throws `InvalidInputError` before queueing anything. */
-  dispatch<Op extends AnyOperation>(op: Op, input: InputOf<Op>): Promise<MutationOutcome> {
+  dispatch<Op extends AnyOperation>(
+    op: Op,
+    input: InputOf<Op>,
+    options: DispatchOptions = {},
+  ): Promise<MutationOutcome> {
     if (op.kind !== 'mutation') {
       throw new Error(`${op.name} is a query; dispatch only takes mutations`);
     }
@@ -257,6 +285,7 @@ export class MutationQueue {
       sent: false,
       sentAt: undefined,
       settle,
+      ...(options.reportRejection ? { reportRejection: options.reportRejection } : {}),
     };
     this.#entries.set(seq, entry);
     this.#publish();
@@ -647,7 +676,7 @@ export class MutationQueue {
     // Reported once rolled back, so a toast handler sees what the user sees (review m2).
     for (const { entry, error } of rejected) {
       const { op, seq, input } = entry.record;
-      this.#options.onRejected({ op, seq, input, ...error });
+      this.#options.onRejected({ op, seq, input, ...error }, reportable(entry));
       entry.settle({ status: 'rejected', error });
     }
   }

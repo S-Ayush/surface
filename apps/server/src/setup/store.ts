@@ -114,7 +114,6 @@ export function pgSetupStore(pool: pg.Pool, options: PgSetupStoreOptions = {}): 
         await repo.insert('Workspace', {
           id: uuidv7(),
           name: input.workspace.name,
-          syncGroups: [],
         });
         const userId = uuidv7();
         await repo.insert('User', {
@@ -124,9 +123,8 @@ export function pgSetupStore(pool: pg.Pool, options: PgSetupStoreOptions = {}): 
           displayName: displayNameFor(input.admin.name, input.admin.email),
           timezone,
           role: 'admin',
-          syncGroups: [],
         });
-        await repo.insert('UserPreferences', { id: userId, syncGroups: [] });
+        await repo.insert('UserPreferences', { id: userId });
         await seedWorkspaceLabels(repo);
         const teamId = uuidv7();
         const workflow = teamWorkflow(teamId);
@@ -138,14 +136,12 @@ export function pgSetupStore(pool: pg.Pool, options: PgSetupStoreOptions = {}): 
           name: input.team.name,
           timezone,
           defaultStatusId: workflow.defaultStatusId,
-          syncGroups: [],
         });
         await seedTeamWorkflow(repo, workflow);
         await repo.insert('TeamMembership', {
           id: uuidv7(),
           teamId,
           userId,
-          syncGroups: [],
         });
         await repo.flush({});
 

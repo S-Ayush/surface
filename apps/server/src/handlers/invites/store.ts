@@ -145,14 +145,13 @@ export const PG_INVITE_STORE: InviteStore = {
         displayName: member.displayName,
         timezone: member.timezone,
         role: member.invite.role,
-        syncGroups: [],
       });
     } catch (error) {
       if (isUniqueViolation(error, 'users_email_idx')) throw new TakenError('email');
       if (isUniqueViolation(error, 'users_display_name_idx')) throw new TakenError('displayName');
       throw error;
     }
-    await repo.insert('UserPreferences', { id: userId, syncGroups: [] });
+    await repo.insert('UserPreferences', { id: userId });
 
     const { rows: teams } = await db.query<InviteTeam>(
       `SELECT t.id, t.private, t.archived_at IS NOT NULL AS archived,
@@ -166,7 +165,7 @@ export const PG_INVITE_STORE: InviteStore = {
     );
     const teamIds = teamsToJoin(teams);
     for (const teamId of teamIds) {
-      await repo.insert('TeamMembership', { id: uuidv7(), teamId, userId, syncGroups: [] });
+      await repo.insert('TeamMembership', { id: uuidv7(), teamId, userId });
     }
     const flushed = await repo.flush({});
 

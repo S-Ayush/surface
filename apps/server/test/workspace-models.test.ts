@@ -10,6 +10,7 @@ import { getTableConfig } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 import { sessions, teamIssueCounters, userCredentials } from '../src/db/schema/index.js';
 import { SYNCED_MODELS } from '../src/sync/models.js';
+import { loggedRow } from '../src/sync/repo.js';
 import { GROUPS_FIELD, syncRegistry } from '../src/sync/registry.js';
 
 const production = syncRegistry({ includeFixtures: false });
@@ -113,5 +114,35 @@ describe('groupsOf without the database (permissions.md §2)', () => {
 
   it('shows a team row without a team id to nobody', async () => {
     expect(await SYNCED_MODELS.WorkflowStatus.groupsOf({}, noDb)).toEqual([]);
+  });
+});
+
+describe('the row a change logs (repo.ts, defence in depth for sync_log)', () => {
+  it('keeps the declared fields, the id and the sync bookkeeping, and drops anything else', () => {
+    const at = new Date('2026-11-12T10:00:00.000Z');
+    const row = {
+      id: 'u-1',
+      email: 'ada@example.com',
+      name: 'Ada',
+      displayName: 'ada',
+      avatarFileId: null,
+      timezone: 'UTC',
+      role: 'admin',
+      active: true,
+      createdAt: at,
+      updatedAt: at,
+      syncGroups: ['workspace'],
+      // A column a synced table must never have (PLAN-001 S1 review), as if one slipped in.
+      passwordHash: '$argon2id$secret',
+    };
+    const logged = loggedRow('User', row);
+    expect(logged).not.toHaveProperty('passwordHash');
+    const { passwordHash: _dropped, ...kept } = row;
+    expect(logged).toEqual(kept);
+    expect(loggedRow('Label', { id: 'l-1', archivedAt: at, syncGroups: [], extra: 1 })).toEqual({
+      id: 'l-1',
+      archivedAt: at,
+      syncGroups: [],
+    });
   });
 });

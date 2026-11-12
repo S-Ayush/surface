@@ -9,6 +9,7 @@ import type { ScreenProps } from '../../app/screens.js';
 import { useSettingsApi } from '../files/api.js';
 import { ImagePicker } from '../files/ImagePicker.js';
 import { fileUrl } from '../files/url.js';
+import { useShowsRejection } from '../teams/submit.js';
 import styles from './profile.module.css';
 import {
   changeAvatar,
@@ -67,6 +68,7 @@ export function ProfileScreen(_props: ScreenProps) {
 function AvatarSection({ me }: { readonly me: Me }) {
   const app = useApp();
   const api = useSettingsApi();
+  const shows = { showsRejection: useShowsRejection() };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -94,8 +96,8 @@ function AvatarSection({ me }: { readonly me: Me }) {
         src={fileUrl(me.avatarFileId)}
         busy={busy}
         error={error}
-        onPick={(file) => void run((store) => changeAvatar(api, store, file))}
-        onRemove={() => void run((store) => removeAvatar(store))}
+        onPick={(file) => void run((store) => changeAvatar(api, store, file, shows))}
+        onRemove={() => void run((store) => removeAvatar(store, shows))}
       />
     </section>
   );
@@ -103,6 +105,7 @@ function AvatarSection({ me }: { readonly me: Me }) {
 
 function ProfileForm({ saved }: { readonly saved: ProfileValues }) {
   const app = useApp();
+  const showsRejection = useShowsRejection();
   // Only the user's edits: until there is one, a field follows the saved value as deltas land.
   const [edits, setEdits] = useState<Partial<ProfileValues>>({});
   const [touched, setTouched] = useState(false);
@@ -134,7 +137,7 @@ function ProfileForm({ saved }: { readonly saved: ProfileValues }) {
     setBusy(true);
     setError(undefined);
     setNote(undefined);
-    const result = await saveProfile(store, saved, values);
+    const result = await saveProfile(store, saved, values, { showsRejection });
     setBusy(false);
     if (result.kind === 'saved') reset();
     else if (result.kind === 'queued') setNote(result.note);

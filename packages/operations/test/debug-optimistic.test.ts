@@ -18,6 +18,7 @@ function memoryStore(): OptimisticStore & { rows: Map<string, StoreRow> } {
       if (row) rows.set(id, { ...row, ...changes });
     },
     insert: (_model, row) => void rows.set(row.id, row),
+    find: () => [],
     archive: () => undefined,
     remove: (_model, id) => void rows.delete(id),
   };

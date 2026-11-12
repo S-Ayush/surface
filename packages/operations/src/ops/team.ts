@@ -6,12 +6,13 @@
  *
  * Optimistic updates (SPEC-003 §8): server-computed rows are not predicted, so `team.create`
  * shows the team and my membership but not its statuses. `team.leave` and `team.removeMember`
- * predict nothing yet: the store finds rows by id only, and a membership is named by its team
- * and user (handoff to session D, PLAN-001 S8 "As built").
+ * find the membership by team and user (`store.find`) and hide it, unless the server would refuse
+ * (a private team's last member, SPEC-001 E12, D3).
  */
 import {
   COLOR_HUES,
   NEW_TEAM_SETTINGS,
+  canEndMembership,
   RESERVED_TEAM_KEYS,
   TeamRef,
   UserRef,
@@ -110,10 +111,11 @@ function rowBasics(store: OptimisticStore) {
   return { groups: [WORKSPACE_GROUP], createdAt: at, updatedAt: at };
 }
 
-/** Shows a membership until the server's row arrives. The UI offers joining to non-members only. */
+/** Shows a membership until the server's row arrives; a member already changes nothing. */
 function insertMembership(store: OptimisticStore, teamId: string, userId: string): void {
+  // The server's row has its own id, so look by team and user, not by the overlay id.
+  if (store.find('TeamMembership', { teamId, userId }).length > 0) return;
   const id = overlayId(teamId, userId);
-  if (store.get('TeamMembership', id) !== undefined) return;
   store.insert('TeamMembership', {
     ...rowBasics(store),
     id,
@@ -121,6 +123,46 @@ function insertMembership(store: OptimisticStore, teamId: string, userId: string
     userId,
     triageResponsible: false,
   });
+}
+
+/**
+ * The team `ref` names, as the server would see it for me: a private team is visible to its
+ * members only (permissions.md §5), so once I have left one in a pending mutation, later ones
+ * naming it predict nothing, as the server answers them `NOT_FOUND`.
+ */
+function visibleTeam(store: OptimisticStore, ref: string, me: string | undefined) {
+  const team = store.get('Team', ref);
+  const teamId = idOf(team);
+  if (team === undefined || teamId === undefined) return undefined;
+  if (team['private'] === false) return team;
+  if (me === undefined) return undefined;
+  return store.find('TeamMembership', { teamId, userId: me }).length > 0 ? team : undefined;
+}
+
+/**
+ * Hides `userId`'s membership of `team` until the server confirms, as `removeMember` on the
+ * server does: a non-member changes nothing, and the last member of a private team stays (E12,
+ * D3: the server refuses, so nothing is predicted). A team the store lacks (a private team the
+ * user isn't in) predicts nothing. Only removes: never shows a row the store didn't have.
+ */
+function removeMembership(
+  store: OptimisticStore,
+  team: StoreRow | undefined,
+  userId: string | undefined,
+): void {
+  const teamId = idOf(team);
+  if (team === undefined || teamId === undefined || userId === undefined) return;
+  const members = store.find('TeamMembership', { teamId });
+  const mine = members.filter((membership) => membership['userId'] === userId);
+  if (mine.length === 0) return;
+  // People, not rows: a pending join's overlay row may sit next to the server's own row.
+  const people = new Set(members.map((membership) => membership['userId'])).size;
+  // Anything but a known public team counts as private: refusing to predict is the safe side.
+  if (!canEndMembership({ private: team['private'] !== false }, people)) return;
+  for (const membership of mine) {
+    const id = idOf(membership);
+    if (id !== undefined) store.remove('TeamMembership', id);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -237,8 +279,8 @@ export const teamJoin = defineOperation({
   // A team page's command menu (SPEC-005 §4.1). For a member it changes nothing.
   ui: { title: 'Join team', icon: 'user-plus', contexts: ['team'], shortcut: null },
   optimistic: (store, input) => {
-    const teamId = idOf(store.get('Team', input.team));
     const myId = idOf(store.get('User', 'me'));
+    const teamId = idOf(visibleTeam(store, input.team, myId));
     if (teamId !== undefined && myId !== undefined) insertMembership(store, teamId, myId);
   },
 });
@@ -257,6 +299,12 @@ export const teamLeave = defineOperation({
   permission: (p) => p.any(),
   destructive: false,
   examples: [{ team: 'ENG' }],
+  // A team page's command menu (SPEC-005 §4.1). It asks first (features/teams/commands.ts).
+  ui: { title: 'Leave team…', icon: 'log-out', contexts: ['team'], shortcut: null },
+  optimistic: (store, input) => {
+    const myId = idOf(store.get('User', 'me'));
+    removeMembership(store, visibleTeam(store, input.team, myId), myId);
+  },
 });
 
 export const teamAddMember = defineOperation({
@@ -273,7 +321,7 @@ export const teamAddMember = defineOperation({
   destructive: false,
   examples: [{ team: 'ENG', user: 'iris@example.com' }],
   optimistic: (store, input) => {
-    const teamId = idOf(store.get('Team', input.team));
+    const teamId = idOf(visibleTeam(store, input.team, idOf(store.get('User', 'me'))));
     const userId = idOf(store.get('User', input.user));
     if (teamId !== undefined && userId !== undefined) insertMembership(store, teamId, userId);
   },
@@ -292,4 +340,10 @@ export const teamRemoveMember = defineOperation({
   permission: (p, { team }) => p.admin() || p.teamMember(team),
   destructive: true,
   examples: [{ team: 'ENG', user: 'iris@example.com' }],
+  // A team page's command menu: a page of the team's members (features/teams/commands.ts).
+  ui: { title: 'Remove member…', icon: 'user-minus', contexts: ['team'], shortcut: null },
+  optimistic: (store, input) => {
+    const team = visibleTeam(store, input.team, idOf(store.get('User', 'me')));
+    removeMembership(store, team, idOf(store.get('User', input.user)));
+  },
 });

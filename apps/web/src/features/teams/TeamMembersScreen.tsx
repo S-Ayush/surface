@@ -1,6 +1,6 @@
 // Team settings → Members (SPEC-001 §3.7): the members, "Add member" and "Remove", for members of
-// the team and Admins (`team.addMember`, `team.removeMember`). Adding shows at once (optimistic);
-// removing shows when the server confirms it. The last member of a private team can't be removed
+// the team and Admins (`team.addMember`, `team.removeMember`). Adding and removing show at once
+// (optimistic); a refusal rolls back. The last member of a private team can't be removed
 // or leave (E12, D3). Leaving yourself works as everywhere else (useLeaveTeam).
 import { teamAddMember, teamRemoveMember } from '@surface/operations';
 import { Avatar, Button, Dialog, DialogClose, Menu } from '@surface/ui';

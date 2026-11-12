@@ -1,6 +1,6 @@
 // Leaving a team, wherever it is offered (Settings → Teams, the team ⋯ menu, Members). Leaving a
 // private team is asked first: only a member can add you back. A public team is one click to join
-// again, so it isn't. The leave shows when the server confirms it (no prediction yet, PLAN-001 S8).
+// again, so it isn't. The leave shows at once (optimistic); a refusal rolls back.
 import { teamLeave } from '@surface/operations';
 import { Button, Dialog, DialogClose } from '@surface/ui';
 import { useState, type ReactNode } from 'react';

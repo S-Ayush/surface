@@ -9,6 +9,7 @@ import type { ScreenProps } from '../../app/screens.js';
 import { useSettingsApi } from '../files/api.js';
 import { ImagePicker } from '../files/ImagePicker.js';
 import { fileUrl } from '../files/url.js';
+import { useShowsRejection } from '../teams/submit.js';
 import { changeLogo, removeLogo, saveWorkspaceName, workspaceNameProblem } from './save.js';
 import styles from './workspace.module.css';
 
@@ -61,6 +62,7 @@ function LogoSection({
 }) {
   const app = useApp();
   const api = useSettingsApi();
+  const shows = { showsRejection: useShowsRejection() };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -85,14 +87,15 @@ function LogoSection({
       square
       busy={busy}
       error={error}
-      onPick={(file) => void run((store) => changeLogo(api, store, file))}
-      onRemove={() => void run((store) => removeLogo(store))}
+      onPick={(file) => void run((store) => changeLogo(api, store, file, shows))}
+      onRemove={() => void run((store) => removeLogo(store, shows))}
     />
   );
 }
 
 function WorkspaceForm({ saved }: { readonly saved: string }) {
   const app = useApp();
+  const showsRejection = useShowsRejection();
   // Only the user's edit: until there is one, the field follows the saved name as deltas land.
   const [edit, setEdit] = useState<string>();
   const [touched, setTouched] = useState(false);
@@ -118,7 +121,7 @@ function WorkspaceForm({ saved }: { readonly saved: string }) {
     setBusy(true);
     setError(undefined);
     setNote(undefined);
-    const result = await saveWorkspaceName(store, name, saved);
+    const result = await saveWorkspaceName(store, name, saved, { showsRejection });
     setBusy(false);
     if (result.kind === 'saved') reset();
     else if (result.kind === 'queued') setNote(result.note);

@@ -6,7 +6,7 @@ import { Button, ColorPicker, Input } from '@surface/ui';
 import { useState, type FormEvent } from 'react';
 import { useApp } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
-import { submitMutation } from './submit.js';
+import { submitMutation, useShowsRejection } from './submit.js';
 import {
   teamSettingsChanges,
   teamSettingsForm,
@@ -29,6 +29,8 @@ export function TeamGeneralScreen({ params }: ScreenProps) {
 
 function GeneralForm({ details }: { readonly details: TeamDetails }) {
   const app = useApp();
+  // The form shows a refusal itself (role="alert"), so the shell's toast stays quiet.
+  const showsRejection = useShowsRejection();
   const { team, access } = details;
   const saved = teamSettingsForm(team);
   // Only what the user edited: every other field follows the saved team as its deltas land.
@@ -52,7 +54,7 @@ function GeneralForm({ details }: { readonly details: TeamDetails }) {
     if (store === null || busy || changes === undefined) return;
     if (Object.keys(teamSettingsProblems(form)).length > 0) return;
     setBusy(true);
-    const result = await submitMutation(store, teamUpdate, changes);
+    const result = await submitMutation(store, teamUpdate, changes, { showsRejection });
     setBusy(false);
     if (result.kind === 'rejected' || result.kind === 'failed') setError(result.message);
     else setEdits({});

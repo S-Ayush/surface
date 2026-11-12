@@ -4,6 +4,8 @@
  */
 import {
   canonicalTimeZone,
+  displayNameFrom,
+  displayNameProblem,
   emailProblem,
   NAME_MAX_LENGTH,
   nameProblem,
@@ -56,16 +58,12 @@ export const setupInputSchema = z.object({
 export type SetupInput = z.infer<typeof setupInputSchema>;
 
 /**
- * The Admin's @mention handle, from their name or email (`Ada Lovelace` → `ada`). The first user
- * can't collide with anyone; they can change it in their profile.
+ * The Admin's @mention handle, from their name or email (`Ada Lovelace` → `ada`), by the shared
+ * rule the invite page uses (SPEC-001 D9). The first user can't collide with anyone; they can
+ * change it in their profile.
  */
 export function displayNameFor(name: string, email: string): string {
-  const handle = (source: string) =>
-    source
-      .normalize('NFKD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
-      .slice(0, 32);
-  return handle(name.split(/\s+/)[0] ?? '') || handle(email.split('@')[0] ?? '') || 'admin';
+  const handle = displayNameFrom(name, email, 'admin');
+  // The rule only ever gives a valid handle; checked so a change to it can't break setup.
+  return displayNameProblem(handle) === undefined ? handle : 'admin';
 }

@@ -36,7 +36,7 @@ export default handler(userUpdatePreferences, async (ctx, input) => {
   const values = mergePreferences(row?.values, changes);
   if (row === undefined) {
     // Setup creates the first Admin's row; anyone else gets theirs on their first change.
-    await ctx.repo.insert('UserPreferences', { id: userId, values, syncGroups: [] });
+    await ctx.repo.insert('UserPreferences', { id: userId, values });
   } else if (JSON.stringify(values) !== JSON.stringify(row.values)) {
     await ctx.repo.update('UserPreferences', userId, { values });
   }

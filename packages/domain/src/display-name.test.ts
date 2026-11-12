@@ -37,6 +37,11 @@ describe('displayNameFrom', () => {
     expect(displayNameFrom('', '')).toBe('member');
   });
 
+  it('falls back to the handle it is given when neither name nor email has one', () => {
+    expect(displayNameFrom('李', '李@example.com', 'admin')).toBe('admin');
+    expect(displayNameFrom('Ada', '', 'admin')).toBe('ada');
+  });
+
   it('always gives a valid display name', () => {
     fc.assert(
       fc.property(fc.string(), fc.string(), (name, email) => {

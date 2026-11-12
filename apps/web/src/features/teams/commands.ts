@@ -1,13 +1,15 @@
 // Command-menu entries for the team operations (SPEC-005 §4.1; session C's handoff, PLAN-005 S6).
 // `team.create` opens the create-team form, which TeamsHost answers (features/hosts.ts). "Rename
 // team…" (`team.update`) opens the team's General settings, where its rename form is: the menu's
-// pages are lists, with no text field. `team.leave` and `team.removeMember` get `ui` once they can
-// predict their effect (lint rule 3; SPEC-001 D6).
-import { Team } from '@surface/domain/model';
-import { teamJoin } from '@surface/operations';
+// pages are lists, with no text field. "Leave team…" asks first, as a page with one choice, as
+// leaving does everywhere else for a private team; "Remove member…" is a page of the team's
+// members. Both predict their effect (`store.find`, PLAN-001 S8 follow-up).
+import { Team, TeamMembership, User } from '@surface/domain/model';
+import { teamJoin, teamLeave, teamRemoveMember } from '@surface/operations';
 import { toast } from '@surface/ui';
-import type { CommandContext } from '../../command-menu/model.js';
+import type { CommandContext, CommandPage } from '../../command-menu/model.js';
 import type { OperationCommand } from '../../command-menu/sources/operations.js';
+import { canEndMembershipOf, LAST_PRIVATE_MEMBER, teamMembers } from './model.js';
 import { submitMutation, toastIfFailed } from './submit.js';
 
 /** The team a command acts on: the focused team (a team page's context chip). */
@@ -43,8 +45,82 @@ async function join(ctx: CommandContext): Promise<void> {
   toastIfFailed(await submitMutation(ctx.store, teamJoin, { team: id }));
 }
 
+/** The focused team with its members, read from the replica when the page shows. */
+function focusedTeam(ctx: CommandContext) {
+  const id = targetTeamId(ctx);
+  const store = ctx.store;
+  const team = id === undefined || store === null ? undefined : store.pool.get(Team, id);
+  if (store === null || team === undefined) return undefined;
+  const memberships = store.pool.all(TeamMembership);
+  return {
+    team,
+    store,
+    members: teamMembers(team.id, memberships, store.pool.all(User)),
+    canEnd: canEndMembershipOf(team, memberships),
+  };
+}
+
+/** Leave the focused team, once chosen: the page is the "are you sure" step. */
+function leavePage(ctx: CommandContext): CommandPage {
+  const found = focusedTeam(ctx);
+  const name = found?.team.name ?? 'this team';
+  const me = ctx.actor?.userId;
+  const member = found?.members.some((m) => m.id === me) === true;
+  return {
+    title: `Leave ${name}`,
+    empty: !member
+      ? 'You’re not a member of this team.'
+      : found?.canEnd === false
+        ? LAST_PRIVATE_MEMBER
+        : undefined,
+    items: () => {
+      if (found === undefined || !member || !found.canEnd) return [];
+      const { team, store } = found;
+      return [
+        {
+          id: 'leave',
+          // Private: only a member can add you back (useLeaveTeam asks the same).
+          title: team.private
+            ? `Leave ${team.key}: only a member can add you back`
+            : `Leave ${team.key}`,
+          run: async () => {
+            // A server refusal is the shell's toast; a change the store didn't take isn't.
+            toastIfFailed(await submitMutation(store, teamLeave, { team: team.id }));
+          },
+        },
+      ];
+    },
+  };
+}
+
+/** Remove one of the focused team's members. */
+function removePage(ctx: CommandContext): CommandPage {
+  const found = focusedTeam(ctx);
+  return {
+    title: 'Remove member',
+    placeholder: 'Find a member…',
+    empty: found?.canEnd === false ? LAST_PRIVATE_MEMBER : 'This team has no members.',
+    items: () => {
+      if (found === undefined || !found.canEnd) return [];
+      const { team, store, members } = found;
+      return members.map((member) => ({
+        id: member.id,
+        title: member.name,
+        keywords: [member.displayName, member.email],
+        run: async () => {
+          toastIfFailed(
+            await submitMutation(store, teamRemoveMember, { team: team.id, user: member.id }),
+          );
+        },
+      }));
+    },
+  };
+}
+
 export const TEAM_COMMANDS: Readonly<Record<string, OperationCommand>> = {
   'team.create': { opens: 'form:create-team' },
   'team.join': { refs: targetTeamRefs, run: (ctx) => join(ctx) },
+  'team.leave': { refs: targetTeamRefs, page: (ctx) => leavePage(ctx) },
+  'team.removeMember': { refs: targetTeamRefs, page: (ctx) => removePage(ctx) },
   'team.update': { refs: targetTeamRefs, run: (ctx) => rename(ctx) },
 };

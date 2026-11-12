@@ -15,6 +15,7 @@ function fakeStore(signedIn = true) {
     get: (model, ref) => (signedIn && model === 'User' && ref === 'me' ? { id: ME } : undefined),
     patch: (model, ref, changes) => void patches.push({ model, ref, changes }),
     insert: () => undefined,
+    find: () => [],
     archive: () => undefined,
     remove: () => undefined,
   };

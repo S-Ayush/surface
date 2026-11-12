@@ -255,6 +255,86 @@ describe('submitMutation', () => {
     expect(await result).toEqual({ kind: 'queued' });
   });
 
+  it('passes a refusal’s issues on, so a form can place it on its field', async () => {
+    const issues = [{ path: ['key'], message: 'Team key ENG is taken. Try ENGI.' }];
+    const refused = store(
+      'online',
+      Promise.resolve({
+        status: 'rejected',
+        error: { code: 'CONFLICT', message: 'Taken', issues },
+      }),
+    );
+    expect(await submitMutation(refused.store, teamCreate, { name: 'Design' })).toEqual({
+      kind: 'rejected',
+      code: 'CONFLICT',
+      message: 'Taken',
+      issues,
+    });
+  });
+
+  /** The `reportRejection` the store was given, asked as the store would at a rejection. */
+  const reports = (dispatch: ReturnType<typeof store>['dispatch']) => () => {
+    const calls = dispatch.mock.calls as unknown as [unknown, unknown, unknown][];
+    const options = calls[0]?.[2] as { reportRejection?: () => boolean } | undefined;
+    return options?.reportRejection?.() ?? true;
+  };
+
+  it('keeps the shell’s toast quiet while a form that shows the refusal waits for it', async () => {
+    let answer: (outcome: unknown) => void = () => undefined;
+    const waiting = store(
+      'online',
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    let open = true;
+    const result = submitMutation(
+      waiting.store,
+      teamCreate,
+      { name: 'Design' },
+      { showsRejection: () => open },
+    );
+    const reported = reports(waiting.dispatch);
+    expect(reported()).toBe(false);
+    open = false; // closed while waiting: nobody else would show it
+    expect(reported()).toBe(true);
+    open = true;
+    answer({ status: 'rejected', error: { code: 'CONFLICT', message: 'Taken' } });
+    expect(await result).toMatchObject({ kind: 'rejected' });
+  });
+
+  it('lets the shell report a refusal that comes after the form stopped waiting', async () => {
+    const pending = store('online', new Promise(() => undefined));
+    const result = submitMutation(
+      pending.store,
+      teamCreate,
+      { name: 'Design' },
+      { showsRejection: () => true },
+    );
+    pending.drop();
+    expect(await result).toEqual({ kind: 'queued' });
+    expect(reports(pending.dispatch)()).toBe(true);
+
+    const offline = store('offline', new Promise(() => undefined));
+    await submitMutation(
+      offline.store,
+      teamCreate,
+      { name: 'Design' },
+      { showsRejection: () => true },
+    );
+    expect(reports(offline.dispatch)()).toBe(true);
+  });
+
+  it('lets the shell report every refusal for a caller with no form to show it in', async () => {
+    const refused = store(
+      'online',
+      Promise.resolve({ status: 'rejected', error: { code: 'CONFLICT', message: 'Taken' } }),
+    );
+    const result = submitMutation(refused.store, teamCreate, { name: 'Design' });
+    expect(reports(refused.dispatch)()).toBe(true);
+    await result;
+  });
+
   it('reports a change the store refused to queue', async () => {
     const broken = {
       connection: 'online',

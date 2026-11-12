@@ -23,7 +23,11 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
-import type { MutationResult } from '@surface/sync-protocol';
+import {
+  mutationIssueSchema,
+  type MutationIssue,
+  type MutationResult,
+} from '@surface/sync-protocol';
 import {
   evaluatePermission,
   fieldsProblem,
@@ -537,11 +541,11 @@ export function createExecutor(deps: ExecutorDeps): Executor {
           if (!recordable(error)) throw error;
           // The client row stays locked: only the mutation's own work is undone.
           await client.query('ROLLBACK TO SAVEPOINT mutation');
-          const { code, message } = toOperationError(error, def?.name, correlationId);
-          if (code === 'INTERNAL') {
+          const refused = toOperationError(error, def?.name, correlationId);
+          if (refused.code === 'INTERNAL') {
             log.error({ err: loggableError(error), op: def?.name }, 'operation failed');
           }
-          const rejected: MutationResult = { seq, status: 'error', error: { code, message } };
+          const rejected = rejectedResult(seq, refused);
           await recordResult(client, clientId, rejected);
           return { outcome: { kind: 'result', result: rejected } };
         }
@@ -722,6 +726,33 @@ function invalidInput(error: z.ZodError): SurfaceError {
 
 const CHANGED_MEANWHILE =
   'Something this change refers to was changed or deleted meanwhile. Reload and try again.';
+
+/**
+ * A recorded rejection (sync-protocol §4.4, v0.6): the code, the message and the `issues` the
+ * operations API returns for the same error, so a form can show the refusal on its field. Not
+ * `candidates`, `operation` or `correlationId`: the wire carries none of them. An issue the wire
+ * can't carry is left out rather than failing the client's decode of the whole response.
+ */
+function rejectedResult(seq: number, error: OperationError): MutationResult {
+  const issues: MutationIssue[] = [];
+  for (const issue of error.issues ?? []) {
+    const parsed = mutationIssueSchema.safeParse({
+      path: [...issue.path],
+      message: issue.message,
+      ...(issue.hint !== undefined ? { hint: issue.hint } : {}),
+    });
+    if (parsed.success) issues.push(parsed.data);
+  }
+  return {
+    seq,
+    status: 'error',
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(issues.length > 0 ? { issues } : {}),
+    },
+  };
+}
 
 function toOperationError(
   error: unknown,

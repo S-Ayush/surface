@@ -200,7 +200,8 @@ Added 2026-11-06 (PLAN-003 S5). The Filter tree is defined in [domain-model §5]
 
 ## 8. Client contract (`optimistic`)
 
-- `optimistic(store, input)` runs in the client after local validation. It may read anything in the store and write only through `store.patch / insert / archive / remove` on the overlay.
+- `optimistic(store, input)` runs in the client after local validation. It may read anything in the store (`store.get` by id or reference, `store.find(model, fields)` for the rows whose fields equal the given values, e.g. a membership by team and user) and write only through `store.patch / insert / archive / remove` on the overlay. Reads see base plus the pending mutations before this one.
+- *Changed 2026-11-12 (PLAN-001 S8 follow-up):* `store.find` added, so `team.leave` and `team.removeMember` can find the membership they end (SPEC-001 D6). Additive.
 - It must be **pure and deterministic** (no `Date.now()`; use `store.now`, which is fixed per mutation). It must not call the network.
 - Server-computed values (issue `number`, automation side effects) are not simulated. The UI shows placeholders until the delta arrives.
 - New entities use client-generated UUIDv7 IDs passed in `input.id`. The server accepts a client ID if it is unused and well-formed.

@@ -37,7 +37,9 @@ const count = defineOperation({
   keywords: ['test', 'count'],
   input: z.object({
     key: z.string(),
-    then: z.enum(['ok', 'notFound', 'bug', 'nothing', 'deadlockOnce']).default('ok'),
+    then: z
+      .enum(['ok', 'notFound', 'bug', 'nothing', 'deadlockOnce', 'conflictWithIssues'])
+      .default('ok'),
   }),
   output: z.object({}),
   permission: (p) => p.any(),
@@ -284,6 +286,15 @@ async function server(
                 throw new SurfaceError('NOT_FOUND', `Item ${input.key} was not found.`);
               }
               if (input.then === 'bug') throw new Error('the handler has a bug: secret-internals');
+              if (input.then === 'conflictWithIssues') {
+                throw new SurfaceError('CONFLICT', `Key ${input.key} is taken.`, {
+                  issues: [
+                    { path: ['key'], message: 'This key is taken.', hint: 'Try another key.' },
+                    { path: ['tags', 0], message: 'This tag is taken too.' },
+                  ],
+                  candidates: [{ id: randomUUID(), label: 'secret-candidate' }],
+                });
+              }
               if (input.then === 'deadlockOnce' && !deadlocked.has(input.key)) {
                 deadlocked.add(input.key);
                 throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
@@ -460,7 +471,11 @@ describe('POST /sync/mutate', () => {
       {
         seq: 3,
         status: 'error',
-        error: { code: 'INVALID_INPUT', message: expect.stringContaining('key') as string },
+        error: {
+          code: 'INVALID_INPUT',
+          message: expect.stringContaining('key') as string,
+          issues: [{ path: ['key'], message: expect.any(String) as string }],
+        },
       },
       {
         seq: 4,
@@ -480,6 +495,39 @@ describe('POST /sync/mutate', () => {
     expect(counts(db)).toEqual({ a: 1 });
     expect(db.committed().ledger.get(clientId)?.lastSeq).toBe(5);
     expect(await results(app, batch, { clientId })).toEqual(got);
+  });
+
+  it('sends a rejection’s issues as the operations API does, without candidates, and replays them', async () => {
+    const db = fakeDatabase();
+    const app = await server(db);
+    const clientId = randomUUID();
+    const batch = [op(1, { key: 'taken', then: 'conflictWithIssues' })];
+    const response = await send(app, batch, { clientId });
+    expect(response.statusCode).toBe(200);
+    const expected = {
+      results: [
+        {
+          seq: 1,
+          status: 'error',
+          error: {
+            code: 'CONFLICT',
+            message: 'Key taken is taken.',
+            issues: [
+              { path: ['key'], message: 'This key is taken.', hint: 'Try another key.' },
+              { path: ['tags', 0], message: 'This tag is taken too.' },
+            ],
+          },
+        },
+      ],
+    };
+    // Exactly this: no `candidates`, `operation` or `correlationId` on the wire.
+    expect(response.json()).toEqual(expected);
+    expect(response.body).not.toContain('secret-candidate');
+    // Kept with the stored result, so a resend gets the same answer.
+    expect(db.committed().ledger.get(clientId)?.results).toEqual(expected.results);
+    const resent = await send(app, batch, { clientId });
+    expect(resent.json()).toEqual(expected);
+    expect(counts(db)).toEqual({});
   });
 
   it('records a handler bug as rejected without showing its internals, and logs it', async () => {

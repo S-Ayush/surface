@@ -137,6 +137,75 @@ describe('the onRejected handler (review m2)', () => {
   });
 });
 
+describe('a caller that shows the refusal itself (reportRejection)', () => {
+  it('keeps the onRejected handler quiet while it says so, and still records the rejection', async () => {
+    const hub = seededHub();
+    const onRejected = vi.fn();
+    const { store } = liveStore(hub, { onRejected });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.last.paused = true;
+    hub.remove(1);
+
+    const outcome = await store.dispatch(
+      debugRename,
+      { id: id(1), title: 'Too late' },
+      { reportRejection: () => false },
+    );
+
+    expect(outcome).toMatchObject({ status: 'rejected', error: { code: 'NOT_FOUND' } });
+    expect(onRejected).not.toHaveBeenCalled();
+    // The inspector still lists it.
+    expect(store.rejections).toHaveLength(1);
+    await store.close();
+  });
+
+  it('asks at the moment of the rejection, so a caller that stopped waiting gets the toast', async () => {
+    const hub = seededHub();
+    const onRejected = vi.fn();
+    const { store } = liveStore(hub, { onRejected });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.last.paused = true;
+    hub.remove(1);
+    let showing = true;
+
+    const outcome = store.dispatch(
+      debugRename,
+      { id: id(1), title: 'Too late' },
+      { reportRejection: () => !showing },
+    );
+    showing = false; // e.g. the dialog closed while waiting
+    expect(await outcome).toMatchObject({ status: 'rejected' });
+    expect(onRejected).toHaveBeenCalledOnce();
+    await store.close();
+  });
+
+  it('reports a rejection by default, and when the flag itself throws', async () => {
+    const hub = seededHub();
+    const onRejected = vi.fn();
+    const { store } = liveStore(hub, { onRejected });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.last.paused = true;
+    hub.remove(1);
+    hub.remove(2);
+
+    await store.dispatch(debugRename, { id: id(1), title: 'Too late' });
+    await store.dispatch(
+      debugRename,
+      { id: id(2), title: 'Too late' },
+      {
+        reportRejection: () => {
+          throw new Error('bug in the form');
+        },
+      },
+    );
+    expect(onRejected).toHaveBeenCalledTimes(2);
+    await store.close();
+  });
+});
+
 describe('an optimistic() that throws', () => {
   it('shows no effect, does not disturb the others, and is still sent', async () => {
     const hub = seededHub();

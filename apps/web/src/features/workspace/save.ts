@@ -4,7 +4,7 @@
 // message, and offline the edit stays with a note until the queued change is sent.
 import { workspaceUpdate } from '@surface/operations';
 import type { SettingsApi } from '../files/api.js';
-import { submitMutation, type MutationStore } from '../teams/submit.js';
+import { submitMutation, type MutationStore, type SubmitOptions } from '../teams/submit.js';
 
 /** Why `name` can't be the workspace's name, in the operation's own words; undefined if it can. */
 export function workspaceNameProblem(name: string): string | undefined {
@@ -25,9 +25,10 @@ export async function saveWorkspaceName(
   store: MutationStore,
   name: string,
   saved: string,
+  options?: SubmitOptions,
 ): Promise<WorkspaceSave> {
   if (name.trim() === saved || workspaceNameProblem(name) !== undefined) return { kind: 'skipped' };
-  const result = await submitMutation(store, workspaceUpdate, { name });
+  const result = await submitMutation(store, workspaceUpdate, { name }, options);
   switch (result.kind) {
     case 'confirmed':
       return { kind: 'saved' };
@@ -49,14 +50,18 @@ export async function changeLogo(
   api: Pick<SettingsApi, 'upload'>,
   store: MutationStore,
   file: Blob,
+  options?: SubmitOptions,
 ): Promise<LogoChange> {
   const uploaded = await api.upload(file, 'logo');
   if (!uploaded.ok) return uploaded;
-  return logoOutcome(await submitMutation(store, workspaceUpdate, { logo: uploaded.id }));
+  return logoOutcome(await submitMutation(store, workspaceUpdate, { logo: uploaded.id }, options));
 }
 
-export async function removeLogo(store: MutationStore): Promise<LogoChange> {
-  return logoOutcome(await submitMutation(store, workspaceUpdate, { logo: null }));
+export async function removeLogo(
+  store: MutationStore,
+  options?: SubmitOptions,
+): Promise<LogoChange> {
+  return logoOutcome(await submitMutation(store, workspaceUpdate, { logo: null }, options));
 }
 
 function logoOutcome(result: Awaited<ReturnType<typeof submitMutation>>): LogoChange {

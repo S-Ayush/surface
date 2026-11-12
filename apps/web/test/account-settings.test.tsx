@@ -5,7 +5,7 @@
 import { User, Workspace } from '@surface/domain/model';
 import type { AnyOperation } from '@surface/operations';
 import { CSRF_HEADER } from '@surface/sync-protocol';
-import type { MutationOutcome, SyncStore } from '@surface/sync-client';
+import type { DispatchOptions, MutationOutcome, SyncStore } from '@surface/sync-client';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/AppModel.js';
@@ -43,7 +43,7 @@ import {
   type SessionsView,
 } from '../src/features/security/sessions.js';
 import { WorkspaceScreen } from '../src/features/workspace/WorkspaceScreen.js';
-import { changeLogo, removeLogo } from '../src/features/workspace/save.js';
+import { changeLogo, removeLogo, saveWorkspaceName } from '../src/features/workspace/save.js';
 import { sessionList, userChangePassword } from '@surface/operations';
 
 const NOW = new Date('2026-11-12T10:00:00.000Z');
@@ -63,18 +63,28 @@ const session = (id: string, current: boolean, lastUsedAt = NOW.toISOString()): 
 /** A store for the mutation helpers: records what it is sent, answers with `outcome`. */
 function fakeStore(outcome: MutationOutcome = { status: 'confirmed' }, connection = 'online') {
   const sent: { op: string; input: unknown }[] = [];
+  /** Whether the shell's toast would report a rejection now, per dispatch. */
+  const reports: (() => boolean)[] = [];
   const store = {
     connection,
-    dispatch: (op: AnyOperation, input: unknown) => {
+    dispatch: (op: AnyOperation, input: unknown, options?: DispatchOptions) => {
       sent.push({ op: op.name, input });
+      reports.push(() => options?.reportRejection?.() ?? true);
       return Promise.resolve(outcome);
     },
   };
-  return { store, sent };
+  return { store, sent, reports };
 }
 
-const rejected = (code: string, message: string): MutationOutcome =>
-  ({ status: 'rejected', error: { code, message } }) as unknown as MutationOutcome;
+const rejected = (
+  code: string,
+  message: string,
+  issues?: { path: (string | number)[]; message: string }[],
+): MutationOutcome =>
+  ({
+    status: 'rejected',
+    error: { code, message, ...(issues ? { issues } : {}) },
+  }) as unknown as MutationOutcome;
 
 /** A fetch that answers each request with the next response, recording what it was sent. */
 function fakeFetch(...responses: Response[]) {
@@ -427,13 +437,52 @@ describe('saving your profile (SPEC-001 §3.5, AC-15)', () => {
     expect(problems.timezone).toMatch(/is not a time zone.*\.$/);
   });
 
-  it('shows a display name someone has on its field (E5)', async () => {
-    const { store } = fakeStore(rejected('CONFLICT', 'That display name is taken. Try grace2.'));
+  it('shows a display name someone has on its field, where the server’s issue puts it (E5)', async () => {
+    const message = 'That display name is taken. Try grace2.';
+    const { store } = fakeStore(
+      rejected('CONFLICT', message, [{ path: ['displayName'], message }]),
+    );
     expect(await saveProfile(store, saved, { ...saved, displayName: 'grace' })).toEqual({
       kind: 'error',
-      message: 'That display name is taken. Try grace2.',
+      message,
       field: 'displayName',
     });
+  });
+
+  it('places any refused field by its issue, and a refusal without one on the form', async () => {
+    const zone = 'Mars/Olympus is not a time zone. Use one like Europe/Berlin.';
+    const timezone = fakeStore(
+      rejected('INVALID_INPUT', zone, [{ path: ['timezone'], message: zone }]),
+    );
+    expect(await saveProfile(timezone.store, saved, { ...saved, name: 'Ada' })).toEqual({
+      kind: 'error',
+      message: zone,
+      field: 'timezone',
+    });
+    const plain = fakeStore(rejected('CONFLICT', 'That display name was just taken.'));
+    expect(await saveProfile(plain.store, saved, { ...saved, displayName: 'grace' })).toEqual({
+      kind: 'error',
+      message: 'That display name was just taken.',
+    });
+    const elsewhere = fakeStore(
+      rejected('NOT_FOUND', 'File not found.', [{ path: ['avatar'], message: 'File not found.' }]),
+    );
+    expect(await saveProfile(elsewhere.store, saved, { ...saved, name: 'Ada' })).toEqual({
+      kind: 'error',
+      message: 'File not found.',
+    });
+  });
+
+  it('keeps the shell’s toast quiet while the form is there to show the refusal', async () => {
+    let mounted = true;
+    const { store, reports } = fakeStore(rejected('CONFLICT', 'Taken.'));
+    await saveProfile(store, saved, { ...saved, name: 'Ada' }, { showsRejection: () => mounted });
+    expect(reports[0]?.()).toBe(false);
+    mounted = false;
+    expect(reports[0]?.()).toBe(true);
+    await changeAvatar(fakeApi(), store, new Blob(['x']), { showsRejection: () => true });
+    await removeAvatar(store, { showsRejection: () => true });
+    expect(reports.slice(1).map((report) => report())).toEqual([false, false]);
   });
 
   it('keeps an offline change queued, with a note', async () => {
@@ -475,6 +524,18 @@ describe('the workspace logo (SPEC-001 §3.6; PLAN-001 S6)', () => {
       { op: 'workspace.update', input: { logo: FILE } },
       { op: 'workspace.update', input: { logo: null } },
     ]);
+  });
+
+  it('keeps the shell’s toast quiet while the screen is there to show the refusal', async () => {
+    const { store, reports } = fakeStore(rejected('FORBIDDEN', 'Only Admins can rename it.'));
+    const shows = { showsRejection: () => true };
+    expect(await saveWorkspaceName(store, 'Acme', 'Old', shows)).toEqual({
+      kind: 'error',
+      message: 'Only Admins can rename it.',
+    });
+    await changeLogo(fakeApi(), store, new Blob(['x']), shows);
+    await removeLogo(store, shows);
+    expect(reports.map((report) => report())).toEqual([false, false, false]);
   });
 
   it('shows a refusal', async () => {

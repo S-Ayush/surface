@@ -130,24 +130,26 @@ export class OverlayEngine {
       if (draft.has(key)) return draft.get(key);
       return this.#pool.baseOf(model, id);
     };
+    /** Every row of `model` as this mutation sees it; a delta to any of them means `rebuild`. */
+    const rowsOf = (model: string): ModelRow[] => {
+      if (!this.#pool.has(model)) return [];
+      searched.add(model);
+      const rows = new Map<string, ModelRow>();
+      for (const { row } of this.#pool.baseRows(model)) rows.set(row.id, row);
+      for (const changes of [draft, layer]) {
+        for (const [key, state] of changes) {
+          const [rowModel, id] = splitKey(key);
+          if (rowModel !== model) continue;
+          if (state === null) rows.delete(id);
+          else rows.set(id, state.row);
+        }
+      }
+      return [...rows.values()];
+    };
     // References see base plus the mutations so far, never the screen (review m3).
     const view: RefSource = {
       row: (model, id) => (this.#pool.has(model) ? read(model, id)?.row : undefined),
-      rows: (model) => {
-        if (!this.#pool.has(model)) return [];
-        searched.add(model);
-        const rows = new Map<string, RefEntity>();
-        for (const { row } of this.#pool.baseRows(model)) rows.set(row.id, row);
-        for (const changes of [draft, layer]) {
-          for (const [key, state] of changes) {
-            const [rowModel, id] = splitKey(key);
-            if (rowModel !== model) continue;
-            if (state === null) rows.delete(id);
-            else rows.set(id, state.row);
-          }
-        }
-        return [...rows.values()];
-      },
+      rows: (model): RefEntity[] => rowsOf(model),
     };
     const resolver = createClientRefResolver(view, this.#me);
     const idOf = (model: string, ref: string): string | undefined => {
@@ -170,6 +172,12 @@ export class OverlayEngine {
     const store: OptimisticStore = {
       now: mutation.now,
       get: (model, ref) => live(model, ref)?.current.row,
+      find: (model, fields) => {
+        const wanted = Object.entries(fields);
+        return rowsOf(model).filter((row) =>
+          wanted.every(([field, value]) => row[field] === value),
+        );
+      },
       patch: (model, ref, changes: StoreRow) => {
         const found = live(model, ref);
         if (found === undefined) return;

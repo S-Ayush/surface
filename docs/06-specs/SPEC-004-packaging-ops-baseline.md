@@ -89,6 +89,7 @@ CMD ["serve"]
 | Requirement | Value |
 |---|---|
 | Architectures | linux/amd64, linux/arm64 |
+| Native modules | sharp (images) and `@node-rs/argon2` (passwords) ship prebuilt per CPU and libc. The runtime stage loads both and encodes one WebP, so the build fails on a platform where either can't load, rather than uploads answering `503` after deploy (added 2026-11-12, PLAN-001 S6 follow-up). |
 | User | Non-root uid 10001. Writable dirs: `/data` only. Read-only root filesystem compatible. |
 | Health check | `healthcheck.js` GETs `/healthz` on loopback. It is the one reader of `PORT`/`HOST` outside `loadConfig()` (same trimming rules), because it must not load the application or its configuration. |
 | Size target | < 250 MB compressed |

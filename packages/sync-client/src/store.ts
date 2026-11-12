@@ -38,7 +38,7 @@ import { claimQueue } from './owner.js';
 import { Persistence } from './persistence.js';
 import type { ReadonlyPool } from './pool.js';
 import { ObjectPool } from './pool.js';
-import type { MutationOutcome, PendingView, Rejection } from './queue.js';
+import type { DispatchOptions, MutationOutcome, PendingView, Rejection } from './queue.js';
 import { MutationQueue } from './queue.js';
 import { createClientRefResolver, poolRefSource } from './refs.js';
 import type { StorageConnector } from './storage/open.js';
@@ -267,7 +267,11 @@ export class SyncStore {
    * rejects it (`rejected`, effect rolled back). It stays pending if the store
    * closes first: the mutation stays queued and the next start sends it.
    */
-  dispatch<Op extends AnyOperation>(op: Op, input: InputOf<Op>): Promise<MutationOutcome> {
+  dispatch<Op extends AnyOperation>(
+    op: Op,
+    input: InputOf<Op>,
+    options?: DispatchOptions,
+  ): Promise<MutationOutcome> {
     const queue = this.#mutations.get();
     if (this.status === 'outdated') {
       throw new Error('Surface was updated. Reload the page to keep working.');
@@ -278,7 +282,7 @@ export class SyncStore {
         'Changes cannot be saved yet. Wait for the workspace to load, then try again.',
       );
     }
-    return queue.dispatch(op, input);
+    return queue.dispatch(op, input, options);
   }
 
   /** The models this store syncs, by name (for the inspector's row counts). */
@@ -524,11 +528,13 @@ export class SyncStore {
       replicaAt: () => (this.status === 'ready' ? this.#position.get()?.lastSyncId : undefined),
       onPush: (mutation) => this.#overlay.push(mutation),
       onRebuild: () => this.#overlay.rebuild(queue.mutations),
-      onRejected: (rejection) => {
+      onRejected: (rejection, report) => {
         runInAction(() => {
           this.#rejections.push(rejection);
           if (this.#rejections.length > RECENT_REJECTIONS) this.#rejections.shift();
         });
+        // The caller shows it itself (`DispatchOptions.reportRejection`): no second report.
+        if (!report) return;
         try {
           this.#options.onRejected?.(rejection);
         } catch {
