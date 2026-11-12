@@ -16,8 +16,10 @@ import {
   seqSchema,
   syncGroupSchema,
   syncIdSchema,
+  userIdSchema,
   uuidSchema,
 } from './scalars.js';
+import { requireUserId } from './user-id.js';
 
 export const SOCKET_PATH = '/sync/ws';
 
@@ -40,7 +42,11 @@ export type CloseCode = (typeof CloseCode)[keyof typeof CloseCode];
 
 /**
  * Query string of the WebSocket URL. `schemaHash` lets the hub answer
- * `resync(schema)` before catch-up (SPEC-002 §4.3).
+ * `resync(schema)` before catch-up (SPEC-002 §4.3). `userId` is the user the
+ * client's replica belongs to; the session must be the same user (SPEC-002
+ * E14). Missing, it is a `MissingUserIdError`: the hub accepts the upgrade and
+ * answers `resync(schema)`, which an old client turns into the reload banner (a
+ * refused upgrade is only a `1006` to a browser).
  */
 export const socketConnectParamsSchema = z.object({
   since: z
@@ -49,6 +55,7 @@ export const socketConnectParamsSchema = z.object({
     .transform(Number)
     .pipe(syncIdSchema),
   clientId: clientIdSchema,
+  userId: userIdSchema,
   schemaHash: schemaHashSchema,
 });
 
@@ -59,12 +66,17 @@ export function encodeSocketConnectParams(params: SocketConnectParams): string {
   return new URLSearchParams({
     since: String(params.since),
     clientId: params.clientId,
+    userId: params.userId,
     schemaHash: params.schemaHash,
   }).toString();
 }
 
-/** Validate the parsed query of `GET /sync/ws`. Throws `ProtocolError`. */
+/**
+ * Validate the parsed query of `GET /sync/ws`. Throws `MissingUserIdError`
+ * (answer `resync(schema)`) when it has no `userId`, else `ProtocolError` (`400`).
+ */
 export function decodeSocketConnectParams(query: unknown): SocketConnectParams {
+  requireUserId(query, 'connect parameters');
   return decodeWith(socketConnectParamsSchema, query, 'connect parameters');
 }
 

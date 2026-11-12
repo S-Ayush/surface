@@ -5,8 +5,16 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { ReplicaLocks } from '../src/locks.js';
 import { FakeHub } from './support/hub.js';
-import { CLIENT_ID, clientItems, liveStore, serverItems, until } from './support/live.js';
-import { debugRow, id } from './support/models.js';
+import {
+  CLIENT_ID,
+  clientItems,
+  eventually,
+  liveStore,
+  serverItems,
+  until,
+} from './support/live.js';
+import { debugRow, id, USER_ID } from './support/models.js';
+import { debugTouch } from './support/ops.js';
 import { closePorts, connectViaRpc, uniqueName } from './support/storage.js';
 
 afterAll(closePorts);
@@ -61,6 +69,19 @@ describe('connecting', () => {
       clientId: CLIENT_ID,
       schemaHash: store.schemaHash,
     });
+    await store.close();
+  });
+
+  // SPEC-002 E14: the server checks it against the session, so a queue or replica
+  // never reaches another user who signed in on the same browser.
+  it('names its user on bootstrap, on every mutate request and on the socket', async () => {
+    const hub = seededHub();
+    const { store } = liveStore(hub);
+    await store.start();
+    await until(() => store.connection === 'online');
+    expect(await store.dispatch(debugTouch, { id: id(1) })).toEqual({ status: 'confirmed' });
+    await eventually(() => hub.users.mutate.length > 0);
+    expect(hub.users).toEqual({ bootstrap: [USER_ID], mutate: [USER_ID], socket: [USER_ID] });
     await store.close();
   });
 

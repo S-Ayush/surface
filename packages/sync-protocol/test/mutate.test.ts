@@ -6,6 +6,7 @@ import {
   decodeMutateRequest,
   decodeMutateResponse,
   MAX_MUTATIONS_PER_BATCH,
+  MissingUserIdError,
   ProtocolError,
 } from '../src/index.js';
 import { mutateRequest, mutateResponse, propertyOptions, viaJson } from './support/arbitraries.js';
@@ -18,7 +19,13 @@ const call = (seq: number, extra: object = {}) => ({
   input: { id: ID },
   ...extra,
 });
-const request = (mutations: unknown[]) => ({ clientId: ID, schemaHash: HASH, mutations });
+const USER = '0192f5a4-1c2b-7d3e-8f40-0000000000aa';
+const request = (mutations: unknown[]) => ({
+  clientId: ID,
+  userId: USER,
+  schemaHash: HASH,
+  mutations,
+});
 
 describe('mutate request', () => {
   it('round-trips through JSON unchanged', () => {
@@ -53,13 +60,36 @@ describe('mutate request', () => {
     ['a mutation without input', request([{ seq: 1, op: 'debug.touch' }])],
     ['an operation name that is not dotted', request([call(1, { op: 'touch' })])],
     ['an invalid timestamp', request([call(1, { at: 'yesterday' })])],
-    [
-      'a client id that is not a UUID',
-      { clientId: 'tab-1', schemaHash: HASH, mutations: [call(1)] },
-    ],
-    ['an invalid schema hash', { clientId: ID, schemaHash: 'ABC', mutations: [call(1)] }],
-  ])('rejects %s', (_case, body) => {
+    ['a client id that is not a UUID', { ...request([call(1)]), clientId: 'tab-1' }],
+    ['an invalid schema hash', { ...request([call(1)]), schemaHash: 'ABC' }],
+    ['a user id that is not a UUID', { ...request([call(1)]), userId: 'sim-1' }],
+    ['an empty user id', { ...request([call(1)]), userId: '' }],
+    ['a null user id', { ...request([call(1)]), userId: null }],
+    ['a body that is not an object', [request([call(1)])]],
+  ])('rejects %s as malformed, not as an old client', (_case, body) => {
     expect(() => decodeMutateRequest(body)).toThrow(ProtocolError);
+    expect(() => decodeMutateRequest(body)).not.toThrow(MissingUserIdError);
+  });
+
+  // SPEC-002 E14: a client from before userId gets 426 and reloads, so its queue is
+  // never refused mutation by mutation as a 400 would be.
+  it('says the client is outdated when the body has no userId', () => {
+    const { userId: _, ...old } = request([call(1)]);
+    expect(() => decodeMutateRequest(old)).toThrow(MissingUserIdError);
+    expect(() => decodeMutateRequest(old)).toThrow(
+      'Invalid mutate request: userId is missing. Reload the app to update it.',
+    );
+  });
+
+  it('says the client is outdated even when the rest of the body is malformed too', () => {
+    expect(() => decodeMutateRequest({ clientId: 'tab-1', mutations: [] })).toThrow(
+      MissingUserIdError,
+    );
+    expect(() => decodeMutateRequest({})).toThrow(MissingUserIdError);
+  });
+
+  it('keeps userId in the decoded request', () => {
+    expect(decodeMutateRequest(request([call(1)])).userId).toBe(USER);
   });
 
   it(`caps a batch at ${MAX_MUTATIONS_PER_BATCH} mutations`, () => {

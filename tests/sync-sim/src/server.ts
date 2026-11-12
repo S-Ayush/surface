@@ -64,7 +64,11 @@ export class FakeHubServer implements SimServer {
 
   /** The fake hub signs nobody in: every user is anybody. */
   constructor(users: number) {
-    this.users = Array.from({ length: users }, (_, i) => `user-${i + 1}`);
+    // UUIDs, as on the wire: the client names its user on every request (SPEC-002 E14).
+    this.users = Array.from(
+      { length: users },
+      (_, i) => `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+    );
     this.#hub.schemaHash = computeSchemaHash(this.models);
     // A live connection hears from the server at least every 25 s, so the
     // client's silence watchdog only fires on a dead connection.

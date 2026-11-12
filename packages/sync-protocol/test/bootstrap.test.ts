@@ -2,11 +2,14 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
   decodeBootstrapFrame,
+  decodeBootstrapQuery,
+  encodeBootstrapQuery,
   encodeNdjsonLine,
+  MissingUserIdError,
   NdjsonDecoder,
   ProtocolError,
 } from '../src/index.js';
-import { bootstrapFrame, propertyOptions, viaJson } from './support/arbitraries.js';
+import { bootstrapFrame, propertyOptions, uuid, viaJson } from './support/arbitraries.js';
 
 const ID = '0192f5a4-1c2b-7d3e-8f40-123456789abc';
 const HASH = 'a'.repeat(64);
@@ -125,5 +128,38 @@ describe('bootstrap frames', () => {
       decodeBootstrapFrame({ t: 'row', m: 'Team', d: { id: 'secret-token-123' } });
     expect(attempt).toThrow(/^Invalid bootstrap frame at d\.id:/);
     expect(attempt).not.toThrow(/secret-token-123/);
+  });
+});
+
+describe('bootstrap query', () => {
+  it('round-trips through a query string', () => {
+    fc.assert(
+      fc.property(fc.record({ userId: uuid }), (query) => {
+        const parsed = Object.fromEntries(new URLSearchParams(encodeBootstrapQuery(query)));
+        expect(decodeBootstrapQuery(parsed)).toEqual(query);
+      }),
+      propertyOptions,
+    );
+  });
+
+  // SPEC-002 E14: an old client gets 426 and reloads.
+  it('says the client is outdated when the query has no userId', () => {
+    expect(() => decodeBootstrapQuery({})).toThrow(MissingUserIdError);
+    expect(() => decodeBootstrapQuery({})).toThrow(
+      'Invalid bootstrap query: userId is missing. Reload the app to update it.',
+    );
+  });
+
+  it.each([
+    ['not a UUID', 'sim-1'],
+    ['empty', ''],
+    ['repeated', [ID, ID]],
+  ])('rejects a userId that is %s as malformed, not as an old client', (_case, userId) => {
+    expect(() => decodeBootstrapQuery({ userId })).toThrow(ProtocolError);
+    expect(() => decodeBootstrapQuery({ userId })).not.toThrow(MissingUserIdError);
+  });
+
+  it('ignores other parameters, so the server decides what they mean', () => {
+    expect(decodeBootstrapQuery({ userId: ID, groups: 'workspace' })).toEqual({ userId: ID });
   });
 });

@@ -205,6 +205,7 @@ export class SyncStore {
           encodeSocketConnectParams({
             since: this.#position.get()?.lastSyncId ?? 0,
             clientId: this.clientId,
+            userId: this.#options.userId,
             schemaHash: this.schemaHash,
           }),
         ),
@@ -513,6 +514,7 @@ export class SyncStore {
     const queue: MutationQueue = new MutationQueue(ownership, persistence, {
       fetch: this.#options.fetch,
       baseUrl: this.#options.baseUrl ?? '',
+      userId: this.#options.userId,
       schemaHash: this.schemaHash,
       registry: this.#options.operations ?? defaultRegistry,
       csrfToken: this.#options.csrfToken ?? browserCsrfToken,
@@ -794,6 +796,7 @@ export class SyncStore {
     const result = await bootstrap({
       fetch: this.#options.fetch,
       baseUrl: this.#options.baseUrl ?? '',
+      userId: this.#options.userId,
       schemaHash: this.schemaHash,
       pool: this.#pool,
       persistence,

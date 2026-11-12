@@ -22,6 +22,7 @@ import {
   MAX_MUTATION_BATCH_BYTES,
   MUTATE_PATH,
   SESSION_PATH,
+  decodeBootstrapQuery,
   decodeClientMessage,
   decodeMutateRequest,
   decodeSocketConnectParams,
@@ -30,7 +31,7 @@ import {
 import type { FetchLike } from '../../src/bootstrap.js';
 import type { SocketConnection, SocketFactory, SocketHandlers } from '../../src/socket.js';
 import type { ConnectionOptions } from '../../src/store.js';
-import { debugRow, id } from './models.js';
+import { USER_ID, debugRow, id } from './models.js';
 import { TEST_SCHEMA_HASH, bootstrapFrames, ndjsonResponse } from './server.js';
 import { ManualTimers } from './timers.js';
 
@@ -101,6 +102,12 @@ export class FakeHub {
   sessionStatus = 200;
   /** Refuse every mutate request with `403 FORBIDDEN` (not a CSRF refusal). */
   forbidMutate = false;
+  /** The `userId` each request named, in order (SPEC-002 E14). */
+  readonly users: { bootstrap: string[]; mutate: string[]; socket: string[] } = {
+    bootstrap: [],
+    mutate: [],
+    socket: [],
+  };
   /** The headers of every mutate request, in order. */
   readonly mutateHeaders: Headers[] = [];
 
@@ -119,11 +126,13 @@ export class FakeHub {
       }
       if (this.csrfToken !== undefined) this.cookies.set(CSRF_COOKIE, this.csrfToken);
       return Promise.resolve(
-        new Response(JSON.stringify({ userId: 'user-1', workspaceId: 'ws' }), {
+        new Response(JSON.stringify({ userId: USER_ID, workspaceId: 'ws' }), {
           headers: { 'content-type': 'application/json' },
         }),
       );
     }
+    const query = decodeBootstrapQuery(Object.fromEntries(new URL(url).searchParams));
+    this.users.bootstrap.push(query.userId);
     this.bootstraps += 1;
     return Promise.resolve(ndjsonResponse(this.snapshot()));
   };
@@ -169,6 +178,7 @@ export class FakeHub {
       );
     }
     const request = decodeMutateRequest(JSON.parse(init.body));
+    this.users.mutate.push(request.userId);
     if (request.mutations.some((m) => this.invalidOps.has(m.op))) {
       return Promise.resolve(
         respond(400, {
@@ -352,6 +362,7 @@ export class FakeHub {
 export class HubConnection {
   readonly since: number;
   readonly clientId: string;
+  readonly userId: string;
   readonly schemaHash: string;
   readonly received: ClientMessage[] = [];
   /** The id of the last packet sent on this connection (`prev` of the next message). */
@@ -376,6 +387,8 @@ export class HubConnection {
     const params = decodeSocketConnectParams(Object.fromEntries(parsed.searchParams));
     this.since = params.since;
     this.clientId = params.clientId;
+    this.userId = params.userId;
+    hub.users.socket.push(params.userId);
     this.schemaHash = params.schemaHash;
     this.sent = params.since;
     this.ackedThrough = params.since;

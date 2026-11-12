@@ -1,6 +1,6 @@
 # Surface: Sync Protocol (v1)
 
-Status: **Draft v0.4** · Date: 2026-11-06 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
+Status: **Draft v0.5** · Date: 2026-11-12 · Decision: [ADR-0002](adr/0002-sync-strategy.md)
 
 This is the contract between `packages/sync-client` and `apps/server`. Every wire type here lives in `packages/sync-protocol`, as a Zod codec. Decoders strip unknown keys instead of rejecting them, so additive changes stay compatible. Changes are listed in §11.
 
@@ -43,7 +43,7 @@ Content is split into separate tables or models on the server (e.g. `issue_conte
 
 ## 4. Wire formats
 
-### 4.1 Bootstrap: `GET /sync/bootstrap` → `application/x-ndjson` (gzip)
+### 4.1 Bootstrap: `GET /sync/bootstrap?userId=<uuid>` → `application/x-ndjson` (gzip)
 ```jsonc
 {"t":"meta","schemaHash":"9f2c…","lastSyncId":18234,"groups":["workspace","team:0192…","user:0193…"],"serverTime":"…","rows":151234}
 {"t":"row","m":"Team","d":{"id":"…","key":"ENG", …}}
@@ -56,17 +56,20 @@ Content is split into separate tables or models on the server (e.g. `issue_conte
 - Archived rows are sent with `"archived":true` on the frame. For live rows the server may omit the field or send `false`. Clients keep archived rows, because a later `V` packet carries only the id.
 - `meta.rows` is the exact number of `row` frames that follow (counted in the same snapshot), so the client can show bootstrap progress. `end.rows` repeats it, so the client can detect a truncated stream.
 - Rows are read inside one `REPEATABLE READ` snapshot, which includes `max(sync_id)`. That makes the snapshot consistent with `lastSyncId`.
+- `userId` is the user the client's replica belongs to. The server compares it with the session's user before streaming anything: another user → `401`, so a replica never receives another user's rows (SPEC-002 E14). No `userId` (a client from before v0.5) → `426 CLIENT_OUTDATED`; a `userId` that is not a UUID → `400`. A v0.5 client treats `426` as "outdated" and shows the reload banner. An older client takes it for a failed load: on a cold start it shows the load-failure page, whose reload loads the new app; a running old tab learns it is outdated from the socket first (`resync(schema)`, §4.3).
 - Optional `?groups=team:<id>` gives a **partial bootstrap** for groups added later (see §6). Until M7 the server answers it with `400`.
 - A model's `groups` field, if it declares one, holds the row's sync groups cut to the receiving connection's groups (SPEC-002 Q6, Q8).
-- The body is gzip-encoded when `Accept-Encoding` allows it. Errors before the first frame use the SPEC-003 body: `401` (not signed in), `403` (an API key), `400`, `503` (starting).
+- The body is gzip-encoded when `Accept-Encoding` allows it. Errors before the first frame use the SPEC-003 body: `401` (not signed in, or signed in as a user other than `userId`), `403` (an API key), `426` (no `userId`), `400`, `503` (starting).
 - The client writes rows to IDB in chunks (worker) and becomes interactive once the `end` frame arrives.
 - The client abandons a bootstrap whose response has not started within 30 s, like a mutate request (§4.4): a cold start fails (the app offers to try again) and a resync retries once the socket reconnects. The rows that follow have no deadline, since a large workspace streams for seconds.
 
 ### 4.2 Content: `GET /sync/content?parent=issue:<id>[,issue:<id>…]`
 Returns the content rows for the given parents (max 50 per request) plus the `lastSyncId` they are consistent with. The client marks those parents **hydrated**.
 
-### 4.3 WebSocket: `GET /sync/ws?since=<lastSyncId>&clientId=<uuid>&schemaHash=<hash>`
-Authenticated by the session cookie. `since` is a non-negative decimal integer without leading zeros. `schemaHash` lets the hub answer `resync(schema)` before catch-up.
+### 4.3 WebSocket: `GET /sync/ws?since=<lastSyncId>&clientId=<uuid>&userId=<uuid>&schemaHash=<hash>`
+Authenticated by the session cookie. `since` is a non-negative decimal integer without leading zeros. `schemaHash` lets the hub answer `resync(schema)` before catch-up. `userId` is the user the client's replica belongs to (SPEC-002 E14). The hub checks, in this order: the session (none → `4001`, below); the connect parameters (a missing `userId` → `resync(schema)`, below; any other invalid parameter → `400`); `userId` against the session's user (another user → `4001`, as for no session); then the `clientId`'s owner (`403`). The `userId` check comes before the owner check, so a tab whose `clientId` its own user registered, opened under another user's cookie, gets `4001` and re-checks the session instead of a `403` it can't read. A socket closed or refused at any of these steps is never registered with the hub.
+
+**No `userId`** (a client from before v0.5): the hub accepts the upgrade, sends `resync(schema)`, then only pings, as after a `schemaHash` mismatch. It keeps the socket as an idle connection with no user, groups or `clientId` (so it is pinged and closed on shutdown), never catches it up and never sends it a delta, and the `clientId` is neither checked nor registered. Old clients already turn `resync(schema)` into the reload banner (SPEC-002 E7); a refused upgrade would only be a `1006`, so an idle old tab would never learn it is outdated.
 
 Server → client messages:
 ```jsonc
@@ -94,9 +97,9 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 
 **Close codes:** `1012` server shutting down (reconnect with backoff) · `4001` session revoked (stop reconnecting, go to login; SPEC-002 E10). The server may also close with `1003` (a binary frame), `1008` (a message other than `pong`), `1009` (a client message over 4 KiB), `1011` (catch-up failed) or `1013` (try again later: the hub is not running yet, or the client fell too far behind). The client treats these like any other close: it reconnects with backoff and catches up from its `lastSyncId`.
 
-**Refused before the upgrade** (SPEC-003 error body): `503` with `Retry-After` while the server starts or stops, `403` for an `Origin` other than `SURFACE_URL`'s, for an API key (SPEC-002 §4.3, Q9) or for a `clientId` another user registered through `POST /sync/mutate` (SPEC-002 §4.4), `400` for invalid connect parameters. A browser sees each of these as an abnormal close (`1006`) and retries with backoff. **Live updates unavailable** (SPEC-005 §8): the client cannot tell a proxy that strips the upgrade from these refusals or from a server that is down, so it asks the server over plain HTTP. After **three attempts in a row that close, or go silent, before opening**, it requests `GET /auth/session`; any status below `500` (a `401` included) means the server answers. It then dials at once, and if that attempt also fails before opening, live updates are unavailable: the app shows the banner and the client keeps retrying with backoff. A network error, `502`, `503` or `504`, or no answer within 10 s, means the server may be down or restarting: no banner, and it asks again after the next failed attempt. A server back from a restart opens on the attempt its answer starts, so a restart never shows the banner. The count and the answer reset when an attempt opens, when the browser's `online` event fires, and when the client stops.
+**Refused before the upgrade** (SPEC-003 error body): `503` with `Retry-After` while the server starts or stops, `403` for an `Origin` other than `SURFACE_URL`'s, for an API key (SPEC-002 §4.3, Q9) or for a `clientId` another user registered through `POST /sync/mutate` (SPEC-002 §4.4), `400` for invalid connect parameters (except a missing `userId`, above). A browser sees each of these as an abnormal close (`1006`) and retries with backoff. **Live updates unavailable** (SPEC-005 §8): the client cannot tell a proxy that strips the upgrade from these refusals or from a server that is down, so it asks the server over plain HTTP. After **three attempts in a row that close, or go silent, before opening**, it requests `GET /auth/session`; any status below `500` (a `401` included) means the server answers. It then dials at once, and if that attempt also fails before opening, live updates are unavailable: the app shows the banner and the client keeps retrying with backoff. A network error, `502`, `503` or `504`, or no answer within 10 s, means the server may be down or restarting: no banner, and it asks again after the next failed attempt. A server back from a restart opens on the attempt its answer starts, so a restart never shows the banner. The count and the answer reset when an attempt opens, when the browser's `online` event fires, and when the client stops.
 
-**No valid session:** the hub accepts the upgrade and then closes at once with `4001`. It does not answer `401`. A browser cannot read the HTTP status of a refused upgrade, which looks like any network failure (`1006`), so the client would keep retrying. This is how a client that was offline when its session was revoked learns about it. Nothing is sent before the close.
+**No valid session** (none, or not `userId`'s): the hub accepts the upgrade and then closes at once with `4001`. It does not answer `401`. A browser cannot read the HTTP status of a refused upgrade, which looks like any network failure (`1006`), so the client would keep retrying. This is how a client that was offline when its session was revoked learns about it. Nothing is sent before the close.
 
 **Revoked on any replica:** a session that ends (sign-out, and later revoke and password reset) closes its sockets with `4001` on every replica. The server sends `NOTIFY session_revoked` with the session ids, and every hub's listen connection hears it next to `sync`. A replica whose listen connection is down at that moment misses it, and those sockets stay open until they disconnect; their next connect is closed with `4001` as above.
 
@@ -105,7 +108,7 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 ### 4.4 Mutations: `POST /sync/mutate`
 ```jsonc
 // request
-{"clientId":"…","schemaHash":"9f2c…","mutations":[
+{"clientId":"…","userId":"…","schemaHash":"9f2c…","mutations":[
   {"seq":57,"op":"issue.update","input":{"id":"…","priority":1},"at":"2026-11-06T10:00:00Z"},
   {"seq":58,"op":"comment.create","input":{"id":"<uuidv7>","issueId":"…","body":{…}}}
 ]}
@@ -117,13 +120,15 @@ Client → server messages: `{"t":"pong"}`, and from M4 `{"t":"presence","subjec
 ```
 - The server processes a batch **in seq order**, with **one DB transaction per mutation** (one failure doesn't block the others).
 - **Idempotency:** the server stores `(clientId → lastProcessedSeq)` with the results of the last 100 seqs (SPEC-002 Q11). Re-sent mutations with `seq ≤ lastProcessedSeq` return their stored result without being re-executed; an `error` result is stored too, so a rejected mutation is never run again. Each mutation's transaction locks the client's row first, so concurrent resends of one batch get the same results. A seq older than the kept results gets `{"status":"error","error":{"code":"CONFLICT",…}}`; a client that follows this protocol never sends one.
+- **Whose queue:** `userId` is the user the client's queue belongs to. The server compares it with the session's user before anything runs or a `clientId` is registered (SPEC-002 E14), so a queue is never committed as whoever signed in next on the browser.
 - **Ownership:** a `clientId` belongs to the user whose mutation first used it. Requests from another user with it get `403` (below), and so does a WebSocket opened with it (§4.3).
 - A mutation that changed no row gets, as its `lastSyncId`, the newest `sync_id` this client's connection receives (in the user's groups, of a synced model; 0 when there is none): no ack comes for it, and the global head may be a row the client never receives.
 - **Ordering across reconnects:** the client never sends seq N+1 before N has been sent. Batches are sent one at a time per client.
 - A batch holds 1–100 mutations with **consecutive, ascending** seqs, starting at 1 for a new client. `input` is any JSON value. `at` is optional and informational (SPEC-002 E11). `results` has one entry per mutation, in the same seq order.
 - **CSRF** (SPEC-001 §6.1, Q7; the server checks it since PLAN-001 S3): a signed-in browser sends the `surface_csrf` cookie's value in the `X-CSRF-Token` header, read again for every request. API keys (M6) don't use cookies and send none.
 - **Whole-request errors** use the SPEC-003 §9 body `{"ok":false,"error":{"code","message","correlationId"}}`:
-  - `426 CLIENT_OUTDATED`: `schemaHash` differs from the server's. The client shows the reload banner.
+  - `426 CLIENT_OUTDATED`: `schemaHash` differs from the server's, or the body has no `userId` (a client from before v0.5). The client shows the reload banner. A missing `userId` wins over any other problem with the body, so an old client always reloads instead of having its queue refused as invalid (`400`, below).
+  - `401 UNAUTHENTICATED`: no session, or a session of a user other than `userId` (SPEC-002 E14). Nothing ran. The client stops sending, keeps the queue, and the app checks the session (SPEC-001 E14; in the client from E14 part 2, until then it backs off like any failure).
   - `403 CSRF_INVALID`: the token is missing or does not match the session, typically because the CSRF cookie was cleared or lost while the session cookie stayed. The client fetches `GET /auth/session`, which sets the cookie again, and resends the same batch at once. Refused a second time, or if the session call fails (`401`: no session), it backs off and retries like any failure below, so a token that stays wrong never makes requests loop. Any other `403` backs off without a renewal.
   - `403 FORBIDDEN` for an API key (it writes through the operations API) or a `clientId` another user registered. The client backs off like any failure.
   - `429 RATE_LIMITED` with `Retry-After` (SPEC-002 Q12): a mutation of the batch hit the rate limit. The mutations before it are committed, and the rest were not run; resending the same batch replays the first and runs the rest. The client resends the same batch after `Retry-After` seconds (at least 0.5 s and at most 30 s, plus up to 250 ms of jitter), and the rate limit does not grow its backoff. It reads the header whatever the body is (a proxy's page included). Without a readable `Retry-After` (a whole number of seconds) it backs off like any failure; on any other status the header is ignored.
@@ -243,6 +248,7 @@ The repo layer is the **only** code allowed to write synced tables. It computes 
 
 | Date | Version | Change | Handed off |
 |---|---|---|---|
+| 2026-11-12 | v0.5 | SPEC-002 E14, a codec change. The client names its user: `userId` (a UUID) in the bootstrap query (§4.1), the socket's connect parameters (§4.3) and the mutate body (§4.4). The server compares it with the session's user first: another user gets `401` on bootstrap and mutate, and `4001` on the socket, before anything is streamed, run or registered. No `userId` gets `426 CLIENT_OUTDATED` on bootstrap and mutate, and an accepted socket that receives only `resync(schema)` (`MissingUserIdError` from the three decoders, which wins over any other problem). The hub checks `userId` before the `clientId`'s owner. A v0.5 client treats a bootstrap `426` as outdated. Found by a real-server repro: a tab's queue and socket carried on under whoever signed in next. `SYNC_PROTOCOL_VERSION` stays, so no client re-bootstraps for it. | Session A (the three server checks and the `403` wording; agreed with A 2026-11-12) |
 | 2026-11-12 | v0.4 | PLAN-002 S8 follow-up, client only, no wire change. §4.4: on `429` or `503` with `Retry-After` (whole seconds), the queue resends after that long (at least 0.5 s and at most 30 s, plus up to 250 ms of jitter) instead of its own backoff, and the answer resets the backoff. The header counts whatever the body is; on other statuses it is ignored. A's optional handoff from PLAN-002 S5. | — (no server change) |
 | 2026-11-07 | v0.4 | PLAN-001 S9, server only, no codec change (`groups` was already a `resync` reason). The hub sends `resync(groups)` when a private team's membership may change a connection's groups (§4.3, §6, SPEC-002 Q13): live, in catch-up, and at connect for a removal while the socket was closed. Nothing more is sent on that connection. A socket's session is read again once the hub has registered it, so a sign-out during the upgrade still closes it with `4001`. Found by the S9 security review (M1, L2). | Session D (Log): the client already handles every `resync` by bootstrapping again; nothing to change |
 | 2026-11-07 | v0.4 | Status only, no wire change: §4.4's CSRF note no longer says it is pending until PLAN-001 S3 (on `main`). Approved by the user | — |

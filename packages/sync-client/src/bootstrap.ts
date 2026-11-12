@@ -10,6 +10,7 @@ import type { ModelRow } from '@surface/domain/model';
 import type { BootstrapMeta, SyncGroup } from '@surface/sync-protocol';
 import {
   BOOTSTRAP_PATH,
+  encodeBootstrapQuery,
   NdjsonDecoder,
   ProtocolError,
   decodeBootstrapFrame,
@@ -31,6 +32,8 @@ export interface BootstrapOptions {
   readonly fetch: FetchLike;
   /** Origin and base path of the server; `''` for same-origin. */
   readonly baseUrl: string;
+  /** The user this replica belongs to; the server refuses another session (SPEC-002 E14). */
+  readonly userId: string;
   readonly schemaHash: string;
   readonly pool: ObjectPool;
   readonly persistence: Persistence;
@@ -96,7 +99,8 @@ async function request(options: BootstrapOptions): Promise<Response> {
     controller.abort();
   }, BOOTSTRAP_RESPONSE_TIMEOUT_MS);
   try {
-    return await options.fetch(`${options.baseUrl}${BOOTSTRAP_PATH}`, {
+    const query = encodeBootstrapQuery({ userId: options.userId });
+    return await options.fetch(`${options.baseUrl}${BOOTSTRAP_PATH}?${query}`, {
       credentials: 'same-origin',
       headers: { accept: 'application/x-ndjson' },
       signal: controller.signal,
@@ -116,6 +120,11 @@ export async function bootstrap(options: BootstrapOptions): Promise<BootstrapRes
   const { pool, persistence } = options;
   const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
   const response = await request(options);
+  // A server of a later protocol, e.g. one that needs `userId` (sync-protocol §4.1).
+  if (response.status === 426) {
+    await response.body?.cancel();
+    throw new ClientOutdatedError();
+  }
   if (!response.ok || response.body === null) {
     throw new BootstrapFailedError(
       `Could not load workspace data (HTTP ${response.status})`,

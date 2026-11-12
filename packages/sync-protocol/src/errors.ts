@@ -6,7 +6,18 @@ import type { z } from 'zod';
  * that must not reach logs (CLAUDE.md rule 6).
  */
 export class ProtocolError extends Error {
-  override readonly name = 'ProtocolError';
+  override readonly name: string = 'ProtocolError';
+}
+
+/**
+ * A mutate body, bootstrap query or socket query without `userId`: a client
+ * from before sync-protocol v0.5. The server answers so that it reloads
+ * (`426 CLIENT_OUTDATED`, or `resync(schema)` on the socket) instead of having
+ * its queue refused as invalid (SPEC-002 E14). A `userId` that is present but
+ * invalid is a plain `ProtocolError`.
+ */
+export class MissingUserIdError extends ProtocolError {
+  override readonly name: string = 'MissingUserIdError';
 }
 
 /** Validate `value` with `schema`, or throw a `ProtocolError` that describes the first issue. */

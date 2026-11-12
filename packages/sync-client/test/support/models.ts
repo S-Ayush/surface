@@ -19,6 +19,9 @@ export const Card = defineModel('Card', {
 
 export const TEST_MODELS = [DebugItem, Board, Card] as const;
 
+/** The signed-in user of every test store (a UUID, as on the wire, SPEC-002 E14). */
+export const USER_ID = '0190f4c4-0000-7000-8000-0000000005e1';
+
 /** Deterministic UUIDv7-shaped ids: `id(1)` → `00000000-0000-7000-8000-000000000001`. */
 export function id(n: number): string {
   return `00000000-0000-7000-8000-${n.toString(16).padStart(12, '0')}`;

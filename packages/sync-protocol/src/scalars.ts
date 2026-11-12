@@ -15,6 +15,9 @@ export type SyncId = z.infer<typeof syncIdSchema>;
 /** Row and client identifiers are UUIDs (client-generated UUIDv7 for new rows, SPEC-003 §8). */
 export const uuidSchema = z.uuid();
 
+/** A user's id: whose replica and queue a client holds (SPEC-002 E14). */
+export const userIdSchema = uuidSchema;
+
 /** A client's per-tab identity for exactly-once delivery (SPEC-002 §4.4, E5). */
 export const clientIdSchema = uuidSchema;
 

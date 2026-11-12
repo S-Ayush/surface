@@ -105,6 +105,7 @@ export const clientMessage: fc.Arbitrary<ClientMessage> = fc.constant({ t: 'pong
 export const mutateRequest = fc
   .record({
     clientId: uuid,
+    userId: uuid,
     schemaHash: hash,
     firstSeq: fc.integer({ min: 1, max: 1e9 }),
     calls: fc.array(
@@ -112,8 +113,9 @@ export const mutateRequest = fc
       { minLength: 1, maxLength: 10 },
     ),
   })
-  .map(({ clientId, schemaHash, firstSeq, calls }) => ({
+  .map(({ clientId, userId, schemaHash, firstSeq, calls }) => ({
     clientId,
+    userId,
     schemaHash,
     mutations: calls.map(({ op, input, at }, i) => ({
       seq: firstSeq + i,

@@ -96,6 +96,8 @@ export class InvalidInputError extends Error {
 export interface QueueOptions {
   readonly fetch: FetchLike;
   readonly baseUrl: string;
+  /** The user this queue belongs to; the server refuses another session (SPEC-002 E14). */
+  readonly userId: string;
   readonly schemaHash: string;
   readonly registry: OperationRegistry;
   readonly timers: Timers;
@@ -493,6 +495,7 @@ export class MutationQueue {
     }
     const body: MutateRequest = {
       clientId: this.clientId,
+      userId: this.#options.userId,
       schemaHash: this.#options.schemaHash,
       mutations,
     };

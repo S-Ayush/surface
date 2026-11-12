@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import { decodeWith } from './errors.js';
+import { requireUserId } from './user-id.js';
 import {
   clientIdSchema,
   errorCodeSchema,
@@ -11,6 +12,7 @@ import {
   schemaHashSchema,
   seqSchema,
   syncIdSchema,
+  userIdSchema,
 } from './scalars.js';
 
 export const MUTATE_PATH = '/sync/mutate';
@@ -56,6 +58,8 @@ export type Mutation = z.infer<typeof mutationSchema>;
 export const mutateRequestSchema = z
   .object({
     clientId: clientIdSchema,
+    /** The user the client's queue belongs to; the session must be the same user (SPEC-002 E14). */
+    userId: userIdSchema,
     schemaHash: schemaHashSchema,
     mutations: z.array(mutationSchema).min(1).max(MAX_MUTATIONS_PER_BATCH),
   })
@@ -124,8 +128,12 @@ export const mutateErrorBodySchema = z.object({
 });
 export type MutateErrorBody = z.infer<typeof mutateErrorBodySchema>;
 
-/** Validate a `POST /sync/mutate` body on the server. Throws `ProtocolError`. */
+/**
+ * Validate a `POST /sync/mutate` body on the server. Throws `MissingUserIdError`
+ * (answer `426`) when it has no `userId`, else `ProtocolError` (answer `400`).
+ */
 export function decodeMutateRequest(body: unknown): MutateRequest {
+  requireUserId(body, 'mutate request');
   return decodeWith(mutateRequestSchema, body, 'mutate request');
 }
 

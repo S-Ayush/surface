@@ -11,7 +11,7 @@ import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import { replicaName } from '../src/storage/open.js';
 import { FakeHub } from './support/hub.js';
 import { clientItems, eventually, liveStore, serverItems, until } from './support/live.js';
-import { DebugItem, TEST_MODELS, id } from './support/models.js';
+import { DebugItem, TEST_MODELS, id, USER_ID } from './support/models.js';
 import { debugHide, debugRename, debugTouch } from './support/ops.js';
 import { gatedResponse } from './support/server.js';
 import { closePorts, connectViaRpc, uniqueName } from './support/storage.js';
@@ -41,7 +41,7 @@ function switchable(hub: FakeHub) {
 /** Read the replica's persisted queue through a connection of its own. */
 async function persistedQueue(workspaceId: string) {
   const storage = await IndexedDbStorage.open(
-    replicaName(workspaceId, 'user-1'),
+    replicaName(workspaceId, USER_ID),
     TEST_MODELS.map((model) => model.name),
   );
   try {

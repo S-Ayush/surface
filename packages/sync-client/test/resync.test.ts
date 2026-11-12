@@ -16,7 +16,7 @@ import { clientItems, eventually, idle, liveStore, serverItems, until } from './
 import { debugRename, debugTouch } from './support/ops.js';
 import type { ManualTimers } from './support/timers.js';
 import { REQUEST_TIMEOUT_MS } from '../src/queue.js';
-import { DebugItem, TEST_MODELS, id } from './support/models.js';
+import { DebugItem, TEST_MODELS, id, USER_ID } from './support/models.js';
 import { closePorts, connectViaRpc, uniqueName } from './support/storage.js';
 
 afterAll(closePorts);
@@ -38,7 +38,7 @@ async function reconnect(store: SyncStore, timers: ManualTimers): Promise<void> 
 
 async function persistedQueue(workspaceId: string) {
   const storage = await IndexedDbStorage.open(
-    replicaName(workspaceId, 'user-1'),
+    replicaName(workspaceId, USER_ID),
     TEST_MODELS.map((model) => model.name),
   );
   try {
@@ -141,7 +141,7 @@ describe('a reload after a server update (E7, AC-10 client part)', () => {
     await before.store.close();
 
     // The replica was written by the previous build: same models, another hash.
-    const db = await openDB(replicaName(workspaceId, 'user-1'));
+    const db = await openDB(replicaName(workspaceId, USER_ID));
     const meta: unknown = await db.get('meta', META_KEY);
     if (typeof meta !== 'object' || meta === null) throw new Error('expected a stored meta');
     await db.put('meta', { ...meta, schemaHash: 'e'.repeat(64) }, META_KEY);

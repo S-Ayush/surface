@@ -8,6 +8,7 @@ import {
   encodeSocketConnectParams,
   encodeSocketMessage,
   MAX_PACKETS_PER_MESSAGE,
+  MissingUserIdError,
   ProtocolError,
 } from '../src/index.js';
 import {
@@ -21,6 +22,7 @@ import {
 } from './support/arbitraries.js';
 
 const ID = '0192f5a4-1c2b-7d3e-8f40-123456789abc';
+const USER = '0192f5a4-1c2b-7d3e-8f40-0000000000aa';
 const row = (id = ID) => ({ id, title: 'x' });
 
 describe('server messages', () => {
@@ -141,22 +143,45 @@ describe('client messages', () => {
 describe('connect parameters', () => {
   it('round-trip through a query string', () => {
     fc.assert(
-      fc.property(fc.record({ since: syncId, clientId: uuid, schemaHash: hash }), (params) => {
-        const query = Object.fromEntries(new URLSearchParams(encodeSocketConnectParams(params)));
-        expect(decodeSocketConnectParams(query)).toEqual(params);
-      }),
+      fc.property(
+        fc.record({ since: syncId, clientId: uuid, userId: uuid, schemaHash: hash }),
+        (params) => {
+          const query = Object.fromEntries(new URLSearchParams(encodeSocketConnectParams(params)));
+          expect(decodeSocketConnectParams(query)).toEqual(params);
+        },
+      ),
       propertyOptions,
     );
   });
 
   it.each(['', '-1', '01', '1.5', '1e3', ' 1', '9007199254740993'])('rejects since=%j', (since) => {
     expect(() =>
-      decodeSocketConnectParams({ since, clientId: ID, schemaHash: 'b'.repeat(64) }),
+      decodeSocketConnectParams({ since, clientId: ID, userId: USER, schemaHash: 'b'.repeat(64) }),
     ).toThrow(ProtocolError);
   });
 
   it('rejects a missing schema hash', () => {
-    expect(() => decodeSocketConnectParams({ since: '0', clientId: ID })).toThrow(ProtocolError);
+    expect(() => decodeSocketConnectParams({ since: '0', clientId: ID, userId: USER })).toThrow(
+      ProtocolError,
+    );
+  });
+
+  // SPEC-002 E14: the hub answers an old client with resync(schema), which it
+  // already turns into the reload banner; a refused upgrade it can't read.
+  it('says the client is outdated when it has no userId, even with other problems', () => {
+    const query = { since: '0', clientId: ID, schemaHash: 'b'.repeat(64) };
+    expect(() => decodeSocketConnectParams(query)).toThrow(MissingUserIdError);
+    expect(() => decodeSocketConnectParams({ since: '-1' })).toThrow(MissingUserIdError);
+  });
+
+  it.each([
+    ['not a UUID', 'sim-1'],
+    ['empty', ''],
+    ['repeated', [ID, ID]],
+  ])('rejects a userId that is %s as malformed, not as an old client', (_case, userId) => {
+    const query = { since: '0', clientId: ID, schemaHash: 'b'.repeat(64), userId };
+    expect(() => decodeSocketConnectParams(query)).toThrow(ProtocolError);
+    expect(() => decodeSocketConnectParams(query)).not.toThrow(MissingUserIdError);
   });
 });
 

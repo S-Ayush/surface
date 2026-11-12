@@ -4,16 +4,40 @@
  */
 import { z } from 'zod';
 import { decodeWith } from './errors.js';
+import { requireUserId } from './user-id.js';
 import {
   modelNameSchema,
   rowSchema,
   schemaHashSchema,
   syncGroupSchema,
   syncIdSchema,
+  userIdSchema,
 } from './scalars.js';
 
 export const BOOTSTRAP_PATH = '/sync/bootstrap';
 export const NDJSON_CONTENT_TYPE = 'application/x-ndjson';
+
+/**
+ * Query string of `GET /sync/bootstrap`. `userId` is the user the client's
+ * replica belongs to; the session must be the same user (SPEC-002 E14). Other
+ * parameters are dropped here and judged by the server (`groups`, say).
+ */
+export const bootstrapQuerySchema = z.object({ userId: userIdSchema });
+export type BootstrapQuery = z.infer<typeof bootstrapQuerySchema>;
+
+/** Build the query string (without `?`) for `GET /sync/bootstrap`. */
+export function encodeBootstrapQuery(query: BootstrapQuery): string {
+  return new URLSearchParams({ userId: query.userId }).toString();
+}
+
+/**
+ * Validate the parsed query of `GET /sync/bootstrap`. Throws `MissingUserIdError`
+ * (answer `426`) when it has no `userId`, else `ProtocolError` (answer `400`).
+ */
+export function decodeBootstrapQuery(query: unknown): BootstrapQuery {
+  requireUserId(query, 'bootstrap query');
+  return decodeWith(bootstrapQuerySchema, query, 'bootstrap query');
+}
 
 /** First frame. The rows that follow are consistent with `lastSyncId` (one REPEATABLE READ snapshot). */
 export const bootstrapMetaSchema = z.object({

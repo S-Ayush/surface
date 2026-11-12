@@ -4,7 +4,7 @@ import type { StorageConnector } from '../../src/storage/open.js';
 import type { SyncStoreOptions } from '../../src/store.js';
 import { SyncStore } from '../../src/store.js';
 import type { FakeHub } from './hub.js';
-import { DebugItem, TEST_MODELS } from './models.js';
+import { DebugItem, TEST_MODELS, USER_ID } from './models.js';
 import { FIXTURE_OPS } from './ops.js';
 import { uniqueName } from './storage.js';
 import { ManualTimers } from './timers.js';
@@ -23,7 +23,7 @@ export function liveStore(
   const store = new SyncStore({
     models: TEST_MODELS,
     workspaceId: uniqueName('ws'),
-    userId: 'user-1',
+    userId: USER_ID,
     fetch: hub.fetch,
     // Absolute: Node has no page origin to resolve the socket URL against.
     baseUrl: 'http://surface.test',

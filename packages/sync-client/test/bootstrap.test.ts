@@ -6,7 +6,7 @@ import { Persistence } from '../src/persistence.js';
 import { ObjectPool } from '../src/pool.js';
 import { MemoryStorage } from '../src/storage/memory.js';
 import type { SyncStorage } from '../src/storage/types.js';
-import { DebugItem, TEST_MODELS, debugRow, id } from './support/models.js';
+import { DebugItem, TEST_MODELS, debugRow, id, USER_ID } from './support/models.js';
 import {
   TEST_SCHEMA_HASH,
   bootstrapFrames,
@@ -32,6 +32,7 @@ const run = (
   bootstrap({
     fetch,
     baseUrl: 'http://surface.test',
+    userId: USER_ID,
     schemaHash: TEST_SCHEMA_HASH,
     ...context,
     ...extra,
@@ -44,7 +45,8 @@ describe('bootstrap', () => {
     const progress: BootstrapProgress[] = [];
     const result = await run(context, fetch, { chunkSize: 2, onProgress: (p) => progress.push(p) });
 
-    expect(fetch.urls).toEqual(['http://surface.test/sync/bootstrap']);
+    // SPEC-002 E14: the server checks the user against the session.
+    expect(fetch.urls).toEqual([`http://surface.test/sync/bootstrap?userId=${USER_ID}`]);
     expect(result).toMatchObject({ lastSyncId: 100, groups: ['workspace'], rows: 5 });
     expect(context.pool.count(DebugItem)).toBe(5);
     expect(context.pool.get(DebugItem, id(3))?.title).toBe('Item 3');
@@ -150,6 +152,22 @@ describe('bootstrap', () => {
     ).rejects.not.toThrow(/hunter2|42/);
   });
 
+  // A server of a later protocol (sync-protocol §4.1): 426 CLIENT_OUTDATED before any frame.
+  it('asks for a reload when the server answers that this client is outdated', async () => {
+    const context = setup();
+    const body = {
+      ok: false,
+      error: { code: 'CLIENT_OUTDATED', message: 'x', correlationId: 'c' },
+    };
+    await expect(
+      run(
+        context,
+        fakeFetch(() => new Response(JSON.stringify(body), { status: 426 })),
+      ),
+    ).rejects.toBeInstanceOf(ClientOutdatedError);
+    expect(await context.storage.readMeta()).toBeUndefined();
+  });
+
   it('reports the HTTP status of a failed request', async () => {
     const attempt = run(
       setup(),
@@ -228,6 +246,7 @@ describe('bootstrap', () => {
     const running = bootstrap({
       fetch: fakeFetch(() => gated.response),
       baseUrl: '',
+      userId: USER_ID,
       schemaHash: TEST_SCHEMA_HASH,
       ...setup(),
       signal: controller.signal,
