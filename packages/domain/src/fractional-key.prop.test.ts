@@ -51,6 +51,64 @@ function expectStrictOrder(keys: readonly string[]): void {
   }
 }
 
+const DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.split('');
+const HEADS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.split('');
+
+/** A digit, often one next to the ends, so carries and borrows happen. */
+const digit = fc.oneof(fc.constantFrom('0', '1', 'y', 'z'), fc.constantFrom(...DIGITS));
+
+/**
+ * An integer part's digits after the head: random, or all `0` or all `z` but for a short random
+ * tail, which reaches the smallest and largest integers and carries through every digit.
+ */
+function integerDigits(length: number): fc.Arbitrary<string> {
+  return fc.oneof(
+    fc.array(digit, { minLength: length, maxLength: length }).map((d) => d.join('')),
+    fc
+      .record({ fill: fc.constantFrom('0', 'z'), tail: fc.array(digit, { maxLength: 2 }) })
+      .map(({ fill, tail }) => (fill.repeat(length) + tail.join('')).slice(-length)),
+  );
+}
+
+/** Any valid key: a head letter (often one at a wrap point), its integer digits, a fraction. */
+const anyKey: fc.Arbitrary<string> = fc
+  .oneof(fc.constantFrom('A', 'B', 'Z', 'a', 'b', 'z'), fc.constantFrom(...HEADS))
+  .chain((head) => {
+    const length = head >= 'a' ? head.charCodeAt(0) - 97 + 2 : 90 - head.charCodeAt(0) + 2;
+    return fc
+      .record({
+        integer: integerDigits(length - 1),
+        fraction: fc.oneof(fc.constant([]), fc.array(digit, { maxLength: 4 })),
+      })
+      .map(({ integer, fraction }) => head + integer + fraction.join('').replace(/0+$/, ''));
+  })
+  .filter(isFractionalKey);
+
+describe('fractionalKeyBetween over arbitrary valid keys', () => {
+  it('returns a valid key strictly between any two, across every integer boundary', () => {
+    fc.assert(
+      fc.property(anyKey, anyKey, (x, y) => {
+        fc.pre(x !== y);
+        const [a, b] = x < y ? [x, y] : [y, x];
+        expectStrictOrder([a, fractionalKeyBetween(a, b), b]);
+      }),
+      { numRuns: 2000 },
+    );
+  });
+
+  it('returns a valid key before or after any key', () => {
+    fc.assert(
+      fc.property(anyKey, (key) => {
+        expectStrictOrder([fractionalKeyBetween(null, key), key]);
+        // The largest integer has no next one, so it gets a fraction instead.
+        expectStrictOrder([key, fractionalKeyBetween(key, null)]);
+      }),
+      // Enough runs to reach the integer just above the reserved smallest one (review finding).
+      { numRuns: 10_000 },
+    );
+  });
+});
+
 describe('fractionalKeyBetween (AC-3 property)', () => {
   it('keeps any insert and move sequence in strict byte order with no duplicates', () => {
     fc.assert(

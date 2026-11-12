@@ -150,7 +150,8 @@ export function fractionalKeyBetween(a: string | null, b: string | null): string
     if (fraction !== '') return integer;
     const previous = decrementInteger(integer);
     if (previous === null) throw new Error(`No order key fits before "${b}"`);
-    return previous;
+    // The smallest integer is reserved (nothing could go before it), so it needs a fraction.
+    return previous === SMALLEST_INTEGER ? previous + midpoint('', null) : previous;
   }
   const lower = split(a);
   if (b === null) {

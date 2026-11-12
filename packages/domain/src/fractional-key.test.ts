@@ -64,6 +64,48 @@ describe('fractionalKeyBetween', () => {
   });
 });
 
+// Review of PLAN-010 S1: each place the integer part wraps or runs out.
+describe('fractionalKeyBetween at the integer-part boundaries', () => {
+  const smallest = `A${'0'.repeat(26)}`;
+  const largest = `z${'z'.repeat(26)}`;
+
+  it('wraps from the negative to the positive integers: Zz → a0', () => {
+    expect(fractionalKeyBetween('Zz', null)).toBe('a0');
+    expect(fractionalKeyBetween(null, 'a0')).toBe('Zz');
+  });
+
+  it('grows the integer part when its digits carry: az → b00', () => {
+    expect(fractionalKeyBetween('az', null)).toBe('b00');
+    expect(fractionalKeyBetween(null, 'b00')).toBe('az');
+  });
+
+  it('shrinks to the longest negative integer when prepending to the shortest one', () => {
+    expect(fractionalKeyBetween(null, `B${'0'.repeat(25)}`)).toBe(`A${'z'.repeat(26)}`);
+  });
+
+  it('appends a fraction after the largest integer, which has no next one', () => {
+    expect(fractionalKeyBetween(largest, null)).toBe(`${largest}V`);
+    expect(fractionalKeyBetween(`${largest}V`, null)).toBe(`${largest}l`);
+  });
+
+  it('prepends a fraction to the smallest integer instead of returning it bare', () => {
+    // The integer before A0…01 is A0…00, which is reserved: alone it is not a valid key.
+    const key = fractionalKeyBetween(null, `A${'0'.repeat(25)}1`);
+    expect(key).toBe(`${smallest}V`);
+    expect(isFractionalKey(key)).toBe(true);
+    // And prepending keeps working from there.
+    const next = fractionalKeyBetween(null, key);
+    expect(next).toBe(`${smallest}G`);
+    expect(isFractionalKey(next)).toBe(true);
+    expect(fractionalKeyBetween(null, `${smallest}1`)).toBe(`${smallest}0V`);
+  });
+
+  it('prepends without a fraction when the first key has one', () => {
+    expect(fractionalKeyBetween(null, 'a0V')).toBe('a0');
+    expect(fractionalKeyBetween(null, 'Zz1')).toBe('Zz');
+  });
+});
+
 describe('fractionalKeyProblem', () => {
   it('accepts integer keys and keys with a fraction', () => {
     for (const key of ['a0', 'a1', 'Zz', 'b00', 'a0V', 'A000000000000000000000000001']) {
