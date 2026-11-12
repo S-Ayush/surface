@@ -35,7 +35,8 @@ export function ShellRoute() {
   if (current === null) return null;
   const { session, epoch } = current;
   // Each session gets a new store and a fresh shell: never the previous user's replica, and a
-  // new socket after a 4001 even for the same user (the old one stays closed for good).
+  // new socket after a 4001 even for the same user (the old one stays closed for good). A mutate
+  // 401 that the same session answers keeps the store (AuthState.recheck, SPEC-002 E14).
   return (
     <SessionShell
       key={`${epoch}/${session.workspaceId}/${session.userId}`}

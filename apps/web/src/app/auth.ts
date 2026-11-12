@@ -142,6 +142,11 @@ export function waitToRetry(
 const UNREACHABLE = "Surface can't reach the server. Check your connection, then reload the page.";
 /** How long a 4001 check waits before its second look (see `recheck`). */
 const SECOND_LOOK_MS = 1000;
+/**
+ * A store that a 4001 closes sooner than this after it opened was closed "at once": reopening the
+ * same session again and again backs off (see `recheck`). It matches the longest `RETRY_MS` wait.
+ */
+export const REOPEN_WINDOW_MS = RETRY_MS.at(-1) ?? 30_000;
 export const LOGIN_FAILED = "Couldn't log in. Check your connection, then try again.";
 
 /** The auth state the router's guards read; loaded once, then changed by sign-in and sign-out. */
@@ -154,6 +159,13 @@ export class AuthState {
   readonly #wait: () => Promise<void>;
   readonly #memory: StartMemory;
   readonly #retry: (attempt: number) => Promise<void>;
+  readonly #now: () => number;
+  /** When the current session's store was opened (its epoch began). */
+  #openedAt = 0;
+  /** The current session reopened this many times in a row, each soon after the last. */
+  #reopens = 0;
+  /** The epoch whose store a check is already reopening: a store is reopened once. */
+  #reopening: number | undefined;
 
   constructor(
     client: AuthClient,
@@ -161,8 +173,13 @@ export class AuthState {
       readonly wait?: () => Promise<void>;
       /** This device's last session; none by default (tests, and before ADR-0018). */
       readonly memory?: StartMemory;
-      /** The wait before each check of a remembered session (default: `waitToRetry`). */
+      /**
+       * The wait before each check of a remembered session, and before reopening a session
+       * that keeps being revoked at once (default: `waitToRetry`).
+       */
       readonly retry?: (attempt: number) => Promise<void>;
+      /** The clock for `REOPEN_WINDOW_MS` (default: `Date.now`). */
+      readonly now?: () => number;
     } = {},
   ) {
     this.#client = client;
@@ -170,6 +187,7 @@ export class AuthState {
       options.wait ?? (() => new Promise((resolve) => setTimeout(resolve, SECOND_LOOK_MS)));
     this.#memory = options.memory ?? forgetful;
     this.#retry = options.retry ?? waitToRetry;
+    this.#now = options.now ?? Date.now;
   }
 
   get snapshot(): AuthSnapshot {
@@ -192,6 +210,7 @@ export class AuthState {
     if (!result.ok) return result;
     const session = await this.#client.session().catch(() => null);
     if (session === null) return { ok: false, message: LOGIN_FAILED };
+    this.#reopens = 0;
     this.#begin(session);
     return { ok: true };
   }
@@ -207,8 +226,14 @@ export class AuthState {
    *   browser has stored the new session's cookie, so the first check may carry the old one.
    * - `epoch` is the session the caller's store was opened for (default: the current one). A
    *   check from an earlier session's store, or answered after the session changed, does nothing.
+   * - `cause`: `unauthorized` is a 401 the store recovers from by itself (a mutate: the queue
+   *   parks, redials and resends after its own backoff, SPEC-002 E14), so the same session keeps
+   *   the store; a new one would resend at once, looping against a server or proxy that disagrees
+   *   with itself. `revoked` (a 4001, whose socket is closed for good, or a bootstrap 401) needs
+   *   a new store, but reopening the same session soon after the last one waits first, as
+   *   `RETRY_MS`, then asks again (`app/session-store.ts` picks the cause).
    */
-  async recheck(epoch?: number): Promise<void> {
+  async recheck(epoch?: number, cause: 'revoked' | 'unauthorized' = 'revoked'): Promise<void> {
     const checked = this.#epoch();
     if (checked === undefined || (epoch !== undefined && epoch !== checked)) return;
     // undefined: no answer, so nothing is known about the session.
@@ -225,8 +250,45 @@ export class AuthState {
     // A late answer is about a session that has gone: the user logged out meanwhile (logging out
     // closes this tab's socket too), or signed in again and the check carried the old cookie.
     if (!current() || session === undefined) return;
-    if (session === null) this.#end(false);
-    else this.#begin(session);
+    if (session !== null && this.#isCurrent(session)) {
+      if (cause === 'unauthorized') return;
+      if (this.#reopening === checked) return;
+      this.#reopening = checked;
+      const attempt = this.#reopenAttempt();
+      if (attempt !== undefined) {
+        await this.#retry(attempt);
+        if (!current()) return;
+        // The answer is up to 30 s old by now: whoever is signed in now gets the new store.
+        session = await ask();
+        if (!current() || session === undefined) return;
+      }
+    }
+    if (session === null) {
+      this.#end(false);
+      return;
+    }
+    if (!this.#isCurrent(session)) this.#reopens = 0;
+    this.#begin(session);
+  }
+
+  #isCurrent(session: Session): boolean {
+    const current = this.snapshot;
+    return (
+      current.status === 'ready' &&
+      current.session !== null &&
+      current.session.userId === session.userId &&
+      current.session.workspaceId === session.workspaceId
+    );
+  }
+
+  /**
+   * Counts a reopen of the same session. The first one soon after the last opening is at once
+   * (undefined); each further one waits `RETRY_MS[attempt]`: 2, 5, 10, then 30 s.
+   */
+  #reopenAttempt(): number | undefined {
+    const soon = this.#now() - this.#openedAt < REOPEN_WINDOW_MS;
+    this.#reopens = soon ? this.#reopens + 1 : 0;
+    return this.#reopens < 2 ? undefined : this.#reopens - 2;
   }
 
   async logout(): Promise<void> {
@@ -263,6 +325,7 @@ export class AuthState {
       offline: false,
     };
     this.#memory.write({ session, smtp: next.capabilities.smtp });
+    this.#openedAt = this.#now();
     runInAction(() => this.#snapshot.set(next));
   }
 
@@ -281,6 +344,7 @@ export class AuthState {
         this.#client.session(),
       ]);
       next = { status: 'ready', capabilities, session, epoch: 0 };
+      this.#openedAt = this.#now();
       if (session === null) this.#memory.clear();
       else this.#memory.write({ session, smtp: capabilities.smtp });
     } catch (error) {
@@ -296,6 +360,8 @@ export class AuthState {
               epoch: 0,
               offline: true,
             };
+      // The store opens now, from the replica, whatever the server says later.
+      this.#openedAt = this.#now();
     }
     runInAction(() => this.#snapshot.set(next));
     if (next.status === 'ready' && next.offline === true) void this.#confirm(next.epoch);

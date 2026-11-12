@@ -4,6 +4,7 @@ import { CSRF_HEADER } from '@surface/sync-protocol';
 import { describe, expect, it } from 'vitest';
 import {
   AuthState,
+  REOPEN_WINDOW_MS,
   UnreachableError,
   httpAuthClient,
   type AuthClient,
@@ -142,6 +143,8 @@ const noWait = () => Promise.resolve();
 const sessionOf = (auth: AuthState) =>
   auth.snapshot.status === 'ready' ? auth.snapshot.session : 'not ready';
 const epochOf = (auth: AuthState) => (auth.snapshot.status === 'ready' ? auth.snapshot.epoch : -1);
+/** Lets pending promise callbacks run. */
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe('AuthState', () => {
   it('signs in: the session is read back, so the guards follow `next`', async () => {
@@ -327,7 +330,6 @@ describe('AuthState: one more look after a 4001', () => {
     const wait = () => new Promise<void>((resolve) => waits.push(resolve));
     return { client, wait, waits, checksMade: () => calls - 1 };
   }
-  const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
   it('stays signed in when the second check finds the new session', async () => {
     const { client, wait, waits, checksMade } = checks(null, SESSION);
@@ -393,8 +395,9 @@ describe('AuthState: checks tied to the session that asked (review M1)', () => {
     await auth.ready();
     const epoch = epochOf(auth);
     state.session = { userId: 'u1', workspaceId: 'w1' }; // signed in again elsewhere
-    await Promise.all([auth.recheck(epoch), auth.recheck(epoch)]);
+    await Promise.all([auth.recheck(epoch, 'unauthorized'), auth.recheck(epoch)]);
     expect(sessionOf(auth)).toEqual({ userId: 'u1', workspaceId: 'w1' });
+    expect(epochOf(auth)).toBe(epoch + 1); // one new store, for the 4001
   });
 });
 
@@ -443,6 +446,176 @@ describe('AuthState: a logout whose answer is lost (review m3)', () => {
     expect(sessionOf(auth)).toEqual(SESSION); // left to the logout in flight
     logouts[1]?.resolve();
     await second;
+    expect(auth.snapshot).toMatchObject({ session: null, loggedOut: true });
+  });
+});
+
+describe('AuthState: the same session revoked again and again (SPEC-002 E14, session D)', () => {
+  // A server or proxy that disagrees with itself: `/auth/session` says the user is signed in, and
+  // every new store's socket is closed 4001 at once. Each 4001 needs a new store (that socket is
+  // revoked for good), but reopening at network speed would loop; repeats wait as ADR-0018's
+  // checks do.
+  function revokedAgain(answer: () => Session | null = () => SESSION) {
+    let time = 0;
+    const waits: number[] = [];
+    const resume: (() => void)[] = [];
+    const client: AuthClient = {
+      capabilities: () => Promise.resolve({ setupComplete: true, smtp: false }),
+      session: () => Promise.resolve(answer()),
+      login: () => Promise.resolve({ ok: true }),
+      logout: () => Promise.resolve(),
+    };
+    const auth = new AuthState(client, {
+      wait: noWait,
+      now: () => time,
+      retry: (attempt) => {
+        waits.push(attempt);
+        return new Promise<void>((resolve) => resume.push(resolve));
+      },
+    });
+    return {
+      auth,
+      waits,
+      resume: () => resume.shift()?.(),
+      advance: (ms: number) => (time += ms),
+    };
+  }
+
+  it('reopens at once the first time, then waits 2, 5, 10, then 30 s before each further reopen', async () => {
+    const { auth, waits, resume } = revokedAgain();
+    await auth.ready();
+    await auth.recheck(epochOf(auth));
+    expect(waits).toEqual([]);
+    for (const attempt of [0, 1, 2, 3, 4]) {
+      const epoch = epochOf(auth);
+      const check = auth.recheck(epoch);
+      await tick();
+      expect(waits.at(-1)).toBe(attempt);
+      expect(epochOf(auth)).toBe(epoch); // the shell keeps the old store while it waits
+      resume();
+      await check;
+      expect(epochOf(auth)).toBe(epoch + 1);
+    }
+    expect(sessionOf(auth)).toEqual(SESSION);
+  });
+
+  it('counts only reopens soon after the last one, and starts over once a store stays open', async () => {
+    const { auth, waits, resume, advance } = revokedAgain();
+    await auth.ready();
+    advance(REOPEN_WINDOW_MS);
+    await auth.recheck(epochOf(auth)); // its store was open long enough: at once
+    await auth.recheck(epochOf(auth)); // the first soon after: at once
+    expect(waits).toEqual([]);
+    const check = auth.recheck(epochOf(auth)); // the second: waits
+    await tick();
+    expect(waits).toEqual([0]);
+    resume();
+    await check;
+    advance(REOPEN_WINDOW_MS);
+    await auth.recheck(epochOf(auth));
+    expect(waits).toEqual([0]);
+  });
+
+  it('reopens at once for another user (signed in again elsewhere, SPEC-001 Q11)', async () => {
+    let now: Session = SESSION;
+    const { auth, waits } = revokedAgain(() => now);
+    await auth.ready();
+    await auth.recheck(epochOf(auth));
+    now = { userId: 'u9', workspaceId: 'w1' };
+    await auth.recheck(epochOf(auth));
+    expect(sessionOf(auth)).toEqual(now);
+    await auth.recheck(epochOf(auth)); // u9's first reopen: the count starts over
+    expect(waits).toEqual([]);
+  });
+
+  it('starts over after signing in again in this tab', async () => {
+    const { auth, waits, resume } = revokedAgain();
+    await auth.ready();
+    await auth.recheck(epochOf(auth));
+    const check = auth.recheck(epochOf(auth));
+    await tick();
+    resume();
+    await check;
+    await auth.logout();
+    await auth.login('u1', 'right');
+    await auth.recheck(epochOf(auth));
+    expect(waits).toEqual([0]);
+  });
+
+  it('asks again after the wait, so it reopens for whoever is signed in by then', async () => {
+    let now: Session | null = SESSION;
+    const { auth, resume } = revokedAgain(() => now);
+    await auth.ready();
+    await auth.recheck(epochOf(auth));
+    const check = auth.recheck(epochOf(auth));
+    await tick();
+    now = { userId: 'u9', workspaceId: 'w1' }; // someone else signed in meanwhile
+    resume();
+    await check;
+    expect(sessionOf(auth)).toEqual(now);
+  });
+
+  it('reopens a store once, however many checks it sends while one waits', async () => {
+    const { auth, waits, resume } = revokedAgain();
+    await auth.ready();
+    await auth.recheck(epochOf(auth));
+    const epoch = epochOf(auth);
+    const first = auth.recheck(epoch);
+    await tick();
+    const second = auth.recheck(epoch);
+    await tick();
+    expect(waits).toEqual([0]);
+    resume();
+    resume();
+    await Promise.all([first, second]);
+    expect(epochOf(auth)).toBe(epoch + 1);
+  });
+
+  it('counts from an offline start too (ADR-0018)', async () => {
+    let reachable = false;
+    let time = REOPEN_WINDOW_MS;
+    const waits: number[] = [];
+    const away = () => Promise.reject(new UnreachableError());
+    const auth = new AuthState(
+      {
+        capabilities: () =>
+          reachable ? Promise.resolve({ setupComplete: true, smtp: false }) : away(),
+        session: () => (reachable ? Promise.resolve(SESSION) : away()),
+        login: () => Promise.resolve({ ok: true }),
+        logout: () => Promise.resolve(),
+      },
+      {
+        wait: noWait,
+        now: () => time,
+        memory: {
+          read: () => ({ session: SESSION, smtp: false }),
+          write: () => {},
+          clear: () => {},
+        },
+        retry: (attempt) => {
+          waits.push(attempt);
+          return new Promise<void>(() => undefined);
+        },
+      },
+    );
+    await auth.ready(); // opened offline; its own check waits (attempt 0)
+    reachable = true;
+    time += 1;
+    await auth.recheck(epochOf(auth)); // the first reopen soon after that start: at once
+    void auth.recheck(epochOf(auth)); // the second waits
+    await tick();
+    expect(waits).toEqual([0, 0]);
+  });
+
+  it('does not reopen after a wait the user logged out during', async () => {
+    const { auth, resume } = revokedAgain();
+    await auth.ready();
+    await auth.recheck(epochOf(auth));
+    const check = auth.recheck(epochOf(auth));
+    await tick();
+    await auth.logout();
+    resume();
+    await check;
     expect(auth.snapshot).toMatchObject({ session: null, loggedOut: true });
   });
 });

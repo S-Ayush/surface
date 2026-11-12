@@ -70,11 +70,17 @@ export function csrfFetch(fetchFn: FetchLike, cookies: () => string): FetchLike 
   };
 }
 
-/** Reports a `401` (the session ended: E14) and passes every answer through. Never resends. */
-export function watchSession(fetchFn: FetchLike, onUnauthenticated: () => void): FetchLike {
+/**
+ * Reports a `401` (the session ended: E14) with the request's URL, and passes every answer
+ * through. Never resends.
+ */
+export function watchSession(
+  fetchFn: FetchLike,
+  onUnauthenticated: (url: string) => void,
+): FetchLike {
   return async (url, init) => {
     const response = await fetchFn(url, init);
-    if (response.status === 401) onUnauthenticated();
+    if (response.status === 401) onUnauthenticated(url);
     return response;
   };
 }
