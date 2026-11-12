@@ -41,6 +41,7 @@ export const SETTINGS = {
   teams: { screen: 'settings/teams', title: 'Teams', admin: false, nav: '/settings/teams' },
   teamGeneral: { screen: 'settings/teams/general', title: 'Team settings', admin: false },
   teamMembers: { screen: 'settings/teams/members', title: 'Team members', admin: false },
+  teamWorkflow: { screen: 'settings/teams/workflow', title: 'Workflow', admin: false },
 } as const satisfies Record<string, SettingsSection>;
 
 const NAV = [

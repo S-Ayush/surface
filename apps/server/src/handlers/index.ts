@@ -6,6 +6,11 @@ import debugListItems from './debug/list-items.js';
 import debugRename from './debug/rename.js';
 import debugTouch from './debug/touch.js';
 import userUpdatePreferences from './users/update-preferences.js';
+import statusCreate from './statuses/create.js';
+import statusDelete from './statuses/delete.js';
+import statusList from './statuses/list.js';
+import statusReorder from './statuses/reorder.js';
+import statusUpdate from './statuses/update.js';
 import teamAddMember from './teams/add-member.js';
 import teamCreate from './teams/create.js';
 import teamJoin from './teams/join.js';
@@ -60,4 +65,9 @@ export const HANDLERS: readonly Handler[] = [
   sessionList,
   sessionRevoke,
   sessionRevokeOthers,
+  statusList,
+  statusCreate,
+  statusUpdate,
+  statusReorder,
+  statusDelete,
 ];

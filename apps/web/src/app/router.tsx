@@ -270,6 +270,11 @@ const routeTree = rootRoute.addChildren([
           path: '$key/members',
           component: settingsScreen(SETTINGS.teamMembers),
         }),
+        createRoute({
+          getParentRoute: () => teamsRoute,
+          path: '$key/workflow',
+          component: settingsScreen(SETTINGS.teamWorkflow),
+        }),
       ]),
     ]),
   ]),

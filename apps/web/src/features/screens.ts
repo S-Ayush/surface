@@ -12,6 +12,7 @@ import {
 } from './account/AccountScreens.js';
 import { InviteScreen } from './invites/InviteScreen.js';
 import { MembersScreen } from './members/MembersScreen.js';
+import { WorkflowScreen } from './statuses/WorkflowScreen.js';
 import { TeamGeneralScreen } from './teams/TeamGeneralScreen.js';
 import { TeamMembersScreen } from './teams/TeamMembersScreen.js';
 import { TeamsScreen } from './teams/TeamsScreen.js';
@@ -33,4 +34,5 @@ export const SCREENS: ScreenRegistry = {
   invite: InviteScreen,
   'settings/account/profile': ProfileScreen,
   'settings/account/security': SecurityScreen,
+  'settings/teams/workflow': WorkflowScreen,
 };

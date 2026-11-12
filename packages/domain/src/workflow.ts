@@ -3,8 +3,10 @@
  * the client's `optimistic` and the server's handlers, so both refuse the same things with the
  * same words. INV-04 and INV-05 themselves are `workflowProblems` in `workspace.ts`.
  */
+import { fractionalKeyBetween } from './fractional-key.js';
 import { nameProblem } from './names.js';
-import type { StatusCategory } from './status-category.js';
+import { STATUS_CATEGORIES, type StatusCategory } from './status-category.js';
+import type { ColorHue } from './workspace.js';
 
 /** At most 50 statuses per team (SPEC-010 D22). */
 export const STATUS_LIMIT = 50;
@@ -115,4 +117,101 @@ export function statusDeleteProblem(
     };
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Create, reorder and the shape of a status row (SPEC-010 §4.1, §6). Shared by the handlers and
+// the operations' `optimistic`, so the client predicts the key the server commits.
+
+/** Categories a status can be created in (§4.1: never Triage or Duplicate). */
+export const EDITABLE_STATUS_CATEGORIES = [
+  'backlog',
+  'unstarted',
+  'started',
+  'completed',
+  'canceled',
+] as const satisfies readonly StatusCategory[];
+
+/** The hue a new status gets when none is given, as seeded by SPEC-001 (§4.1). */
+export const STATUS_CATEGORY_COLORS: Readonly<Record<StatusCategory, ColorHue>> = {
+  triage: 'orange',
+  backlog: 'gray',
+  unstarted: 'gray',
+  started: 'yellow',
+  completed: 'blue',
+  canceled: 'gray',
+  duplicate: 'gray',
+};
+
+/** Category order on the workflow page and in `status.list` (Triage first when it is on). */
+export function statusCategoryRank(category: StatusCategory): number {
+  return STATUS_CATEGORIES.indexOf(category);
+}
+
+/** Byte order of `position`, never `localeCompare` (the column is `COLLATE "C"`). */
+export function comparePositions(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+export interface PositionedStatus {
+  readonly id: string;
+  readonly category: StatusCategory;
+  readonly position: string;
+}
+
+/** A team's statuses in display order: category, then position, then id. */
+export function sortStatuses<T extends PositionedStatus>(statuses: readonly T[]): T[] {
+  return [...statuses].sort(
+    (a, b) =>
+      statusCategoryRank(a.category) - statusCategoryRank(b.category) ||
+      comparePositions(a.position, b.position) ||
+      comparePositions(a.id, b.id),
+  );
+}
+
+export type StatusPlacement =
+  | { readonly ok: true; readonly position: string; readonly unchanged: boolean }
+  | { readonly ok: false; readonly field: 'before' | 'after'; readonly message: string };
+
+/**
+ * Where a status goes in `category`: right after `after`, right before `before`, or at the end.
+ * `movingId` is a status being moved: it is left out of the neighbours, and `unchanged` says it
+ * would stay where it is (a reorder then writes nothing). An anchor must be another status of the
+ * same category (SPEC-010 §6, AC-3, E4).
+ */
+export function placeStatus(
+  statuses: readonly PositionedStatus[],
+  category: StatusCategory,
+  anchor: { readonly before?: string | undefined; readonly after?: string | undefined },
+  movingId?: string,
+): StatusPlacement {
+  const inCategory = sortStatuses(statuses.filter((s) => s.category === category));
+  const others = inCategory.filter((s) => s.id !== movingId);
+  const anchorId = anchor.after ?? anchor.before;
+  const field = anchor.after !== undefined ? 'after' : 'before';
+  let index = others.length;
+  if (anchorId !== undefined) {
+    if (anchorId === movingId) {
+      return { ok: false, field, message: "Can't move a status next to itself." };
+    }
+    const at = others.findIndex((s) => s.id === anchorId);
+    if (at < 0) {
+      return {
+        ok: false,
+        field,
+        message: `The ${field} status must be in the ${STATUS_CATEGORY_TITLES[category]} category. Choose a status in the same category.`,
+      };
+    }
+    index = field === 'after' ? at + 1 : at;
+  }
+  const previous = others[index - 1];
+  const next = others[index];
+  const current = inCategory.findIndex((s) => s.id === movingId);
+  // The status keeps its slot when the same number of others sit before it as before.
+  const unchanged = movingId !== undefined && current >= 0 && index === current;
+  return {
+    ok: true,
+    position: fractionalKeyBetween(previous?.position ?? null, next?.position ?? null),
+    unchanged,
+  };
 }

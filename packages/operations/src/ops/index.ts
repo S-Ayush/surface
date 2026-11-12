@@ -24,6 +24,7 @@ import { workspaceGet, workspaceUpdate } from './workspace.js';
 import { inviteCreate, inviteList, inviteRevoke } from './invite.js';
 import { userChangePassword, userMe, userUpdateProfile } from './profile.js';
 import { sessionList, sessionRevoke, sessionRevokeOthers } from './session.js';
+import { statusCreate, statusDelete, statusList, statusReorder, statusUpdate } from './status.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -34,6 +35,7 @@ export * from './workspace.js';
 export * from './invite.js';
 export * from './profile.js';
 export * from './session.js';
+export * from './status.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -74,6 +76,13 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   sessionRevoke,
   sessionRevokeOthers,
   userChangePassword,
+  // Create before update, reorder and delete: the examples run in this order on one seed, and
+  // each acts on the status the one before it made (SPEC-010 §6).
+  statusList,
+  statusCreate,
+  statusUpdate,
+  statusReorder,
+  statusDelete,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

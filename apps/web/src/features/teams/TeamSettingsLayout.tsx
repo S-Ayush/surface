@@ -32,6 +32,9 @@ export function TeamSettingsLayout({
           <Link to="/settings/teams/$key/members" params={{ key: team.key }}>
             Members
           </Link>
+          <Link to="/settings/teams/$key/workflow" params={{ key: team.key }}>
+            Workflow
+          </Link>
         </nav>
       </div>
       {children(details)}
