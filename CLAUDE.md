@@ -58,7 +58,7 @@ packages/config         shared tsconfig, ESLint, Prettier, Vitest presets
 ## Architecture rules that must never be broken
 
 1. **Every state change is an operation.** Operations are defined once in `packages/operations` (`defineOperation`) and run through the server executor. This applies to the web client, the HTTP API and MCP alike: no side-channel writes and no ad-hoc REST mutations.
-2. **Only the repo layer writes synced tables** (`apps/server/src/sync/repo.ts`). It records `sync_log` rows in the same transaction. Writing a synced table any other way silently breaks sync.
+2. **Only the repo layer writes synced tables** (`apps/server/src/sync/repo.ts`). It records `sync_log` rows in the same transaction. Writing a synced table any other way silently breaks sync. The only two unlogged writes are stated exceptions: purging an issue's content rows ([ADR-0022](docs/04-architecture/adr/0022-purge-content-unlogged.md)) and document schema migrations ([ADR-0023](docs/04-architecture/adr/0023-document-migration-unlogged.md)). Don't add a third without an ADR.
 3. **The server is authoritative.** The client writes base state only from server data. Optimistic changes live in the overlay.
 4. **Private teams never leak.** Every query and delta is filtered by sync groups (`sync_groups && actorGroups`). Invisible rows are `NOT_FOUND`, never `FORBIDDEN`. See `docs/03-domain/permissions.md` §5 for the leak checklist that tests must cover.
 5. **No outbound network calls** except to the user's own SMTP server. That rules out telemetry, update checks, CDNs, external fonts and remote scripts.
