@@ -73,6 +73,11 @@ type Row = { id: string; role: UserRole };
 function fakeCtx(people: readonly Row[]) {
   const calls: string[] = [];
   const events: DomainEvent[] = [];
+  const logged: Record<string, unknown>[] = [];
+  const log = {
+    info: (fields: object, msg: string) => logged.push({ level: 'info', ...fields, msg }),
+    warn: (fields: object, msg: string) => logged.push({ level: 'warn', ...fields, msg }),
+  };
   const at = new Date('2026-11-07T12:00:00Z');
   const full = (row: Row) => ({
     ...row,
@@ -125,9 +130,11 @@ function fakeCtx(people: readonly Row[]) {
       emit: (event: DomainEvent) => {
         events.push(event);
       },
+      log,
     }) as unknown as HandlerContext;
   const writes = () => calls.filter((call) => call.startsWith('write'));
-  return { ctx, calls, writes, events };
+  const audits = () => logged.filter((line) => line['audit'] === true);
+  return { ctx, calls, writes, events, audits };
 }
 
 describe('user.setRole (AC-10, E6)', () => {
@@ -206,6 +213,47 @@ describe('user.setRole (AC-10, E6)', () => {
     ]);
     await setRole.run(ctx(IRIS, null), { user: IRIS, role: 'admin' });
     expect(writes()).toEqual([`write ${IRIS} admin`]);
+  });
+});
+
+describe('user.setRole audit line (SPEC-001 §10)', () => {
+  it('logs who changed whose role, from what to what, by id only', async () => {
+    const { ctx, audits } = fakeCtx([
+      { id: ADA, role: 'admin' },
+      { id: IRIS, role: 'admin' },
+    ]);
+    await setRole.run(ctx(ADA, IRIS), { user: ADA, role: 'member' });
+    expect(audits()).toEqual([
+      {
+        level: 'info',
+        audit: true,
+        event: 'user.role_changed',
+        actorId: IRIS,
+        userId: ADA,
+        from: 'admin',
+        to: 'member',
+        msg: 'role changed',
+      },
+    ]);
+  });
+
+  it('names no actor for the system actor', async () => {
+    const { ctx, audits } = fakeCtx([
+      { id: ADA, role: 'admin' },
+      { id: IRIS, role: 'member' },
+    ]);
+    await setRole.run(ctx(IRIS, null), { user: IRIS, role: 'admin' });
+    expect(audits()).toHaveLength(1);
+    expect(audits()[0]).not.toHaveProperty('actorId');
+  });
+
+  it('logs nothing when nothing changes or the change is refused', async () => {
+    const { ctx, audits } = fakeCtx([{ id: ADA, role: 'admin' }]);
+    await setRole.run(ctx(ADA), { user: ADA, role: 'admin' });
+    await expect(setRole.run(ctx(ADA), { user: ADA, role: 'member' })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(audits()).toEqual([]);
   });
 });
 

@@ -25,6 +25,7 @@ import {
 } from '@surface/domain';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { audit } from '../../auth/audit.js';
 import { csrfCookie, csrfToken } from '../../auth/csrf.js';
 import { hashPassword } from '../../auth/password.js';
 import { createSession, sessionCookie, type NewSession } from '../../auth/session.js';
@@ -204,12 +205,25 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AccountRouteDe
       return { userId, session, ended };
     });
     if (signedIn === undefined) {
-      request.log.warn({ event: 'auth.login_failed', reason: 'magic_link' }, 'login link refused');
+      // SPEC-001 §10. Expired, used or unknown look alike, and name no one.
+      audit(
+        request.log,
+        'auth.login_failed',
+        { method: 'magic_link', reason: 'invalid_link', ip: request.ip },
+        'login link refused',
+      );
       return reply.code(401).send(errorBody(request, 'UNAUTHENTICATED', USED_UP.magicLink));
     }
     closeAfterResponse(request, reply, signedIn.ended, deps.closeSessions);
-    request.log.info(
-      { event: 'auth.login', method: 'magic_link', userId: signedIn.userId },
+    audit(
+      request.log,
+      'auth.login',
+      {
+        method: 'magic_link',
+        userId: signedIn.userId,
+        sessionId: signedIn.session.id,
+        ip: request.ip,
+      },
       'signed in',
     );
     return signIn(reply, signedIn.session, signedIn.userId);
@@ -244,11 +258,21 @@ export function registerAccountRoutes(app: FastifyInstance, deps: AccountRouteDe
       return { userId, session, ended };
     });
     if (reset === undefined) {
-      request.log.warn({ event: 'auth.password_reset_failed' }, 'reset link refused');
+      audit(
+        request.log,
+        'auth.password_reset_failed',
+        { reason: 'invalid_link', ip: request.ip },
+        'reset link refused',
+      );
       return reply.code(401).send(errorBody(request, 'UNAUTHENTICATED', USED_UP.passwordReset));
     }
     closeAfterResponse(request, reply, reset.ended, deps.closeSessions);
-    request.log.info({ event: 'auth.password_reset', userId: reset.userId }, 'password reset');
+    audit(
+      request.log,
+      'auth.password_reset',
+      { userId: reset.userId, sessionId: reset.session.id, ip: request.ip },
+      'password reset',
+    );
     return signIn(reply, reset.session, reset.userId);
   });
 

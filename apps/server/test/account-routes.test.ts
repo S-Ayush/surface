@@ -439,3 +439,68 @@ describe('POST /auth/reset', () => {
     expect(res.json()).toMatchObject({ error: { code: 'CSRF_INVALID' } });
   });
 });
+
+describe('audit lines (SPEC-001 §10)', () => {
+  const audits = (logs: { lines: Record<string, unknown>[] }) =>
+    logs.lines.filter((line) => line['audit'] === true);
+  const lastSessionId = (sessions: FakeAuthStore) => sessions.inserted.at(-1)?.['id'];
+
+  it('logs a sign-in by login link, and a refused link at warn, naming no one', async () => {
+    const { accounts, logs, origin, post, sessions } = await accountApp();
+    await accounts.store.issueLink(Object.create(null) as never, 'magicLink', ADA, {
+      now: new Date(),
+    });
+    await post('/auth/magic', { token: 'magicLink-token-1' }, { origin });
+    const sessionId = lastSessionId(sessions);
+    expect(sessionId).toBeDefined();
+    await post('/auth/magic', { token: 'magicLink-token-1' }, { origin });
+    expect(audits(logs)).toEqual([
+      expect.objectContaining({
+        level: 'info',
+        event: 'auth.login',
+        method: 'magic_link',
+        userId: ADA,
+        sessionId,
+        ip: '127.0.0.1',
+      }),
+      expect.objectContaining({
+        level: 'warn',
+        event: 'auth.login_failed',
+        method: 'magic_link',
+        reason: 'invalid_link',
+        ip: '127.0.0.1',
+      }),
+    ]);
+    expect(audits(logs)[1]).not.toHaveProperty('userId');
+    expect(logs.text()).not.toContain('magicLink-token-1');
+  });
+
+  it('logs a password reset, and a refused reset link at warn, without the token', async () => {
+    const { logs, origin, post, sessions, token } = await (async () => {
+      const app = await accountApp();
+      await app.post('/auth/forgot', { email: 'ada@example.com' });
+      await app.settled();
+      return { ...app, token: tokenOf(app.accounts.queued[0]?.link ?? '') };
+    })();
+    await post('/auth/reset', { token, password: NEW_PASSWORD }, { origin });
+    const sessionId = lastSessionId(sessions);
+    await post('/auth/reset', { token, password: NEW_PASSWORD }, { origin });
+    expect(audits(logs)).toEqual([
+      expect.objectContaining({
+        level: 'info',
+        event: 'auth.password_reset',
+        userId: ADA,
+        sessionId,
+        ip: '127.0.0.1',
+      }),
+      expect.objectContaining({
+        level: 'warn',
+        event: 'auth.password_reset_failed',
+        reason: 'invalid_link',
+        ip: '127.0.0.1',
+      }),
+    ]);
+    expect(audits(logs)[1]).not.toHaveProperty('userId');
+    expect(logs.text()).not.toContain(token);
+  });
+});
