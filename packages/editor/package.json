@@ -28,7 +28,7 @@
     "@tiptap/pm": "3.32.2",
     "@tiptap/react": "3.32.2",
     "emojibase-data": "18.0.0",
-    "lowlight": "^3.3.0",
+    "lowlight": "3.3.0",
     "markdown-it": "15.0.3"
   },
   "devDependencies": {

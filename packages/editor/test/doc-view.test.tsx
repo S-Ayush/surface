@@ -91,6 +91,22 @@ describe('DocView follows the link rule of validateDoc (AC-14)', () => {
   });
 });
 
+describe('DocView code block language', () => {
+  const block = (language: unknown): DocNodeJSON =>
+    doc({ type: 'codeBlock', attrs: { language }, content: [text('x')] });
+
+  it('adds the language class only for a valid language name', () => {
+    expect(render({ doc: block('c++') }).querySelector('code')?.className).toBe('language-c++');
+    for (const bad of ['a b', 'x" onclick="y', '', 'é', 'a'.repeat(41)]) {
+      expect(
+        render({ doc: block(bad) })
+          .querySelector('code')
+          ?.hasAttribute('class'),
+      ).toBe(false);
+    }
+  });
+});
+
 describe('DocView images and files', () => {
   const image = (src: unknown) => doc({ type: 'image', attrs: { src, alt: 'shot' } });
 

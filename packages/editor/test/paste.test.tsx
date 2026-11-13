@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 // PLAN-013 S2: paste (SPEC-013 §4.4 "Paste", AC-14, E11 insert logic, E19, D9).
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fileFromImageSource, sanitizePastedHtml } from '../src/paste.js';
+import {
+  fileFromImageSource,
+  PASTED_IMAGE_MAX_BYTES,
+  PastedImageTooLarge,
+  sanitizePastedHtml,
+} from '../src/paste.js';
 import { destroyAll, docOf, makeEditor, paragraph, type Harness } from './support/web-editor.js';
 
 afterEach(() => {
@@ -232,5 +237,127 @@ describe('pasted text', () => {
     const harness = makeEditor();
     harness.editor.view.pasteText('just words', clipboard({ text: 'just words' }));
     expect(content(harness)).toEqual([paragraph('just words')]);
+  });
+});
+
+describe('plain-text paste, Mod+Shift+V', () => {
+  /** ProseMirror sets `input.shiftKey` for that paste. */
+  function plain(harness: Harness): void {
+    const input: unknown = Reflect.get(harness.editor.view, 'input');
+    if (typeof input !== 'object' || input === null) throw new Error('no input state');
+    Reflect.set(input, 'shiftKey', true);
+  }
+
+  it('does not upload pasted data: images', () => {
+    const harness = makeEditor({ mode: 'description' });
+    plain(harness);
+    pasteHtml(harness, `<img src="${PNG}">`, 'plain words');
+    expect(harness.upload).not.toHaveBeenCalled();
+  });
+
+  it('inserts Markdown text as it is', () => {
+    const harness = makeEditor({ mode: 'description' });
+    plain(harness);
+    harness.editor.view.pasteText('# Title\n\n- one', clipboard({ text: '# Title\n\n- one' }));
+    expect(JSON.stringify(content(harness))).not.toContain('heading');
+    expect(JSON.stringify(content(harness))).not.toContain('bulletList');
+    expect(JSON.stringify(content(harness))).toContain('# Title');
+  });
+
+  it('does not turn a URL over a selection into a link', () => {
+    const harness = makeEditor({ content: docOf(paragraph('docs')) });
+    harness.editor.commands.setTextSelection({ from: 1, to: 5 });
+    plain(harness);
+    harness.editor.view.pasteText(
+      'https://example.com',
+      clipboard({ text: 'https://example.com' }),
+    );
+    expect(JSON.stringify(content(harness))).not.toContain('"link"');
+    expect(JSON.stringify(content(harness))).toContain('https://example.com');
+  });
+});
+
+describe('pasted prose is not read as Markdown by a stray sign', () => {
+  it.each([
+    // Each has an HTML entity that Markdown would decode: converting would change the text.
+    "it's a__b &amp; c",
+    'use ` here &lt;b&gt;',
+    'a ](b) c &amp; d',
+    'snake_case_name and a~~b &amp; c',
+    'price is 5 * 3 * 2 &amp; more',
+  ])('pastes %j verbatim', (prose) => {
+    const harness = makeEditor();
+    harness.editor.view.pasteText(prose, clipboard({ text: prose }));
+    expect(content(harness)).toEqual([paragraph(prose)]);
+  });
+
+  it.each([
+    ['use `code` here', 'code'],
+    ['say **hi**', 'bold'],
+    ['see [docs](https://example.com)', 'link'],
+  ])('still converts %j (a balanced pair)', (markdown, mark) => {
+    const harness = makeEditor();
+    harness.editor.view.pasteText(markdown, clipboard({ text: markdown }));
+    expect(JSON.stringify(content(harness))).toContain(`"type":"${mark}"`);
+  });
+});
+
+describe('pasted image size', () => {
+  const oversized = `data:image/png;base64,${'A'.repeat(Math.ceil((PASTED_IMAGE_MAX_BYTES * 4) / 3) + 8)}`;
+
+  it('refuses a data: image over the upload limit before decoding it', async () => {
+    const decode = vi.spyOn(globalThis, 'atob');
+    await expect(fileFromImageSource(oversized)).rejects.toBeInstanceOf(PastedImageTooLarge);
+    expect(decode).not.toHaveBeenCalled();
+    decode.mockRestore();
+  });
+
+  it('refuses a blob: image over the limit', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          blob: () => Promise.resolve({ size: PASTED_IMAGE_MAX_BYTES + 1, type: 'image/png' }),
+        }),
+      ),
+    );
+    await expect(fileFromImageSource('blob:http://localhost/x')).rejects.toBeInstanceOf(
+      PastedImageTooLarge,
+    );
+  });
+
+  it('reports it through onError with a message that says what to do', async () => {
+    const harness = makeEditor({ mode: 'description' });
+    pasteHtml(harness, `<img src="${oversized}">`);
+    await vi.waitFor(() => {
+      expect(harness.errors).toEqual([
+        'That image is larger than 25 MB. Save a smaller one and upload the file.',
+      ]);
+    });
+    expect(harness.upload).not.toHaveBeenCalled();
+  });
+
+  it('still reads an image under the limit', async () => {
+    const file = await fileFromImageSource(PNG);
+    expect(file.size).toBeGreaterThan(0);
+  });
+});
+
+describe('sanitizePastedHtml parses once per paste', () => {
+  it('reuses the last result for the same HTML', () => {
+    const parse = vi.spyOn(DOMParser.prototype, 'parseFromString');
+    const html = `<p>unique ${String(Math.random())}</p>`;
+    const first = sanitizePastedHtml(html);
+    expect(sanitizePastedHtml(html)).toBe(first);
+    expect(parse).toHaveBeenCalledTimes(1);
+    parse.mockRestore();
+  });
+
+  it('parses once for a whole paste', () => {
+    const harness = makeEditor({ mode: 'description' });
+    const parse = vi.spyOn(DOMParser.prototype, 'parseFromString');
+    pasteHtml(harness, `<p>whole paste ${String(Math.random())}</p>`);
+    expect(parse).toHaveBeenCalledTimes(1);
+    parse.mockRestore();
   });
 });

@@ -6,7 +6,7 @@
  */
 import type { DocMarkJSON, DocNodeJSON } from '@surface/domain';
 import { Fragment, type ReactNode } from 'react';
-import { fileIdOfSrc, isAllowedHref } from './schema/links.js';
+import { fileIdOfSrc, isAllowedHref, isCodeLanguage } from './schema/links.js';
 import './editor.css';
 
 export interface DocViewProps {
@@ -139,7 +139,7 @@ function render(
       const language = stringAttr(node, 'language');
       return (
         <pre>
-          <code className={language === '' ? undefined : `language-${language}`}>
+          <code className={isCodeLanguage(language) ? `language-${language}` : undefined}>
             {textOf(node)}
           </code>
         </pre>

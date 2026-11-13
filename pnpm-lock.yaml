@@ -239,7 +239,7 @@ importers:
         specifier: 18.0.0
         version: 18.0.0(emojibase@18.0.0)
       lowlight:
-        specifier: ^3.3.0
+        specifier: 3.3.0
         version: 3.3.0
       markdown-it:
         specifier: 15.0.3

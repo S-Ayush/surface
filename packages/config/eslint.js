@@ -58,6 +58,17 @@ export const EMOJI_LIBRARY_BAN = {
 };
 
 /**
+ * The same ban for dynamic `import('emojibase')`, which `no-restricted-imports` doesn't see. It is a
+ * `no-restricted-syntax` selector, so every config block that sets that rule must include it
+ * (a later block replaces an earlier one's list).
+ */
+export const EMOJI_DYNAMIC_IMPORT_BAN = {
+  selector: 'ImportExpression[source.value=/^(emojibase|emoji-mart|@emoji-mart)(\\/|$)/]',
+  message:
+    'This package can load emoji from a CDN. Use the bundled `emojibase-data` JSON (SPEC-013 D22).',
+};
+
+/**
  * Surface ESLint flat config.
  * @param {{ rootDir: string }} options  rootDir = repository root (for typed linting).
  */
@@ -82,6 +93,7 @@ export function surfaceEslint({ rootDir }) {
         eqeqeq: ['error', 'smart'],
         'no-console': 'error',
         'no-restricted-imports': ['error', EMOJI_LIBRARY_BAN],
+        'no-restricted-syntax': ['error', EMOJI_DYNAMIC_IMPORT_BAN],
       },
     },
     {
@@ -111,6 +123,7 @@ export function surfaceEslint({ rootDir }) {
       rules: {
         'no-restricted-syntax': [
           'error',
+          EMOJI_DYNAMIC_IMPORT_BAN,
           {
             selector: `JSXAttribute[name.name='style'] Literal[value=${INLINE_STYLE_RAW_VALUE}]`,
             message: INLINE_STYLE_MESSAGE,

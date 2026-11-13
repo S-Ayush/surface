@@ -7,4 +7,9 @@ export declare const EMOJI_LIBRARY_BAN: {
   readonly paths: readonly { readonly name: string; readonly message: string }[];
   readonly patterns: readonly { readonly group: readonly string[]; readonly message: string }[];
 };
+/** The `no-restricted-syntax` selector that bans dynamic `import()` of the same libraries. */
+export declare const EMOJI_DYNAMIC_IMPORT_BAN: {
+  readonly selector: string;
+  readonly message: string;
+};
 export declare function surfaceEslint(options: { rootDir: string }): Linter.Config[];

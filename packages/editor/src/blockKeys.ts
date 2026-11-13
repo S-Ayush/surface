@@ -5,7 +5,7 @@
 import { Extension } from '@tiptap/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { Plugin, PluginKey, TextSelection, type EditorState } from '@tiptap/pm/state';
-import { BINDINGS, hasMod, inside, matches, type KeyHandlers } from './keymap.js';
+import { BINDINGS, hasMod, inside, letterOf, matches, type KeyHandlers } from './keymap.js';
 import { isSuggestionOpen } from './suggestion.js';
 
 /** A mutable holder: the host's callbacks change between renders, the extensions don't. */
@@ -26,12 +26,7 @@ export function formattingKeys(ref: HandlerRef): Extension {
           props: {
             handleKeyDown: (view, event) => {
               if (!view.editable || event.isComposing) return false;
-              if (
-                hasMod(event) &&
-                !event.shiftKey &&
-                !event.altKey &&
-                event.key.toLowerCase() === 'k'
-              ) {
+              if (hasMod(event) && !event.shiftKey && !event.altKey && letterOf(event) === 'k') {
                 // Without a text selection the key is not consumed, so the command menu opens
                 // (shortcuts §3.7, SPEC-005 E1).
                 const { selection } = view.state;

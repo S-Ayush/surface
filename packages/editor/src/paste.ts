@@ -36,8 +36,21 @@ export interface SanitizedPaste {
   readonly uploads: readonly string[];
 }
 
-/** Cleans clipboard HTML in a detached document. Pure: it loads and runs nothing. */
+let lastSanitized: { readonly input: string; readonly result: SanitizedPaste } | null = null;
+
+/**
+ * Cleans clipboard HTML in a detached document. Pure: it loads and runs nothing. A paste asks
+ * twice (`handlePaste` for the uploads, `transformPastedHTML` for the markup), so the last result
+ * is kept and the HTML is parsed once.
+ */
 export function sanitizePastedHtml(html: string): SanitizedPaste {
+  if (lastSanitized?.input === html) return lastSanitized.result;
+  const result = sanitize(html);
+  lastSanitized = { input: html, result };
+  return result;
+}
+
+function sanitize(html: string): SanitizedPaste {
   const parsed = new DOMParser().parseFromString(html, 'text/html');
   const uploads: string[] = [];
   for (const element of Array.from(parsed.body.querySelectorAll(REMOVED_TAGS.join(',')))) {
@@ -64,19 +77,45 @@ export function sanitizePastedHtml(html: string): SanitizedPaste {
   return { html: parsed.body.innerHTML, uploads };
 }
 
-const MARKDOWN_SIGNS = /^(?:#{1,4} |> |[-*+] |\d+\. |```|\[[ xX]\] )|\*\*|__|`|\]\(|~~|^---$/m;
+/**
+ * Text is read as Markdown only with a block sign at a line start (heading, quote, list, fence,
+ * task, divider) or a balanced inline pair (`code`, **bold**, [text](url)). A stray backtick,
+ * underscore or `](` in prose pastes verbatim.
+ */
+const MARKDOWN_SIGNS = new RegExp(
+  [
+    '^(?:#{1,4} |> |[-*+] |\\d+\\. |```|\\[[ xX]\\] |---$)',
+    '`[^`\\n]+`',
+    '\\*\\*[^*\\n]+\\*\\*',
+    '\\[[^\\]\\n]+\\]\\([^)\\s]+\\)',
+  ].join('|'),
+  'm',
+);
+
+/** The largest pasted image the editor will try to upload: `UPLOAD_MAX_MB`'s default (SPEC-014). */
+export const PASTED_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+
+export class PastedImageTooLarge extends Error {
+  constructor() {
+    super('That image is larger than 25 MB. Save a smaller one and upload the file.');
+  }
+}
 
 /** A `data:` or `blob:` image source as a file to upload. */
 export async function fileFromImageSource(src: string): Promise<File> {
   if (/^blob:/i.test(src)) {
     // A same-origin object URL: this reads memory, not the network.
     const blob = await (await fetch(src)).blob();
+    if (blob.size > PASTED_IMAGE_MAX_BYTES) throw new PastedImageTooLarge();
     return new File([blob], `pasted-image.${extensionOf(blob.type)}`, { type: blob.type });
   }
   const comma = src.indexOf(',');
   const head = src.slice(5, comma);
   const type = head.split(';')[0] || 'image/png';
   const body = src.slice(comma + 1);
+  // Estimated from the text, before anything is decoded: base64 is 4 characters per 3 bytes.
+  const estimate = head.includes(';base64') ? Math.floor((body.length * 3) / 4) : body.length;
+  if (estimate > PASTED_IMAGE_MAX_BYTES) throw new PastedImageTooLarge();
   const bytes = head.includes(';base64')
     ? Uint8Array.from(atob(body), (char) => char.charCodeAt(0))
     : new TextEncoder().encode(decodeURIComponent(body));
@@ -91,6 +130,12 @@ function extensionOf(type: string): string {
 export interface PasteOptions {
   readonly upload: () => UploadFile;
   readonly onError: () => (message: string) => void;
+}
+
+/** ProseMirror marks a Mod+Shift+V paste on its (untyped) input state. */
+function isPlainTextPaste(view: object): boolean {
+  const input: unknown = Reflect.get(view, 'input');
+  return typeof input === 'object' && input !== null && Reflect.get(input, 'shiftKey') === true;
 }
 
 export function pasteExtension(options: PasteOptions): Extension {
@@ -108,6 +153,9 @@ export function pasteExtension(options: PasteOptions): Extension {
             handlePaste: (view, event) => {
               const data = event.clipboardData;
               if (data === null || !view.editable) return false;
+              // Mod+Shift+V: ProseMirror sets `input.shiftKey` and parses the text alone. Insert
+              // exactly that: no upload, no Markdown, no link.
+              if (isPlainTextPaste(view)) return false;
               const html = data.getData('text/html');
               const text = data.getData('text/plain');
               const files = Array.from(data.files);
@@ -119,8 +167,12 @@ export function pasteExtension(options: PasteOptions): Extension {
               }
               if (html !== '') {
                 for (const src of sanitizePastedHtml(html).uploads) {
-                  void fileFromImageSource(src).then(upload, () => {
-                    options.onError()("That image couldn't be read. Save it and upload the file.");
+                  void fileFromImageSource(src).then(upload, (error: unknown) => {
+                    options.onError()(
+                      error instanceof PastedImageTooLarge
+                        ? error.message
+                        : "That image couldn't be read. Save it and upload the file.",
+                    );
                   });
                 }
                 return false;

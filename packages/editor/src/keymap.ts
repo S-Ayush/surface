@@ -149,10 +149,21 @@ export const BINDINGS: readonly Binding[] = [
   },
 ];
 
+/**
+ * The letter a key press stands for. On a non-Latin layout `event.key` is not ASCII (`и`), so the
+ * physical key (`KeyB`) decides, as the bindings are named by Latin letter.
+ */
+export function letterOf(event: KeyboardEvent): string {
+  const key = event.key.toLowerCase();
+  if (key.length === 1 && key.charCodeAt(0) < 0x80) return key;
+  const code = /^Key([A-Z])$/.exec(event.code);
+  return code?.[1]?.toLowerCase() ?? key;
+}
+
 export function matches(binding: Binding, event: KeyboardEvent): boolean {
   if ((binding.mod ?? false) !== hasMod(event)) return false;
   if ((binding.shift ?? false) !== event.shiftKey) return false;
   if ((binding.alt ?? false) !== event.altKey) return false;
   if (binding.code !== undefined) return event.code === binding.code;
-  return binding.key !== undefined && event.key.toLowerCase() === binding.key;
+  return binding.key !== undefined && letterOf(event) === binding.key;
 }

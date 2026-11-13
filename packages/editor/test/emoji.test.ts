@@ -22,6 +22,8 @@ const isRegionalIndicator = (entry: Raw) => /^1F1(?:E[6-9A-F]|F[0-9A-F])$/.test(
  * server's `\p{RGI_Emoji}` check refuses them (SPEC-013 §4.4 names this skew). The loader drops
  * them, so the picker never offers what `reaction.set` would refuse. Shrinks when Node moves on.
  */
+// UPDATE THIS LIST when Node's ICU or `emojibase-data` moves: a newer Node knows more emoji (the
+// list shrinks), a newer data package adds some (it grows). The loader's filter needs no change.
 const NEWER_THAN_NODE = new Set([
   '1FAEB',
   '1FAF9',

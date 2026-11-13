@@ -75,6 +75,18 @@ describe('formatting keys (AC-23)', () => {
     expect(firstBlock(harness)).toMatchObject({ type: 'heading', attrs: { level } });
   });
 
+  it('applies bold on a non-Latin layout, where the key is not ASCII but the code is KeyB', () => {
+    const harness = selected();
+    press(harness.editor, { key: 'и', code: 'KeyB', ctrl: true });
+    expect(firstBlock(harness)).toEqual({ type: 'paragraph', content: [text('hello', 'bold')] });
+  });
+
+  it('opens the link field on a non-Latin layout with Mod+K', () => {
+    const harness = selected();
+    press(harness.editor, { key: 'л', code: 'KeyK', ctrl: true });
+    expect(harness.openLink).toHaveBeenCalledOnce();
+  });
+
   it('turns a heading back into regular text with Mod+Alt+0', () => {
     const harness = makeEditor({
       content: docOf({ type: 'heading', attrs: { level: 2 }, content: [text('hi')] }),
