@@ -1,6 +1,7 @@
 /**
  * The `files` rows (server-only, ADR-0014, ADR-0021; PLAN-001 S6, PLAN-014 S1). Uploading writes
- * one; nothing synced changes until an operation names the file (`user.updateProfile`,
+ * one, through the byte protocol (`bytes.ts`, the only module that inserts or deletes rows);
+ * nothing synced changes until an operation names the file (`user.updateProfile`,
  * `workspace.update`, `attachment.createFile`).
  *
  * Every read of a file goes through `visibleFile` (SPEC-014 §4.2): `GET /files/:id`, `HEAD`, the
@@ -9,29 +10,15 @@
  */
 import type { Actor } from '@surface/domain';
 import { sql, type SQL } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { LOCK_CLASSES } from '../db/locks.js';
 import type { Queryable } from '../db/pool.js';
-import { files, type FilePurpose } from '../db/schema/index.js';
+import type { FilePurpose } from '../db/schema/index.js';
+import type { BlobStore } from './blob-store.js';
+import { insertUpload, pgFileTx, type NewFile } from './bytes.js';
 import { overCaps, type UnclaimedUsage } from './limits.js';
 
-export interface NewFile {
-  readonly id: string;
-  readonly storageKey: string;
-  readonly purpose: FilePurpose;
-  readonly name: string;
-  readonly mimeType: string;
-  readonly size: number;
-  readonly uploaderId: string;
-  /** The owning issue; null or absent while unclaimed (SPEC-014 §4.2). */
-  readonly issueId?: string | null;
-  /** Raster images only. */
-  readonly width?: number | null;
-  readonly height?: number | null;
-  /** For a `preview`, the file it shows. */
-  readonly previewOf?: string | null;
-}
+export type { NewFile } from './bytes.js';
 
 export interface VisibleFile {
   readonly id: string;
@@ -189,7 +176,13 @@ export async function reserveUpload(
 }
 
 export interface FileStore {
-  insert(client: Queryable, file: NewFile): Promise<void>;
+  /** `insertUpload` (`bytes.ts`): the key lock, the rename, then the row (SPEC-014 §4.5). */
+  insertUpload(
+    client: Queryable,
+    blobs: Pick<BlobStore, 'commit'>,
+    temp: { readonly tempPath: string; readonly key: string },
+    file: Omit<NewFile, 'storageKey'>,
+  ): Promise<void>;
   /** `visibleFile`; an interface so route tests keep a fake. */
   visibleFile(
     client: Queryable,
@@ -203,10 +196,27 @@ export interface FileStore {
 }
 
 export const PG_FILE_STORE: FileStore = {
-  async insert(client, file) {
-    await drizzle({ client, casing: 'snake_case' }).insert(files).values(file);
-  },
+  insertUpload: (client, blobs, temp, file) => insertUpload(pgFileTx(client), blobs, temp, file),
   visibleFile,
   unclaimedUsage,
   reserveUpload,
 };
+
+/** What `/metrics` reports about stored files (SPEC-014 §10). */
+export interface FileStorageStats {
+  /** Bytes on the uploads volume: each key counted once, however many rows share it. */
+  readonly storedBytes: number;
+  /** Keys in `blob_release` waiting for the drain. */
+  readonly releaseBacklog: number;
+}
+
+export async function fileStorageStats(db: Pick<Queryable, 'query'>): Promise<FileStorageStats> {
+  const { rows } = await db.query<{ stored: string | number; backlog: string | number }>(
+    `SELECT (SELECT coalesce(sum(size), 0)
+               FROM (SELECT DISTINCT ON (storage_key) size FROM files ORDER BY storage_key) k)
+              AS stored,
+            (SELECT count(*) FROM blob_release) AS backlog`,
+  );
+  const row = rows[0];
+  return { storedBytes: Number(row?.stored ?? 0), releaseBacklog: Number(row?.backlog ?? 0) };
+}

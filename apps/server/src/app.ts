@@ -15,6 +15,7 @@ import { uploadsDir } from './data-dir.js';
 import { localBlobStore } from './files/blob-store.js';
 import { diskSpace } from './files/limits.js';
 import { registerFileRoutes } from './files/routes.js';
+import type { FileStorageStats } from './files/store.js';
 import type { SessionAuth } from './auth/sessions.js';
 import type { AuthStore } from './auth/store.js';
 import type { EmailOutbox } from './jobs/email.js';
@@ -24,7 +25,7 @@ import type { Executor } from './executor/execute.js';
 import { trustReverseProxy } from './http/client-address.js';
 import { registerErrorHandler } from './http/errors.js';
 import { registerHealthRoutes } from './http/health.js';
-import { registerMetrics } from './http/metrics.js';
+import { registerFileMetrics, registerMetrics } from './http/metrics.js';
 import { registerOpsRoutes, type ActorResolver } from './http/ops.js';
 import { registerSecurityHeaders } from './http/security-headers.js';
 import { readIndexHtml, registerWebApp } from './http/static.js';
@@ -54,6 +55,8 @@ export interface AppDeps {
   setup?: { store: SetupStore; gate: SetupGate };
   /** Sign-in, sessions and CSRF (PLAN-001 S3). Left out by tests that don't need them. */
   auth?: AuthDeps;
+  /** Stored bytes and the `blob_release` backlog, for `/metrics` (SPEC-014 §10). */
+  fileStats?: () => Promise<FileStorageStats>;
 }
 
 export interface AuthDeps {
@@ -86,6 +89,7 @@ export async function buildApp({
   sync,
   setup,
   auth,
+  fileStats,
 }: AppDeps): Promise<FastifyInstance> {
   // Widened to Fastify's base logger type so the instance keeps its default generics.
   const loggerInstance: FastifyBaseLogger = logger;
@@ -116,6 +120,7 @@ export async function buildApp({
   registerSecurityHeaders(app, indexHtml, { https: config.secureCookies });
   registerErrorHandler(app);
   const metrics = config.metricsEnabled ? registerMetrics(app) : undefined;
+  if (metrics && fileStats) registerFileMetrics(metrics, fileStats, logger);
   registerHealthRoutes(app, lifecycle, info);
   // Its guard is an `onRequest` hook: registered before the routes it closes until setup is done.
   if (setup) {

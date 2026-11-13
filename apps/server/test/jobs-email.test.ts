@@ -5,6 +5,7 @@ import type { PoolClient } from 'pg';
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import type { Pool } from '../src/db/pool.js';
+import { memoryBlobStore } from '../src/files/blob-store.js';
 import { emailOutbox, NO_EMAIL } from '../src/jobs/email.js';
 import { QUEUES, registerJobs, type JobQueue } from '../src/jobs/index.js';
 import { EMAIL_QUEUE, type EmailJob, type JobSender } from '../src/mail/job.js';
@@ -44,8 +45,14 @@ function recordingQueue() {
   return { queue, created, scheduled, workers };
 }
 
-const base = { pool: {} as Pool, log: pino({ level: 'silent' }) };
-const PRUNES = [QUEUES.idempotencyPrune.name, QUEUES.syncLogPrune.name];
+const base = { pool: {} as Pool, blobs: memoryBlobStore(), log: pino({ level: 'silent' }) };
+// The scheduled jobs every working role runs: the prunes and the file jobs (PLAN-014 S3).
+const PRUNES = [
+  QUEUES.idempotencyPrune.name,
+  QUEUES.syncLogPrune.name,
+  QUEUES.filesCleanup.name,
+  QUEUES.filesSweep.name,
+];
 
 describe('registerJobs', () => {
   it('lets the web role queue email without sending it or running any job', async () => {
@@ -62,6 +69,19 @@ describe('registerJobs', () => {
     expect(r.created).toContain(EMAIL_QUEUE);
     expect(r.workers.sort()).toEqual([EMAIL_QUEUE, ...PRUNES].sort());
     expect(r.scheduled.sort()).toEqual([...PRUNES].sort());
+  });
+
+  it('runs the file jobs one at a time across replicas (ADR-0024)', async () => {
+    const r = recordingQueue();
+    await registerJobs(r.queue, base);
+    for (const queue of [QUEUES.filesCleanup, QUEUES.filesSweep]) {
+      expect(r.queue.createQueue).toHaveBeenCalledWith(queue.name, { policy: 'exclusive' });
+      expect(r.queue.schedule).toHaveBeenCalledWith(queue.name, queue.cron, null, {
+        singletonKey: queue.name,
+      });
+    }
+    expect(QUEUES.filesCleanup.cron).toBe('23 * * * *'); // hourly
+    expect(QUEUES.filesSweep.cron).toBe('53 4 * * *'); // daily
   });
 
   it('has no email queue or worker without SMTP', async () => {

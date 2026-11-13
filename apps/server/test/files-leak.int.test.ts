@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import type { Actor } from '@surface/domain';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
@@ -80,11 +81,11 @@ beforeAll(async () => {
       purpose: FilePurpose,
       extra: { issueId?: string; detached?: boolean; previewOf?: string } = {},
     ) => {
-      const storageKey = await blobs.put(new TextEncoder().encode(`bytes of ${label}`));
+      const temp = await blobs.putStream(Readable.from([Buffer.from(`bytes of ${label}`)]));
+      const storageKey = temp.key;
       const id = uuidv7();
-      await PG_FILE_STORE.insert(client, {
+      await PG_FILE_STORE.insertUpload(client, blobs, temp, {
         id,
-        storageKey,
         purpose,
         name: `${label}.bin`,
         mimeType: 'application/octet-stream',

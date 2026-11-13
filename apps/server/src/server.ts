@@ -8,7 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import { buildApp } from './app.js';
 import { buildInfo, type BuildInfo } from './build-info.js';
-import { checkDataDir } from './data-dir.js';
+import { checkDataDir, uploadsDir } from './data-dir.js';
 import type { Config } from './config.js';
 import { loadMigrations, migrationStatus, type Migration } from './db/migrate.js';
 import { createPool, waitForDatabase, type Pool } from './db/pool.js';
@@ -16,6 +16,8 @@ import { prepareDatabase } from './db/prepare.js';
 import { createExecutor, missingHandlers } from './executor/execute.js';
 import { tokenBucket } from './executor/rate-limit.js';
 import { transactionRunner } from './executor/transaction.js';
+import { localBlobStore } from './files/blob-store.js';
+import { fileStorageStats } from './files/store.js';
 import { HANDLERS } from './handlers/index.js';
 import { pgAttemptStore } from './auth/attempts.js';
 import { SessionAuth } from './auth/sessions.js';
@@ -147,6 +149,7 @@ export async function startServer(
       ...(hub ? { hub } : {}),
     },
     setup: { store: setupStore, gate: setupGate },
+    fileStats: () => fileStorageStats(pool),
     auth: {
       auth: sessions,
       store: authStore,
@@ -211,6 +214,7 @@ export async function startServer(
       jobs = await startJobs({
         databaseUrl: config.databaseUrl,
         pool,
+        blobs: localBlobStore(uploadsDir(config.dataDir)),
         log: logger,
         work,
         ...(config.smtp === null

@@ -10,18 +10,25 @@ import type { Logger } from 'pino';
 import type { Pool } from '../db/pool.js';
 import { pruneIdempotency } from '../executor/idempotency.js';
 import { loggableError } from '../executor/log-error.js';
+import type { BlobStore } from '../files/blob-store.js';
+import { pgFileDb } from '../files/bytes.js';
 import { createEmailQueue, startEmailWorker } from '../mail/job.js';
 import type { SmtpSettings } from '../mail/smtp.js';
 import { pruneSyncLog, SYNC_LOG_RETENTION_DAYS } from '../sync/repo.js';
+import { fileJobs } from './files.js';
 
 export const JOB_SCHEMA = 'pgboss';
 
-/** Queue names and schedules. ADR-0010 lists the queues later milestones add. */
+/** Queue names and schedules (ADR-0024 lists the M1 queues). */
 export const QUEUES = {
   /** Deletes `clientMutationId` results older than 24 h (SPEC-003 §9). */
   idempotencyPrune: { name: 'idempotency-prune', cron: '17 * * * *' },
   /** Deletes `sync_log` rows past retention (30 days); later clients resync (SPEC-002 §4.3). */
   syncLogPrune: { name: 'synclog-prune', cron: '41 3 * * *' },
+  /** Deletes unneeded files and drains `blob_release` (SPEC-014 §4.6). */
+  filesCleanup: { name: 'files-cleanup', cron: '23 * * * *' },
+  /** Removes bytes with no `files` row and stale temporary files (SPEC-014 §4.5 step 5). */
+  filesSweep: { name: 'files-sweep', cron: '53 4 * * *' },
 } as const;
 
 export interface Jobs {
@@ -33,6 +40,11 @@ export interface JobOptions {
   readonly databaseUrl: string;
   /** The app's pool, which job handlers query. pg-boss keeps a small pool of its own. */
   readonly pool: Pool;
+  /**
+   * The uploads volume (`localBlobStore(uploadsDir(DATA_DIR))`), for the file jobs. A `worker`
+   * replica mounts the same volume as the web process.
+   */
+  readonly blobs: BlobStore;
   readonly log: Logger;
   /** Seconds between polls when a queue is idle (tests make it short). */
   readonly pollingIntervalSeconds?: number;
@@ -88,6 +100,7 @@ export async function registerJobs(
   boss: JobQueue,
   {
     pool,
+    blobs,
     log,
     pollingIntervalSeconds = 30,
     work = true,
@@ -130,4 +143,16 @@ export async function registerJobs(
     const deleted = await pruneSyncLog(drizzle({ client: pool, casing: 'snake_case' }), before);
     jobLog.info({ queue: syncPrune.name, deleted }, 'pruned sync log');
   });
+
+  // One run at a time across replicas (ADR-0024): an `exclusive` queue holds one job queued or
+  // active, and the schedule's `singletonKey` names it. Two runs at once would still be safe.
+  const files = fileJobs({ db: pgFileDb(pool), blobs }, jobLog);
+  for (const [queue, run] of [
+    [QUEUES.filesCleanup, files.cleanup],
+    [QUEUES.filesSweep, files.sweep],
+  ] as const) {
+    await boss.createQueue(queue.name, { policy: 'exclusive' });
+    await boss.schedule(queue.name, queue.cron, null, { singletonKey: queue.name });
+    await boss.work(queue.name, { pollingIntervalSeconds }, () => run(queue.name));
+  }
 }

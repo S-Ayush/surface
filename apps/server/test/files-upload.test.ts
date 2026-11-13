@@ -469,7 +469,7 @@ describe('server errors on the streamed path (review m6)', () => {
 
   it('closes the connection and removes the temporary file when the insert fails', async () => {
     const { upload, files, temps } = await harness();
-    files.insert = () => Promise.reject(new Error('database is down'));
+    files.insertUpload = () => Promise.reject(new Error('database is down'));
     const response = await upload(binary(10));
     expect(response.statusCode).toBe(500);
     expect(response.headers.connection).toBe('close');

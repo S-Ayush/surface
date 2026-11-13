@@ -230,6 +230,23 @@ Doctor warns under 1 GB free and reports a problem under 100 MB. Check with `df 
 usage: `docker system df`. Old images from earlier upgrades are a common cause:
 `docker image prune` removes the ones no container uses.
 
+### Disk space isn't freed right after a file is removed
+
+Removing an attachment, or replacing an avatar or logo, frees nothing at once. The hourly
+`files-cleanup` job deletes unclaimed uploads, removed attachments and unused avatars and logos
+24 hours later, then unlinks their bytes when no other file uses the same bytes. The daily
+`files-sweep` job removes bytes no file names and temporary upload files older than an hour
+(SPEC-014 §4.5, §4.6). Look for `files cleanup` and `files sweep` in the logs. With
+`METRICS_ENABLED=true`, `surface_files_stored_bytes` and `surface_files_blob_release_backlog`
+show stored bytes and the bytes waiting to be unlinked.
+
+### Separate worker containers (`SURFACE_ROLE=worker`)
+
+The file jobs run where jobs run: in `SURFACE_ROLE=all` (the default) or in a `worker`
+container. A `worker` must mount the **same** `uploads` volume as the `web` containers, at the
+same `DATA_DIR`. With a volume of its own, the jobs clean that one instead, and the real uploads
+volume fills up with bytes nothing removes.
+
 ### Leftover empty volumes
 
 The image declares `/data` as a volume, so each new app container gets a small anonymous volume

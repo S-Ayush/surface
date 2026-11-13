@@ -2,6 +2,7 @@
 // and the prune job deletes only expired `clientMutationId` results.
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { memoryBlobStore } from '../src/files/blob-store.js';
 import { JOB_SCHEMA, QUEUES, startJobs, type Jobs } from '../src/jobs/index.js';
 import { createTestDatabase, silentLog, type TestDatabase } from './db.js';
 
@@ -12,6 +13,7 @@ beforeAll(async () => {
   jobs = await startJobs({
     databaseUrl: db.url,
     pool: db.pool,
+    blobs: memoryBlobStore(),
     log: silentLog,
     pollingIntervalSeconds: 0.5,
   });
@@ -36,6 +38,21 @@ it('installs its own schema and schedules the hourly prune', async () => {
   expect(rowCount).toBe(1);
   const schedules = await jobs.boss.getSchedules(QUEUES.idempotencyPrune.name);
   expect(schedules.map((s) => s.cron)).toEqual([QUEUES.idempotencyPrune.cron]);
+});
+
+it('schedules the file jobs on exclusive queues (PLAN-014 S3, ADR-0024)', async () => {
+  for (const queue of [QUEUES.filesCleanup, QUEUES.filesSweep]) {
+    const schedules = await jobs.boss.getSchedules(queue.name);
+    expect(schedules.map((s) => s.cron)).toEqual([queue.cron]);
+    expect((await jobs.boss.getQueue(queue.name))?.policy).toBe('exclusive');
+    // And the worker runs it to completion on an empty store.
+    const id = await jobs.boss.send(queue.name, null, { singletonKey: queue.name });
+    expect(id).not.toBeNull();
+    await until(async () => {
+      const job = await jobs.boss.getJobById(queue.name, id ?? '');
+      return job?.state === 'completed';
+    }, `the ${queue.name} job to complete`);
+  }
 });
 
 it('prunes expired idempotency results when the job runs', async () => {

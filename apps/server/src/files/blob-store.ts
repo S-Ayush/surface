@@ -5,7 +5,7 @@
  * comes from anything the uploader named. An S3-compatible store is v2 (FR-OPS-11).
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -33,8 +33,19 @@ export interface BlobStream {
   readonly size: number;
 }
 
+/** A temporary file left by `putStream`, for the sweep (SPEC-014 §4.5 step 5). */
+export interface TempEntry {
+  readonly tempPath: string;
+  /** Its last write: an upload in progress writes at least every 30 s (`UPLOAD_IDLE_MS`). */
+  readonly modifiedAt: Date;
+}
+
 export interface BlobStore {
-  /** Stores `bytes` and returns their key; storing the same bytes again returns the same key. */
+  /**
+   * Stores `bytes` and returns their key; storing the same bytes again returns the same key.
+   * Test fixtures only: production bytes enter through `putStream` and `insertUpload`
+   * (`bytes.ts`), under the key lock (SPEC-014 §4.5).
+   */
   put(bytes: Uint8Array): Promise<string>;
   /** The bytes under `key`, or undefined if there are none. */
   get(key: string): Promise<Buffer | undefined>;
@@ -60,6 +71,10 @@ export interface BlobStore {
   discard(tempPath: string): Promise<void>;
   /** The bytes under `key` as a stream, or undefined if there are none. */
   getStream(key: string): Promise<BlobStream | undefined>;
+  /** Every key with bytes, for the sweep. Deleting keys while iterating is allowed. */
+  list(): AsyncIterable<string>;
+  /** The temporary files `putStream` left, for the sweep. */
+  listTemps(): AsyncIterable<TempEntry>;
 }
 
 const KEY_PATTERN = /^sha256\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})$/;
@@ -225,16 +240,52 @@ export function localBlobStore(root: string): BlobStore {
         throw error;
       }
     },
+    async *list() {
+      // One directory level at a time, each read whole before anything under it is deleted.
+      for (const a of await entries(path.join(root, 'sha256'))) {
+        for (const b of await entries(path.join(root, 'sha256', a))) {
+          for (const name of await entries(path.join(root, 'sha256', a, b))) {
+            const key = `sha256/${a}/${b}/${name}`;
+            // Anything else (a crashed `put`'s `.tmp`) is never a key, so never ours to judge.
+            if (isBlobKey(key)) yield key;
+          }
+        }
+      }
+    },
+    async *listTemps() {
+      for (const name of await entries(tempDir)) {
+        if (!TEMP_NAME.test(name)) continue;
+        const tempPath = path.join(tempDir, name);
+        try {
+          yield { tempPath, modifiedAt: (await stat(tempPath)).mtime };
+        } catch (error) {
+          // Committed or discarded since the listing.
+          if (!isMissing(error)) throw error;
+        }
+      }
+    },
   };
 }
 
-/** For tests: the same contract in memory. */
-export function memoryBlobStore(): BlobStore & {
+/** A directory's names, or none if it doesn't exist (yet). */
+async function entries(dir: string): Promise<string[]> {
+  try {
+    return await readdir(dir);
+  } catch (error) {
+    if (isMissing(error)) return [];
+    throw error;
+  }
+}
+
+/** For tests: the same contract in memory. `now` stamps temporary files (the sweep's age). */
+export function memoryBlobStore(options: { now?: () => Date } = {}): BlobStore & {
   readonly keys: () => string[];
   readonly temps: () => string[];
 } {
+  const now = options.now ?? (() => new Date());
   const blobs = new Map<string, Buffer>();
   const temps = new Map<string, Buffer>();
+  const written = new Map<string, Date>();
   return {
     put(bytes) {
       const key = blobKey(bytes);
@@ -260,6 +311,7 @@ export function memoryBlobStore(): BlobStore & {
       const patch = finish?.();
       if (patch !== undefined) bytes.set(patch.bytes, patch.offset);
       temps.set(tempPath, bytes);
+      written.set(tempPath, now());
       const sha256 = createHash('sha256').update(bytes).digest('hex');
       return { tempPath, sha256, key: keyOfHash(sha256), size: bytes.length };
     },
@@ -269,16 +321,27 @@ export function memoryBlobStore(): BlobStore & {
       if (bytes === undefined && blobs.has(checkedKey(key))) return Promise.resolve();
       if (bytes === undefined) return Promise.reject(new Error('No such temporary upload.'));
       temps.delete(tempPath);
+      written.delete(tempPath);
       blobs.set(checkedKey(key), bytes);
       return Promise.resolve();
     },
     discard(tempPath) {
       temps.delete(tempPath);
+      written.delete(tempPath);
       return Promise.resolve();
     },
     getStream(key) {
       const found = blobs.get(checkedKey(key));
       return Promise.resolve(found && { stream: Readable.from([found]), size: found.length });
+    },
+    async *list() {
+      // A copy: deleting while iterating is allowed.
+      for (const key of [...blobs.keys()]) yield await Promise.resolve(key);
+    },
+    async *listTemps() {
+      for (const [tempPath, modifiedAt] of [...written]) {
+        yield await Promise.resolve({ tempPath, modifiedAt });
+      }
     },
     keys: () => [...blobs.keys()],
     temps: () => [...temps.keys()],

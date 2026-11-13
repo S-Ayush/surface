@@ -377,7 +377,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       return await storeUpload(request, reply, session, purpose, temp, mimeType, usage);
     } catch (error) {
       // A failed transaction (§4.5 step 2). Bytes already renamed under their key are the
-      // sweep's (PLAN-014 S3); a temporary file still here is removed now.
+      // sweep's (`files-sweep`); a temporary file still here is removed now.
       await deps.blobs.discard(temp.tempPath);
       throw error;
     }
@@ -419,13 +419,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       // Parallel uploads all passed the checks above together: under the uploader's lock, each
       // counts the rows of those before it (review M2).
       if (!(await store.reserveUpload(client, session.userId, temp.size))) return false;
-      // S3: `insertUpload` (files/bytes.ts) takes the key lock (SPEC-014 §4.5) before the
-      // rename and the insert. Until then nothing deletes file rows or bytes, so there is no
-      // delete to race. A retried transaction repeats the rename, which `commit` allows.
-      await deps.blobs.commit(temp.tempPath, temp.key);
-      await store.insert(client, {
+      // The key lock, the rename, then the row (SPEC-014 §4.5 step 2): the drain and the sweep
+      // never unlink bytes between them. A retried transaction repeats the rename (`commit`).
+      await store.insertUpload(client, deps.blobs, temp, {
         id,
-        storageKey: temp.key,
         purpose,
         name,
         mimeType,
@@ -506,19 +503,26 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       }
       throw error;
     }
-    const storageKey = await deps.blobs.put(image.bytes);
+    // Through a temporary file and the key lock like any upload (SPEC-014 §4.5 step 2): bytes
+    // written straight under their key could be drained before the row commits.
+    const temp = await deps.blobs.putStream(Readable.from([image.bytes]));
     const id = uuidv7();
-    await deps.withTransaction((client) =>
-      store.insert(client, {
-        id,
-        storageKey,
-        purpose,
-        name: `${purpose}.${EXTENSIONS[image.mimeType] ?? 'img'}`,
-        mimeType: image.mimeType,
-        size: image.bytes.length,
-        uploaderId: session.userId,
-      }),
-    );
+    try {
+      await deps.withTransaction((client) =>
+        store.insertUpload(client, deps.blobs, temp, {
+          id,
+          purpose,
+          name: `${purpose}.${EXTENSIONS[image.mimeType] ?? 'img'}`,
+          mimeType: image.mimeType,
+          size: image.bytes.length,
+          uploaderId: session.userId,
+        }),
+      );
+    } catch (error) {
+      // Renamed bytes are the sweep's; a temporary file still here goes now.
+      await deps.blobs.discard(temp.tempPath);
+      throw error;
+    }
     // Ids only: the uploader's file name is never read, stored or logged.
     request.log.info({ fileId: id, purpose }, 'file uploaded');
     return reply.code(201).send({
@@ -630,7 +634,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
         // An empty stream keeps Fastify from replacing the length.
         bytes = Readable.from([]);
       } else {
-        // It may have gone since the stat (S3's sweep): still no file headers.
+        // It may have gone since the stat (the drain or the sweep): still no file headers.
         const blob = await deps.blobs.getStream(file.storageKey);
         if (blob === undefined) return missingBytes();
         bytes = blob.stream;

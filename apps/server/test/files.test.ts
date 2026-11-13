@@ -10,7 +10,13 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import sharp from 'sharp';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { ResolvedSession } from '../src/auth/sessions.js';
-import { blobKey, isBlobKey, localBlobStore, memoryBlobStore } from '../src/files/blob-store.js';
+import {
+  blobKey,
+  isBlobKey,
+  localBlobStore,
+  memoryBlobStore,
+  type BlobStore,
+} from '../src/files/blob-store.js';
 import {
   imageProcessor,
   ImagesBusy,
@@ -49,9 +55,15 @@ function session(userId: string, role: 'admin' | 'member'): ResolvedSession {
 class FakeFiles implements FileStore {
   rows: NewFile[] = [];
   inUse = new Set<string>();
-  insert(_client: unknown, file: NewFile) {
-    this.rows.push(file);
-    return Promise.resolve();
+  /** The rename, then the row: the route's side of `insertUpload` (the lock is Postgres's). */
+  async insertUpload(
+    _client: unknown,
+    blobs: Pick<BlobStore, 'commit'>,
+    temp: { tempPath: string; key: string },
+    file: Omit<NewFile, 'storageKey'>,
+  ) {
+    await blobs.commit(temp.tempPath, temp.key);
+    this.rows.push({ ...file, storageKey: temp.key });
   }
   visibleFile(_client: unknown, fileId: string, reader: FileReader) {
     const row = this.rows.find((file) => file.id === fileId);

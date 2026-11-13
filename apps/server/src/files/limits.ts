@@ -34,6 +34,17 @@ export const UPLOAD_IDLE_MS = 30_000;
  */
 export const MAX_CONCURRENT_UPLOADS = 3;
 
+/**
+ * `files-cleanup` deletes unclaimed uploads, detached attachments and unused avatars and logos
+ * this long after upload or detaching (SPEC-014 §4.6): the window for saving, undo and setting.
+ */
+export const FILE_CLEANUP_AFTER_MS = 24 * 60 * 60 * 1000;
+/**
+ * `files-sweep` removes temporary upload files untouched this long (SPEC-014 §4.5 step 5). An
+ * upload in progress writes at least every `UPLOAD_IDLE_MS`, so only a crashed one is this old.
+ */
+export const TEMP_FILE_MAX_AGE_MS = 60 * 60 * 1000;
+
 /** Free bytes on the uploads volume; tests pass a fake. */
 export type DiskSpace = () => Promise<number>;
 

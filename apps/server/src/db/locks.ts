@@ -28,4 +28,9 @@ export const LOCK_CLASSES = {
   authAttempts: 0x5355_0001,
   /** One upload's caps check and insert per uploader at a time (PLAN-014 S2, `files/store.ts`). */
   uploadCaps: 0x5355_0002,
+  /**
+   * One storage key's `files` rows and bytes at a time: every insert and delete of a row, the
+   * `blob_release` drain and the sweep (SPEC-014 §4.5, PLAN-014 S3, `files/bytes.ts`).
+   */
+  fileBytes: 0x5355_0003,
 } as const;

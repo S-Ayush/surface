@@ -3,7 +3,9 @@
  * `/metrics` is unauthenticated: keep it off the public proxy, or leave it disabled.
  */
 import type { FastifyInstance } from 'fastify';
-import { collectDefaultMetrics, Histogram, Registry } from 'prom-client';
+import { collectDefaultMetrics, Gauge, Histogram, Registry } from 'prom-client';
+import { loggableError } from '../executor/log-error.js';
+import type { FileStorageStats } from '../files/store.js';
 
 export function registerMetrics(app: FastifyInstance): Registry {
   const registry = new Registry();
@@ -32,4 +34,39 @@ export function registerMetrics(app: FastifyInstance): Registry {
   );
 
   return registry;
+}
+
+/**
+ * Stored file bytes and the `blob_release` backlog (SPEC-014 §10, PLAN-014 S3), read from the
+ * database on each scrape. A failed read keeps the last value and logs a warning: a scrape never
+ * fails because of it.
+ */
+export function registerFileMetrics(
+  registry: Registry,
+  stats: () => Promise<FileStorageStats>,
+  log: { warn(object: object, message: string): void },
+): void {
+  const read = async (pick: (stats: FileStorageStats) => number, gauge: Gauge) => {
+    try {
+      gauge.set(pick(await stats()));
+    } catch (error) {
+      log.warn({ err: loggableError(error) }, 'file metrics unavailable');
+    }
+  };
+  new Gauge({
+    name: 'surface_files_stored_bytes',
+    help: 'Bytes of uploaded files on the uploads volume, each stored key counted once',
+    registers: [registry],
+    async collect() {
+      await read((s) => s.storedBytes, this);
+    },
+  });
+  new Gauge({
+    name: 'surface_files_blob_release_backlog',
+    help: 'Storage keys waiting in blob_release for the files-cleanup drain',
+    registers: [registry],
+    async collect() {
+      await read((s) => s.releaseBacklog, this);
+    },
+  });
 }
