@@ -29,7 +29,7 @@ import type {
   UnsubscribedMessage,
 } from '@surface/sync-protocol';
 import { MAX_TEAMS_PER_MESSAGE } from '@surface/sync-protocol';
-import type { IObservableArray, IObservableValue, ObservableSet } from 'mobx';
+import type { IObservableArray, IObservableValue, ObservableMap, ObservableSet } from 'mobx';
 import { computed, observable, reaction, runInAction, when } from 'mobx';
 import { ClientOutdatedError } from './bootstrap.js';
 import type { DeltaPlan } from './deltas.js';
@@ -115,7 +115,12 @@ export class TeamSubscriptions {
   /** Asked for and not accepted: unknown, or invisible (E32). Nothing to load. */
   readonly #refused: ObservableSet<string> = observable.set();
   /** Accepted, partial bootstrap pending: the attempt number. */
-  readonly #loading = new Map<string, number>();
+  readonly #loading: ObservableMap<string, number> = observable.map([], { deep: false });
+  /** Bumped by `close()`: a lock or answer that arrives after it belongs to a closed store. */
+  #lifetime = 0;
+  /** Aborts the shared-lock requests still waiting when the store closes. */
+  #lockAbort = new AbortController();
+  readonly #closed: IObservableValue<boolean> = observable.box(false);
   /** `unsubscribe` sent, ack pending. */
   readonly #leaving = new Set<string>();
   /** Teams of each `subscribe` sent on this connection, in order (acks come in order). */
@@ -159,9 +164,12 @@ export class TeamSubscriptions {
     return new Set([...this.#membership.get().privateTeams, ...this.#accepted]);
   }
 
-  /** Teams whose `teamThrough` this tab's writes advance. */
+  /**
+   * Teams whose `teamThrough` this tab's writes advance: complete in its pool and received on its
+   * connection (accepted). A team only stored, or not yet acked, must not move (E35).
+   */
   currentTeams(): string[] {
-    return [...this.#current];
+    return [...this.#current].filter((team) => this.#accepted.has(team));
   }
 
   /** Observable; see `TeamLoadState`. */
@@ -175,10 +183,25 @@ export class TeamSubscriptions {
     return connection === 'online' || connection === 'connecting' ? 'loading' : 'offline';
   }
 
-  /** Resolves once `teamId` is no longer loading. */
+  /**
+   * Resolves once `teamId` is loaded as far as it can be now: not `loading`, and, for a team this
+   * tab follows, acked and with no partial bootstrap pending (a team found behind is reloading,
+   * E35). Offline it resolves with the state it has. Resolves `loading` if the store closes first.
+   */
   async whenLoaded(teamId: string): Promise<TeamLoadState> {
-    await when(() => this.loadState(teamId) !== 'loading');
-    return this.loadState(teamId);
+    await when(() => {
+      if (this.#closed.get()) return true;
+      const state = this.loadState(teamId);
+      if (state !== 'ready') return state !== 'loading';
+      const connection = this.#host.connection();
+      if (connection !== 'online' && connection !== 'connecting') return true;
+      const pending =
+        this.wanted.has(teamId) &&
+        !this.#refused.has(teamId) &&
+        (!this.#accepted.has(teamId) || this.#loading.has(teamId));
+      return !pending;
+    });
+    return this.#closed.get() ? 'loading' : this.loadState(teamId);
   }
 
   // ---------------------------------------------------------------------------
@@ -214,6 +237,7 @@ export class TeamSubscriptions {
    * pool what this tab doesn't follow, and hold the shared lock of each wanted team.
    */
   async prepare(): Promise<void> {
+    runInAction(() => this.#closed.set(false));
     const persistence = this.#host.persistence();
     if (!this.#onDemandRead && persistence !== undefined) {
       const stored = await persistence.write((storage) => storage.readOnDemand());
@@ -225,6 +249,21 @@ export class TeamSubscriptions {
     for (const teamId of this.#deferred.splice(0)) this.#touch(teamId);
     this.#prune();
     await Promise.all([...this.wanted].map((team) => this.#hold(team)));
+    // The cursors came from storage before the shared holds: another tab may have removed a
+    // team's rows (and its cursor) since, under its exclusive lock (E36). Read them again now
+    // that no tab can remove a team this one holds, and reload any team no longer complete.
+    const meta = await this.#host.persistence()?.write((storage) => storage.readMeta());
+    const applied = this.#host.appliedId();
+    const followed = this.#followed();
+    runInAction(() => {
+      for (const team of [...this.#loaded]) if (!followed.has(team)) this.#loaded.delete(team);
+    });
+    for (const team of [...this.#current]) {
+      const through = meta?.teamThrough?.[team];
+      const complete = through !== undefined && applied !== undefined && through >= applied;
+      // A team this tab doesn't follow was pruned from the pool: it must load when opened.
+      if (!followed.has(team) || (meta !== undefined && !complete)) this.#current.delete(team);
+    }
     this.#stopMembership ??= reaction(
       () => this.#membership.get().publicTeams,
       (now, before) => this.#membershipChanged(now, before),
@@ -245,6 +284,10 @@ export class TeamSubscriptions {
 
   /** The store closed: stop loading, let go of the team locks. */
   close(): void {
+    this.#lifetime += 1;
+    this.#lockAbort.abort();
+    this.#lockAbort = new AbortController();
+    runInAction(() => this.#closed.set(true));
     this.#cancelLoads();
     this.#stopMembership?.();
     this.#stopMembership = undefined;
@@ -305,9 +348,17 @@ export class TeamSubscriptions {
   async #follow(team: string): Promise<void> {
     await this.#hold(team);
     if (!this.wanted.has(team) || !this.#held.has(team)) return;
-    if (this.#accepted.has(team) || this.#sent.some((teams) => teams.includes(team))) return;
-    if (this.#asked?.has(team) === true) return;
+    // A team whose `unsubscribe` is in flight is not followed: its `unsubscribed` ack will come
+    // first (the hub handles requests in order), and this `subscribe` then follows it again.
+    const following = this.#accepted.has(team) && !this.#leaving.has(team);
+    if (following || this.#subscribing(team)) return;
+    if (this.#asked?.has(team) === true && !this.#leaving.has(team)) return;
     this.#subscribe([team]);
+  }
+
+  /** A `subscribe` naming `team` is sent and not yet acked. */
+  #subscribing(team: string): boolean {
+    return this.#sent.some((teams) => teams.includes(team));
   }
 
   #subscribe(teams: readonly string[]): void {
@@ -340,9 +391,14 @@ export class TeamSubscriptions {
       return;
     }
     this.#holding.add(team);
+    const lifetime = this.#lifetime;
     try {
-      const release = await holdShared(locks, teamLockName(this.#host.replica, team));
-      if (!this.wanted.has(team)) {
+      const release = await holdShared(
+        locks,
+        teamLockName(this.#host.replica, team),
+        this.#lockAbort.signal,
+      );
+      if (lifetime !== this.#lifetime || !this.wanted.has(team)) {
         void release();
         return;
       }
@@ -400,7 +456,9 @@ export class TeamSubscriptions {
       );
       if (gone.length > 0) this.#remove(gone);
       // Wanted teams the URL couldn't name yet (their lock arrived while dialling).
-      const missing = [...this.wanted].filter((t) => this.#held.has(t) && !asked.has(t));
+      const missing = [...this.wanted].filter(
+        (t) => this.#held.has(t) && !asked.has(t) && !this.#subscribing(t),
+      );
       this.#subscribe(missing.slice(0, MAX_TEAMS_PER_MESSAGE));
     }
     // A refused team is invisible now: rows it left would never be kept live.
@@ -415,11 +473,16 @@ export class TeamSubscriptions {
       this.#leaving.delete(team);
       runInAction(() => this.#accepted.delete(team));
       this.#current.delete(team);
-      this.#loading.delete(team);
-      // Wanted again: its `subscribe` follows, and its ack loads it afresh.
+      this.#doneLoading(team);
+      // Wanted again: its `subscribe` follows (sent by `#follow`), and its ack loads it afresh.
       if (!this.wanted.has(team)) remove.push(team);
     }
     if (remove.length > 0) this.#remove(remove);
+    // Wanted again with no `subscribe` on its way (the lock came back meanwhile): send one now.
+    const again = message.teams.filter(
+      (team) => this.wanted.has(team) && this.#held.has(team) && !this.#subscribing(team),
+    );
+    this.#subscribe(again.slice(0, MAX_TEAMS_PER_MESSAGE));
   }
 
   /** After a delta batch was applied: remember what it changed while a load is pending. */
@@ -432,7 +495,9 @@ export class TeamSubscriptions {
   // Partial bootstrap
 
   #load(teams: readonly string[], attempt: number): void {
-    for (const team of teams) this.#loading.set(team, attempt);
+    runInAction(() => {
+      for (const team of teams) this.#loading.set(team, attempt);
+    });
     const epoch = this.#epoch;
     this.#host.fetchPartial(teams, this.#abort.signal).then(
       (answer) => {
@@ -458,8 +523,9 @@ export class TeamSubscriptions {
       this.#retry = undefined;
       if (epoch !== this.#epoch) return;
       const teams = [...this.#loading.keys()].filter((team) => this.#accepted.has(team));
-      for (const team of this.#loading.keys())
-        if (!teams.includes(team)) this.#loading.delete(team);
+      for (const team of [...this.#loading.keys()]) {
+        if (!teams.includes(team)) this.#doneLoading(team);
+      }
       if (teams.length > 0) this.#load(teams, this.#retryAttempt);
     }, delay);
   }
@@ -472,7 +538,7 @@ export class TeamSubscriptions {
   #applyAnswer(teams: readonly string[], answer: PartialAnswer): void {
     const { rules } = this.#host;
     const still = teams.filter((team) => this.#loading.has(team) && this.#accepted.has(team));
-    for (const team of teams) this.#loading.delete(team);
+    for (const team of teams) this.#doneLoading(team);
     this.#retryAttempt = 0;
     const applied = this.#host.appliedId();
     if (still.length > 0 && applied !== undefined) {
@@ -545,6 +611,10 @@ export class TeamSubscriptions {
     if (this.#loading.size === 0) this.#touched.clear();
   }
 
+  #doneLoading(team: string): void {
+    runInAction(() => this.#loading.delete(team));
+  }
+
   #cancelLoads(): void {
     this.#epoch += 1;
     this.#abort.abort();
@@ -552,7 +622,7 @@ export class TeamSubscriptions {
     this.#host.timers.clearTimeout(this.#retry);
     this.#retry = undefined;
     this.#retryAttempt = 0;
-    this.#loading.clear();
+    runInAction(() => this.#loading.clear());
     this.#touched.clear();
   }
 
@@ -587,7 +657,7 @@ export class TeamSubscriptions {
     const released = new Map<string, Promise<void>>();
     for (const team of teams) {
       this.#current.delete(team);
-      this.#loading.delete(team);
+      this.#doneLoading(team);
       released.set(team, this.#release(team));
     }
     this.#prune();

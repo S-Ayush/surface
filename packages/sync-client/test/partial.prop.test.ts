@@ -49,7 +49,7 @@ type Command =
   | { kind: 'part'; n: number }
   | { kind: 'open'; tab: Tab; squad: number }
   | { kind: 'join' | 'leave'; squad: number }
-  | { kind: 'hold' | 'release' | 'prune' }
+  | { kind: 'hold' | 'release' | 'prune' | 'holdAcks' | 'releaseAcks' }
   | { kind: 'drop' | 'tick' | 'reload'; tab: Tab }
   | { kind: 'yield'; turns: number }
   | { kind: 'wait' };
@@ -98,7 +98,13 @@ const command: fc.Arbitrary<Command> = fc.oneof(
   {
     weight: 2,
     arbitrary: fc.record({
-      kind: fc.constantFrom('hold' as const, 'release' as const, 'prune' as const),
+      kind: fc.constantFrom(
+        'hold' as const,
+        'release' as const,
+        'prune' as const,
+        'holdAcks' as const,
+        'releaseAcks' as const,
+      ),
     }),
   },
   {
@@ -158,9 +164,23 @@ const live = (hub: FakeHub, no: number) => {
   return row !== undefined && row['archivedAt'] === null && row['deletedAt'] === null;
 };
 
-/** The on-demand teams a store follows: its followed public teams the user isn't a member of. */
-const onDemand = (hub: FakeHub, store: SyncStore) =>
-  [...store.followedTeams].filter((team) => !hub.isMember(USER_ID, team)).sort();
+/** Whether the store's own replica has the user in `team` (what `openTeam` goes by). */
+const memberIn = (store: SyncStore, team: string) =>
+  store.pool.all('SquadMember').some((m) => m['userId'] === USER_ID && m['teamId'] === team);
+
+/** `list` with `team` opened: most recent first, at most the limit. */
+const touched = (list: readonly string[], team: string) =>
+  [team, ...list.filter((t) => t !== team)].slice(0, LIMIT);
+
+/** The shared replica's on-demand list, read through a connection of its own. */
+async function storedOnDemand(workspaceId: string) {
+  const storage = await IndexedDbStorage.open(`surface-${workspaceId}-${USER_ID}`, NAMES);
+  try {
+    return await storage.readOnDemand();
+  } finally {
+    await storage.close();
+  }
+}
 
 it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the same subscriptions', async () => {
   await fc.assert(
@@ -196,18 +216,26 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
         });
         return { store, timers, connections, opened: [] };
       };
-      const tabs: TabHandle[] = [open('a'), open('b')];
-      const all: SyncStore[] = tabs.map((t) => t.store);
+      const all: SyncStore[] = [];
+      const tabs: TabHandle[] = [];
       const closed = [false, false];
-      const restart = async (at: Tab) => {
-        const next = open(`tab-${String(all.length)}`);
+      /** The model of the replica's on-demand list (`touchOnDemand`), shared by its tabs. */
+      let shared: string[] = [];
+      /** A tab starting on the replica: it begins with the replica's list (once stored). */
+      const begin = async (name: string): Promise<TabHandle> => {
+        await eventually(async () => (await storedOnDemand(workspaceId)).join() === shared.join());
+        const next = open(name);
         all.push(next.store);
-        tabs[at] = next;
-        closed[at] = false;
+        next.opened.push(...shared);
         await next.store.start();
+        return next;
+      };
+      const restart = async (at: Tab) => {
+        tabs[at] = await begin(`tab-${String(all.length)}`);
+        closed[at] = false;
       };
       try {
-        for (const t of tabs) await t.store.start();
+        tabs.push(await begin('a'), await begin('b'));
 
         for (const c of commands) {
           switch (c.kind) {
@@ -233,16 +261,18 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
               // Archived and deleted issues are read-only: their attachments too (SPEC-011 §6.1).
               if (live(hub, taskNo(c.n))) hub.putPart(500 + c.n, taskNo(c.n));
               break;
-            case 'open':
-              if (closed[c.tab] !== true) {
-                const t = tabs[c.tab];
-                t?.store.openTeam(id(c.squad));
-                if (t !== undefined) {
-                  const next = [id(c.squad), ...t.opened.filter((x) => x !== id(c.squad))];
-                  t.opened.splice(0, t.opened.length, ...next.slice(0, LIMIT));
-                }
+            case 'open': {
+              const t = tabs[c.tab];
+              if (closed[c.tab] === true || t === undefined) break;
+              const team = id(c.squad);
+              // A team the tab sees the user in is not an on-demand team: opening it is a no-op.
+              if (!memberIn(t.store, team)) {
+                t.opened.splice(0, t.opened.length, ...touched(t.opened, team));
+                shared = touched(shared, team);
               }
+              t.store.openTeam(team);
               break;
+            }
             case 'join':
               if (!hub.isMember(USER_ID, id(c.squad))) hub.join(USER_ID, c.squad);
               break;
@@ -258,6 +288,12 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
               break;
             case 'prune':
               hub.retainedFrom = hub.head + 1;
+              break;
+            case 'holdAcks':
+              hub.holdAcks = true;
+              break;
+            case 'releaseAcks':
+              hub.releaseAcks();
               break;
             case 'drop':
               for (const connection of tabs[c.tab]?.connections ?? []) {
@@ -282,6 +318,7 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
             case 'wait':
               hub.holdPartial = false;
               hub.releasePartial();
+              hub.releaseAcks();
               await settle(
                 hub,
                 tabs.filter((_, at) => closed[at] !== true),
@@ -293,6 +330,7 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
         // Quiesce: answer held loads, keep history, reconnect, then a probe every tab applies.
         hub.holdPartial = false;
         hub.releasePartial();
+        hub.releaseAcks();
         hub.retainedFrom = 0;
         // A closed tab starts again only once the open one has caught up and stored it all, so
         // the replica has moved past what the closed tab's teams last saw (E35).
@@ -302,15 +340,13 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
         await eventually(async () => ((await storedMeta(workspaceId))?.lastSyncId ?? 0) >= reached);
         for (const at of [0, 1] as const) if (closed[at]) await restart(at);
         await settle(hub, tabs);
-        for (const t of tabs) await expectFresh(hub, t.store);
+        for (const t of tabs) await expectFresh(hub, t);
         for (const t of tabs) await t.store.close();
 
         // A tab started from the shared replica alone shows the same as a fresh bootstrap.
-        const later = open('c');
-        all.push(later.store);
-        await later.store.start();
+        const later = await begin('c');
         await settle(hub, [later]);
-        await expectFresh(hub, later.store);
+        await expectFresh(hub, later);
       } finally {
         for (const store of all) await store.close();
       }
@@ -328,6 +364,19 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
             { kind: 'reload', tab: 0 },
             { kind: 'put', n: 2, assignee: 'other', title: 'B' },
             { kind: 'purge', n: 7 },
+          ],
+        ],
+        // A team dropped and reopened before its `unsubscribed` ack is followed again.
+        [
+          [
+            { kind: 'open', tab: 0, squad: 3 },
+            { kind: 'wait' },
+            { kind: 'holdAcks' },
+            { kind: 'open', tab: 0, squad: 4 },
+            { kind: 'open', tab: 0, squad: 5 },
+            { kind: 'open', tab: 0, squad: 3 },
+            { kind: 'yield', turns: 5 },
+            { kind: 'releaseAcks' },
           ],
         ],
       ],
@@ -358,9 +407,14 @@ async function settle(hub: FakeHub, tabs: readonly TabHandle[]): Promise<void> {
   }
 }
 
-/** A fresh store, bootstrapped from the hub, opening the same on-demand teams, shows the same. */
-async function expectFresh(hub: FakeHub, store: SyncStore): Promise<void> {
-  const teams = onDemand(hub, store);
+/**
+ * The tab follows exactly its private and member teams and the teams the model says it opened,
+ * and shows what a fresh store, bootstrapped from the hub and opening those teams, shows.
+ */
+async function expectFresh(hub: FakeHub, { store, opened }: TabHandle): Promise<void> {
+  const members = [...hub.squads.keys()].filter((team) => hub.isMember(USER_ID, team));
+  expect([...store.followedTeams].sort()).toEqual([...new Set([...members, ...opened])].sort());
+  const teams = opened.filter((team) => !hub.isMember(USER_ID, team));
   const fresh = teamStore(hub, { onDemandLimit: LIMIT }).store;
   try {
     await fresh.start();

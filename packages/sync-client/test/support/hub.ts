@@ -192,6 +192,12 @@ export class FakeHub {
   failPartial = 0;
   /** Snapshot partial bootstraps at once but answer them on `releasePartial()`. */
   holdPartial = false;
+  /**
+   * Leave `subscribe`/`unsubscribe` unhandled until `releaseAcks()`, so their acks reach the
+   * client after whatever it does next (a real server answers them a network trip later).
+   * Packets keep flowing meanwhile.
+   */
+  holdAcks = false;
   readonly #heldPartial: (() => void)[] = [];
 
   constructor(head = 100) {
@@ -203,6 +209,11 @@ export class FakeHub {
     this.teamsOn = true;
     this.schemaHash = computeSchemaHash(PARTIAL_TEST_MODELS);
     return this;
+  }
+
+  releaseAcks(): void {
+    this.holdAcks = false;
+    for (const connection of this.live) connection.deliver();
   }
 
   releasePartial(): void {
@@ -933,12 +944,14 @@ export class HubConnection {
   deliver(): void {
     if (!this.isOpen || this.paused) return;
     if (this.teams !== undefined && !this.#greeted) {
+      // The greeting is an ack too, and goes first: nothing is sent before it.
+      if (this.hub.holdAcks) return;
       this.#greeted = true;
       const accepted = this.hub.accept(this.userId, this.teams);
       this.send({ t: 'subscribed', teams: accepted, at: this.since });
     }
     this.#deliverPackets();
-    while (this.isOpen && !this.paused && this.#requests.length > 0) {
+    while (this.isOpen && !this.paused && !this.hub.holdAcks && this.#requests.length > 0) {
       const request = this.#requests.shift();
       if (request === undefined) break;
       if (request.t === 'subscribe') {

@@ -71,6 +71,8 @@ export type Dispatched = { readonly op: string; readonly input: unknown };
 export class FakeApp extends AppModel {
   readonly #store: SyncStore;
   readonly dispatched: Dispatched[] = [];
+  /** The teams the page opened (`store.openTeam`), in order. */
+  readonly opened: string[] = [];
   readonly issues: Row[];
 
   constructor(options: { issues: readonly Row[]; teams?: readonly Row[] }) {
@@ -95,6 +97,9 @@ export class FakeApp extends AppModel {
       dispatch: (op: { name: string }, input: unknown) => {
         this.dispatched.push({ op: op.name, input });
         return Promise.resolve({ status: 'confirmed' });
+      },
+      openTeam: (teamId: string) => {
+        this.opened.push(teamId);
       },
       pool: {
         all: (model: unknown) => byModel.get(model) ?? [],

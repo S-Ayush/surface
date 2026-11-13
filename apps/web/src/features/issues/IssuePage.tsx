@@ -99,6 +99,13 @@ function useIssueSource(issueRef: string) {
   >(undefined);
   const [attempt, setAttempt] = useState(0);
   const inReplica = replica !== undefined;
+  const replicaTeam = replica?.teamId ?? null;
+  useEffect(() => {
+    // SPEC-011 §5.7: opening one of a team's issues opens the team on demand, also when the replica
+    // already holds the row (through `user:`, or a team opened before): it keeps the team in the
+    // recently opened set and its content live. A member or private team is a no-op.
+    if (replicaTeam !== null) app.store?.openTeam(replicaTeam);
+  }, [app, replicaTeam]);
   // Adjusting state while rendering (react.dev "storing information from previous renders"): the
   // last row the replica had, shown read-only if it leaves the replica while open (E3).
   if (replica !== undefined && (last?.ref !== issueRef || !structurallyEqual(replica, last.view))) {

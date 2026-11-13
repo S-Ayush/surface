@@ -101,3 +101,17 @@ export const IssueHistory = defineModel('IssueHistory', {
   },
   indexes: ['issueId'],
 });
+
+/** An eager model that belongs to an issue, and the field naming the issue. */
+export interface EagerIssueChild {
+  readonly model: string;
+  readonly field: string;
+}
+
+/**
+ * The eager models that belong to an issue (SPEC-011 §5.7 "eager children leave with their
+ * issue"): the client removes them with their issue, and the server marks each `issueChild` in
+ * its registry (`sync-registry.test.ts` checks the two agree). Content models need no entry:
+ * their `parent` says it. PLAN-014 S4a adds `{ model: 'Attachment', field: 'issueId' }`.
+ */
+export const EAGER_ISSUE_CHILDREN: readonly EagerIssueChild[] = [];

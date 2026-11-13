@@ -5,6 +5,7 @@ import {
   array,
   DebugItem,
   defineModel,
+  EAGER_ISSUE_CHILDREN,
   int,
   PRODUCTION_MODELS,
   str,
@@ -15,7 +16,12 @@ import { computeSchemaHash, decodeBootstrapFrame } from '@surface/sync-protocol'
 import { describe, expect, it } from 'vitest';
 import { debugItems } from '../src/db/schema/index.js';
 import { selectRows } from '../src/sync/bootstrap.js';
-import { groupsOfIssueChild, SYNCED_MODELS } from '../src/sync/models.js';
+import {
+  groupsOfIssueChild,
+  isIssueChild,
+  isModelName,
+  SYNCED_MODELS,
+} from '../src/sync/models.js';
 import {
   clientRow,
   contentParentProblem,
@@ -111,6 +117,16 @@ describe('content models', () => {
     ]);
     expect(registry.eager.map((m) => m.name)).not.toContain('IssueContent');
     expect(registry.models.filter((m) => m.def.load === 'content')).toEqual(registry.content);
+  });
+
+  it('marks as issueChild exactly the eager models the client removes with their issue (SPEC-011 §5.7)', () => {
+    // The client's `ISSUE_CHILDREN` is `EAGER_ISSUE_CHILDREN`; an eager child missing from it would
+    // outlive its issue in the replica. `issueChildProblem` holds every child to `issueId`.
+    const eager = Object.keys(SYNCED_MODELS)
+      .filter(isModelName)
+      .filter((name) => isIssueChild(name) && SYNCED_MODELS[name].def.load === 'eager')
+      .map((model) => ({ model, field: 'issueId' }));
+    expect(eager).toEqual([...EAGER_ISSUE_CHILDREN]);
   });
 
   it('change the schema hash with their parent, so clients re-bootstrap when it changes', () => {

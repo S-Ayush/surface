@@ -11,6 +11,7 @@ import {
   ISSUE_A,
   ISSUE_B,
   ISSUE_C,
+  TEAM,
   UNHELD,
   inAct,
   installDomShims,
@@ -202,5 +203,14 @@ describe('the address (AC-13)', () => {
       app.remote(ISSUE_A, { number: 7 });
     });
     expect(replace).toHaveBeenLastCalledWith(null, '', '/issue/ENG-7/login-page-flickers');
+  });
+});
+
+describe('the issue’s team (SPEC-011 §5.7)', () => {
+  it('is opened on demand for an issue the replica already holds', async () => {
+    const app = new FakeApp({ issues: rows() });
+    mounted = await mountIssuePage({ app, ref: 'ENG-42' });
+    expect(document.body.textContent).toContain('Login page flickers');
+    expect(app.opened).toEqual([TEAM]);
   });
 });

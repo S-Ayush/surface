@@ -402,7 +402,11 @@ export class SyncStore {
     return this.#teams?.loadState(teamId) ?? (this.status === 'ready' ? 'ready' : 'loading');
   }
 
-  /** Resolves once `teamId` is no longer `loading`. */
+  /**
+   * Resolves once `teamId` is loaded as far as it can be now: a followed team once acked and its
+   * partial bootstrap (or reload, E35) applied; offline, with the state it has. `loading` if the
+   * store closes first.
+   */
   whenTeamLoaded(teamId: string): Promise<TeamLoadState> {
     return this.#teams?.whenLoaded(teamId) ?? Promise.resolve('ready');
   }

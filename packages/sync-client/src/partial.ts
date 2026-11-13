@@ -6,7 +6,7 @@
  * `PartialLoading` config. Its fields are fixed: the team model has `private`, the membership
  * model `teamId` and `userId`, the Issue model `teamId`, `groups`, `archivedAt` and `deletedAt`.
  */
-import type { ModelDef, ModelRow } from '@surface/domain/model';
+import { EAGER_ISSUE_CHILDREN, type ModelDef, type ModelRow } from '@surface/domain/model';
 import {
   NdjsonDecoder,
   ProtocolError,
@@ -22,10 +22,10 @@ import type { BootstrapRecord, IssueChildRef, IssueShape } from './storage/types
 /**
  * Eager models that belong to an issue, with the field naming it (SPEC-011 §5.7 "eager children
  * leave with their issue"). They are removed with their issue, after the whole delta batch, and on
- * an unsubscribe. Content models need no entry: their `parent` says it. PLAN-014 S4a adds
- * `{ model: 'Attachment', field: 'issueId' }` here.
+ * an unsubscribe. The list is the domain's, which the server's `issueChild` marks are checked
+ * against, so a new eager child is added there once (PLAN-014 S4a: Attachment).
  */
-export const ISSUE_CHILDREN: readonly IssueChildRef[] = [];
+export const ISSUE_CHILDREN: readonly IssueChildRef[] = EAGER_ISSUE_CHILDREN;
 
 /** The models of partial issue loading, by name. */
 export interface PartialLoading {

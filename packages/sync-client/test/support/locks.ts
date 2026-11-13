@@ -12,6 +12,8 @@ interface Waiting {
   readonly run: () => void;
 }
 
+const aborted = () => new DOMException('The request was aborted.', 'AbortError');
+
 /**
  * Web Locks shared by the tabs of one browser profile (SPEC-002 E5): shared locks together,
  * exclusive ones alone, granted in request order; `ifAvailable` answers `null` at once when the
@@ -31,6 +33,11 @@ export class FakeLocks {
   /** Who holds `name`, and how. */
   holders(name: string): { tab: string; mode: LockMode }[] {
     return this.held.filter((h) => h.name === name).map(({ tab, mode }) => ({ tab, mode }));
+  }
+
+  /** How many requests for `name` wait. */
+  waiting(name: string): number {
+    return this.#waiting.filter((w) => w.name === name).length;
   }
 
   #request<T>(
@@ -54,11 +61,25 @@ export class FakeLocks {
           },
         );
       };
+      if (options.signal?.aborted === true) {
+        reject(aborted());
+        return;
+      }
       const free =
         this.#grantable(name, options.mode) && !this.#waiting.some((w) => w.name === name);
       if (free) run();
       else if (options.ifAvailable) callback(null).then(resolve, reject);
-      else this.#waiting.push({ name, mode: options.mode, run });
+      else {
+        const waiting: Waiting = { name, mode: options.mode, run };
+        this.#waiting.push(waiting);
+        // As Web Locks: aborting a request still waiting rejects it with an AbortError.
+        options.signal?.addEventListener('abort', () => {
+          const at = this.#waiting.indexOf(waiting);
+          if (at < 0) return;
+          this.#waiting.splice(at, 1);
+          reject(aborted());
+        });
+      }
     });
   }
 

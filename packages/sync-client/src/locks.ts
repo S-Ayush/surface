@@ -52,13 +52,19 @@ export function teamLockName(replica: string, teamId: string): string {
  * resolves once the lock is let go: locks are released asynchronously, so a request made right
  * after `release()`, without awaiting it, would still find this tab holding the lock.
  */
-export function holdShared(locks: ReplicaLocks, name: string): Promise<() => Promise<void>> {
+export function holdShared(
+  locks: ReplicaLocks,
+  name: string,
+  signal?: AbortSignal,
+): Promise<() => Promise<void>> {
   return new Promise((resolve, reject) => {
     let done: () => void = () => undefined;
     const held = new Promise<void>((resolveHeld) => {
       done = resolveHeld;
     });
-    const request = locks.request(name, { mode: 'shared' }, () => {
+    // `signal` gives up a request still waiting (the store closed); a granted lock is let go
+    // through the release.
+    const request = locks.request(name, { mode: 'shared', signal }, () => {
       resolve(() => {
         done();
         return released;

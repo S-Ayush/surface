@@ -143,6 +143,28 @@ describe('subscriptions', () => {
     expect(taskIds(store)).toEqual([id(110), id(120), id(130), id(131), id(140)]);
   });
 
+  it('follows a team reopened before its unsubscribed ack: it subscribes again after it', async () => {
+    const hub = world();
+    const { store } = await started(hub, { onDemandLimit: 1 });
+    store.openTeam(id(3));
+    await until(() => store.teamLoadState(id(3)) === 'ready');
+    // The acks come a network trip later: the user moves to squad 4 and straight back to 3.
+    hub.holdAcks = true;
+    store.openTeam(id(4));
+    store.openTeam(id(3));
+    // Squad 4 is dropped again before its lock or `subscribe`; squad 3 is asked for again
+    // behind its own `unsubscribe`.
+    await eventually(() => sentOf(hub, 'subscribe').length === 2);
+    expect(sentOf(hub, 'unsubscribe')).toEqual([[id(3)]]);
+    expect(sentOf(hub, 'subscribe')).toEqual([[id(3)], [id(3)]]);
+    hub.releaseAcks();
+    await until(() => store.followedTeams.has(id(3)) && !store.followedTeams.has(id(4)));
+    expect(await store.whenTeamLoaded(id(3))).toBe('ready');
+    hub.putTask(132, 3, { creatorId: OTHER_USER, title: 'Still live' });
+    await until(() => teamView(store).tasks[id(132)] !== undefined);
+    expect(taskIds(store)).toEqual([id(110), id(120), id(130), id(131), id(132)]);
+  });
+
   it('drops the content and children of an issue kept through user: when its team is unsubscribed (§5.3 rule 5)', async () => {
     const hub = world();
     const kept = keptMemoryStorage();
@@ -200,6 +222,19 @@ describe('subscriptions', () => {
     await until(() => store.teamLoadState(id(3)) === 'ready');
     expect(hub.last.teams).toEqual([id(1), id(3)]);
     expect(taskIds(store)).toContain(id(133));
+  });
+
+  it('settles a wait for a team still loading when the store closes', async () => {
+    const hub = world();
+    hub.holdPartial = true;
+    const { store } = await started(hub);
+    store.openTeam(id(3));
+    const waiting = store.whenTeamLoaded(id(3));
+    await eventually(() => hub.partialRequests.length === 1);
+    await store.close();
+    expect(await waiting).toBe('loading');
+    hub.holdPartial = false;
+    hub.releasePartial();
   });
 
   it('shows a team as offline when it was never loaded and the connection is down (E34)', async () => {

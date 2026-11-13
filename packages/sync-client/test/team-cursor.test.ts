@@ -5,6 +5,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
+import type { IssueShape, SyncStorage } from '../src/storage/types.js';
 import type { SyncStore } from '../src/store.js';
 import { FakeHub } from './support/hub.js';
 import { eventually, teamStore, teamView, until } from './support/live.js';
@@ -57,6 +58,22 @@ async function tab(
 async function open(store: SyncStore, team: number): Promise<void> {
   store.openTeam(id(team));
   await until(() => store.teamLoadState(id(team)) === 'ready' && store.followedTeams.has(id(team)));
+}
+
+const SHAPE: IssueShape = {
+  issue: 'Task',
+  children: [{ model: 'TaskPart', field: 'issueId' }],
+  content: [{ model: 'TaskNote', field: 'issueId' }],
+};
+
+/** Run `act` on the replica's storage through a connection of its own, as another tab. */
+async function onReplica(workspaceId: string, act: (storage: SyncStorage) => Promise<unknown>) {
+  const storage = await IndexedDbStorage.open(`surface-${workspaceId}-${USER_ID}`, NAMES);
+  try {
+    await act(storage);
+  } finally {
+    await storage.close();
+  }
 }
 
 /** What the replica's storage holds. */
@@ -155,5 +172,103 @@ describe('team cursors across tabs', () => {
     await until(() => teamView(a).tasks[id(130)] === undefined);
     await eventually(async () => (await stored(workspaceId)).tasks.includes(id(140)));
     expect((await stored(workspaceId)).tasks).toContain(id(130));
+  });
+
+  it('loads a team the replica holds complete but this tab did not follow at its start', async () => {
+    const hub = world();
+    const workspaceId = uniqueName('ws');
+    const locks = new FakeLocks();
+    const a = await tab(hub, workspaceId, locks, 'a');
+    await open(a, 3);
+    await eventually(
+      async () => (await stored(workspaceId)).meta?.teamThrough?.[id(3)] !== undefined,
+    );
+    await a.close();
+    // Another tab's on-demand list moved on: squad 3 is complete in storage but nobody's.
+    await onReplica(workspaceId, (storage) => storage.touchOnDemand(id(4), 1));
+
+    const { store: b } = teamStore(hub, {
+      workspaceId,
+      connectStorage: connect,
+      locks: locks.forTab('b'),
+    });
+    stores.push(b);
+    // Opened after the start, before the connection's first ack.
+    hub.holdAcks = true;
+    await b.start();
+    expect(taskIds(b)).not.toContain(id(130));
+    b.openTeam(id(3));
+    expect(b.teamLoadState(id(3))).toBe('loading');
+    hub.releaseAcks();
+    expect(await b.whenTeamLoaded(id(3))).toBe('ready');
+    expect(taskIds(b)).toContain(id(130));
+    expect(hub.partialRequests.filter((teams) => teams.includes(id(3)))).toHaveLength(2);
+  });
+
+  it("reloads a team another tab removed between this tab's cursor read and its shared hold (E36)", async () => {
+    const hub = world();
+    const workspaceId = uniqueName('ws');
+    const locks = new FakeLocks();
+    const a = await tab(hub, workspaceId, locks, 'a');
+    await open(a, 3);
+    await eventually(async () => (await stored(workspaceId)).tasks.includes(id(130)));
+    await a.close();
+
+    // A tab removing squad 3 holds its lock exclusively while tab B starts.
+    const replica = `surface-${workspaceId}-${USER_ID}`;
+    const name = `${replica}:team:${id(3)}`;
+    let finish: () => void = () => undefined;
+    const removing = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    void locks.forTab('x').request(name, { mode: 'exclusive' }, () => removing);
+    const { store: b } = teamStore(hub, {
+      workspaceId,
+      connectStorage: connect,
+      locks: locks.forTab('b'),
+    });
+    stores.push(b);
+    const starting = b.start();
+    // B has read the cursors (squad 3 complete) and waits for its shared hold.
+    await eventually(() => locks.waiting(name) === 1);
+    await onReplica(workspaceId, async (storage) => {
+      const meta = await storage.readMeta();
+      await storage.removeTeamRows(meta?.generation ?? '', {
+        shape: SHAPE,
+        teams: [id(3)],
+        keep: ['workspace', `user:${USER_ID}`, `team:${id(1)}`],
+      });
+    });
+    finish();
+    await starting;
+    await eventually(() => hub.partialRequests.length === 2);
+    await eventually(async () => (await stored(workspaceId)).tasks.includes(id(130)));
+    expect((await stored(workspaceId)).meta?.teamThrough?.[id(3)]).toBeDefined();
+  });
+
+  it('lets go of a team lock granted after the store closed', async () => {
+    const hub = world();
+    const workspaceId = uniqueName('ws');
+    const locks = new FakeLocks();
+    const a = await tab(hub, workspaceId, locks, 'a');
+    await open(a, 3);
+    await a.close();
+    const name = `surface-${workspaceId}-${USER_ID}:team:${id(3)}`;
+    let finish: () => void = () => undefined;
+    const busy = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    void locks.forTab('x').request(name, { mode: 'exclusive' }, () => busy);
+    const { store: b } = teamStore(hub, {
+      workspaceId,
+      connectStorage: connect,
+      locks: locks.forTab('b'),
+    });
+    const starting = b.start().catch(() => undefined);
+    await eventually(() => locks.waiting(name) === 1);
+    await b.close();
+    await starting;
+    finish();
+    await eventually(() => locks.holders(name).length === 0 && locks.waiting(name) === 0);
   });
 });
