@@ -106,28 +106,49 @@ export function columnOf(
   return { column };
 }
 
+/** How `deleteWhereStatements` orders and cuts the rows. */
+export interface DeleteOrder {
+  /**
+   * A self-reference (`comments.parent_comment_id`): rows that have one go first, so a chunk
+   * never deletes a row another row still references through a `RESTRICT` key (SPEC-013 §4.3,
+   * replies before roots). Without it, rows go in ascending id.
+   */
+  readonly childrenFirst?: PgColumn;
+  /** Rows per delete statement. Default `SYNC_LOG_CHUNK`; tests pass a small one. */
+  readonly chunkSize?: number;
+}
+
 /**
  * The statements of `repo.deleteWhere(model, column, values)`. A bare `DELETE … WHERE column = ANY`
  * locks rows in scan order, so the rows are locked first, in ascending id, by one
  * `SELECT id … WHERE column = ANY($values) ORDER BY id FOR UPDATE` (`lock`); then `deletes(ids)`
  * gives one `DELETE … WHERE id = ANY($chunk) RETURNING id, sync_groups` per chunk of the locked
  * ids, ascending (SPEC-015 §4.4, sync-protocol §7).
+ *
+ * With `childrenFirst`, the lock orders by `(<column> IS NULL, id)` and `deletes` keeps the order
+ * it is given (the lock's), so every child is deleted in a chunk before or with its parent's.
  */
 export function deleteWhereStatements(
   db: NodePgDatabase,
   table: ModelTable<ModelName>,
   column: PgColumn,
   values: Iterable<string>,
+  { childrenFirst, chunkSize = SYNC_LOG_CHUNK }: DeleteOrder = {},
 ) {
+  const select = db
+    .select({ id: table.id })
+    .from(table)
+    .where(anyOf(column, ascendingIds(values)));
   return {
-    lock: db
-      .select({ id: table.id })
-      .from(table)
-      .where(anyOf(column, ascendingIds(values)))
-      .orderBy(asc(table.id))
-      .for('update'),
+    lock: (childrenFirst === undefined
+      ? select.orderBy(asc(table.id))
+      : select.orderBy(sql`${childrenFirst} IS NULL`, asc(table.id))
+    ).for('update'),
     deletes: (ids: Iterable<string>) =>
-      chunked(ascendingIds(ids)).map((chunk) => ({
+      chunked(
+        childrenFirst === undefined ? ascendingIds(ids) : [...ids].map((id) => id.toLowerCase()),
+        chunkSize,
+      ).map((chunk) => ({
         ids: chunk,
         delete: db
           .delete(table)

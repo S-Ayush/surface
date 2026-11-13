@@ -8,6 +8,7 @@
  */
 import { eq, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import { LOCKS } from '../db/locks.js';
 import { syncLog, syncState } from '../db/schema/index.js';
 import { SurfaceError } from '../executor/errors.js';
@@ -98,12 +99,19 @@ export interface Repo {
    * `log: false` logs nothing: the one unlogged repo write (ADR-0022), for purging an issue's
    * content. It is refused unless `model` is a content model matched on its parent field, and
    * `flush` fails the transaction unless each parent is deleted, with a logged `D`, in it too.
+   *
+   * `childrenFirst` names a self-reference field (`Comment.parentCommentId`): rows with one are
+   * locked and deleted first, so a chunk boundary never leaves a child of a deleted row (a
+   * `RESTRICT` key would fail the delete; SPEC-013 §4.3).
    */
   deleteWhere<M extends ModelName>(
     model: M,
     field: keyof ModelRow<M> & string,
     ids: readonly string[],
-    options?: { readonly log?: boolean },
+    options?: {
+      readonly log?: boolean;
+      readonly childrenFirst?: keyof ModelRow<M> & string;
+    },
   ): Promise<string[]>;
   /** Changes buffered so far. */
   changes(): readonly RowChange[];
@@ -145,12 +153,14 @@ export interface SyncRepoOptions {
    * content models over tables their scripted connection holds.
    */
   readonly shapeOf?: (model: string) => ModelShape | undefined;
+  /** Rows per `deleteWhere` statement. Default `SYNC_LOG_CHUNK`; tests pass a small one. */
+  readonly deleteChunkSize?: number;
 }
 
 export function syncRepo(
   db: NodePgDatabase,
   now: Date,
-  { shapeOf = modelShape }: SyncRepoOptions = {},
+  { shapeOf = modelShape, deleteChunkSize }: SyncRepoOptions = {},
 ): TransactionRepo {
   const buffered: RowChange[] = [];
   const unlogged: UnloggedDelete[] = [];
@@ -330,7 +340,18 @@ export function syncRepo(
         const allowed = unloggedParent(model, shapeOf(model), field);
         if ('problem' in allowed) throw new Error(allowed.problem);
       }
-      const statements = deleteWhereStatements(db, table, found.column, ids);
+      let childrenFirst: PgColumn | undefined;
+      if (options.childrenFirst !== undefined) {
+        const self = columnOf(table, options.childrenFirst);
+        if ('problem' in self) {
+          throw new Error(`deleteWhere(${model}): ${model} ${self.problem}`);
+        }
+        childrenFirst = self.column;
+      }
+      const statements = deleteWhereStatements(db, table, found.column, ids, {
+        childrenFirst,
+        chunkSize: deleteChunkSize,
+      });
       const locked = await statements.lock;
       const deleted: { id: string; groups: string[] }[] = [];
       for (const chunk of statements.deletes(locked.map((row) => row.id))) {

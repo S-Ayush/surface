@@ -435,8 +435,6 @@ interface CommentRow extends RefEntity {
   issueId: string;
   teamId: string;
   parentCommentId: string | null;
-  userId: string;
-  deleted: boolean;
 }
 
 /**
@@ -455,8 +453,7 @@ async function lookupComment(value: string, ctx: LookupContext): Promise<Comment
     ref?.by === 'id'
       ? await ctx.db.query<CommentRow>(
           `SELECT c.id, c.issue_id AS "issueId", c.team_id AS "teamId",
-                  c.parent_comment_id AS "parentCommentId", c.user_id AS "userId",
-                  c.deleted_at IS NOT NULL AS deleted
+                  c.parent_comment_id AS "parentCommentId"
              FROM comments c JOIN issues i ON i.id = c.issue_id
             WHERE c.id = $1
               AND ($2::text[] IS NULL OR (i.sync_groups && $2::text[] AND c.sync_groups && $2::text[]))

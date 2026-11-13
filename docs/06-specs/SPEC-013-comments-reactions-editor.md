@@ -194,7 +194,7 @@ Foreign keys never cascade (`ON DELETE RESTRICT`): the handler deletes reactions
 - Database backups keep whatever they captured, for the operator's backup retention.
 - Inline files referenced only by the deleted comment stay owned by the issue (SPEC-014 §4.3) until the issue is purged. Only people who can see the issue can read them, and only by their `/files/<id>` URL.
 
-Comment and reaction events in the outbox carry ids and the actor, never the body, so the outbox adds no copy. Deleting an issue's comments when the issue is purged is SPEC-015's (permissions §6). This spec registers its steps in SPEC-015's purge-step registry (SPEC-015 §4.5): reactions, then comments (replies before roots), then `comment_search_text`. Comment and Reaction are content models, so their steps use `repo.deleteWhere` with `log: false` (SPEC-011 §5.1); `comment_search_text` is server-only and is a plain delete.
+Comment and reaction events in the outbox carry ids and the actor, never the body, so the outbox adds no copy. Deleting an issue's comments when the issue is purged is SPEC-015's (permissions §6). This spec registers its steps in SPEC-015's purge-step registry (SPEC-015 §4.5): reactions, then `comment_search_text`, then comments (replies before roots: `deleteWhere`'s `childrenFirst` on `parentCommentId`, so no chunk deletes a root whose reply is still there). The search text goes before the comments because its key cascades from them: after them it would find nothing. Comment and Reaction are content models, so their steps use `repo.deleteWhere` with `log: false` (SPEC-011 §5.1); `comment_search_text` is server-only and is a plain delete.
 
 **Editing with conflict detection** (NFR-07). `comment.update` sends the `baseVersion` it was edited from. If the stored `version` differs, the answer is `CONFLICT` and the client keeps the user's text in the editor (§6.3). A checklist toggle is a `comment.update` like any other, so a toggle in one tab can't silently overwrite text saved from another tab. Within one client, queued edits chain: each optimistic update raises `version`, so the next queued edit carries the right base.
 
@@ -351,8 +351,11 @@ Optimistic code runs in `packages/operations` and never parses or builds documen
 | Empty body | `INVALID_INPUT` | "Comment can't be empty." |
 | Body over 50 KB | `INVALID_INPUT` | "Comment is too long. Split it into two, or attach a file." |
 | Editing someone else's comment | `FORBIDDEN` | "Only the author can edit a comment." |
+| Deleting someone else's comment, not being an Admin | `FORBIDDEN` | "Only the author or an Admin can delete a comment." |
+| Commenting as the system actor (a job, never a person or key) | `FORBIDDEN` | "Only a signed-in user or an API key can comment." |
 | Reply to a reply | `INVALID_INPUT` | "Replies go one level deep. Reply to the thread's first comment." |
 | Reply to a deleted comment | `INVALID_INPUT` | "That comment was deleted. Comment on the issue instead." |
+| Reply to a comment of another issue | `INVALID_INPUT` | "Reply to a comment of the same issue, or leave out parent." |
 | Stale `baseVersion` | `CONFLICT` | "This comment changed since you started editing. Copy your text, then edit it again." |
 | Not one emoji | `INVALID_INPUT` | "Use a single emoji, like 👍." |
 | 21st distinct emoji | `INVALID_INPUT` | "You can add at most 20 different reactions here." |

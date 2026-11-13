@@ -52,13 +52,14 @@ const audit = () => ({
   createdAt: instant().notNull().defaultNow(),
   updatedAt: instant().notNull().defaultNow(),
 });
-const syncGroups = () => text().array().notNull();
+/** A synced table's `sync_groups` column (sync-protocol §3). */
+export const syncGroups = () => text().array().notNull();
 
 /** `1, 3, 6, 9, 12`: the automation periods (SPEC-015 §3.2), our constants, not input. */
 const automationMonths = sql.raw(AUTOMATION_MONTHS.join(', '));
 
 /** `column IN ('a', 'b')` for an enum stored as text. Values are our constants, not input. */
-function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
+export function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
   return sql`${column} IN (${sql.raw(values.map((v) => `'${v}'`).join(', '))})`;
 }
 

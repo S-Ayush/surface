@@ -36,9 +36,19 @@ export interface ScriptedDb {
   readonly rowsOf: (table: string) => Map<string, Row>;
 }
 
+/** A `RESTRICT` foreign key the scripted tables enforce: `table.column` references `table.id`. */
+export interface ScriptedRestrict {
+  readonly table: string;
+  readonly column: string;
+}
+
 export function scriptedDb(
   seed: Record<string, Row[]> = {},
-  { now, ...options }: SyncRepoOptions & { readonly now: Date },
+  {
+    now,
+    restrict = [],
+    ...options
+  }: SyncRepoOptions & { readonly now: Date; readonly restrict?: readonly ScriptedRestrict[] },
 ): ScriptedDb {
   const tables = new Map<string, Map<string, Row>>();
   for (const [table, rows] of Object.entries(seed)) {
@@ -78,12 +88,17 @@ export function scriptedDb(
       if (text.startsWith('insert into "sync_log"')) return answer([]);
 
       let m =
-        /^select (.*?) from "(\w+)" where (.*?)( order by "\w+"\."id" asc)?( for (?:update|share))?$/.exec(
+        /^select (.*?) from "(\w+)" where (.*?)( order by (?:"\w+"\."(\w+)" IS NULL, )?"\w+"\."id" asc)?( for (?:update|share))?$/.exec(
           text,
         );
       if (m) {
         const rows = matching(m[2] ?? '', m[3] ?? '', params);
         if (m[4]) rows.sort(byId);
+        // `ORDER BY <column> IS NULL, id`: rows with the column set first (false sorts first).
+        const nullsLast = m[5];
+        if (nullsLast !== undefined) {
+          rows.sort((a, b) => Number(a[nullsLast] == null) - Number(b[nullsLast] == null));
+        }
         return answer(asArrays(rows, columnList(m[1] ?? '')));
       }
       m = /^update "(\w+)" set (.*) where (.*) returning (.*)$/.exec(text);
@@ -99,9 +114,24 @@ export function scriptedDb(
       }
       m = /^delete from "(\w+)" where (.*) returning (.*)$/.exec(text);
       if (m) {
-        const table = rowsOf(m[1] ?? '');
-        const rows = matching(m[1] ?? '', m[2] ?? '', params);
+        const name = m[1] ?? '';
+        const table = rowsOf(name);
+        const rows = matching(name, m[2] ?? '', params);
         for (const row of rows) table.delete(String(row['id']));
+        // Postgres checks the key once the statement has run: a row deleted with its children
+        // in one statement passes, one whose child is left fails the statement.
+        const gone = new Set(rows.map((row) => row['id']));
+        for (const key of restrict.filter((r) => r.table === name)) {
+          const child = [...table.values()].find((row) => gone.has(row[key.column]));
+          if (child !== undefined) {
+            for (const row of rows) table.set(String(row['id']), row);
+            return Promise.reject(
+              new Error(
+                `update or delete on table "${key.table}" violates a RESTRICT key from "${key.column}" of ${String(child['id'])}`,
+              ),
+            );
+          }
+        }
         rows.sort(byId).reverse();
         return answer(asArrays(rows, columnList(m[3] ?? '')));
       }

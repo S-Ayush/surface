@@ -22,6 +22,7 @@ import {
   DOC_MAX_BYTES,
   EMPTY_DOC,
   IssueRef,
+  isSet,
   lifecycleOf,
   replyParentProblem,
 } from '@surface/domain';
@@ -90,8 +91,6 @@ function text(row: StoreRow | undefined, field: string): string | undefined {
   const value = row?.[field];
   return typeof value === 'string' ? value : undefined;
 }
-
-const isSet = (value: unknown): boolean => value !== null && value !== undefined;
 
 /** The issue a comment is on, when the store holds it and it is live (D10: else CONFLICT). */
 function liveIssue(store: OptimisticStore, ref: string | undefined): StoreRow | undefined {
@@ -264,6 +263,9 @@ export const commentDelete = defineOperation({
     const { comment, id } = found;
     // A placeholder is already deleted: the server answers NOT_FOUND.
     if (isSet(comment['deletedAt'])) return;
+    // The author or an Admin (permissions §3.3); anyone else is refused, so predict nothing.
+    const me = store.get('User', 'me');
+    if (text(comment, 'userId') !== text(me, 'id') && me?.['role'] !== 'admin') return;
     removeReactions(store, id);
     const replies = store.find('Comment', { parentCommentId: id });
     if (replies.length > 0) {

@@ -5,6 +5,7 @@
  * is visible only through it), the issue's team, and users, who are workspace-wide.
  */
 import {
+  COMMENT_MESSAGES,
   issueIdentifier,
   type CommentActorKind,
   type DocNodeJSON,
@@ -80,7 +81,7 @@ export function commentAccess(ctx: HandlerContext): CommentAccess {
 export function commentAuthorOf(ctx: HandlerContext): CommentAuthor {
   const { userId, kind } = ctx.actor;
   if (userId === undefined || kind === 'system') {
-    throw new SurfaceError('FORBIDDEN', 'Only a signed-in user or an API key can comment.');
+    throw new SurfaceError('FORBIDDEN', COMMENT_MESSAGES.systemActor);
   }
   const actorKind: CommentActorKind = kind;
   return { userId, actorKind, admin: ctx.actor.role === 'admin' };

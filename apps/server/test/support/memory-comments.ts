@@ -14,9 +14,9 @@ import {
   type IssueLockMode,
   teamGroup,
   type CommentActorKind,
+  type Actor,
   type DocNodeJSON,
 } from '@surface/domain';
-import { docFileIds, DOC_MESSAGES } from '@surface/editor/schema';
 import type { DomainEvent } from '../../src/executor/context.js';
 import { SurfaceError } from '../../src/executor/errors.js';
 import { refNotFound } from '../../src/executor/refs/sources.js';
@@ -26,8 +26,10 @@ import type {
   CommentRow,
   CommentWriteContext,
 } from '../../src/handlers/comments/core.js';
+import { claimInlineFiles } from '../../src/files/claim.js';
 import type { LockedIssue } from '../../src/issues/lifecycle.js';
 import type { Repo, RowChange } from '../../src/sync/repo.js';
+import { recordingDb } from './scripted-db.js';
 
 export const NOW = new Date('2026-11-13T10:00:00.000Z');
 export const ADA = '0192f0c1-7e5a-7b3c-9d4e-0000000000ad';
@@ -81,6 +83,16 @@ export interface MemoryComments {
   /** Forgets the calls, writes and events so far. */
   reset(): void;
 }
+
+const claimDb = recordingDb().db;
+const claimActor: Actor = {
+  kind: 'user',
+  userId: ADA,
+  role: 'member',
+  groups: [],
+  publicTeams: [TEAM],
+  memberOf: [TEAM],
+};
 
 export function memoryComments(): MemoryComments {
   const issues = new Map<string, MemoryIssue>();
@@ -143,13 +155,11 @@ export function memoryComments(): MemoryComments {
       else searchText.set(commentId, text);
       return Promise.resolve();
     },
-    // The `claimInlineFiles` stub's rule (`files/claim.ts`): any file reference is refused.
-    claimFiles(doc: DocNodeJSON) {
+    // The real seam (`files/claim.ts`), over a connection that answers nothing: the stub reads no
+    // row. When PLAN-014 S4b gives it a body, this fake needs the claim's tables.
+    claimFiles(doc: DocNodeJSON, issue: LockedIssue) {
       calls.push('claimFiles');
-      if (docFileIds(doc).length > 0) {
-        return Promise.reject(new SurfaceError('INVALID_INPUT', DOC_MESSAGES.badFile));
-      }
-      return Promise.resolve(doc);
+      return claimInlineFiles(claimDb, doc, issue, claimActor);
     },
   };
 

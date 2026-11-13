@@ -17,6 +17,7 @@ import {
   DOC_MAX_BYTES,
   docJsonBytes,
   EMPTY_DOC,
+  isSet,
   issueLockModeOf,
   replyParentProblem,
   type CommentActorKind,
@@ -81,8 +82,6 @@ function invalid(field: string, message: string, path: readonly (string | number
     issues: [{ path: [field, ...path], message }],
   });
 }
-
-const isSet = (value: unknown): boolean => value !== null && value !== undefined;
 
 /**
  * The input body as a valid document (§4.4, §6.3): Markdown is converted first, then the document

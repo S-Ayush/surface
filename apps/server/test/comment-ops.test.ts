@@ -17,7 +17,6 @@ import {
   type OptimisticStore,
   type StoreRow,
 } from '@surface/operations';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { describe, expect, it } from 'vitest';
 import type { HandlerContext } from '../src/executor/context.js';
 import { SurfaceError } from '../src/executor/errors.js';
@@ -31,6 +30,7 @@ import {
   type CommentRow,
   type CommentTarget,
 } from '../src/handlers/comments/core.js';
+import { commentAuthorOf } from '../src/handlers/comments/access.js';
 import listComments from '../src/handlers/comments/list.js';
 import {
   ADA,
@@ -104,6 +104,21 @@ describe('comment.create (AC-1)', () => {
     const m = memoryComments();
     expect((await create(m, {}, { actorKind: 'api' })).actorKind).toBe('api');
     expect((await create(m, {}, { actorKind: 'mcp' })).actorKind).toBe('mcp');
+  });
+
+  it('takes the user or the key’s owner as author, and refuses the system actor (§6.3)', () => {
+    const authorOf = (actor: Partial<Actor>) =>
+      commentAuthorOf({
+        actor: { groups: [], publicTeams: [], memberOf: [], ...actor },
+      } as unknown as HandlerContext);
+    expect(authorOf({ kind: 'mcp', userId: IRIS, role: 'admin' })).toEqual({
+      userId: IRIS,
+      actorKind: 'mcp',
+      admin: true,
+    });
+    expect(() => authorOf({ kind: 'system' })).toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN', message: COMMENT_MESSAGES.systemActor }),
+    );
   });
 
   it('attaches a reply to a live top-level comment of the same issue', async () => {
@@ -217,13 +232,15 @@ describe('body checks (§6.3)', () => {
     const error = await failure(create(m, { body }));
     expect(error.code).toBe('INVALID_INPUT');
     expect(error.message).toBe(DOC_MESSAGES.badFile);
+    // On the body, never NOT_FOUND on the file (E9).
+    expect(error.details.issues).toEqual([{ path: ['body'], message: DOC_MESSAGES.badFile }]);
     expect(m.writes).toEqual([]);
   });
 
-  it('the real claimInlineFiles stub accepts a document without files and refuses one with', async () => {
+  it('the claimInlineFiles stub accepts a document without files and refuses one on its field', async () => {
     // The stub reads no row; PLAN-014 S4b replaces this test with the real claim's.
-    const tx = {} as NodePgDatabase;
-    const actor = { kind: 'user', userId: ADA, groups: [], publicTeams: [], memberOf: [] } as Actor;
+    const tx = recordingDb().db;
+    const actor: Actor = { kind: 'user', userId: ADA, groups: [], publicTeams: [], memberOf: [] };
     const issue = { id: randomUUID(), teamId: TEAM };
     const plain = commentDoc('No files here');
     await expect(claimInlineFiles(tx, plain, issue, actor)).resolves.toBe(plain);
@@ -236,9 +253,22 @@ describe('body checks (§6.3)', () => {
         },
       ],
     };
-    await expect(claimInlineFiles(tx, withFile, issue, actor)).rejects.toThrow(
-      DOC_MESSAGES.badFile,
-    );
+    const message = DOC_MESSAGES.badFile;
+    const refusal = (field?: string) =>
+      failure(claimInlineFiles(tx, withFile, issue, actor, field)).then((e) => ({
+        code: e.code,
+        message: e.message,
+        issues: e.details.issues,
+      }));
+    await expect(refusal()).resolves.toEqual({
+      code: 'INVALID_INPUT',
+      message,
+      issues: [{ path: ['body'], message }],
+    });
+    // An issue description's save names its own field (PLAN-011 S6).
+    await expect(refusal('description')).resolves.toMatchObject({
+      issues: [{ path: ['description'], message }],
+    });
   });
 });
 
@@ -530,13 +560,16 @@ function clientRow(row: object): StoreRow {
 const byId = (rows: Iterable<StoreRow>) =>
   [...rows].sort((a, b) => String(a['id']).localeCompare(String(b['id'])));
 
-/** The client store over a copy of `m`'s rows, with its live issue and Ada as `me` (§6.2). */
-function storeOver(m: MemoryComments): OptimisticStore & { rows(model: string): StoreRow[] } {
+/** The client store over a copy of `m`'s rows, with its live issue and `me` (Ada) (§6.2). */
+function storeOver(
+  m: MemoryComments,
+  me: string = ADA,
+): OptimisticStore & { rows(model: string): StoreRow[] } {
   const tables = new Map<string, Map<string, StoreRow>>([
     ['Comment', new Map([...m.comments].map(([id, row]) => [id, clientRow(row)]))],
     ['Reaction', new Map([...m.reactions].map(([id, row]) => [id, clientRow(row)]))],
     ['Issue', new Map([[m.issue.id, clientRow(m.issue)]])],
-    ['User', new Map([[ADA, { id: ADA }]])],
+    ['User', new Map([[me, { id: me, role: 'member' }]])],
   ]);
   const table = (model: string) => {
     const found = tables.get(model);
@@ -544,7 +577,7 @@ function storeOver(m: MemoryComments): OptimisticStore & { rows(model: string): 
     return found;
   };
   const get = (model: string, ref: string) =>
-    table(model).get(model === 'User' && ref === 'me' ? ADA : ref);
+    table(model).get(model === 'User' && ref === 'me' ? me : ref);
   return {
     now: NOW,
     get,
@@ -611,7 +644,8 @@ describe('AC-11: optimistic equals the server', () => {
       'comment.delete, the last reply of a placeholder',
       async ({ m, root, reply }) => {
         await deleteComment(m.ctx(), target(root));
-        const store = storeOver(m);
+        // Iris deletes her own reply, in her tab.
+        const store = storeOver(m, IRIS);
         commentDelete.optimistic?.(store, { comment: reply.id });
         await deleteComment(m.ctx({ userId: IRIS }), target(reply));
         return store;

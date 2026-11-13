@@ -50,12 +50,6 @@ export const SEED_INVITE_ID = '01930000-0000-7000-8000-000000000501';
 export const SEED_SESSION_ID = '01930000-0000-7000-8000-000000000601';
 
 /**
- * The actor's password, which `user.changePassword`'s example gives as the current one. Test
- * only: it never ships (this file is outside `src/`), and it guards nothing.
- */
-export const SEED_PASSWORD = 'seed-password-not-secret';
-/** argon2id of `SEED_PASSWORD`, computed once so seeding does no hashing. */
-/**
  * The comments the comment examples name (`packages/operations/src/ops/comment.ts`), on ENG-1.
  * Ids in creation order, so `comment.list` lists them in this order.
  */
@@ -66,6 +60,12 @@ export const SEED_COMMENTS = {
   single: '01930000-0000-7000-8000-000000000704',
 } as const;
 
+/**
+ * The actor's password, which `user.changePassword`'s example gives as the current one. Test
+ * only: it never ships (this file is outside `src/`), and it guards nothing.
+ */
+export const SEED_PASSWORD = 'seed-password-not-secret';
+/** argon2id of `SEED_PASSWORD`, computed once so seeding does no hashing. */
 const SEED_PASSWORD_HASH =
   '$argon2id$v=19$m=19456,t=2,p=1$ILoquvZtUDFkYznV2ZZTVQ$vmKgU2G0VG8bHpy7GgrQJQrob4gcMjEAK3amW3vJvaQ';
 

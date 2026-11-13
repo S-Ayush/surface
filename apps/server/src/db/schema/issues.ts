@@ -22,7 +22,7 @@ import {
   type HistoryActorKind,
   type IssueHistoryKind,
 } from '@surface/domain';
-import { sql, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import {
   check,
   date,
@@ -34,20 +34,13 @@ import {
   text,
   uniqueIndex,
   uuid,
-  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
-import { instant, teams, users, workflowStatuses } from './workspace.js';
+import { instant, oneOf, syncGroups, teams, users, workflowStatuses } from './workspace.js';
 
 const audit = () => ({
   createdAt: instant().notNull().defaultNow(),
   updatedAt: instant().notNull().defaultNow(),
 });
-const syncGroups = () => text().array().notNull();
-
-/** `column IN ('a', 'b')` for an enum stored as text. Values are our constants, not input. */
-function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
-  return sql`${column} IN (${sql.raw(values.map((v) => `'${v}'`).join(', '))})`;
-}
 
 export const issues = pgTable(
   'issues',

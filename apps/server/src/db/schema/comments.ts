@@ -15,7 +15,7 @@
  * by a trigger (SPEC-013 §4.6).
  */
 import { COMMENT_ACTOR_KINDS, type CommentActorKind } from '@surface/domain';
-import { sql, type SQL } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import {
   check,
   foreignKey,
@@ -28,14 +28,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { issues } from './issues.js';
-import { instant, teams, users } from './workspace.js';
-
-const syncGroups = () => text().array().notNull();
-
-/** `column IN ('a', 'b')` for an enum stored as text. Values are our constants, not input. */
-function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
-  return sql`${column} IN (${sql.raw(values.map((v) => `'${v}'`).join(', '))})`;
-}
+import { instant, oneOf, syncGroups, teams, users } from './workspace.js';
 
 export const comments = pgTable(
   'comments',

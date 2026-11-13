@@ -213,8 +213,16 @@ describe('comment.update optimistic (AC-11, E22)', () => {
 });
 
 describe('comment.delete optimistic (AC-11)', () => {
-  it('removes a comment without replies and its reactions', () => {
+  it('predicts nothing when I am neither the author nor an Admin: the server refuses', () => {
     const store = seeded();
+    commentDelete.optimistic?.(store, { comment: REPLY });
+    expect(row(store, REPLY)).toBeDefined();
+    expect(row(store, REPLY)?.['deletedAt']).toBeNull();
+  });
+
+  it('lets an Admin remove another’s comment without replies, and its reactions', () => {
+    const store = seeded();
+    store.patch('User', 'me', { role: 'admin' });
     store.insert('Reaction', {
       id: NEW_ID,
       issueId: ISSUE,
@@ -241,6 +249,7 @@ describe('comment.delete optimistic (AC-11)', () => {
 
   it('removes a placeholder with its last reply', () => {
     const store = seeded();
+    store.patch('User', 'me', { role: 'admin' });
     commentDelete.optimistic?.(store, { comment: ROOT });
     commentDelete.optimistic?.(store, { comment: REPLY });
     expect(store.find('Comment', {})).toEqual([]);

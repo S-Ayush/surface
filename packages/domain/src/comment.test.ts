@@ -9,7 +9,6 @@ import {
   commentInvariantProblems,
   reactionInvariantProblems,
   replyParentProblem,
-  threadRootId,
   type CommentFacts,
 } from './comment.js';
 import { EMPTY_DOC } from './doc.js';
@@ -171,11 +170,6 @@ describe('commentDeletePlan (§4.3)', () => {
 });
 
 describe('helpers', () => {
-  it('threadRootId is the parent for a reply and the comment itself otherwise', () => {
-    expect(threadRootId(comment())).toBe('c1');
-    expect(threadRootId(comment({ id: 'c2', parentCommentId: 'c1' }))).toBe('c1');
-  });
-
   it('commentBodyBytes measures Markdown as UTF-8 and a document as its JSON', () => {
     expect(commentBodyBytes('é👍')).toBe(6);
     expect(commentBodyBytes(EMPTY_DOC)).toBe(JSON.stringify(EMPTY_DOC).length);

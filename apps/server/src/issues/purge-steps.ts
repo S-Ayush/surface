@@ -26,13 +26,12 @@ export interface PurgeStep {
 }
 
 /**
- * SPEC-013 §4.3: reactions, then comments, then `comment_search_text`. Every foreign key from
- * `reactions` and `comments` is `ON DELETE RESTRICT`, so reactions go before the comments they
- * name. A reply references its root by `comments_parent_comment_id_fk`, also RESTRICT: one
- * `DELETE` statement removing both is fine (Postgres checks RESTRICT at the end of the statement),
- * but `deleteWhere` deletes in chunks of ids, so a thread split across two chunks with its root in
- * the earlier one would fail. Follow-up for PLAN-015 S2: order the comment deletes replies first
- * (or test the chunk boundary) before an issue can have more comments than one chunk.
+ * SPEC-013 §4.3: reactions, then `comment_search_text`, then comments, replies before roots.
+ * Every foreign key from `reactions` and `comments` is `ON DELETE RESTRICT`, so reactions go
+ * before the comments they name. The search text goes before the comments: its key cascades from
+ * them, so afterwards it would find nothing and the step would only look like it ran. A reply
+ * references its root by a RESTRICT key too, and `deleteWhere` deletes in chunks, so the comment
+ * step orders replies first (`childrenFirst`): no chunk deletes a root whose reply is still there.
  */
 export const COMMENT_PURGE_STEPS: readonly PurgeStep[] = [
   {
@@ -42,20 +41,22 @@ export const COMMENT_PURGE_STEPS: readonly PurgeStep[] = [
     },
   },
   {
-    model: 'Comment',
-    step: async (_tx, repo, issueId) => {
-      await repo.deleteWhere('Comment', 'issueId', [issueId], { log: LOG_CONTENT_DELETES });
-    },
-  },
-  {
-    // Server-only (D2). Its foreign key cascades from `comments`, so after the step above this
-    // finds nothing; it stays as the registered step so the purge never depends on the cascade.
+    // Server-only (D2).
     model: 'table:comment_search_text',
     step: async (tx, _repo, issueId) => {
       await tx.execute(
         sql`DELETE FROM comment_search_text t USING comments c
             WHERE c.id = t.comment_id AND c.issue_id = ${issueId}`,
       );
+    },
+  },
+  {
+    model: 'Comment',
+    step: async (_tx, repo, issueId) => {
+      await repo.deleteWhere('Comment', 'issueId', [issueId], {
+        log: LOG_CONTENT_DELETES,
+        childrenFirst: 'parentCommentId',
+      });
     },
   },
 ];

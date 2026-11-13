@@ -33,6 +33,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { uuidv7 } from '../src/db/uuidv7.js';
 import type { Executor } from '../src/executor/execute.js';
+import { lookup } from '../src/executor/refs/sources.js';
 import { Lifecycle } from '../src/lifecycle.js';
 import { createLogger } from '../src/logger.js';
 import { pgSyncLogSource } from '../src/sync/hub-source.js';
@@ -447,6 +448,30 @@ describe('comment operations on SEC comments', () => {
 
 // ---------------------------------------------------------------------------------------------
 // What the database keeps
+
+describe('the CommentRef lookup on its own', () => {
+  // The executor's key scope (`key-scope.ts`) also refuses a row outside the key's teams; the
+  // lookup's own `team_id` clause is the backstop, so it is checked without the executor.
+  const resolve = async (actor: Actor) => {
+    try {
+      const row = await lookup('CommentRef', secThread, {
+        db: h.pool,
+        actor,
+        path: ['comment'],
+        allowInactive: false,
+      });
+      return row.id;
+    } catch (error) {
+      return (error as { code: string }).code;
+    }
+  };
+
+  it('finds a SEC comment for Sam, and not for Sam’s key limited to ENG, or a Member outside SEC', async () => {
+    expect(await resolve(samActor)).toBe(secThread);
+    expect(await resolve(samKeyActor)).toBe('NOT_FOUND');
+    expect(await resolve(anaActor)).toBe('NOT_FOUND');
+  });
+});
 
 describe('stored SEC comment rows', () => {
   it('are logged under team:<SEC> only (D12)', async () => {

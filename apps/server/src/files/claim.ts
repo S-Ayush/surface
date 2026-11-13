@@ -19,14 +19,23 @@ export interface ClaimTarget {
   readonly teamId: string;
 }
 
+/**
+ * `field` is the input field the document came from (`body` for comments, `description` for
+ * issues): a refusal is `INVALID_INPUT` on that field, never `NOT_FOUND` on the file, so nothing
+ * about the file leaks (SPEC-013 E9, SPEC-014 §4.3).
+ */
 export function claimInlineFiles(
   _tx: NodePgDatabase,
   doc: DocNodeJSON,
   _issue: ClaimTarget,
   _actor: Actor,
+  field = 'body',
 ): Promise<DocNodeJSON> {
   if (docFileIds(doc).length > 0) {
-    return Promise.reject(new SurfaceError('INVALID_INPUT', DOC_MESSAGES.badFile));
+    const message = DOC_MESSAGES.badFile;
+    return Promise.reject(
+      new SurfaceError('INVALID_INPUT', message, { issues: [{ path: [field], message }] }),
+    );
   }
   return Promise.resolve(doc);
 }

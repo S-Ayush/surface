@@ -19,10 +19,6 @@ export const COMMENT_FILTER_FIELDS = defineFilterFields({
 export const COMMENT_ACTOR_KINDS = ['user', 'api', 'mcp'] as const;
 export type CommentActorKind = (typeof COMMENT_ACTOR_KINDS)[number];
 
-export function isCommentActorKind(value: unknown): value is CommentActorKind {
-  return typeof value === 'string' && (COMMENT_ACTOR_KINDS as readonly string[]).includes(value);
-}
-
 /** The SPEC-013 §6.3 sentences, so the server and its tests use the same words. */
 export const COMMENT_MESSAGES = {
   empty: "Comment can't be empty.",
@@ -34,6 +30,7 @@ export const COMMENT_MESSAGES = {
   replyOtherIssue: 'Reply to a comment of the same issue, or leave out parent.',
   staleVersion:
     'This comment changed since you started editing. Copy your text, then edit it again.',
+  systemActor: 'Only a signed-in user or an API key can comment.',
 } as const;
 
 /**
@@ -62,12 +59,8 @@ export interface ReactionFacts {
   readonly commentId: string | null;
 }
 
-const isSet = (value: unknown): boolean => value !== null && value !== undefined;
-
-/** The id of a comment's thread root: itself for a top-level comment, else its parent. */
-export function threadRootId(comment: Pick<CommentFacts, 'id' | 'parentCommentId'>): string {
-  return comment.parentCommentId ?? comment.id;
-}
+/** A nullable field holds a value: `deletedAt`, `resolvedAt` and the like, on a row from any side. */
+export const isSet = (value: unknown): boolean => value !== null && value !== undefined;
 
 /**
  * Why a reply under `parent` is refused (INV-19, SPEC-013 §4.3, §6.3), or undefined. `parent` is

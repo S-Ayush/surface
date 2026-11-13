@@ -130,6 +130,19 @@ describe('the bulk statements (SQL)', () => {
     expect(first?.params[0]).toEqual(ids.slice(1).reverse());
     expect(chunks[1]?.ids).toEqual([id(5_001)]);
   });
+
+  it('deleteWhere with childrenFirst locks rows that reference another first, and keeps that order in its chunks', () => {
+    const statements = deleteWhereStatements(db, labels, labels.parentId, [id(1)], {
+      childrenFirst: labels.parentId,
+      chunkSize: 2,
+    });
+    expect(statements.lock.toSQL().sql).toBe(
+      'select "id" from "labels" where "labels"."parent_id" = ANY($1::uuid[]) order by "labels"."parent_id" IS NULL, "labels"."id" asc for update',
+    );
+    // The lock's order (children, then parents), not ascending id.
+    const chunks = statements.deletes([id(9), id(4), id(2)]);
+    expect(chunks.map((c) => c.ids)).toEqual([[id(9), id(4)], [id(2)]]);
+  });
 });
 
 describe('repo.updateWhere', () => {
