@@ -9,3 +9,4 @@ export * from './auth.js';
 export * from './files.js';
 export * from './issues.js';
 export * from './drafts.js';
+export * from './comments.js';

@@ -435,11 +435,11 @@ describe('the unlogged content delete (ADR-0022)', () => {
 
   it('reads each synced model’s shape from its typed definition (PLAN-011 S5a)', () => {
     const parent = { model: 'Issue', field: 'issueId' };
+    // PLAN-013 S3 adds Comment and Reaction, content of their issue.
+    const content = new Set(['IssueContent', 'IssueHistory', 'Comment', 'Reaction']);
     for (const model of Object.keys(SYNCED_MODELS)) {
       expect(modelShape(model)).toEqual(
-        model === 'IssueContent' || model === 'IssueHistory'
-          ? { load: 'content', parent }
-          : { load: 'eager' },
+        content.has(model) ? { load: 'content', parent } : { load: 'eager' },
       );
     }
     expect(modelShape('Nope')).toBeUndefined();

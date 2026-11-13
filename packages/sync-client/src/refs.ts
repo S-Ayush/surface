@@ -24,6 +24,7 @@ import type {
   RefType,
 } from '@surface/domain';
 import {
+  parseIdRef,
   parseIssueRef,
   parseLabelRef,
   parseNamedRef,
@@ -40,6 +41,7 @@ export const REF_MODELS = {
   StatusRef: 'WorkflowStatus',
   LabelRef: 'Label',
   IssueRef: 'Issue',
+  CommentRef: 'Comment',
 } as const satisfies Partial<Record<RefType, string>>;
 
 const NOT_FOUND: RefLookup = { status: 'notFound' };
@@ -88,6 +90,11 @@ export function createClientRefResolver(
           return label(value, options);
         case 'IssueRef':
           return found(issue(value));
+        // By id only, among the comments the replica holds (PLAN-013 S3).
+        case 'CommentRef': {
+          const ref = parseIdRef(value);
+          return found(ref?.by === 'id' ? byId(REF_MODELS.CommentRef, ref.id) : undefined);
+        }
         // Invites are never in the replica: the server resolves them (PLAN-001 S5).
         case 'InviteRef':
           return NOT_FOUND;

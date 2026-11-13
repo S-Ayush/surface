@@ -56,6 +56,14 @@ import {
 } from './issues/list.js';
 import draftSave from './drafts/save.js';
 import draftDiscard from './drafts/discard.js';
+import commentCreate from './comments/create.js';
+import commentDelete from './comments/delete.js';
+import commentList from './comments/list.js';
+import {
+  reopenHandler as commentReopen,
+  resolveHandler as commentResolve,
+} from './comments/resolve.js';
+import commentUpdate from './comments/update.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -114,4 +122,10 @@ export const HANDLERS: readonly Handler[] = [
   issueRestore,
   draftSave,
   draftDiscard,
+  commentList,
+  commentCreate,
+  commentUpdate,
+  commentResolve,
+  commentReopen,
+  commentDelete,
 ];

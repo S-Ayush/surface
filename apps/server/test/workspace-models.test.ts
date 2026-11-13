@@ -64,7 +64,12 @@ describe('the production model list', () => {
     expect(production.eager.map((m) => m.name)).toEqual(
       PRODUCTION_MODELS.filter((m) => m.load === 'eager').map((m) => m.name),
     );
-    expect(production.content.map((m) => m.name)).toEqual(['IssueContent', 'IssueHistory']);
+    expect(production.content.map((m) => m.name)).toEqual([
+      'IssueContent',
+      'IssueHistory',
+      'Comment',
+      'Reaction',
+    ]);
   });
 });
 

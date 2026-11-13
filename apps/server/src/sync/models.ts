@@ -5,12 +5,14 @@
  */
 import { teamGroup, userGroup, WORKSPACE_GROUP } from '@surface/domain';
 import {
+  Comment,
   DebugItem,
   Draft,
   Issue,
   IssueContent,
   IssueHistory,
   Label,
+  Reaction,
   Team,
   TeamMembership,
   User,
@@ -23,12 +25,14 @@ import { eq, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import {
+  comments,
   debugItems,
   issueContent,
   issueHistory,
   drafts,
   issues,
   labels,
+  reactions,
   teamMemberships,
   teams,
   userPreferences,
@@ -329,6 +333,26 @@ export const SYNCED_MODELS = {
     },
     groupFields: ['userId'],
     teamColumn: null,
+  },
+  // PLAN-013 S3 (SPEC-013 §5.1): content models with parent Issue. Their groups are
+  // `team:<teamId>` only, never the issue's `user:` groups (SPEC-013 D12).
+  Comment: {
+    table: comments,
+    def: Comment,
+    fixture: false,
+    issueChild: true,
+    groupsOf: groupsOfIssueChild,
+    groupFields: ['issueId', 'teamId'],
+    teamColumn: comments.teamId,
+  },
+  Reaction: {
+    table: reactions,
+    def: Reaction,
+    fixture: false,
+    issueChild: true,
+    groupsOf: groupsOfIssueChild,
+    groupFields: ['issueId', 'teamId'],
+    teamColumn: reactions.teamId,
   },
 } as const satisfies Record<
   string,

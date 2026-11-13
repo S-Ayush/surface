@@ -104,6 +104,23 @@ export interface DraftRow {
   readonly syncGroups: readonly string[];
 }
 
+/** A `comments` row as stored, the fields the comment property compares (PLAN-013 S3). */
+export interface CommentRow {
+  readonly id: string;
+  readonly issueId: string;
+  readonly teamId: string;
+  readonly parentCommentId: string | null;
+  readonly userId: string;
+  readonly actorKind: string;
+  readonly body: unknown;
+  readonly version: number;
+  readonly editedAt: string | null;
+  readonly deletedAt: string | null;
+  readonly resolvedAt: string | null;
+  readonly resolvedById: string | null;
+  readonly syncGroups: readonly string[];
+}
+
 /** The SPEC-003 response body of `POST /api/ops/:name`. */
 export type OpResponse =
   | { readonly ok: true; readonly result: unknown }
@@ -133,6 +150,10 @@ export interface TestServer {
   issues(): Promise<IssueRow[]>;
   /** Every `drafts` row, by id (PLAN-012 S5). */
   drafts(): Promise<DraftRow[]>;
+  /** Every `comments` row, by id (PLAN-013 S3). */
+  comments(): Promise<CommentRow[]>;
+  /** How many `reactions` rows are stored (PLAN-013 S3: none until `reaction.set`, S4). */
+  reactionCount(): Promise<number>;
   /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
@@ -172,6 +193,27 @@ const DraftDbRow = z.object({
   team_id: z.string().nullable(),
   issue_id: z.string().nullable(),
   data: z.unknown(),
+  sync_groups: z.array(z.string()),
+});
+
+const instantText = z
+  .date()
+  .nullable()
+  .transform((value) => value?.toISOString() ?? null);
+
+const CommentDbRow = z.object({
+  id: z.string(),
+  issue_id: z.string(),
+  team_id: z.string(),
+  parent_comment_id: z.string().nullable(),
+  user_id: z.string(),
+  actor_kind: z.string(),
+  body: z.unknown(),
+  version: z.number(),
+  edited_at: instantText,
+  deleted_at: instantText,
+  resolved_at: instantText,
+  resolved_by_id: z.string().nullable(),
   sync_groups: z.array(z.string()),
 });
 
@@ -308,6 +350,35 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             syncGroups: draft.sync_groups,
           };
         });
+      },
+      comments: async () => {
+        const { rows } = await db.query(
+          `SELECT id, issue_id, team_id, parent_comment_id, user_id, actor_kind, body, version,
+                  edited_at, deleted_at, resolved_at, resolved_by_id, sync_groups
+             FROM comments ORDER BY id`,
+        );
+        return rows.map((row) => {
+          const c = CommentDbRow.parse(row);
+          return {
+            id: c.id,
+            issueId: c.issue_id,
+            teamId: c.team_id,
+            parentCommentId: c.parent_comment_id,
+            userId: c.user_id,
+            actorKind: c.actor_kind,
+            body: c.body,
+            version: c.version,
+            editedAt: c.edited_at,
+            deletedAt: c.deleted_at,
+            resolvedAt: c.resolved_at,
+            resolvedById: c.resolved_by_id,
+            syncGroups: c.sync_groups,
+          };
+        });
+      },
+      reactionCount: async () => {
+        const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM reactions');
+        return rows[0]?.n ?? 0;
       },
       compactLog: async () => {
         // Every row older than year 9999: all but the newest (`pruneSyncLog` keeps it).

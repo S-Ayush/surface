@@ -102,10 +102,12 @@ describe('content models', () => {
     return model;
   };
 
-  it('are IssueContent and IssueHistory, outside the bootstrap, with parent Issue by issueId', () => {
+  it('are the issue’s content, history, comments and reactions, outside the bootstrap, with parent Issue by issueId', () => {
     expect(registry.content.map((m) => [m.name, m.def.parent])).toEqual([
       ['IssueContent', { model: 'Issue', field: 'issueId' }],
       ['IssueHistory', { model: 'Issue', field: 'issueId' }],
+      ['Comment', { model: 'Issue', field: 'issueId' }],
+      ['Reaction', { model: 'Issue', field: 'issueId' }],
     ]);
     expect(registry.eager.map((m) => m.name)).not.toContain('IssueContent');
     expect(registry.models.filter((m) => m.def.load === 'content')).toEqual(registry.content);

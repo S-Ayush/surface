@@ -61,6 +61,8 @@ export async function lookup(
       return lookupFile(stringValue(value), ctx);
     case 'IssueRef':
       return lookupIssue(stringValue(value), ctx);
+    case 'CommentRef':
+      return lookupComment(stringValue(value), ctx);
     case 'CycleRef':
     case 'ProjectRef':
     case 'InitiativeRef':
@@ -123,6 +125,8 @@ export function refNotFound(
         return `File "${value}" not found. Upload the image with POST /files/upload and use the id it returns.`;
       case 'IssueRef':
         return `Issue "${value}" not found. Use an issue identifier like ENG-123, or an issue id.`;
+      case 'CommentRef':
+        return `Comment "${value}" not found. Use a comment id from comment.list.`;
       case 'CycleRef':
       case 'ProjectRef':
       case 'InitiativeRef':
@@ -422,6 +426,47 @@ async function lookupIssue(value: string, ctx: LookupContext): Promise<IssueRow>
   const [issue] = rows;
   if (!issue) throw refNotFound('IssueRef', value, ctx.path);
   return issue;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Comments (PLAN-013 S3)
+
+interface CommentRow extends RefEntity {
+  issueId: string;
+  teamId: string;
+  parentCommentId: string | null;
+  userId: string;
+  deleted: boolean;
+}
+
+/**
+ * A comment by id, of an issue the actor can see (SPEC-013 §6.1, §12): both the issue row and the
+ * comment row must meet the actor's visible groups (`visibleGroups`, every public team's
+ * included), and a key limited to some teams sees no comment of another team. A
+ * missing comment, one on a private team's issue the actor can't see and one outside the key's
+ * teams are the same `NOT_FOUND` (permissions.md §5). Soft-deleted comments resolve (`deleted`):
+ * resolve and reopen work on a placeholder root; the handlers refuse the rest.
+ */
+async function lookupComment(value: string, ctx: LookupContext): Promise<CommentRow> {
+  const ref = parseIdRef(value);
+  const groups = groupsFilter(ctx.actor);
+  const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
+  const { rows } =
+    ref?.by === 'id'
+      ? await ctx.db.query<CommentRow>(
+          `SELECT c.id, c.issue_id AS "issueId", c.team_id AS "teamId",
+                  c.parent_comment_id AS "parentCommentId", c.user_id AS "userId",
+                  c.deleted_at IS NOT NULL AS deleted
+             FROM comments c JOIN issues i ON i.id = c.issue_id
+            WHERE c.id = $1
+              AND ($2::text[] IS NULL OR (i.sync_groups && $2::text[] AND c.sync_groups && $2::text[]))
+              AND ($3::uuid[] IS NULL OR c.team_id = ANY($3::uuid[]))`,
+          [ref.id, groups, keyTeams],
+        )
+      : { rows: [] };
+  const [comment] = rows;
+  if (!comment) throw refNotFound('CommentRef', value, ctx.path);
+  return comment;
 }
 
 // ---------------------------------------------------------------------------------------------

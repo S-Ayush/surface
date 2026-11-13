@@ -13,6 +13,7 @@ import { backRef, defineModel, ref } from './define-model.js';
 import { array, bool, enumOf, int, json, str, timestamp, uuid } from './fields.js';
 import { Issue, IssueContent, IssueHistory } from './issue-models.js';
 import { Draft } from './draft.js';
+import { Comment, Reaction } from './comment-models.js';
 
 const audit = { createdAt: timestamp(), updatedAt: timestamp() };
 
@@ -174,4 +175,6 @@ export const PRODUCTION_MODELS = [
   IssueContent,
   IssueHistory,
   Draft,
+  Comment,
+  Reaction,
 ] as const;

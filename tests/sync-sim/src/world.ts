@@ -8,7 +8,7 @@
  */
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { DebugItem, Draft, Issue } from '@surface/domain/model';
+import { Comment, DebugItem, Draft, Issue } from '@surface/domain/model';
 import type { AnyOperation, InputOf } from '@surface/operations';
 import type { MutationOutcome, StorageConnector } from '@surface/sync-client';
 import { SyncStore } from '@surface/sync-client';
@@ -20,7 +20,7 @@ import type { Link } from './network.js';
 import { Network } from './network.js';
 import type { Random } from './random.js';
 import { seededRandom, uuidFrom } from './random.js';
-import type { DraftState, IssueState, ItemState, SimServer } from './server.js';
+import type { CommentState, DraftState, IssueState, ItemState, SimServer } from './server.js';
 import { TabTimers } from './timers.js';
 
 export interface WorldOptions {
@@ -91,6 +91,8 @@ export class World {
   readonly saved = new Map<string, Saved>();
   /** Ids of the issues `issueCreate` steps dispatched, accepted or not (PLAN-011 S4). */
   readonly issueIds: string[] = [];
+  /** Ids of every comment a step created (PLAN-013 S3), refused ones included. */
+  readonly commentIds: string[] = [];
   readonly #problems: string[] = [];
   readonly #webLocks: boolean;
   readonly #states = new Map<Tab, TabState>();
@@ -371,6 +373,27 @@ export class World {
         groups: item.groups,
         archivedAt: item.archivedAt,
         archived: item.$archived,
+      },
+    ]);
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /** The comments a live tab holds, by id: base plus overlay (PLAN-013 S3). */
+  commentView(tab: Tab): Record<string, CommentState> {
+    const entries = tab.store.pool.all(Comment).map((c): [string, CommentState] => [
+      c.id,
+      {
+        issueId: c.issueId,
+        teamId: c.teamId,
+        parentCommentId: c.parentCommentId,
+        userId: c.userId,
+        actorKind: c.actorKind,
+        body: c.body,
+        version: c.version,
+        editedAt: c.editedAt,
+        deletedAt: c.deletedAt,
+        resolvedAt: c.resolvedAt,
+        resolvedById: c.resolvedById,
       },
     ]);
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));

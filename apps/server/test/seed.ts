@@ -17,12 +17,18 @@
  *
  * PLAN-011 S4: issues ENG-1 to ENG-3; the issue examples read them and `issue.update` edits ENG-1.
  *
+ * PLAN-013 S3: on ENG-1, a thread of the actor's with a reply by Iris (`SEED_COMMENTS.thread`), a
+ * thread of Iris's the actor resolved, and a comment of the actor's with no replies. The comment
+ * examples run in registry order: edit and resolve the first thread, reopen the second, delete the
+ * last comment.
+ *
  * PLAN-001 S6 (session E, agreed with A): the actor's password and a second session of theirs.
  * `session.revoke`'s example ends that session, and `user.changePassword`'s example changes the
  * password from `SEED_PASSWORD`.
  */
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
+import { docToText, markdownToDoc } from '@surface/editor/schema';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedTeamWorkflow, teamWorkflow } from '../src/handlers/teams/seed.js';
 import { newIssuePosition } from '../src/issues/numbering.js';
@@ -49,6 +55,17 @@ export const SEED_SESSION_ID = '01930000-0000-7000-8000-000000000601';
  */
 export const SEED_PASSWORD = 'seed-password-not-secret';
 /** argon2id of `SEED_PASSWORD`, computed once so seeding does no hashing. */
+/**
+ * The comments the comment examples name (`packages/operations/src/ops/comment.ts`), on ENG-1.
+ * Ids in creation order, so `comment.list` lists them in this order.
+ */
+export const SEED_COMMENTS = {
+  thread: '01930000-0000-7000-8000-000000000701',
+  reply: '01930000-0000-7000-8000-000000000702',
+  resolvedThread: '01930000-0000-7000-8000-000000000703',
+  single: '01930000-0000-7000-8000-000000000704',
+} as const;
+
 const SEED_PASSWORD_HASH =
   '$argon2id$v=19$m=19456,t=2,p=1$ILoquvZtUDFkYznV2ZZTVQ$vmKgU2G0VG8bHpy7GgrQJQrob4gcMjEAK3amW3vJvaQ';
 
@@ -103,6 +120,7 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
       syncGroups: [],
     });
     // PLAN-011 S4: ENG-1 to ENG-3, numbered and ordered like `issue.create` does.
+    const issueIds: string[] = [];
     const statusNamed = (name: string) => {
       const status = statuses.find((s) => s.name === name);
       if (!status) throw new Error(`The seed workflow has no ${name} status`);
@@ -114,17 +132,55 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
       ['Write the onboarding guide', 'Backlog', users.iris],
     ] as const) {
       const { number, sortOrder } = await newIssuePosition(tx, teams.eng);
-      await repo.insert('Issue', {
-        id: randomUUID(),
+      issueIds.push(
+        (
+          await repo.insert('Issue', {
+            id: randomUUID(),
+            teamId: teams.eng,
+            number,
+            title,
+            statusId: statusNamed(status),
+            assigneeId,
+            sortOrder,
+            creatorId: users.me,
+            startedAt: status === 'In Progress' ? new Date() : null,
+          })
+        ).id,
+      );
+    }
+    // PLAN-013 S3: comments on ENG-1. The repo gives them one `createdAt`, so `comment.list`
+    // orders them by id, their creation order.
+    const eng1 = issueIds[0];
+    if (eng1 === undefined) throw new Error('The seed has no ENG-1');
+    for (const [id, userId, parentCommentId, text, resolvedById] of [
+      [SEED_COMMENTS.thread, users.me, null, 'Does this happen on **Firefox** too?', null],
+      [SEED_COMMENTS.reply, users.iris, SEED_COMMENTS.thread, 'Yes, on 132 and later.', null],
+      [
+        SEED_COMMENTS.resolvedThread,
+        users.iris,
+        null,
+        'The redirect comes from the proxy.',
+        users.me,
+      ],
+      [SEED_COMMENTS.single, users.me, null, 'Moving this to next week.', null],
+    ] as const) {
+      const body = markdownToDoc(text);
+      await repo.insert('Comment', {
+        id,
+        issueId: eng1,
         teamId: teams.eng,
-        number,
-        title,
-        statusId: statusNamed(status),
-        assigneeId,
-        sortOrder,
-        creatorId: users.me,
-        startedAt: status === 'In Progress' ? new Date() : null,
+        parentCommentId,
+        userId,
+        actorKind: 'user',
+        body,
+        version: 1,
+        resolvedAt: resolvedById === null ? null : new Date(),
+        resolvedById,
       });
+      await client.query('INSERT INTO comment_search_text (comment_id, text) VALUES ($1, $2)', [
+        id,
+        docToText(body),
+      ]);
     }
     await repo.flush({});
     // Server-only, so plain SQL. The id is the one `invite.revoke`'s example names.
@@ -153,6 +209,9 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
     id: users.me,
     role: 'admin',
     memberships: [{ teamId: teams.eng, private: false }],
+    // ENG is public, as a real actor's `publicTeams` says (SPEC-011 §5.6): comments are in
+    // `team:<id>` only (SPEC-013 D12), so without it the actor would see none.
+    publicTeams: [teams.eng],
   });
   return { actor, users, teams };
 }

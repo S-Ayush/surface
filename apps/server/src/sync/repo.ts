@@ -211,7 +211,8 @@ export function syncRepo(
 
     let [row] = await db
       .update(table)
-      .set({ ...values, updatedAt: now })
+      // Reaction has no `updatedAt` (SPEC-013 §4.2): reactions are set and removed, never edited.
+      .set('updatedAt' in table ? { ...values, updatedAt: now } : values)
       .where(eq(table.id, id))
       .returning();
     if (!row) throw new Error(`update of ${model} ${id} returned no row`);

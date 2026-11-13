@@ -37,6 +37,8 @@ export const SYNCED_TABLES = [
   { identifier: 'issueContent', name: 'issue_content' },
   { identifier: 'issueHistory', name: 'issue_history' },
   { identifier: 'drafts', name: 'drafts' },
+  { identifier: 'comments', name: 'comments' },
+  { identifier: 'reactions', name: 'reactions' },
   { identifier: 'syncLog', name: 'sync_log' },
   { identifier: 'syncState', name: 'sync_state' },
 ];

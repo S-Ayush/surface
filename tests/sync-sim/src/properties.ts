@@ -3,7 +3,14 @@
  * suite (`pnpm test`, `pnpm sim`) and the real server's (`pnpm test:int`).
  */
 import { expect } from 'vitest';
-import { isIssueServer, type IssueFixtures, type IssueRecord, type IssueState } from './server.js';
+import {
+  isCommentServer,
+  isIssueServer,
+  type CommentState,
+  type IssueFixtures,
+  type IssueRecord,
+  type IssueState,
+} from './server.js';
 import type { Outcome, SimulateOptions } from './simulate.js';
 import { itemId } from './steps.js';
 
@@ -231,5 +238,62 @@ export const issueConvergence: Property = {
         expect(issues[id], `${id} should have been refused`).toBeUndefined();
       }
     }
+  },
+};
+
+/**
+ * The thread rules of SPEC-013 §4.3 and §4.5 on the stored comments: a reply's parent exists, is
+ * a top-level comment of the same issue (INV-19, so no reply under a hard-deleted comment), and
+ * only top-level comments are resolved, with both fields set together. A placeholder (deleted,
+ * `EMPTY_DOC`) always has a reply left (no orphan placeholder).
+ */
+export function checkThreads(comments: Readonly<Record<string, CommentState>>): void {
+  const replies = new Map<string, number>();
+  for (const [id, c] of Object.entries(comments)) {
+    if (typeof c.parentCommentId !== 'string') continue;
+    const parent = comments[c.parentCommentId];
+    expect(parent, `${id}: its parent is gone`).toBeDefined();
+    expect(parent?.parentCommentId, `${id}: a reply to a reply`).toBeNull();
+    expect(parent?.issueId, `${id}: a reply on another issue`).toBe(c.issueId);
+    expect(c.resolvedAt, `${id}: a resolved reply`).toBeNull();
+    replies.set(c.parentCommentId, (replies.get(c.parentCommentId) ?? 0) + 1);
+  }
+  for (const [id, c] of Object.entries(comments)) {
+    expect(c.resolvedAt === null, `${id}: resolvedAt and resolvedById apart`).toBe(
+      c.resolvedById === null,
+    );
+    if (c.deletedAt !== null) {
+      expect(replies.get(id) ?? 0, `${id}: a placeholder without replies`).toBeGreaterThan(0);
+      expect(c.body, id).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] });
+    }
+  }
+}
+
+/**
+ * Comment threads (SPEC-013 AC-5 for comments): the issue property, then every tab holds exactly
+ * the server's comments, every field included, and the stored threads keep §4.3's rules. A
+ * comment step's refusals (an edit of another's comment, a stale version, a reply to a reply or a
+ * placeholder) are part of the run; a create the server refused never committed.
+ */
+export const commentConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    await issueConvergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isCommentServer(server)) throw new Error('The comment property needs the real server.');
+    const comments = await server.comments();
+    for (const tab of world.live) {
+      expect(world.commentView(tab), tab.name).toEqual(comments);
+    }
+    checkThreads(comments);
+    for (const d of world.dispatched.filter((x) => x.op === 'comment.create')) {
+      const id: unknown =
+        typeof d.input === 'object' && d.input !== null ? Reflect.get(d.input, 'id') : undefined;
+      if (d.outcome?.status === 'rejected' && typeof id === 'string') {
+        expect(comments[id], `${d.key} was refused but committed`).toBeUndefined();
+      }
+    }
+    expect(await server.reactionCount()).toBe(0);
   },
 };

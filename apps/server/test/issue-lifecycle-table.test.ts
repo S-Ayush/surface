@@ -23,8 +23,18 @@ import { z } from 'zod';
 import type { HandlerContext } from '../src/executor/context.js';
 import { SurfaceError } from '../src/executor/errors.js';
 import { HANDLERS } from '../src/handlers/index.js';
+import {
+  createComment,
+  deleteComment,
+  setThreadResolved,
+  updateComment,
+  type CommentTarget,
+  type CommentWriteContext,
+} from '../src/handlers/comments/core.js';
 import { createIssue, updateIssue, type IssueRow } from '../src/handlers/issues/core.js';
+import type { Repo } from '../src/sync/repo.js';
 import { deleteIssue, restoreIssue } from '../src/handlers/issues/lifecycle-core.js';
+import { memoryComments } from './support/memory-comments.js';
 import { ADA_ID, memoryIssues, NOW, type MemoryIssues } from './support/memory-issues.js';
 import { recordingDb, scriptedDb, type Statement } from './support/scripted-db.js';
 
@@ -70,6 +80,64 @@ async function issueIn(state: IssueLifecycle): Promise<{ m: MemoryIssues; issue:
 /** Runs one operation's handler rules on `issue` at `now`. */
 type Case = (m: MemoryIssues, issue: IssueRow, now: Date) => Promise<unknown>;
 
+/**
+ * A comment rule run on a thread of `issue` (a root by Ada with one reply, resolved when
+ * `resolved`): the issue lock goes through `m`'s access, so `m` records its mode, and each comment
+ * write is recorded in `m.writes` and `m.calls` like an issue write (PLAN-013 S3).
+ */
+function commentCase(
+  rule: (ctx: CommentWriteContext, target: CommentTarget) => Promise<unknown>,
+  options: { readonly resolved?: boolean } = {},
+): Case {
+  return (m, issue) => {
+    const c = memoryComments();
+    const root = c.addComment({
+      issueId: issue.id,
+      teamId: issue.teamId,
+      userId: ADA_ID,
+      ...(options.resolved === true ? { resolvedAt: EARLIER, resolvedById: ADA_ID } : {}),
+    });
+    c.addComment({ issueId: issue.id, teamId: issue.teamId, parentCommentId: root.id });
+    const recorded = (method: 'insert' | 'update' | 'purge', model: string, id: string) => {
+      m.calls.push(`write:${method}`);
+      m.writes.push({
+        action: method === 'insert' ? 'insert' : 'update',
+        model,
+        ids: [id],
+        fields: [],
+      });
+    };
+    const repo: Repo = {
+      ...c.repo,
+      insert: (model, row) => {
+        recorded('insert', model, row.id ?? '');
+        return c.repo.insert(model, row);
+      },
+      update: (model, id, patch) => {
+        recorded('update', model, id);
+        return c.repo.update(model, id, patch);
+      },
+      purge: (model, id) => {
+        recorded('purge', model, id);
+        return c.repo.purge(model, id);
+      },
+    };
+    const base = c.ctx({ userId: ADA_ID });
+    const ctx: CommentWriteContext = {
+      ...base,
+      repo,
+      emit: (event) => void m.events.push(event),
+      access: { ...base.access, lockIssue: (id, mode) => m.ctx.access.lockIssue(id, mode) },
+    };
+    return rule(ctx, { commentId: root.id, issueId: issue.id, rootId: root.id });
+  };
+}
+
+const commentBody = {
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Looks good' }] }],
+};
+
 /** One case per built row: the handler's own rules, as its handler calls them. */
 const CASES: Readonly<Record<string, Case>> = {
   'issue.update': (m, issue) =>
@@ -82,6 +150,16 @@ const CASES: Readonly<Record<string, Case>> = {
     }),
   'issue.delete': (m, issue, now) => deleteIssue(m.lifecycle({ now }), issue.id),
   'issue.restore': (m, issue, now) => restoreIssue(m.lifecycle({ now }), issue.id),
+  'comment.create': commentCase((ctx, t) =>
+    createComment(ctx, { id: randomUUID(), issueId: t.issueId, body: commentBody }),
+  ),
+  'comment.update': commentCase((ctx, t) =>
+    updateComment(ctx, { ...t, baseVersion: 1, body: commentBody }),
+  ),
+  // The root has a reply, so this is a soft delete: an update.
+  'comment.delete': commentCase((ctx, t) => deleteComment(ctx, t)),
+  'comment.resolve': commentCase((ctx, t) => setThreadResolved(ctx, t, true)),
+  'comment.reopen': commentCase((ctx, t) => setThreadResolved(ctx, t, false), { resolved: true }),
 };
 
 /** What happened, in the table's words. */
@@ -127,11 +205,6 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
     );
     expect(pending).toEqual({
       'issue.updateDescription': 'PLAN-011 S6',
-      'comment.create': 'PLAN-013 S3',
-      'comment.update': 'PLAN-013 S3',
-      'comment.delete': 'PLAN-013 S3',
-      'comment.resolve': 'PLAN-013 S3',
-      'comment.reopen': 'PLAN-013 S3',
       'reaction.set': 'PLAN-013 S4',
       'attachment.createFile': 'PLAN-014 S4a',
       'attachment.createLink': 'PLAN-014 S4a',
@@ -202,11 +275,19 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
   );
 });
 
+/** The comment the comment handlers' inputs name, a top-level comment on ENG-1 by Ada. */
+const COMMENT_ID = '0190f0c0-0000-7000-8000-0000000000c1';
+
 /** The input each built operation's registered handler runs with on ENG-1. */
 const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
   'issue.update': { issue: 'ENG-1', title: 'Fix the login' },
   'issue.delete': { issue: 'ENG-1' },
   'issue.restore': { issue: 'ENG-1' },
+  'comment.create': { issue: 'ENG-1', body: 'Looks good' },
+  'comment.update': { comment: COMMENT_ID, baseVersion: 1, body: 'Looks good' },
+  'comment.delete': { comment: COMMENT_ID },
+  'comment.resolve': { comment: COMMENT_ID },
+  'comment.reopen': { comment: COMMENT_ID },
 };
 
 const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
@@ -242,6 +323,23 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
       teams: snakeRow(team),
       workflow_statuses: { id: issue.statusId, name: 'Backlog', category: 'backlog' },
       users: { id: ADA_ID, name: 'Ada' },
+      comments: snakeRow({
+        id: COMMENT_ID,
+        issueId: issue.id,
+        teamId: issue.teamId,
+        parentCommentId: null,
+        userId: ADA_ID,
+        actorKind: 'user',
+        body: { type: 'doc', content: [{ type: 'paragraph' }] },
+        version: 1,
+        editedAt: null,
+        deletedAt: null,
+        resolvedAt: null,
+        resolvedById: null,
+        syncGroups: [`team:${issue.teamId}`],
+        createdAt: EARLIER,
+        updatedAt: EARLIER,
+      }),
     }),
   );
   let current: IssueRow = issue;
@@ -257,6 +355,7 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
     updateWhere: () => write('updateWhere').then(() => []),
     insert: () => write('insert'),
     purge: () => write('purge'),
+    deleteWhere: () => write('deleteWhere').then(() => []),
   };
   const actor: Actor = {
     kind: 'user',
@@ -270,7 +369,10 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
     actor,
     tx: db,
     repo,
-    refs: { issue: { id: issue.id, teamId: issue.teamId, key: 'ENG-1' } },
+    refs: {
+      issue: { id: issue.id, teamId: issue.teamId, key: 'ENG-1' },
+      comment: { id: COMMENT_ID, issueId: issue.id, teamId: issue.teamId, parentCommentId: null },
+    },
     now: () => NOW,
     emit: () => undefined,
     publicUrl: 'https://surface.test',

@@ -27,6 +27,7 @@ export const REF_TYPES = [
   'InviteRef',
   'SessionRef',
   'FileRef',
+  'CommentRef',
 ] as const;
 
 export type RefType = (typeof REF_TYPES)[number];
@@ -36,7 +37,8 @@ export function isRefType(value: unknown): value is RefType {
 }
 
 /**
- * Reference types whose entities exist (M0's, and `IssueRef` from PLAN-011 S3). The others are
+ * Reference types whose entities exist (M0's, `IssueRef` from PLAN-011 S3 and `CommentRef` from
+ * PLAN-013 S3). The others are
  * declared for docs and lint.
  */
 export const AVAILABLE_REF_TYPES: ReadonlySet<RefType> = new Set([
@@ -48,6 +50,7 @@ export const AVAILABLE_REF_TYPES: ReadonlySet<RefType> = new Set([
   'InviteRef',
   'SessionRef',
   'FileRef',
+  'CommentRef',
 ]);
 
 /** First milestone where an unavailable reference type can be resolved. */
@@ -65,6 +68,7 @@ export const REF_AVAILABLE_FROM: Readonly<Record<RefType, string>> = {
   InviteRef: 'M0',
   SessionRef: 'M0',
   FileRef: 'M0',
+  CommentRef: 'M1',
 };
 
 /**
@@ -277,6 +281,17 @@ export const FileRef = refString(
   'File id, from POST /files/upload',
   parseIdRef,
   'Use a file id from POST /files/upload',
+);
+
+/**
+ * A comment, by id only (SPEC-013 §6.1, §12): resolved to a comment of an issue the caller can
+ * see; anything else is NOT_FOUND, worded as for a comment that doesn't exist.
+ */
+export const CommentRef = refString(
+  'CommentRef',
+  'Comment id, from comment.list',
+  parseIdRef,
+  'Use a comment id from comment.list',
 );
 
 export const CycleRef = z

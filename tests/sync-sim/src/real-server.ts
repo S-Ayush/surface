@@ -40,10 +40,11 @@ import type { SocketConnection, SocketHandlers } from '@surface/sync-client';
 import { CSRF_HEADER, computeSchemaHash } from '@surface/sync-protocol';
 import { addRealEvents, trackRealWork } from './clock.js';
 import type {
+  CommentServer,
+  CommentState,
   StoredDraft,
   IssueFixtures,
   IssueRecord,
-  IssueServer,
   IssueState,
   ItemState,
 } from './server.js';
@@ -150,7 +151,7 @@ interface RealSocket {
   resynced: boolean;
 }
 
-export class RealServer implements IssueServer {
+export class RealServer implements CommentServer {
   readonly users: readonly string[];
   readonly models = REAL_MODELS;
   /** What went wrong on the server side; each is a failure of the case. */
@@ -411,6 +412,34 @@ export class RealServer implements IssueServer {
         ]),
       );
     });
+  }
+
+  comments(): Promise<Record<string, CommentState>> {
+    return this.#serially('read the comments', async () => {
+      const rows = await this.#entry.comments();
+      return Object.fromEntries(
+        rows.map((row): [string, CommentState] => [
+          row.id,
+          {
+            issueId: row.issueId,
+            teamId: row.teamId,
+            parentCommentId: row.parentCommentId,
+            userId: row.userId,
+            actorKind: row.actorKind,
+            body: row.body,
+            version: row.version,
+            editedAt: row.editedAt,
+            deletedAt: row.deletedAt,
+            resolvedAt: row.resolvedAt,
+            resolvedById: row.resolvedById,
+          },
+        ]),
+      );
+    });
+  }
+
+  reactionCount(): Promise<number> {
+    return this.#serially('count the reactions', () => this.#entry.reactionCount());
   }
 
   compactLog(): void {

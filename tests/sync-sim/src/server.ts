@@ -124,6 +124,36 @@ export function isIssueServer(server: SimServer): server is IssueServer {
   return 'issueRows' in server && 'seedIssueFixtures' in server;
 }
 
+/**
+ * What a client should end up showing for one comment (PLAN-013 S3): every field a comment
+ * operation writes. Timestamps are ISO strings, as on the wire.
+ */
+export interface CommentState {
+  readonly issueId: unknown;
+  readonly teamId: unknown;
+  readonly parentCommentId: unknown;
+  readonly userId: unknown;
+  readonly actorKind: unknown;
+  readonly body: unknown;
+  readonly version: unknown;
+  readonly editedAt: unknown;
+  readonly deletedAt: unknown;
+  readonly resolvedAt: unknown;
+  readonly resolvedById: unknown;
+}
+
+/** A server the comment steps run against: the real one, with issues. */
+export interface CommentServer extends IssueServer {
+  /** The database's comments, by id. */
+  comments(): Promise<Record<string, CommentState>>;
+  /** How many reactions are stored. */
+  reactionCount(): Promise<number>;
+}
+
+export function isCommentServer(server: SimServer): server is CommentServer {
+  return isIssueServer(server) && 'comments' in server;
+}
+
 /** The hub's ping interval (sync-protocol §4.2; PLAN-002 S4: every 25 s). */
 export const PING_INTERVAL_MS = 25_000;
 

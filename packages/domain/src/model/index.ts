@@ -5,3 +5,4 @@ export * from './debug-item.js';
 export * from './workspace-models.js';
 export * from './issue-models.js';
 export * from './draft.js';
+export * from './comment-models.js';

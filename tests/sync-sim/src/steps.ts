@@ -6,6 +6,11 @@
  */
 import fc from 'fast-check';
 import {
+  commentCreate,
+  commentDelete,
+  commentReopen,
+  commentResolve,
+  commentUpdate,
   debugArchive,
   debugCreate,
   debugDelete,
@@ -17,7 +22,7 @@ import {
   issueCreate,
   issueUpdate,
 } from '@surface/operations';
-import { Issue } from '@surface/domain/model';
+import { Comment, Issue } from '@surface/domain/model';
 import type { Faults } from './network.js';
 import type { Random } from './random.js';
 import { isIssueServer, type IssueFixtures } from './server.js';
@@ -86,6 +91,28 @@ export type Step =
    */
   | { readonly t: 'draftSave'; readonly tab: number; readonly key: number; readonly title: string }
   | { readonly t: 'draftDiscard'; readonly tab: number; readonly key: number }
+  /**
+   * `comment.create` on an issue the tab shows (PLAN-013 S3). With `parent`, a reply to a comment
+   * an earlier step created (wrapped around them), on that comment's issue when the tab holds it:
+   * the server refuses a reply to a reply or to a deleted comment, and NOT_FOUND for a gone one.
+   */
+  | {
+      readonly t: 'commentCreate';
+      readonly tab: number;
+      readonly issue: number;
+      readonly parent?: number | undefined;
+      readonly text: string;
+    }
+  /** `comment.update` from the version the tab holds; only the author's is accepted. */
+  | {
+      readonly t: 'commentEdit';
+      readonly tab: number;
+      readonly comment: number;
+      readonly text: string;
+    }
+  | { readonly t: 'commentDelete'; readonly tab: number; readonly comment: number }
+  | { readonly t: 'commentResolve'; readonly tab: number; readonly comment: number }
+  | { readonly t: 'commentReopen'; readonly tab: number; readonly comment: number }
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -282,6 +309,52 @@ export function draftCase(): fc.Arbitrary<Case> {
   return caseOf(step);
 }
 
+const commentText = fc.constantFrom('LGTM', 'Repro on **Safari**', '日本語', 'Done ✅');
+
+/** Two issues every comment case starts with, created by the first two tabs. */
+const COMMENT_ISSUES: readonly Step[] = [
+  { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+  { t: 'issueCreate', tab: 1, title: 'Beta', status: 'default', labels: [] },
+  { t: 'wait', ms: 3_000 },
+];
+
+/**
+ * Comment threads (SPEC-013 AC-5 for comments; reactions join in PLAN-013 S4): comments, replies,
+ * edits, deletes, resolves and reopens on two issues from every tab, with the faults a tab that
+ * keeps its replica survives (network faults, socket drops, server restarts, reloads).
+ *
+ * Left out until the client loads content per issue (PLAN-011 S5b): a tab bootstraps content-less
+ * (content is not in the bootstrap), so steps that make a tab bootstrap again after the first
+ * comment (compaction, a crash before its replica is complete, a late user's first tab) would
+ * leave it without comments the server has. `crash` is out with them: the tab reopened for its
+ * user at the end may bootstrap.
+ */
+export function commentCase(): fc.Arbitrary<Case> {
+  const comment = index;
+  const commentStep = (arbitrary: fc.Arbitrary<Step>) => ({ weight: 6, arbitrary });
+  const kept = new Set(['wait', 'faults', 'disconnect', 'offline', 'restart', 'reload']);
+  const step = fc.oneof(
+    commentStep(
+      fc.record({
+        t: fc.constant('commentCreate'),
+        tab,
+        issue: index,
+        parent: fc.option(comment, { nil: undefined, freq: 2 }),
+        text: commentText,
+      }),
+    ),
+    commentStep(fc.record({ t: fc.constant('commentEdit'), tab, comment, text: commentText })),
+    commentStep(fc.record({ t: fc.constant('commentDelete'), tab, comment })),
+    commentStep(fc.record({ t: fc.constant('commentResolve'), tab, comment })),
+    commentStep(fc.record({ t: fc.constant('commentReopen'), tab, comment })),
+    ...faultSteps.map((arbitrary) => ({
+      weight: 1,
+      arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
+    })),
+  );
+  return caseOf(step).map((c) => ({ ...c, lateUsers: 0, steps: [...COMMENT_ISSUES, ...c.steps] }));
+}
+
 /** A UUIDv7 from the case's randomness, as `issue.create` takes, so a case replays exactly. */
 function uuidV7From(random: Random): string {
   const hex = Array.from({ length: 32 }, () => Math.floor(random() * 16).toString(16));
@@ -435,6 +508,51 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
               },
             };
       world.dispatch(target, draftSave, { id: uuidV7From(world.random), ...key, data });
+      return;
+    }
+    case 'commentCreate': {
+      const target = pick(readyTabs(live), step.tab);
+      if (target === undefined) return;
+      const parent = step.parent === undefined ? undefined : pick(world.commentIds, step.parent);
+      const held = parent === undefined ? undefined : target.store.pool.get(Comment, parent);
+      const shown = world.issueIds.filter((id) => target.store.pool.get(Issue, id) !== undefined);
+      const issue = held?.issueId ?? pick(shown, step.issue);
+      if (issue === undefined) return;
+      const id = uuidV7From(world.random);
+      const input = {
+        id,
+        issue,
+        ...(parent === undefined ? {} : { parent }),
+        body: {
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: step.text }] }],
+        },
+      };
+      if (world.dispatch(target, commentCreate, input)) world.commentIds.push(id);
+      return;
+    }
+    case 'commentEdit':
+    case 'commentDelete':
+    case 'commentResolve':
+    case 'commentReopen': {
+      const target = pick(readyTabs(live), step.tab);
+      const comment = pick(world.commentIds, step.comment);
+      if (target === undefined || comment === undefined) return;
+      if (step.t === 'commentEdit') {
+        // As the edit box does: from the version on screen; a comment the tab lacks isn't edited.
+        const row = target.store.pool.get(Comment, comment);
+        if (row === undefined) return;
+        world.dispatch(target, commentUpdate, {
+          comment,
+          baseVersion: row.version,
+          body: {
+            type: 'doc',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: step.text }] }],
+          },
+        });
+      } else if (step.t === 'commentDelete') world.dispatch(target, commentDelete, { comment });
+      else if (step.t === 'commentResolve') world.dispatch(target, commentResolve, { comment });
+      else world.dispatch(target, commentReopen, { comment });
       return;
     }
     case 'wait':

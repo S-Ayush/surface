@@ -26,3 +26,4 @@ export * from './doc.js';
 export * from './order-key.js';
 export * from './issue.js';
 export * from './issue-lifecycle.js';
+export * from './comment.js';

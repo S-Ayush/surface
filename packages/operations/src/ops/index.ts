@@ -48,6 +48,14 @@ import {
 } from './issue.js';
 import { issueDelete, issueRestore } from './issue-lifecycle.js';
 import { draftDiscard, draftSave } from './draft.js';
+import {
+  commentCreate,
+  commentDelete,
+  commentList,
+  commentReopen,
+  commentResolve,
+  commentUpdate,
+} from './comment.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -63,6 +71,7 @@ export * from './label.js';
 export * from './issue.js';
 export * from './issue-lifecycle.js';
 export * from './draft.js';
+export * from './comment.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -139,6 +148,14 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   // The actor's own drafts (SPEC-012 §4.3): save, then discard what was saved.
   draftSave,
   draftDiscard,
+  // Read, create, edit, resolve, reopen, then delete (SPEC-013 §6.1): the examples run in this
+  // order on one seed, which holds a thread on ENG-1 with a reply and a resolved thread.
+  commentList,
+  commentCreate,
+  commentUpdate,
+  commentResolve,
+  commentReopen,
+  commentDelete,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

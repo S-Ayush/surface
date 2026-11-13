@@ -58,6 +58,11 @@ export const COMMANDS = {
   'issue-page:link-url': { title: 'Link URL to the issue' },
   'comment:reply': { title: 'Reply to comment' },
   'comment:send': { title: 'Send comment' },
+  // The comment-context operations' menu entries (SPEC-013 §6.1); their handlers are PLAN-013 S5's.
+  'comment:edit': { title: 'Edit comment' },
+  'comment:delete': { title: 'Delete comment' },
+  'comment:resolve': { title: 'Resolve thread' },
+  'comment:reopen': { title: 'Reopen thread' },
   'editor:bold': { title: 'Bold' },
   'editor:italic': { title: 'Italic' },
   'editor:underline': { title: 'Underline' },
