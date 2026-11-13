@@ -20,6 +20,8 @@ export interface SessionRecord {
   readonly workspaceId: string;
   readonly role: Role;
   readonly memberships: readonly Membership[];
+  /** Every public team's id: their issues are visible to every active user (SPEC-011 §5.6). */
+  readonly publicTeams: readonly string[];
   readonly lastUsedAt: Date;
 }
 
@@ -41,16 +43,20 @@ const SessionRow = z.object({
   role: z.enum(['admin', 'member']),
   last_used_at: z.date(),
   memberships: z.array(z.object({ teamId: z.string(), private: z.boolean() })),
+  public_teams: z.array(z.string()),
 });
 
-// One round trip per request: the session, its user, the workspace and every team membership.
-// Memberships are read each time, so joining or leaving a team applies to the next request.
+// One round trip per request: the session, its user, the workspace, every team membership and
+// every public team. Read each time, so joining or leaving a team, or a new public team, applies to
+// the next request.
 const SELECT_SESSION = `
   SELECT s.id, s.user_id, s.last_used_at, u.role,
          (SELECT w.id FROM workspace w) AS workspace_id,
          COALESCE((SELECT json_agg(json_build_object('teamId', m.team_id, 'private', t.private))
                      FROM team_memberships m JOIN teams t ON t.id = m.team_id
-                    WHERE m.user_id = s.user_id), '[]'::json) AS memberships
+                    WHERE m.user_id = s.user_id), '[]'::json) AS memberships,
+         COALESCE((SELECT json_agg(t.id ORDER BY t.id) FROM teams t WHERE NOT t.private),
+                  '[]'::json) AS public_teams
     FROM sessions s JOIN users u ON u.id = s.user_id
    WHERE s.token_hash = $1 AND s.expires_at > $2 AND u.active`;
 
@@ -79,6 +85,7 @@ export function pgAuthStore(pool: Pick<pg.Pool, 'query'>): AuthStore {
         workspaceId: row.workspace_id,
         role: row.role,
         memberships: row.memberships,
+        publicTeams: row.public_teams,
         lastUsedAt: row.last_used_at,
       };
     },

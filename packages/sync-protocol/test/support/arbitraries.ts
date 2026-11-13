@@ -94,9 +94,20 @@ export const serverMessage: fc.Arbitrary<ServerMessage> = fc.oneof(
     reason: fc.constantFrom('schema' as const, 'too_old' as const, 'groups' as const),
   }),
   fc.constant({ t: 'ping' as const }),
+  fc.record({
+    t: fc.constantFrom('subscribed' as const, 'unsubscribed' as const),
+    teams: fc.array(uuid, { maxLength: 6 }),
+    at: syncId,
+  }),
 );
 
-export const clientMessage: fc.Arbitrary<ClientMessage> = fc.constant({ t: 'pong' as const });
+export const clientMessage: fc.Arbitrary<ClientMessage> = fc.oneof(
+  fc.constant({ t: 'pong' as const }),
+  fc.record({
+    t: fc.constantFrom('subscribe' as const, 'unsubscribe' as const),
+    teams: fc.array(uuid, { minLength: 1, maxLength: 6 }),
+  }),
+);
 
 /** Typed loosely: fast-check's JsonValue differs from Zod's JSONType only in nested `undefined`. */
 export const mutateRequest = fc

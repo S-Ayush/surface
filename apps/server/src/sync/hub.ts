@@ -9,8 +9,13 @@
  *   up on `(since, upTo]` a page at a time. Nothing is missed, and the writer drops overlaps.
  * - **Resync:** `schema` when the client's hash differs, `too_old` when its `since` is outside
  *   retention, `groups` when a private team's membership changes and the connection's user may
- *   be the one who joined or left (a connection's groups are fixed when it opens). The client
- *   then re-bootstraps and closes the socket itself.
+ *   be the one who joined or left (a connection's home groups are fixed when it opens). The
+ *   client then re-bootstraps and closes the socket itself.
+ * - **Team subscriptions** (v0.8, SPEC-011 §5.7): a connection's groups are its home groups plus
+ *   `team:<id>` of each public team its client follows. `subscribe` and `unsubscribe` are handled
+ *   one at a time, in order, once the connection is live, so the writer has sent everything it
+ *   took in: `subscribed`/`unsubscribed` go out at `at` = the last sync id taken in, and the next
+ *   delivery is filtered with the new groups.
  * - **Liveness:** a `ping` every 25 s; no `pong` within 10 s ends the connection. Each ping round
  *   also reads the log, so a listen connection that silently stopped delivering costs at most one
  *   interval of lag, and a failed read is retried.
@@ -25,6 +30,7 @@ import {
   encodeSocketMessage,
   PING_INTERVAL_MS,
   PING_TIMEOUT_MS,
+  type ClientMessage,
   type ServerMessage,
 } from '@surface/sync-protocol';
 import { teamGroup } from '@surface/domain';
@@ -32,6 +38,7 @@ import type { Logger } from 'pino';
 import { Gauge, Histogram, type Registry } from 'prom-client';
 import { loggableError } from '../executor/log-error.js';
 import { DeltaWriter, type LogRow } from './delta-writer.js';
+import type { TeamAccess } from './groups.js';
 import type { Listener, SyncLogSource } from './hub-source.js';
 import type { SyncModel, SyncRegistry } from './registry.js';
 
@@ -49,7 +56,18 @@ export interface ConnectionInfo {
   /** For `closeSessions`, once sessions exist (PLAN-001 S3). */
   readonly sessionId?: string;
   readonly clientId: string;
+  /**
+   * The home groups: `workspace`, `user:<id>`, each private team the user is a member of. Fixed
+   * for the connection's life: `unsubscribe` never removes one.
+   */
   readonly groups: readonly string[];
+  /**
+   * Teams followed from the start (v0.8): the accepted `teams` of the URL, or the user's member
+   * teams when it names none. Catch-up uses them too.
+   */
+  readonly teams?: readonly string[];
+  /** Whether to answer the URL's `teams` with `subscribed {teams, at: since}` first. */
+  readonly ackTeams?: boolean;
   readonly since: number;
   readonly schemaHash: string;
 }
@@ -85,6 +103,13 @@ export interface HubOptions {
   readonly drainPollMs?: number;
   /** First wait before listening again after the listen connection failed; doubles to 30 s. */
   readonly retryDelayMs?: number;
+  /**
+   * Which teams a user may subscribe to (`acceptedTeams` over the database), read at each
+   * `subscribe` and at connect. Without it, every subscription is ignored.
+   */
+  readonly teamAccess?: TeamAccess;
+  /** `subscribe`/`unsubscribe` requests a connection may have waiting before it is closed. */
+  readonly maxPendingRequests?: number;
 }
 
 /** Close codes besides the protocol's own (`CloseCode`). */
@@ -93,6 +118,7 @@ const TRY_AGAIN_LATER = 1013;
 const POLICY_VIOLATION = 1008;
 const MAX_RETRY_DELAY_MS = 30_000;
 const TEAM_GROUP_PREFIX = teamGroup('');
+const IGNORE_EVERY_TEAM: TeamAccess = () => Promise.resolve([]);
 
 /**
  * Whether `rows` may change the sync groups of `info`'s user (permissions.md §2, sync-protocol
@@ -134,10 +160,21 @@ const OUTDATED_CLIENT: ConnectionInfo = {
   schemaHash: '',
 };
 
+/** A `subscribe` or `unsubscribe`, waiting for its turn. */
+type TeamRequest = Extract<ClientMessage, { t: 'subscribe' | 'unsubscribe' }>;
+
 interface Connection {
   readonly info: ConnectionInfo;
-  /** `info.groups`, as a set. Fixed for the connection's life: a change resyncs it instead. */
-  readonly groups: ReadonlySet<string>;
+  /** `info.groups`: never removed by `unsubscribe`. A change resyncs the connection instead. */
+  readonly home: ReadonlySet<string>;
+  /**
+   * The connection's groups: the home groups plus each followed team's. The writer filters with
+   * this very set, so a change applies from the next row it takes in.
+   */
+  readonly groups: Set<string>;
+  /** `subscribe`/`unsubscribe` requests in arrival order, handled once live (`#pump`). */
+  readonly requests: TeamRequest[];
+  pumping: boolean;
   readonly socket: HubSocket;
   readonly writer: DeltaWriter;
   /** `catching-up` buffers live rows; `idle` (after a resync) gets nothing more. */
@@ -172,6 +209,8 @@ export class SyncHub {
       catchUpHighWaterBytes: 1024 * 1024,
       drainPollMs: 20,
       retryDelayMs: 1000,
+      teamAccess: IGNORE_EVERY_TEAM,
+      maxPendingRequests: 32,
       ...options,
     };
     this.#models = new Map(options.registry.models.map((model) => [model.name, model]));
@@ -249,11 +288,33 @@ export class SyncHub {
     return closed;
   }
 
+  /**
+   * The groups this replica's open connections of `clientId` receive (the user's), or undefined
+   * when it has none here: the confirm point of a no-op mutation (`visibleHead`) uses them, never
+   * every group the user may see (PLAN-011 S4b).
+   */
+  connectionGroups(userId: string, clientId: string): readonly string[] | undefined {
+    let groups: Set<string> | undefined;
+    for (const connection of this.#connections) {
+      const { info } = connection;
+      if (info.clientId !== clientId || info.userId !== userId || connection.state === 'idle') {
+        continue;
+      }
+      groups ??= new Set();
+      for (const group of connection.groups) groups.add(group);
+    }
+    return groups && [...groups];
+  }
+
   connect(socket: HubSocket, info: ConnectionInfo): HubConnection {
     return this.#register(socket, info, (connection, upTo) => {
       if (info.schemaHash !== this.#options.registry.schemaHash) {
         this.#resync(connection, 'schema');
         return;
+      }
+      if (info.ackTeams === true) {
+        // Catch-up from `since` already uses these teams (sync-protocol §4.3).
+        this.#send(connection, { t: 'subscribed', teams: [...(info.teams ?? [])], at: info.since });
       }
       void this.#catchUp(connection, upTo);
     });
@@ -278,10 +339,14 @@ export class SyncHub {
     info: ConnectionInfo,
     start: (connection: Connection, upTo: number) => void,
   ): HubConnection {
-    const groups = new Set(info.groups);
+    const home = new Set(info.groups);
+    const groups = new Set([...home, ...(info.teams ?? []).map(teamGroup)]);
     const connection: Connection = {
       info,
+      home,
       groups,
+      requests: [],
+      pumping: false,
       socket,
       state: 'catching-up',
       buffer: [],
@@ -317,7 +382,8 @@ export class SyncHub {
       const events = this.#options.source.catchUp({
         since: info.since,
         upTo,
-        groups: info.groups,
+        // Fixed for the catch-up: team requests wait until the connection is live.
+        groups: [...connection.groups],
         clientId: info.clientId,
         pageSize: this.#options.catchUpPageSize,
       });
@@ -352,6 +418,7 @@ export class SyncHub {
         writer.flush(true);
       }
       connection.state = 'live';
+      void this.#pump(connection);
     } catch (error) {
       this.#options.log.error({ err: loggableError(error) }, 'sync catch-up failed');
       this.#close(connection, INTERNAL_ERROR, 'Catch-up failed');
@@ -487,14 +554,73 @@ export class SyncHub {
   }
 
   #receive(connection: Connection, text: string): void {
+    let message: ClientMessage;
     try {
-      const message = decodeClientMessage(text);
-      if (message.t === 'pong') {
-        clearTimeout(connection.pongTimer);
-        connection.pongTimer = undefined;
-      }
+      message = decodeClientMessage(text);
     } catch {
       this.#close(connection, POLICY_VIOLATION, 'Unknown message');
+      return;
+    }
+    if (message.t === 'pong') {
+      clearTimeout(connection.pongTimer);
+      connection.pongTimer = undefined;
+      return;
+    }
+    // An outdated client's connection is idle from the start and follows nothing.
+    if (connection.state === 'idle') return;
+    if (connection.requests.length >= this.#options.maxPendingRequests) {
+      this.#close(connection, POLICY_VIOLATION, 'Too many subscription requests');
+      return;
+    }
+    connection.requests.push(message);
+    void this.#pump(connection);
+  }
+
+  /**
+   * Handles the connection's `subscribe` and `unsubscribe` requests one at a time, in arrival
+   * order, and only while it is live (SPEC-011 §5.7). While live, every delivery is flushed whole
+   * and synchronously, so between deliveries the writer holds nothing: everything up to
+   * `writer.through` has been sent with the old groups, and the next row it takes in is filtered
+   * with the new ones. The ack goes out at that point, in the same ordered stream as the deltas.
+   */
+  async #pump(connection: Connection): Promise<void> {
+    if (connection.pumping) return;
+    connection.pumping = true;
+    try {
+      while (connection.open && connection.state === 'live') {
+        const request = connection.requests.shift();
+        if (request === undefined) return;
+        if (request.t === 'subscribe') {
+          // Read fresh (SPEC-011 §5.7): an unknown team and a private team the user isn't in are
+          // dropped alike (E32).
+          const accepted = await this.#options.teamAccess(connection.info.userId, request.teams);
+          // A resync or a close meanwhile: the connection follows nothing more.
+          if (!connection.open || connection.state !== 'live') return;
+          for (const team of accepted) connection.groups.add(teamGroup(team));
+          this.#send(connection, {
+            t: 'subscribed',
+            teams: accepted,
+            at: connection.writer.through,
+          });
+        } else {
+          // A home group stays (a private team the user is in): its packets keep coming, so it
+          // isn't acked as dropped.
+          const dropped = [...new Set(request.teams)].filter(
+            (team) => !connection.home.has(teamGroup(team)),
+          );
+          for (const team of dropped) connection.groups.delete(teamGroup(team));
+          this.#send(connection, {
+            t: 'unsubscribed',
+            teams: dropped,
+            at: connection.writer.through,
+          });
+        }
+      }
+    } catch (error) {
+      this.#options.log.error({ err: loggableError(error) }, 'sync subscription failed');
+      this.#close(connection, INTERNAL_ERROR, 'Subscription failed');
+    } finally {
+      connection.pumping = false;
     }
   }
 

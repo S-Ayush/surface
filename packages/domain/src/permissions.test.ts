@@ -6,6 +6,7 @@ import {
   syncGroupsFor,
   systemActor,
   userActor,
+  visibleGroups,
   type Actor,
 } from './permissions.js';
 
@@ -39,6 +40,7 @@ describe('actors', () => {
       userId: 'u-1',
       role: 'member',
       groups: ['workspace', 'user:u-1', 'team:team-sec'],
+      publicTeams: [],
       memberOf: ['team-eng', 'team-sec'],
     });
   });
@@ -74,7 +76,7 @@ describe('actors', () => {
   });
 
   it('has a frozen system actor with no user and no groups', () => {
-    expect(systemActor()).toEqual({ kind: 'system', groups: [], memberOf: [] });
+    expect(systemActor()).toEqual({ kind: 'system', groups: [], publicTeams: [], memberOf: [] });
     expect(Object.isFrozen(systemActor())).toBe(true);
   });
 
@@ -84,6 +86,25 @@ describe('actors', () => {
     expect(canSeeGroups(admin, [])).toBe(false);
     expect(canSeeGroups(systemActor(), ['team:anything'])).toBe(true);
   });
+
+  it('sees every public team’s group, though it is no home group (SPEC-011 §5.6)', () => {
+    const actor = userActor({
+      userId: 'u-1',
+      role: 'member',
+      memberships: [{ teamId: 't-sec', private: true }],
+      publicTeams: ['t-eng', 't-des'],
+    });
+    expect(actor.groups).toEqual(['workspace', 'user:u-1', 'team:t-sec']);
+    expect(visibleGroups(actor)).toEqual([
+      'workspace',
+      'user:u-1',
+      'team:t-sec',
+      'team:t-eng',
+      'team:t-des',
+    ]);
+    expect(canSeeGroups(actor, ['team:t-des'])).toBe(true);
+    expect(canSeeGroups(actor, ['team:t-other'])).toBe(false);
+  });
 });
 
 describe('predicates', () => {
@@ -91,7 +112,7 @@ describe('predicates', () => {
 
   it('any() passes for users and fails without a user', () => {
     expect(pFor(member).p.any()).toBe(true);
-    const anonymous: Actor = { kind: 'user', groups: [], memberOf: [] };
+    const anonymous: Actor = { kind: 'user', groups: [], publicTeams: [], memberOf: [] };
     const bound = pFor(anonymous);
     expect(bound.p.any()).toBe(false);
     expect(bound.allowedWho()).toEqual(['signed-in users']);

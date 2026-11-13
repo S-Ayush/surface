@@ -182,6 +182,36 @@ describe('client messages', () => {
   it('rejects messages the server does not accept from clients', () => {
     expect(() => decodeClientMessage('{"t":"ping"}')).toThrow(ProtocolError);
   });
+
+  it('takes subscribe and unsubscribe with 1 to 100 team ids (v0.8)', () => {
+    const teams = (n: number) =>
+      Array.from({ length: n }, (_, i) => `${ID.slice(0, -3)}${String(i).padStart(3, '0')}`);
+    for (const t of ['subscribe', 'unsubscribe'] as const) {
+      expect(decodeClientMessage(JSON.stringify({ t, teams: [ID] }))).toEqual({ t, teams: [ID] });
+      expect(() => decodeClientMessage(JSON.stringify({ t, teams: teams(100) }))).not.toThrow();
+      for (const bad of [[], teams(101), ['ENG'], undefined]) {
+        expect(() => decodeClientMessage(JSON.stringify({ t, teams: bad }))).toThrow(ProtocolError);
+      }
+    }
+  });
+});
+
+describe('subscription acks (v0.8)', () => {
+  it.each(['subscribed', 'unsubscribed'] as const)('decodes %s with its teams and at', (t) => {
+    expect(decodeServerMessage(JSON.stringify({ t, teams: [ID], at: 7 }))).toEqual({
+      t,
+      teams: [ID],
+      at: 7,
+    });
+    expect(decodeServerMessage(JSON.stringify({ t, teams: [], at: 0 }))).toEqual({
+      t,
+      teams: [],
+      at: 0,
+    });
+    for (const bad of [{ teams: [ID] }, { teams: ['ENG'], at: 1 }, { teams: [ID], at: -1 }]) {
+      expect(() => decodeServerMessage(JSON.stringify({ t, ...bad }))).toThrow(ProtocolError);
+    }
+  });
 });
 
 describe('connect parameters', () => {
@@ -196,6 +226,26 @@ describe('connect parameters', () => {
       ),
       propertyOptions,
     );
+  });
+
+  it('carries teams (v0.8): absent, empty and listed differ', () => {
+    const base = { since: 3, clientId: ID, userId: USER, schemaHash: 'b'.repeat(64) };
+    const roundTrip = (params: typeof base & { teams?: string[] }) =>
+      decodeSocketConnectParams(
+        Object.fromEntries(new URLSearchParams(encodeSocketConnectParams(params))),
+      );
+    expect(roundTrip(base)).toEqual(base);
+    expect(roundTrip({ ...base, teams: [] })).toEqual({ ...base, teams: [] });
+    expect(roundTrip({ ...base, teams: [ID, USER] })).toEqual({ ...base, teams: [ID, USER] });
+  });
+
+  it.each([
+    ['a team that is not a uuid', 'ENG'],
+    ['an empty entry', `${ID},`],
+    ['more than 100 teams', Array.from({ length: 101 }, () => ID).join(',')],
+  ])('rejects teams with %s', (_case, teams) => {
+    const query = { since: '0', clientId: ID, userId: USER, schemaHash: 'b'.repeat(64), teams };
+    expect(() => decodeSocketConnectParams(query)).toThrow(ProtocolError);
   });
 
   it.each(['', '-1', '01', '1.5', '1e3', ' 1', '9007199254740993'])('rejects since=%j', (since) => {

@@ -122,15 +122,31 @@ beforeAll(async () => {
     });
     await seedTeamWorkflow(repo, workflow);
   });
-  anaActor = actorFor({ id: ana, memberships: [{ teamId: h.teams.eng, private: false }] });
+  // Every user sees the public teams ENG and OPS (SPEC-011 §5.6), as the session store says.
+  const publicTeams = [h.teams.eng, ops];
+  anaActor = actorFor({
+    id: ana,
+    memberships: [{ teamId: h.teams.eng, private: false }],
+    publicTeams,
+  });
   zoeActor = actorFor({
     id: zoe,
     role: 'admin',
     memberships: [{ teamId: h.teams.eng, private: false }],
+    publicTeams,
   });
-  samActor = actorFor({ id: sam, memberships: [{ teamId: h.teams.sec, private: true }] });
+  samActor = actorFor({
+    id: sam,
+    memberships: [{ teamId: h.teams.sec, private: true }],
+    publicTeams,
+  });
   engKeyActor = actorFor(
-    { id: zoe, role: 'admin', memberships: [{ teamId: h.teams.eng, private: false }] },
+    {
+      id: zoe,
+      role: 'admin',
+      memberships: [{ teamId: h.teams.eng, private: false }],
+      publicTeams,
+    },
     {
       kind: 'api',
       apiKey: { id: 'key-1', scope: 'read_write', teamIds: [h.teams.eng], allowDestructive: false },
@@ -301,10 +317,13 @@ describe('SEC issues in sync', () => {
       await ok('issue.create', { id: live, team: 'SEC', title: 'Live secret' }, samActor);
       await ok('issue.update', { issue: live, status: 'Done', priority: 1 }, samActor);
       await ok('issue.update', { issue: secIssue, removeLabels: ['Secret sauce'] }, samActor);
-      // Written last: once it arrives, anything earlier would have arrived too.
+      // Written last: once they arrive, anything earlier would have arrived too. One per
+      // connection: since PLAN-011 S4b each follows its member teams only (SPEC-011 §5.7).
       const marker = uuidv7();
+      const secMarker = uuidv7();
       await ok('issue.create', { id: marker, team: 'ENG', title: 'Marker' }, anaActor);
-      await eventually(() => outsider.text().includes(marker) && member.text().includes(marker));
+      await ok('issue.create', { id: secMarker, team: 'SEC', title: 'Marker' }, samActor);
+      await eventually(() => outsider.text().includes(marker) && member.text().includes(secMarker));
       expect(outsider.text()).not.toContain(live);
       expect(outsider.text()).not.toContain(secIssue);
       expect(outsider.text()).not.toContain(h.teams.sec);

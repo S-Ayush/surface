@@ -8,7 +8,7 @@
  * `If-None-Match` path and the `FileRef` resolver. Its SQL is built by one function,
  * `visibleFileQuery`, so a later branch is added there and never as a second predicate.
  */
-import type { Actor } from '@surface/domain';
+import { visibleGroups, type Actor } from '@surface/domain';
 import { sql, type SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { PoolClient } from 'pg';
@@ -46,13 +46,13 @@ export interface FileReader {
 
 /** The reader an actor is, or undefined for an actor without a user (it reads no file). */
 export function fileReaderOf(
-  actor: Pick<Actor, 'userId' | 'groups' | 'apiKey'>,
+  actor: Pick<Actor, 'userId' | 'groups' | 'publicTeams' | 'apiKey'>,
 ): FileReader | undefined {
   if (actor.userId === undefined) return undefined;
   const teamIds = actor.apiKey?.teamIds ?? [];
   return {
     userId: actor.userId,
-    groups: actor.groups,
+    groups: visibleGroups(actor),
     keyTeamIds: teamIds.length > 0 ? teamIds : null,
   };
 }

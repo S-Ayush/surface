@@ -36,9 +36,10 @@ describe('computeSchemaHash', () => {
     // If this fails on purpose (protocol version bump, canonical form change), every
     // client re-bootstraps on deploy: update the value and say so in the change summary.
     // Changed in PLAN-013 S1, when DOC_SCHEMA_VERSION joined the input (SPEC-013 D6), and in
-    // PLAN-011 S2, when SYNC_PROTOCOL_VERSION became 2 (v0.7: A and V packets carry the row).
+    // PLAN-011 S2, when SYNC_PROTOCOL_VERSION became 2 (v0.7: A and V packets carry the row), and
+    // in PLAN-011 S4b, when it became 3 (v0.8: partial issue loading).
     expect(computeSchemaHash([DEBUG_ITEM, TEAM])).toBe(
-      '9c11eb17f22a2d35916eb92bc882758ef5a3765f676133b5f4d03dc4b74d2715',
+      '0c34855d33d80d012e05cad3d836715088872811d17130255698dcd182d0f3df',
     );
   });
 

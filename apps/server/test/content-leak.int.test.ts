@@ -58,6 +58,8 @@ let keyActor: Actor;
 const secIssue = uuidv7();
 const engIssue = uuidv7();
 const secHistory = uuidv7();
+/** The last write of the setup, an ENG issue: what an ENG member's catch-up waits for. */
+const engMarker = uuidv7();
 const engHistory = uuidv7();
 const SECRET = 'Rotate the leaked signing key';
 
@@ -143,15 +145,31 @@ beforeAll(async () => {
       await repo.insert('TeamMembership', { id: randomUUID(), teamId, userId, syncGroups: [] });
     }
   });
-  anaActor = actorFor({ id: ana, memberships: [{ teamId: h.teams.eng, private: false }] });
+  // Every user sees public ENG (SPEC-011 §5.6), as the session store says.
+  const publicTeams = [h.teams.eng];
+  anaActor = actorFor({
+    id: ana,
+    memberships: [{ teamId: h.teams.eng, private: false }],
+    publicTeams,
+  });
   zoeActor = actorFor({
     id: zoe,
     role: 'admin',
     memberships: [{ teamId: h.teams.eng, private: false }],
+    publicTeams,
   });
-  samActor = actorFor({ id: sam, memberships: [{ teamId: h.teams.sec, private: true }] });
+  samActor = actorFor({
+    id: sam,
+    memberships: [{ teamId: h.teams.sec, private: true }],
+    publicTeams,
+  });
   keyActor = actorFor(
-    { id: zoe, role: 'admin', memberships: [{ teamId: h.teams.eng, private: false }] },
+    {
+      id: zoe,
+      role: 'admin',
+      memberships: [{ teamId: h.teams.eng, private: false }],
+      publicTeams,
+    },
     {
       kind: 'api',
       apiKey: { id: 'key-1', scope: 'read', teamIds: [h.teams.eng], allowDestructive: false },
@@ -163,8 +181,9 @@ beforeAll(async () => {
   await ok('issue.create', { id: engIssue, team: 'ENG', title: 'Fix login' }, anaActor);
   await writeContent(secIssue, h.teams.sec, secHistory, sam, SECRET);
   await writeContent(engIssue, h.teams.eng, engHistory, ana, 'Public notes');
-  // Last in the log and seen by everyone (ENG is public), so catch-up can wait for it.
-  await ok('issue.create', { id: uuidv7(), team: 'ENG', title: 'Marker' }, anaActor);
+  // Last in the log, so an ENG member's catch-up can wait for it (since PLAN-011 S4b a socket
+  // follows its member teams only, so SEC's member waits for SEC's content instead).
+  await ok('issue.create', { id: engMarker, team: 'ENG', title: 'Marker' }, anaActor);
 
   const config = testConfig();
   const lifecycle = new Lifecycle();
@@ -357,12 +376,19 @@ describe('SEC content in sync', () => {
     const admin = connect('admin');
     const member = connect('member', Number(joined.rows[0]?.id));
     try {
-      const last = await head();
-      await eventually(() =>
-        [outsider, admin, member].every((c) => c.packets().some((p) => p.id >= last)),
+      await eventually(
+        () =>
+          outsider.text().includes(engMarker) &&
+          admin.text().includes(engMarker) &&
+          contentIn(member.packets()).includes(`IssueHistory ${secHistory}`),
       );
       for (const c of [outsider, admin]) {
-        expect(contentIn(c.packets())).toEqual([]);
+        // Since PLAN-011 S4b an ENG member's socket follows `team:ENG`, so ENG's content comes
+        // (the control); SEC's never does.
+        expect(contentIn(c.packets())).toEqual([
+          `IssueContent ${engIssue}`,
+          `IssueHistory ${engHistory}`,
+        ]);
         expect(c.text()).not.toContain(secIssue);
         expect(c.text()).not.toContain(secHistory);
         expect(c.text()).not.toContain(h.teams.sec);
@@ -387,10 +413,13 @@ describe('SEC content in sync', () => {
       const liveHistory = uuidv7();
       await ok('issue.create', { id: live, team: 'SEC', title: 'Live secret' }, samActor);
       await writeContent(live, h.teams.sec, liveHistory, sam, 'Live secret text');
-      // Written last: once it arrives, anything earlier would have arrived too.
+      // Written last: once they arrive, anything earlier would have arrived too. One per
+      // connection: since PLAN-011 S4b each follows its member teams only (SPEC-011 §5.7).
       const marker = uuidv7();
+      const secMarker = uuidv7();
       await ok('issue.create', { id: marker, team: 'ENG', title: 'Marker' }, anaActor);
-      await eventually(() => outsider.text().includes(marker) && member.text().includes(marker));
+      await ok('issue.create', { id: secMarker, team: 'SEC', title: 'Marker' }, samActor);
+      await eventually(() => outsider.text().includes(marker) && member.text().includes(secMarker));
       expect(contentIn(outsider.packets())).toEqual([]);
       expect(outsider.text()).not.toContain(live);
       expect(outsider.text()).not.toContain(liveHistory);

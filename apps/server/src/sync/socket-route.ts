@@ -23,6 +23,7 @@ import { errorBody, ROUTE_ERROR_STATUS } from '../http/errors.js';
 import type { ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { FOREIGN_CLIENT_MESSAGE } from './client-mutations.js';
+import type { TeamAccess } from './groups.js';
 import type { HubConnection, SyncHub } from './hub.js';
 
 export interface SocketRouteDeps {
@@ -48,9 +49,14 @@ export interface SocketRouteDeps {
    * was closed (`hub.closeSessions`) before there was a connection to close.
    */
   readonly sessionLive?: (request: FastifyRequest) => Promise<boolean>;
+  /** Which of the URL's `teams` the user may follow (SPEC-011 §5.7). */
+  readonly teamAccess: TeamAccess;
 }
 
-/** A client sends only `pong` (and small `presence` messages from M4). */
+/**
+ * A client sends `pong`, `subscribe` and `unsubscribe` (at most 100 team ids, about 3.9 KiB), and
+ * small `presence` messages from M4.
+ */
 const MAX_CLIENT_MESSAGE_BYTES = 4096;
 const UNSUPPORTED_DATA = 1003;
 const INTERNAL_ERROR = 1011;
@@ -60,6 +66,8 @@ type Admitted =
       readonly kind: 'client';
       readonly actor: Actor & { readonly userId: string };
       readonly params: SocketConnectParams;
+      /** The teams the connection follows from the start (SPEC-011 §5.7). */
+      readonly teams: readonly string[];
     }
   /** A client from before v0.5, without `userId` (SPEC-002 E14): only `resync(schema)`. */
   | { readonly kind: 'outdated' };
@@ -135,10 +143,18 @@ export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps)
           if (owner !== undefined && owner !== actor.userId) {
             return reply.code(403).send(errorBody(request, 'FORBIDDEN', FOREIGN_CLIENT_MESSAGE));
           }
+          // v0.8 (SPEC-011 §5.7): the URL's `teams`, checked now (so a team that turned private
+          // can't be followed again), and answered with `subscribed`. Without them, the user's
+          // member teams: what the full bootstrap holds (private ones are home groups anyway).
+          const teams =
+            params.teams === undefined
+              ? actor.memberOf
+              : await deps.teamAccess(actor.userId, params.teams);
           admitted.set(request, {
             kind: 'client',
             actor: { ...actor, userId: actor.userId },
             params,
+            teams,
           });
         },
       },
@@ -160,13 +176,15 @@ export function registerSocketRoute(app: FastifyInstance, deps: SocketRouteDeps)
         if (entry.kind === 'outdated') {
           listen(deps.hub.connectOutdated(socket, sessionId));
         } else {
-          const { actor, params } = entry;
+          const { actor, params, teams } = entry;
           listen(
             deps.hub.connect(socket, {
               userId: actor.userId,
               ...(sessionId === undefined ? {} : { sessionId }),
               clientId: params.clientId,
               groups: actor.groups,
+              teams,
+              ackTeams: params.teams !== undefined,
               since: params.since,
               schemaHash: params.schemaHash,
             }),

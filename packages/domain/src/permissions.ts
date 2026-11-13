@@ -25,8 +25,18 @@ export interface Actor {
   readonly kind: ActorKind;
   readonly userId?: string;
   readonly role?: Role;
-  /** Sync groups the actor can see (permissions.md §2). Visibility filters use these. */
+  /**
+   * The actor's **home** sync groups (permissions.md §2): `workspace`, `user:<id>` and each
+   * private team they are a member of. A sync connection always has these. Visibility filters use
+   * `visibleGroups(actor)`, which adds every public team's group (SPEC-011 §5.6).
+   */
   readonly groups: readonly string[];
+  /**
+   * Ids of every public team in the workspace, when the actor was built (SPEC-011 §5.6, §5.7).
+   * Their issues are in `team:<id>`, which any active user may see but which is not a home group:
+   * a sync connection receives it only while its client subscribes to the team.
+   */
+  readonly publicTeams: readonly string[];
   /**
    * Ids of every team the user is a member of, public or private. `p.teamMember` needs this
    * because public-team membership is not a sync group.
@@ -62,6 +72,11 @@ export interface UserActorInput {
   readonly userId: string;
   readonly role: Role;
   readonly memberships: readonly Membership[];
+  /**
+   * Every public team's id (SPEC-011 §5.6). The server reads them with the session; the web
+   * client's pre-check actor needs none, since nothing there filters issues by them.
+   */
+  readonly publicTeams?: readonly string[];
   /** Set for API and MCP calls (M6). */
   readonly via?: { readonly kind: 'api' | 'mcp'; readonly apiKey: ApiKeyScope };
   /** The session behind a signed-in request; ignored for API and MCP calls. */
@@ -69,12 +84,20 @@ export interface UserActorInput {
 }
 
 /** The actor for an active user, from a session (PLAN-001 S3) or an API key (M6). */
-export function userActor({ userId, role, memberships, via, sessionId }: UserActorInput): Actor {
+export function userActor({
+  userId,
+  role,
+  memberships,
+  publicTeams = [],
+  via,
+  sessionId,
+}: UserActorInput): Actor {
   return {
     kind: via?.kind ?? 'user',
     userId,
     role,
     groups: syncGroupsFor(userId, memberships),
+    publicTeams: [...publicTeams],
     memberOf: memberships.map((m) => m.teamId),
     ...(via ? { apiKey: via.apiKey } : {}),
     ...(sessionId !== undefined && !via ? { sessionId } : {}),
@@ -84,6 +107,7 @@ export function userActor({ userId, role, memberships, via, sessionId }: UserAct
 const SYSTEM_ACTOR: Actor = Object.freeze({
   kind: 'system',
   groups: Object.freeze([]),
+  publicTeams: Object.freeze([]),
   memberOf: Object.freeze([]),
 });
 
@@ -92,10 +116,23 @@ export function systemActor(): Actor {
   return SYSTEM_ACTOR;
 }
 
-/** Whether a row with `rowGroups` is visible to an actor (`sync_groups && actorGroups`). */
+/**
+ * Every sync group the actor may see (SPEC-011 §5.6): its home groups plus `team:<id>` of every
+ * public team. Every read path filters with these (`sync_groups && $groups`), never with a sync
+ * connection's groups, which hold only the subscribed public teams (§5.7). The system actor sees
+ * everything: callers serving it skip the filter instead.
+ */
+export function visibleGroups(actor: Pick<Actor, 'groups' | 'publicTeams'>): readonly string[] {
+  const groups = new Set(actor.groups);
+  for (const teamId of actor.publicTeams) groups.add(teamGroup(teamId));
+  return [...groups];
+}
+
+/** Whether a row with `rowGroups` is visible to an actor (`sync_groups && visibleGroups`). */
 export function canSeeGroups(actor: Actor, rowGroups: readonly string[]): boolean {
   if (actor.kind === 'system') return true;
-  return rowGroups.some((g) => actor.groups.includes(g));
+  const visible = new Set(visibleGroups(actor));
+  return rowGroups.some((g) => visible.has(g));
 }
 
 // ---------------------------------------------------------------------------------------------

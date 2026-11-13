@@ -58,7 +58,10 @@ const teamReads = (statements: readonly Statement[]) =>
 const logged = (changes: readonly RowChange[]) =>
   changes.map((c) => ({ action: c.action, model: c.model, groups: [...c.groups] }));
 
-function world(groups: string[] = ['workspace']) {
+/** A public team's issue's groups since PLAN-011 S4b: its team's and its creator's (§5.7). */
+const ENG_ISSUE_GROUPS = [teamGroup(ENG), userGroup(ADA)];
+
+function world(groups: string[] = ENG_ISSUE_GROUPS) {
   return scriptedDb(
     {
       teams: [team(ENG, false), team(SEC, true), team(OTHER, false)],
@@ -104,14 +107,14 @@ describe('Issue groups (SPEC-011 §4.8, D5)', () => {
       'select "id", "private" from "teams" where "teams"."id" = $1 for share',
     ]);
     expect(logged(repo.changes())).toEqual([
-      { action: 'D', model: 'Issue', groups: ['workspace'] },
+      { action: 'D', model: 'Issue', groups: ENG_ISSUE_GROUPS },
       { action: 'U', model: 'Issue', groups: [teamGroup(SEC)] },
     ]);
   });
 
   it('an insert takes its team’s groups from the team row, read FOR SHARE', async () => {
     for (const [teamId, groups] of [
-      [ENG, ['workspace']],
+      [ENG, ENG_ISSUE_GROUPS],
       [SEC, [teamGroup(SEC)]],
     ] as const) {
       const { repo, statements } = scriptedDb(

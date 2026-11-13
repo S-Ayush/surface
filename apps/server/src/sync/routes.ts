@@ -5,6 +5,7 @@
  */
 import { pipeline, Readable } from 'node:stream';
 import { createGzip } from 'node:zlib';
+import { teamGroup } from '@surface/domain';
 import {
   BOOTSTRAP_PATH,
   CONTENT_PATH,
@@ -24,6 +25,7 @@ import { signedIn, type ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { bootstrapFrames, type BootstrapPool } from './bootstrap.js';
 import { contentFrames } from './content.js';
+import { acceptedTeams, memberGroups, type TeamAccess } from './groups.js';
 import type { Executor } from '../executor/execute.js';
 import type { SyncHub } from './hub.js';
 import { sendClientOutdated, sendOtherUser } from './identity.js';
@@ -44,13 +46,32 @@ export interface SyncRoutesDeps {
   readonly sessionLive?: SocketRouteDeps['sessionLive'];
   /** Runs `POST /sync/mutate`; without it there is no such route (tests without operations). */
   readonly executor?: Executor;
+  /**
+   * Which teams a user may follow (SPEC-011 §5.7), for the partial bootstrap and the socket URL's
+   * `teams`. Default: `acceptedTeams` over `pool`.
+   */
+  readonly teamAccess?: TeamAccess;
+}
+
+/** `acceptedTeams` on a connection of the bootstrap pool. */
+export function poolTeamAccess(pool: BootstrapPool): TeamAccess {
+  return async (userId, teamIds) => {
+    if (teamIds.length === 0) return [];
+    const client = await pool.connect();
+    try {
+      return await acceptedTeams(client, userId, teamIds);
+    } finally {
+      client.release();
+    }
+  };
 }
 
 export function registerSyncRoutes(
   app: FastifyInstance,
   deps: SyncRoutesDeps & Pick<SocketRouteDeps, 'allowedOrigin'>,
 ): void {
-  if (deps.hub) registerSocketRoute(app, { ...deps, hub: deps.hub });
+  const teamAccess = deps.teamAccess ?? poolTeamAccess(deps.pool);
+  if (deps.hub) registerSocketRoute(app, { ...deps, hub: deps.hub, teamAccess });
   if (deps.executor) {
     registerMutateRoute(app, {
       ...deps,
@@ -80,23 +101,33 @@ export function registerSyncRoutes(
     }
     // SPEC-002 E14: another user's replica never receives this user's rows.
     if (query.userId !== actor.userId) return sendOtherUser(request, reply);
-    if (hasQuery(request, 'groups')) {
-      // Partial bootstrap comes with group changes (`G` packets, M7: SPEC-002 §2).
-      return reply
-        .code(400)
-        .send(
-          errorBody(
-            request,
-            'INVALID_INPUT',
-            'Partial bootstrap is not supported yet. Request /sync/bootstrap without groups.',
-          ),
-        );
+    // A partial bootstrap needs the client's schema hash (SPEC-011 §5.7); a full one checks it
+    // when given. Either way a client with another is outdated, before the first frame.
+    const partial = query.groups !== undefined;
+    if (
+      (partial || query.schemaHash !== undefined) &&
+      query.schemaHash !== deps.registry.schemaHash
+    ) {
+      return sendClientOutdated(request, reply);
     }
+    // The partial bootstrap (v0.8, SPEC-011 §5.7): the Issue rows of the teams the user may
+    // follow. An unknown team and a private team the user isn't in are dropped alike, so their
+    // answers are the same empty stream (AC-28, E32), never an error.
+    const groups =
+      query.groups === undefined
+        ? memberGroups(actor)
+        : (
+            await teamAccess(
+              actor.userId,
+              query.groups.map((group) => group.slice(teamGroup('').length)),
+            )
+          ).map(teamGroup);
 
     const frames = bootstrapFrames({
       pool: deps.pool,
       registry: deps.registry,
-      groups: actor.groups,
+      groups,
+      partial,
       now: deps.now ?? (() => new Date()),
     });
     // Read the first frame before answering, so a database error is a 500, not a 200 with a
@@ -184,11 +215,6 @@ function sendNdjson(request: FastifyRequest, reply: FastifyReply, lines: Readabl
   reply.header('content-encoding', 'gzip');
   // `pipeline` passes an error on to the gzip stream, where Fastify sees it.
   return reply.send(pipeline(lines, createGzip(), () => {}));
-}
-
-function hasQuery(request: FastifyRequest, name: string): boolean {
-  const query = request.query;
-  return typeof query === 'object' && query !== null && Object.hasOwn(query, name);
 }
 
 /** `gzip` listed in Accept-Encoding with a non-zero quality. */

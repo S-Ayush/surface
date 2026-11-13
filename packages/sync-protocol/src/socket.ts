@@ -2,6 +2,9 @@
  * `GET /sync/ws` (sync-protocol.md §4.3): connect parameters, server → client
  * messages, client → server messages and close codes.
  *
+ * Team subscriptions (v0.8, SPEC-011 §5.7): `teams` on the URL, `subscribe` and
+ * `unsubscribe` from the client, `subscribed` and `unsubscribed` from the server.
+ *
  * Not in v0 (SPEC-002 §2): `presence` in both directions arrives in M4. A `G`
  * packet is part of the stream ordering, so it is decoded here; until M7 the
  * client handles it with a full re-bootstrap.
@@ -25,6 +28,12 @@ export const SOCKET_PATH = '/sync/ws';
 
 /** sync-protocol.md §9. */
 export const MAX_PACKETS_PER_MESSAGE = 500;
+/**
+ * Teams one `teams` parameter, `subscribe`, `unsubscribe` or ack may name (v0.8, sync-protocol
+ * §6.1): a client follows its member teams plus at most 5 others, and a client message is at most
+ * 4 KiB.
+ */
+export const MAX_TEAMS_PER_MESSAGE = 100;
 export const PING_INTERVAL_MS = 25_000;
 export const PING_TIMEOUT_MS = 10_000;
 
@@ -48,6 +57,18 @@ export type CloseCode = (typeof CloseCode)[keyof typeof CloseCode];
  * answers `resync(schema)`, which an old client turns into the reload banner (a
  * refused upgrade is only a `1006` to a browser).
  */
+/** A list of team ids on the wire (v0.8): what a client subscribes to or drops. */
+export const teamIdsSchema = z.array(uuidSchema).max(MAX_TEAMS_PER_MESSAGE);
+
+/**
+ * `teams` on the socket URL (v0.8): comma-separated team ids, possibly none (`teams=`). Absent and
+ * empty differ: absent, the connection follows the user's member teams (sync-protocol §4.3).
+ */
+const teamsParamSchema = z
+  .string()
+  .transform((value) => (value === '' ? [] : value.split(',')))
+  .pipe(teamIdsSchema);
+
 export const socketConnectParamsSchema = z.object({
   since: z
     .string()
@@ -57,6 +78,7 @@ export const socketConnectParamsSchema = z.object({
   clientId: clientIdSchema,
   userId: userIdSchema,
   schemaHash: schemaHashSchema,
+  teams: teamsParamSchema.optional(),
 });
 
 export type SocketConnectParams = z.output<typeof socketConnectParamsSchema>;
@@ -68,6 +90,7 @@ export function encodeSocketConnectParams(params: SocketConnectParams): string {
     clientId: params.clientId,
     userId: params.userId,
     schemaHash: params.schemaHash,
+    ...(params.teams === undefined ? {} : { teams: params.teams.join(',') }),
   }).toString();
 }
 
@@ -184,15 +207,40 @@ export const resyncMessageSchema = z.object({ t: z.literal('resync'), reason: re
 
 export const pingMessageSchema = z.object({ t: z.literal('ping') });
 
+/**
+ * v0.8 (SPEC-011 §5.7): the server accepted these of the teams a client asked for (on the URL or in
+ * `subscribe`). From the packet after `at`, the connection receives their deltas. A team the
+ * server ignores (unknown, or private and not the user's) is left out, exactly alike.
+ */
+export const subscribedMessageSchema = z.object({
+  t: z.literal('subscribed'),
+  teams: teamIdsSchema,
+  at: syncIdSchema,
+});
+
+/**
+ * v0.8: the answer to `unsubscribe`. No packet of these teams follows `at`, and every earlier one
+ * has been sent, so the client removes the team's rows on this ack.
+ */
+export const unsubscribedMessageSchema = z.object({
+  t: z.literal('unsubscribed'),
+  teams: teamIdsSchema,
+  at: syncIdSchema,
+});
+
 export const serverMessageSchema = z.discriminatedUnion('t', [
   deltasMessageSchema,
   resyncMessageSchema,
   pingMessageSchema,
+  subscribedMessageSchema,
+  unsubscribedMessageSchema,
 ]);
 
 export type DeltasMessage = z.infer<typeof deltasMessageSchema>;
 export type ResyncMessage = z.infer<typeof resyncMessageSchema>;
 export type PingMessage = z.infer<typeof pingMessageSchema>;
+export type SubscribedMessage = z.infer<typeof subscribedMessageSchema>;
+export type UnsubscribedMessage = z.infer<typeof unsubscribedMessageSchema>;
 export type ServerMessage = z.infer<typeof serverMessageSchema>;
 
 // ---------------------------------------------------------------------------
@@ -200,9 +248,27 @@ export type ServerMessage = z.infer<typeof serverMessageSchema>;
 
 export const pongMessageSchema = z.object({ t: z.literal('pong') });
 
-export const clientMessageSchema = z.discriminatedUnion('t', [pongMessageSchema]);
+/** v0.8: follow these teams too (SPEC-011 §5.7). Answered with `subscribed`. */
+export const subscribeMessageSchema = z.object({
+  t: z.literal('subscribe'),
+  teams: teamIdsSchema.min(1),
+});
+
+/** v0.8: stop following these teams. Answered with `unsubscribed`. */
+export const unsubscribeMessageSchema = z.object({
+  t: z.literal('unsubscribe'),
+  teams: teamIdsSchema.min(1),
+});
+
+export const clientMessageSchema = z.discriminatedUnion('t', [
+  pongMessageSchema,
+  subscribeMessageSchema,
+  unsubscribeMessageSchema,
+]);
 
 export type PongMessage = z.infer<typeof pongMessageSchema>;
+export type SubscribeMessage = z.infer<typeof subscribeMessageSchema>;
+export type UnsubscribeMessage = z.infer<typeof unsubscribeMessageSchema>;
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
 // ---------------------------------------------------------------------------

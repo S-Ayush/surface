@@ -253,6 +253,9 @@ export class SyncSocket {
       this.#attempt = 0;
       return;
     }
+    // v0.8 subscription acks (SPEC-011 §5.7). This client names no `teams`, so its connection
+    // follows the user's member teams and the server sends none; PLAN-011 S4c handles them.
+    if (message.t === 'subscribed' || message.t === 'unsubscribed') return;
     const token = this.#token;
     const verdict = this.#options.onMessage(message);
     // The store may have stopped or restarted the socket while handling it.

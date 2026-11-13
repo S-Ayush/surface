@@ -27,11 +27,22 @@ const ENG = randomUUID(); // public
 const SEC = randomUUID(); // private
 const AT = '2026-11-13T10:00:00.000Z';
 
-/** Ana: a member of public ENG only. Sam: a member of private SEC. */
-const ana = actorFor({ id: randomUUID(), memberships: [{ teamId: ENG, private: false }] });
-const sam = actorFor({ id: randomUUID(), memberships: [{ teamId: SEC, private: true }] });
+/**
+ * Ana: a member of public ENG only. Sam: a member of private SEC. Every user sees public ENG
+ * (`publicTeams`, read with the session; SPEC-011 §5.6).
+ */
+const ana = actorFor({
+  id: randomUUID(),
+  memberships: [{ teamId: ENG, private: false }],
+  publicTeams: [ENG],
+});
+const sam = actorFor({
+  id: randomUUID(),
+  memberships: [{ teamId: SEC, private: true }],
+  publicTeams: [ENG],
+});
 const apiKey = actorFor(
-  { id: randomUUID() },
+  { id: randomUUID(), publicTeams: [ENG] },
   {
     kind: 'api',
     apiKey: { id: randomUUID(), scope: 'read', teamIds: [ENG], allowDestructive: false },
@@ -49,6 +60,9 @@ const archivedIssue = randomUUID();
 const trashedIssue = randomUUID();
 
 type Row = Record<string, unknown>;
+
+/** Created by someone else: Ana sees these issues through public ENG alone. */
+const engIssueGroups = [teamGroup(ENG), `user:${randomUUID()}`];
 
 /** Rows per table as `selectRows` aliases them (client field names), with their groups. */
 function tables(): Record<string, Row[]> {
@@ -78,17 +92,13 @@ function tables(): Record<string, Row[]> {
     __archived: false,
   });
   return {
-    teams: [
-      { id: ENG, private: false },
-      { id: SEC, private: true },
-    ],
-    // Before S4b a public team's issues are in `workspace` (PLAN-011 S3).
+    // A public team's issue is in its team's group and its creator's (PLAN-011 S4b).
     issues: [
-      { id: engIssue, __groups: ['workspace'] },
+      { id: engIssue, __groups: engIssueGroups },
       { id: secIssue, __groups: [teamGroup(SEC)] },
-      { id: bareIssue, __groups: ['workspace'] },
-      { id: archivedIssue, __groups: ['workspace'], __archived: true },
-      { id: trashedIssue, __groups: ['workspace'], __deleted: true },
+      { id: bareIssue, __groups: engIssueGroups },
+      { id: archivedIssue, __groups: engIssueGroups, __archived: true },
+      { id: trashedIssue, __groups: engIssueGroups, __deleted: true },
     ],
     issue_content: [
       content(engIssue, ENG),
@@ -110,7 +120,7 @@ interface Statement {
 }
 
 /**
- * A pool over `tables()`. It answers the snapshot, the head, the public teams, the parent query
+ * A pool over `tables()`. It answers the snapshot, the head, the parent query
  * (`id = ANY($1)`, `sync_groups && $2`, and an `archived_at`/`deleted_at` filter if one is sent)
  * and each content model's query (`sync_groups && $1`, parent `= ANY($2)`), as Postgres would. `failOn` makes a statement starting with it throw.
  */
@@ -133,9 +143,6 @@ function fakePool({ failOn }: { failOn?: string } = {}) {
         Promise.resolve({ rows: rows.filter((r): r is R => typeof r === 'object') });
       if (text.startsWith('SELECT last_sync_id')) return answer([{ last: '42' }]);
       const table = /FROM "?(\w+)"?/.exec(text)?.[1];
-      if (table === 'teams') {
-        return answer((data['teams'] ?? []).filter((t) => t['private'] === false));
-      }
       if (table === 'issues') {
         const [ids, groups] = values;
         return answer(
@@ -374,7 +381,7 @@ describe('GET /sync/content answers', () => {
   });
 
   it('filters parents and rows with every group the actor may see, public teams included', async () => {
-    // TODO(S4b): visibleGroups. Until then: the actor's groups plus every public team's.
+    // `visibleGroups(actor)`: the home groups plus every public team's.
     const pool = fakePool();
     await get([issueParent(engIssue)], 'ana', pool);
     const parentQuery = pool.statements.find((s) => /FROM "issues"/.test(s.text));
@@ -383,6 +390,8 @@ describe('GET /sync/content answers', () => {
       expect.arrayContaining(['workspace', `user:${ana.userId ?? ''}`, teamGroup(ENG)]),
     );
     expect(parentQuery?.values[1]).not.toContain(teamGroup(SEC));
+    // From the actor alone: no teams read in the snapshot.
+    expect(pool.statements.some((st) => /FROM "?teams"?/.test(st.text))).toBe(false);
     for (const s of pool.statements.filter((st) =>
       /FROM "issue_(content|history)"/.test(st.text),
     )) {

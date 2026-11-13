@@ -1,6 +1,8 @@
 /**
- * `GET /sync/bootstrap` (SPEC-002 §4, sync-protocol §4.1): every eager row the actor can see,
- * as NDJSON frames `meta`, `row`…, `end`. Everything is read in one `REPEATABLE READ READ ONLY`
+ * `GET /sync/bootstrap` (SPEC-002 §4, sync-protocol §4.1): every eager row in the connection's
+ * groups, as NDJSON frames `meta`, `row`…, `end`. The partial bootstrap (v0.8, SPEC-011 §5.7)
+ * streams only the Issue rows and eager issue children of the teams it names. Neither ever sends
+ * an archived or deleted issue, or a child of one. Everything is read in one `REPEATABLE READ READ ONLY`
  * transaction, so the rows are exactly the state at `lastSyncId`: the client continues with
  * deltas after it and misses nothing. Rows stream through a server-side cursor, 1,000 per
  * fetch, pulled only as fast as the response is written.
@@ -27,8 +29,13 @@ export interface BootstrapPool {
 export interface BootstrapOptions {
   readonly pool: BootstrapPool;
   readonly registry: SyncRegistry;
-  /** The actor's sync groups: only rows in one of them are sent (`sync_groups && $groups`). */
+  /**
+   * The groups to stream (`sync_groups && $groups`): the user's member groups for the full
+   * bootstrap (`memberGroups`), the accepted teams' groups for a partial one. `meta.groups` too.
+   */
   readonly groups: readonly string[];
+  /** Only the Issue rows and eager issue children (a partial bootstrap). */
+  readonly partial?: boolean;
   readonly now: () => Date;
 }
 
@@ -40,10 +47,12 @@ export async function* bootstrapFrames({
   pool,
   registry,
   groups,
+  partial = false,
   now,
 }: BootstrapOptions): AsyncGenerator<BootstrapFrame> {
   // The actor's groups are the server's own, but `meta` promises wire-valid ones: check first.
   const wireGroups = syncGroupSchema.array().parse(groups);
+  const models = partial ? registry.eager.filter((m) => m.issueRows !== undefined) : registry.eager;
   const client = await pool.connect();
   let healthy = false;
   try {
@@ -56,9 +65,9 @@ export async function* bootstrapFrames({
     );
     const lastSyncId = Number(head.rows[0]?.last ?? 0);
     let total = 0;
-    for (const model of registry.eager) {
+    for (const model of models) {
       const counted = await client.query<{ n: string }>(
-        `SELECT count(*) AS n FROM ${quote(model.table)} WHERE sync_groups && $1::text[]`,
+        `SELECT count(*) AS n FROM ${quote(model.table)} WHERE ${rowsWhere(model)}`,
         [groups],
       );
       total += Number(counted.rows[0]?.n ?? 0);
@@ -75,7 +84,7 @@ export async function* bootstrapFrames({
 
     const visible = new Set(groups);
     let sent = 0;
-    for (const model of registry.eager) {
+    for (const model of models) {
       await client.query(`DECLARE bootstrap NO SCROLL CURSOR FOR ${selectRows(model)}`, [groups]);
       for (;;) {
         const batch = await client.query<Record<string, unknown>>(
@@ -140,7 +149,31 @@ export function selectRows(model: SyncModel): string {
       ? `archived_at IS NOT NULL AS ${quote(ARCHIVED_ALIAS)}`
       : `false AS ${quote(ARCHIVED_ALIAS)}`,
   );
-  return `SELECT ${fields.join(', ')} FROM ${quote(model.table)} WHERE sync_groups && $1::text[]`;
+  return `SELECT ${fields.join(', ')} FROM ${quote(model.table)} WHERE ${rowsWhere(model)}`;
+}
+
+/** Live: neither archived nor deleted (SPEC-011 §5.7). */
+const LIVE_ISSUE = 'archived_at IS NULL AND deleted_at IS NULL';
+
+/**
+ * Which rows of `model` a bootstrap sends, with the groups as `$1`: those in the groups and, for
+ * issues and their children, only live issues' (SPEC-011 §5.7: archived and deleted issues are
+ * never stored on a client). Exported for tests.
+ */
+export function rowsWhere(model: SyncModel): string {
+  const inGroups = 'sync_groups && $1::text[]';
+  switch (model.issueRows) {
+    case undefined:
+      return inGroups;
+    case 'issue':
+      return `${inGroups} AND ${LIVE_ISSUE}`;
+    case 'child': {
+      const issueId = model.columns.get('issueId');
+      if (issueId === undefined) throw new Error(`Issue child ${model.name} declares no issueId`);
+      const parent = `${quote(model.table)}.${quote(issueId)}`;
+      return `${inGroups} AND EXISTS (SELECT 1 FROM issues i WHERE i.id = ${parent} AND i.archived_at IS NULL AND i.deleted_at IS NULL)`;
+    }
+  }
 }
 
 /** A SQL identifier from the registry (never from input): table and column names. */

@@ -341,7 +341,7 @@ describe('teams an accepted invite joins (D10)', () => {
 });
 
 describe('InviteRef (SPEC-003 §4, PLAN-001 S5)', () => {
-  const actor = { kind: 'user' as const, userId: ADA, groups: ['workspace'] };
+  const actor = { kind: 'user' as const, userId: ADA, groups: ['workspace'], publicTeams: [] };
   const db = (rows: { id: string }[]) => ({
     calls: [] as unknown[][],
     query(sql: string, params: unknown[]) {

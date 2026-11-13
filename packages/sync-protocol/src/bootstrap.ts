@@ -17,17 +17,49 @@ import {
 export const BOOTSTRAP_PATH = '/sync/bootstrap';
 export const NDJSON_CONTENT_TYPE = 'application/x-ndjson';
 
+/** Teams one partial bootstrap may name (v0.8): as many as a socket message (sync-protocol §9). */
+export const MAX_PARTIAL_BOOTSTRAP_GROUPS = 100;
+
+/**
+ * `groups` of a partial bootstrap (v0.8, SPEC-011 §5.7): comma-separated, distinct `team:<uuid>`
+ * groups. Only team groups load partially; the home groups come with the full bootstrap.
+ */
+const partialGroupsSchema = z
+  .string()
+  .transform((value) => value.split(','))
+  .pipe(
+    z
+      .array(z.templateLiteral(['team:', z.uuid()]), {
+        error: 'groups must be team groups, like team:<uuid>',
+      })
+      .min(1)
+      .max(MAX_PARTIAL_BOOTSTRAP_GROUPS)
+      .refine((groups) => new Set(groups).size === groups.length, {
+        message: 'groups must not repeat a team',
+      }),
+  );
+
 /**
  * Query string of `GET /sync/bootstrap`. `userId` is the user the client's
- * replica belongs to; the session must be the same user (SPEC-002 E14). Other
- * parameters are dropped here and judged by the server (`groups`, say).
+ * replica belongs to; the session must be the same user (SPEC-002 E14).
+ * `groups` (v0.8) asks for the partial bootstrap of those teams, which also
+ * needs `schemaHash`: a client with another is outdated (`426`). Other
+ * parameters are dropped.
  */
-export const bootstrapQuerySchema = z.object({ userId: userIdSchema });
+export const bootstrapQuerySchema = z.object({
+  userId: userIdSchema,
+  schemaHash: schemaHashSchema.optional(),
+  groups: partialGroupsSchema.optional(),
+});
 export type BootstrapQuery = z.infer<typeof bootstrapQuerySchema>;
 
 /** Build the query string (without `?`) for `GET /sync/bootstrap`. */
 export function encodeBootstrapQuery(query: BootstrapQuery): string {
-  return new URLSearchParams({ userId: query.userId }).toString();
+  return new URLSearchParams({
+    userId: query.userId,
+    ...(query.schemaHash === undefined ? {} : { schemaHash: query.schemaHash }),
+    ...(query.groups === undefined ? {} : { groups: query.groups.join(',') }),
+  }).toString();
 }
 
 /**

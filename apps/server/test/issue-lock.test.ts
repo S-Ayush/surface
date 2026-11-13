@@ -23,9 +23,10 @@ const ada: Actor = {
   kind: 'user',
   userId: ADA,
   groups: ['workspace', `user:${ADA}`],
+  publicTeams: [ENG],
   memberOf: [ENG],
 };
-const system: Actor = { kind: 'system', groups: [], memberOf: [] };
+const system: Actor = { kind: 'system', groups: [], publicTeams: [], memberOf: [] };
 
 type State = { readonly archivedAt: string | null; readonly deletedAt: string | null };
 const LIVE: State = { archivedAt: null, deletedAt: null };
@@ -156,7 +157,8 @@ describe('lockIssueForWrite', () => {
     await lockIssueForWrite(db, ISSUE, { actor: ada }, 'edit');
     expect(statements[0]?.text).toContain('"issues"."sync_groups" && $2');
     // Drizzle sends the array as a Postgres array literal.
-    expect(statements[0]?.params[1]).toBe(`{"workspace","user:${ADA}"}`);
+    // Every group the actor may see, public ENG's included (`visibleGroups`, SPEC-011 §5.6).
+    expect(statements[0]?.params[1]).toBe(`{"workspace","user:${ADA}","team:${ENG}"}`);
     expect(statements[0]?.text).not.toContain('"issues"."team_id" in');
   });
 

@@ -101,18 +101,23 @@ describe('the file visibility statement (SPEC-014 §4.2)', () => {
 describe('fileReaderOf', () => {
   it('reads as the actor’s user with all its groups, narrowed only by a key with teams', () => {
     const groups = ['workspace', `user:${ADA}`];
-    expect(fileReaderOf({ userId: ADA, groups })).toEqual({
+    const publicTeams: string[] = [];
+    expect(fileReaderOf({ userId: ADA, groups, publicTeams })).toEqual({
       userId: ADA,
       groups,
       keyTeamIds: null,
     });
     const key = { id: 'k', scope: 'read' as const, allowDestructive: false };
-    expect(fileReaderOf({ userId: ADA, groups, apiKey: { ...key, teamIds: [] } })).toEqual({
+    expect(
+      fileReaderOf({ userId: ADA, groups, publicTeams, apiKey: { ...key, teamIds: [] } }),
+    ).toEqual({
       userId: ADA,
       groups,
       keyTeamIds: null,
     });
-    expect(fileReaderOf({ userId: ADA, groups, apiKey: { ...key, teamIds: ['t'] } })).toEqual({
+    expect(
+      fileReaderOf({ userId: ADA, groups, publicTeams, apiKey: { ...key, teamIds: ['t'] } }),
+    ).toEqual({
       userId: ADA,
       groups,
       keyTeamIds: ['t'],
@@ -120,6 +125,14 @@ describe('fileReaderOf', () => {
   });
 
   it('is undefined for an actor without a user, which reads no file', () => {
-    expect(fileReaderOf({ groups: [] })).toBeUndefined();
+    expect(fileReaderOf({ groups: [], publicTeams: [] })).toBeUndefined();
+  });
+
+  it('reads with every public team’s group, which no socket needs to follow (SPEC-011 §5.6)', () => {
+    const groups = ['workspace', `user:${ADA}`];
+    expect(fileReaderOf({ userId: ADA, groups, publicTeams: ['t-eng'] })?.groups).toEqual([
+      ...groups,
+      'team:t-eng',
+    ]);
   });
 });

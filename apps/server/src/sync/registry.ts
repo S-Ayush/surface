@@ -8,7 +8,13 @@ import type { ModelDef } from '@surface/domain/model';
 import { computeSchemaHash } from '@surface/sync-protocol';
 import { getTableColumns, getTableName } from 'drizzle-orm';
 import { toSnakeCase } from 'drizzle-orm/casing';
-import { groupsOfIssueChild, isModelName, SYNCED_MODELS, type ModelName } from './models.js';
+import {
+  groupsOfIssueChild,
+  isIssueChild,
+  isModelName,
+  SYNCED_MODELS,
+  type ModelName,
+} from './models.js';
 
 /**
  * The client field a row's sync groups travel in. They go out cut to the groups of the
@@ -26,6 +32,13 @@ export interface SyncModel {
   readonly columns: ReadonlyMap<string, string>;
   /** Whether the table has `archived_at`; archived rows go out with `archived: true`. */
   readonly archivable: boolean;
+  /**
+   * `issue` for Issue, `child` for an **eager** issue child (SPEC-011 §5.1; SPEC-014's
+   * Attachment): a bootstrap leaves out archived and deleted issues and their eager children, and a
+   * partial bootstrap streams only these (§5.7). Content children (IssueContent, IssueHistory) are
+   * not marked: `/sync/content` returns an archived or deleted issue's content (SPEC-015 §3.4).
+   */
+  readonly issueRows?: 'issue' | 'child';
 }
 
 export interface SyncRegistry {
@@ -140,12 +153,15 @@ export function syncModel(
     // SQL (drizzle.config.ts, the executor); `column.name` is then still the camelCase key.
     columns.set(field, column.keyAsName ? toSnakeCase(column.name) : column.name);
   }
+  const issueRows =
+    name === 'Issue' ? 'issue' : isIssueChild(name) && def.load === 'eager' ? 'child' : undefined;
   return {
     name,
     def,
     table: getTableName(table),
     columns,
     archivable: Object.hasOwn(tableColumns, 'archivedAt'),
+    ...(issueRows === undefined ? {} : { issueRows }),
   };
 }
 

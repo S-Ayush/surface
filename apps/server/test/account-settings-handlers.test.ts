@@ -631,7 +631,7 @@ describe('SessionRef and FileRef (SPEC-003 §4; PLAN-001 S6)', () => {
       },
     };
   }
-  const actor = { kind: 'user' as const, userId: ADA, groups: ['workspace'] };
+  const actor = { kind: 'user' as const, userId: ADA, groups: ['workspace'], publicTeams: [] };
   const at = (found: ReturnType<typeof db>, path: string, who: ResolveActor = actor) => ({
     db: found as never,
     actor: who,

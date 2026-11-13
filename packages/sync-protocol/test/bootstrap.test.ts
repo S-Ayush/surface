@@ -159,7 +159,44 @@ describe('bootstrap query', () => {
     expect(() => decodeBootstrapQuery({ userId })).not.toThrow(MissingUserIdError);
   });
 
-  it('ignores other parameters, so the server decides what they mean', () => {
-    expect(decodeBootstrapQuery({ userId: ID, groups: 'workspace' })).toEqual({ userId: ID });
+  it('ignores other parameters', () => {
+    expect(decodeBootstrapQuery({ userId: ID, since: '4' })).toEqual({ userId: ID });
+  });
+
+  describe('partial bootstrap (v0.8)', () => {
+    const TEAM_A = '0190f0c0-0000-7000-8000-00000000000a';
+    const TEAM_B = '0190f0c0-0000-7000-8000-00000000000b';
+
+    it('reads groups as a comma-separated list of team groups, with the schema hash', () => {
+      const groups = [`team:${TEAM_A}`, `team:${TEAM_B}`] as const;
+      const query = { userId: ID, groups: [...groups], schemaHash: HASH };
+      const text = encodeBootstrapQuery(query);
+      expect(decodeBootstrapQuery(Object.fromEntries(new URLSearchParams(text)))).toEqual(query);
+      expect(decodeBootstrapQuery({ userId: ID, groups: `team:${TEAM_A}` })).toEqual({
+        userId: ID,
+        groups: [`team:${TEAM_A}`],
+      });
+    });
+
+    it.each([
+      ['an empty list', ''],
+      ['the workspace group', 'workspace'],
+      ['a user group', `user:${ID}`],
+      ['a team that is not a uuid', 'team:ENG'],
+      ['a repeated team', `team:${TEAM_A},team:${TEAM_A}`],
+      [
+        'too many teams',
+        Array.from(
+          { length: 101 },
+          (_, i) => `team:${TEAM_A.slice(0, -3)}${String(i).padStart(3, '0')}`,
+        ).join(','),
+      ],
+    ])('refuses %s', (_name, groups) => {
+      expect(() => decodeBootstrapQuery({ userId: ID, groups })).toThrow(ProtocolError);
+    });
+
+    it('refuses a malformed schema hash', () => {
+      expect(() => decodeBootstrapQuery({ userId: ID, schemaHash: 'abc' })).toThrow(ProtocolError);
+    });
   });
 });

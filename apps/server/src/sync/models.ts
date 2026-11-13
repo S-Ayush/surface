@@ -110,20 +110,77 @@ export interface LockedGroups {
 }
 
 /**
- * An Issue's groups after an update, from the row the handler locked (SPEC-011 §4.8): its stored
- * groups, unless the patch moves it to another team (M3), when `groupsOf` reads the new team.
- * A patch naming the issue's own team is no move. So an issue edit never reads a team row after
- * the issue lock. In S3 and S4 they are the team's groups, which only a team move changes; S4b
- * replaces this with SPEC-011 §5.7's builder (still reading no team row: it tells a public
- * team's issue by the stored `user:<creatorId>` group).
+ * An Issue's groups from its team's privacy and its people (SPEC-011 §5.7, permissions.md §2): a
+ * private team's issue is in `team:<teamId>` only; a public team's issue also in
+ * `user:<creatorId>` and, when assigned, `user:<assigneeId>`, so "My issues" is local for everyone.
+ * Child rows never get the `user:` groups (`groupsOfIssueChild`).
+ *
+ * Every issue has a creator (SPEC-011 §4.1, `issues.creator_id NOT NULL`), and the update path
+ * tells a public issue by its stored `user:<creatorId>` group (`issueGroupsOnUpdate`), so an Issue
+ * row without one fails loudly here rather than getting groups that path would misread.
  */
-function issueGroupsOnUpdate(
-  _row: AnyRow,
+export function issueGroups(
+  row: AnyRow,
+  team: { readonly id: string; readonly private: boolean },
+): string[] {
+  const creatorId = stringField(row, 'creatorId');
+  if (creatorId === undefined) {
+    throw new Error(
+      'An Issue needs a creatorId: its groups (SPEC-011 §5.7) and their update rule depend on it.',
+    );
+  }
+  if (team.private) return [teamGroup(team.id)];
+  const groups = [teamGroup(team.id), userGroup(creatorId)];
+  const assigneeId = stringField(row, 'assigneeId');
+  if (assigneeId !== undefined && assigneeId !== creatorId) groups.push(userGroup(assigneeId));
+  return groups;
+}
+
+/**
+ * An Issue's groups on insert, or on a team move (M3): its team's privacy, read with the team
+ * row `FOR SHARE` (SPEC-011 §4.8: `issue.create` takes the team row first). A missing team gives
+ * no groups; the foreign key fails the transaction anyway.
+ */
+async function groupsOfIssue(row: AnyRow, tx: NodePgDatabase): Promise<string[]> {
+  const teamId = stringField(row, 'teamId');
+  if (teamId === undefined) return [];
+  const [team] = await tx
+    .select({ id: teams.id, private: teams.private })
+    .from(teams)
+    .where(eq(teams.id, teamId))
+    .for('share');
+  return team ? issueGroups(row, team) : [];
+}
+
+/**
+ * An Issue's groups after an update, from the row the handler locked and nothing else (SPEC-011
+ * §4.8): `row` is that row with the patch applied, `before` its stored groups and team. The team's
+ * privacy is read from the stored groups: a public team's issue always carries
+ * `user:<creatorId>`, a private team's never does. So an assignee change recomputes the `user:`
+ * part without reading the team row after the issue lock, and the repo logs `D` with the old
+ * groups, then `U` with the new ones (sync-protocol §6). A patch that moves the issue to another
+ * team (M3) returns `undefined`: the repo then reads the new team (`groupsOfIssue`).
+ *
+ * Stored groups without `team:<teamId>` are from before PLAN-011 S4b (`workspace`): refused
+ * loudly, since guessing could put a private team's issue in a `user:` group. Development
+ * databases from S3–S4 are recreated; nothing was released with them.
+ */
+export function issueGroupsOnUpdate(
+  row: AnyRow,
   before: LockedGroups,
   patch: AnyRow,
 ): readonly string[] | undefined {
   const teamId = patch['teamId'];
-  return teamId === undefined || teamId === before.teamId ? before.groups : undefined;
+  if (teamId !== undefined && teamId !== before.teamId) return undefined;
+  const stored = stringField(row, 'teamId');
+  if (stored === undefined || !before.groups.includes(teamGroup(stored))) {
+    throw new Error(
+      `Issue ${String(row['id'])} has groups from before partial issue loading (PLAN-011 S4b). Recreate the development database.`,
+    );
+  }
+  const creatorId = stringField(row, 'creatorId');
+  const isPublic = creatorId !== undefined && before.groups.includes(userGroup(creatorId));
+  return issueGroups(row, { id: stored, private: !isPublic });
 }
 
 export const SYNCED_MODELS = {
@@ -223,19 +280,19 @@ export const SYNCED_MODELS = {
     groupFields: ['teamId'],
     teamColumn: labels.teamId,
   },
-  // PLAN-011 S3 (SPEC-011 §4.1, §5.1). Public team issues are in `workspace` until S4b.
+  // PLAN-011 S3 (SPEC-011 §4.1, §5.1); groups from S4b (§5.7).
   Issue: {
     table: issues,
     def: Issue,
     fixture: false,
-    /** On insert: the team's groups, read `FOR SHARE` (§4.8 `issue.create` lock order). */
-    groupsOf: groupsOfTeamRow,
+    /** On insert: `issueGroups`, with the team row `FOR SHARE` (§4.8 `issue.create` lock order). */
+    groupsOf: groupsOfIssue,
     /**
      * On update (`repo.update`, `archive`, `unarchive`): the groups from the locked row, or
      * `undefined` to recompute with `groupsOf`. Only Issue declares it.
      */
     groupsOnUpdate: issueGroupsOnUpdate,
-    groupFields: ['teamId'],
+    groupFields: ['teamId', 'creatorId', 'assigneeId'],
     teamColumn: issues.teamId,
   },
   // PLAN-011 S5a (SPEC-011 §5.1): content models, loaded per issue (`sync/content.ts`). Their

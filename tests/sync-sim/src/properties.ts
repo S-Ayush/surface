@@ -3,7 +3,7 @@
  * suite (`pnpm test`, `pnpm sim`) and the real server's (`pnpm test:int`).
  */
 import { expect } from 'vitest';
-import { isIssueServer, type IssueFixtures, type IssueRecord } from './server.js';
+import { isIssueServer, type IssueFixtures, type IssueRecord, type IssueState } from './server.js';
 import type { Outcome, SimulateOptions } from './simulate.js';
 import { itemId } from './steps.js';
 
@@ -121,6 +121,26 @@ function refusedCreate(input: unknown, fixtures: IssueFixtures): boolean {
 }
 
 /**
+ * The issues as a tab of `userId` holds them: a row's groups cut to its connection's (SPEC-002
+ * Q6). Since PLAN-011 S4b a public team's issue is also in `user:<creatorId>` and
+ * `user:<assigneeId>` (SPEC-011 §5.7), and another user's `user:` group never reaches the tab.
+ * The sim's sockets name no `teams`, so they follow every member team: its `team:` groups stay.
+ */
+function asSeenBy(
+  issues: Readonly<Record<string, IssueState>>,
+  userId: string,
+): Record<string, IssueState> {
+  const seen = (group: unknown) =>
+    typeof group === 'string' && (!group.startsWith('user:') || group === `user:${userId}`);
+  return Object.fromEntries(
+    Object.entries(issues).map(([id, issue]) => [
+      id,
+      { ...issue, groups: Array.isArray(issue.groups) ? issue.groups.filter(seen) : issue.groups },
+    ]),
+  );
+}
+
+/**
  * Issue numbering and labels (SPEC-011 AC-2, AC-4, E1, E3, E5–E7): property 1 for the debug
  * items; every tab shows exactly the server's issues, numbers and sort keys included; numbers are
  * gap-free in commit order with distinct keys; no issue holds two labels of the exclusive group,
@@ -138,7 +158,9 @@ export const issueConvergence: Property = {
     }
     const fixtures = server.issueFixtures;
     const issues = await server.issues();
-    for (const tab of world.live) expect(world.issueView(tab), tab.name).toEqual(issues);
+    for (const tab of world.live) {
+      expect(world.issueView(tab), tab.name).toEqual(asSeenBy(issues, tab.user.id));
+    }
     const rows = await server.issueRows();
     checkNumbering(rows);
     const small = fixtures.labels['Size/Small'] ?? '';

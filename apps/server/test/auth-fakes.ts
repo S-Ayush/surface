@@ -35,6 +35,7 @@ export class FakeAuthStore implements AuthStore {
       workspaceId: WORKSPACE,
       role: 'admin',
       memberships: [],
+      publicTeams: [],
       lastUsedAt: session.now,
       tokenHash,
       expiresAt,

@@ -14,20 +14,14 @@
  * (a description is at most 200 KB), and the snapshot's connection goes back to the pool before
  * the response is written, whatever the client's speed.
  */
-import { teamGroup, type Actor } from '@surface/domain';
+import { visibleGroups, type Actor } from '@surface/domain';
 import {
   parentIssueId,
   syncGroupSchema,
   type ContentFrame,
   type ContentParent,
 } from '@surface/sync-protocol';
-import {
-  GROUPS_ALIAS,
-  quote,
-  selectRows,
-  type BootstrapClient,
-  type BootstrapPool,
-} from './bootstrap.js';
+import { GROUPS_ALIAS, quote, selectRows, type BootstrapPool } from './bootstrap.js';
 import { clientRow, type SyncModel, type SyncRegistry } from './registry.js';
 
 /** The one parent model of v0.7 (`issue:<id>`). */
@@ -43,21 +37,12 @@ export interface ContentOptions {
 }
 
 /**
- * Every group `actor` may see, read in the answer's snapshot (SPEC-011 §5.6). The one place
- * `/sync/content` decides visibility, so S4b's swap is one line.
- *
- * Until S4b, an actor's groups are `workspace`, `user:<id>` and their private teams' groups
- * (`syncGroupsFor`); public teams' issues are in `workspace`, but an issue child's only group is
- * `team:<teamId>` (S3), public team or not. So every public team's `team:<id>` is added here, as
- * `visibleGroups` will (every user may see a public team). A private team's group comes only from
- * the actor's own membership.
+ * Every group `actor` may see (SPEC-011 §5.6): `visibleGroups`, so every public team's
+ * `team:<id>` (the actor's `publicTeams`, read with the session) and never a socket's
+ * subscriptions. The one place `/sync/content` decides visibility.
  */
-// TODO(S4b): visibleGroups — replace the body with `visibleGroups(actor)` from `sync/groups.ts`.
-export async function contentGroups(actor: Actor, client: BootstrapClient): Promise<string[]> {
-  const publicTeams = await client.query<{ id: string }>(
-    'SELECT id::text AS id FROM teams WHERE NOT private ORDER BY id',
-  );
-  return [...new Set([...actor.groups, ...publicTeams.rows.map((team) => teamGroup(team.id))])];
+export function contentGroups(actor: Actor): readonly string[] {
+  return visibleGroups(actor);
 }
 
 /**
@@ -84,7 +69,7 @@ export async function contentFrames({
     );
     const lastSyncId = Number(head.rows[0]?.last ?? 0);
     // Only well-formed groups reach SQL (and `clientRow`), like bootstrap's `meta.groups`.
-    const groups = syncGroupSchema.array().parse(await contentGroups(actor, client));
+    const groups = syncGroupSchema.array().parse(contentGroups(actor));
     const found = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM ${quote(parentModel.table)}
         WHERE id = ANY($1::uuid[]) AND sync_groups && $2::text[] ORDER BY id`,

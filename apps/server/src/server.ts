@@ -30,6 +30,7 @@ import { createLogger } from './logger.js';
 import { installProcessHandlers } from './shutdown.js';
 import { StartupError } from './startup-error.js';
 import pg from 'pg';
+import { acceptedTeams } from './sync/groups.js';
 import { SyncHub } from './sync/hub.js';
 import { pgSyncLogSource, sessionCloser } from './sync/hub-source.js';
 import { announceSetup } from './setup/announce.js';
@@ -121,6 +122,7 @@ export async function startServer(
           }),
           registry: sync,
           log: logger.child({ component: 'sync-hub' }),
+          teamAccess: (userId, teamIds) => acceptedTeams(pool, userId, teamIds),
         });
   // Here at once (if this replica has a hub), and on every replica through `NOTIFY`.
   const closeSessions = sessionCloser({ hub, pool, log: logger });
@@ -175,6 +177,9 @@ export async function startServer(
           publicUrl: config.publicUrl,
           attempts,
           syncedModels: sync.models.map((model) => model.name),
+          ...(hub
+            ? { connectionGroups: (userId, clientId) => hub.connectionGroups(userId, clientId) }
+            : {}),
           ...(metrics ? { metrics } : {}),
         }),
     },

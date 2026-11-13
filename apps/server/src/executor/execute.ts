@@ -74,6 +74,7 @@ import {
   recordResult,
   visibleHead,
 } from '../sync/client-mutations.js';
+import { memberGroups } from '../sync/groups.js';
 import { serverSyncRegistry } from '../sync/registry.js';
 import { syncRepo, type RepoFactory, type RowChange, type TransactionRepo } from '../sync/repo.js';
 import { nearestNames } from './suggest.js';
@@ -131,6 +132,13 @@ export interface ExecutorDeps {
   readonly publicUrl?: string;
   /** The sign-in lockout's store, for `ctx.attempts`. Without it, using it fails. */
   readonly attempts?: AttemptStore;
+  /**
+   * The groups a client's open sockets receive on this replica (`SyncHub.connectionGroups`): home
+   * groups plus the teams it follows (SPEC-011 §5.7). A no-op mutation is confirmed at the newest
+   * row in them. Without a socket here, the groups of a socket that names no `teams` (the user's
+   * member teams, `memberGroups`).
+   */
+  readonly connectionGroups?: (userId: string, clientId: string) => readonly string[] | undefined;
 }
 
 interface TransactionOutcome {
@@ -557,9 +565,14 @@ export function createExecutor(deps: ExecutorDeps): Executor {
           await recordResult(client, clientId, rejected);
           return { outcome: { kind: 'result', result: rejected } };
         }
+        // The connection's groups, never every group the user may see (`visibleGroups`): a
+        // no-op must confirm at an id that connection receives, and skip none it does (§5.7).
         const lastSyncId =
           applied.lastSyncId ??
-          (await visibleHead(client, { groups: actor.groups, models: syncedModels() }));
+          (await visibleHead(client, {
+            groups: deps.connectionGroups?.(userId, clientId) ?? memberGroups(actor),
+            models: syncedModels(),
+          }));
         const ok: MutationResult = { seq, status: 'ok', lastSyncId };
         await recordResult(client, clientId, ok);
         return { outcome: { kind: 'result', result: ok }, ...postCommit(applied) };

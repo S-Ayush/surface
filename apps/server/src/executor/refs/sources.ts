@@ -15,6 +15,7 @@ import {
   parseTeamRef,
   parseUserRef,
   REF_AVAILABLE_FROM,
+  visibleGroups,
   type Actor,
   type RefEntity,
   type RefType,
@@ -24,7 +25,7 @@ import { fileReaderOf, visibleFile } from '../../files/store.js';
 import { SurfaceError, type ErrorCandidate } from '../errors.js';
 
 /** What resolution needs from the actor: `me`, the groups for visibility, and key narrowing. */
-export type ResolveActor = Pick<Actor, 'kind' | 'userId' | 'groups' | 'apiKey'>;
+export type ResolveActor = Pick<Actor, 'kind' | 'userId' | 'groups' | 'publicTeams' | 'apiKey'>;
 
 export interface LookupContext {
   readonly db: Queryable;
@@ -70,9 +71,13 @@ export async function lookup(
   }
 }
 
-/** `null` means "every group": the system actor is not subject to visibility (permissions.md §1). */
-function visibleGroups(actor: ResolveActor): readonly string[] | null {
-  return actor.kind === 'system' ? null : actor.groups;
+/**
+ * The groups a ref may resolve in: every group the actor may see, every public team's included
+ * (SPEC-011 §5.6). `null` means "every group": the system actor is not subject to visibility
+ * (permissions.md §1).
+ */
+function groupsFilter(actor: ResolveActor): readonly string[] | null {
+  return actor.kind === 'system' ? null : visibleGroups(actor);
 }
 
 function stringValue(value: unknown): string {
@@ -169,7 +174,7 @@ interface TeamRow extends RefEntity {
 
 async function lookupTeam(value: string, ctx: LookupContext): Promise<TeamRow> {
   const ref = parseTeamRef(value);
-  const groups = visibleGroups(ctx.actor);
+  const groups = groupsFilter(ctx.actor);
   // permissions.md §3.5: a key limited to some teams sees no others, public ones included.
   // Statuses and labels resolve within a team ref, so this one filter covers them too.
   const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
@@ -210,7 +215,7 @@ interface UserRow extends RefEntity {
 
 async function lookupUser(value: string, ctx: LookupContext): Promise<UserRow> {
   const ref = parseUserRef(value);
-  const groups = visibleGroups(ctx.actor);
+  const groups = groupsFilter(ctx.actor);
   let rows: UserRow[] = [];
 
   if (ref?.by === 'me' && ctx.actor.userId === undefined) {
@@ -332,7 +337,7 @@ async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRo
   if (!team) throw invalid(ctx, `Status "${value}" needs a team. Set the team as well.`);
   const teamKey = String(team.key);
   const ref = parseNamedRef(value);
-  const groups = visibleGroups(ctx.actor);
+  const groups = groupsFilter(ctx.actor);
   let rows: StatusRow[] = [];
   if (ref?.by === 'id') {
     ({ rows } = await ctx.db.query<StatusRow>(
@@ -392,7 +397,7 @@ function isIssueNumberInRange(n: number): boolean {
 
 async function lookupIssue(value: string, ctx: LookupContext): Promise<IssueRow> {
   const ref = parseIssueRef(value);
-  const groups = visibleGroups(ctx.actor);
+  const groups = groupsFilter(ctx.actor);
   const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
   const select = `SELECT i.id, i.team_id AS "teamId", t.key AS "teamKey", i.number,
                          i.sync_groups AS "syncGroups"
@@ -434,7 +439,7 @@ interface LabelRow extends RefEntity {
 async function lookupLabel(value: string, ctx: LookupContext): Promise<LabelRow> {
   const team = ctx.scopeTeam;
   const ref = parseLabelRef(value);
-  const groups = visibleGroups(ctx.actor);
+  const groups = groupsFilter(ctx.actor);
   // An API key limited to teams sees their labels and workspace labels only, as for issues.
   const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
   let rows: LabelRow[] = [];

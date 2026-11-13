@@ -89,16 +89,24 @@ export { systemActor } from '@surface/domain';
 
 /**
  * The actor for a test user (PLAN-003 S3). Sessions build the same thing from the database in
- * PLAN-001 S3. Pass `via` for an API-key or MCP actor.
+ * PLAN-001 S3. Pass `via` for an API-key or MCP actor. `publicTeams` are every public team's id,
+ * as the session reads them (SPEC-011 §5.6): without them, a public team's issue is visible only
+ * to its creator and assignee.
  */
 export function actorFor(
-  user: { id: string; role?: Role; memberships?: readonly Membership[] },
+  user: {
+    id: string;
+    role?: Role;
+    memberships?: readonly Membership[];
+    publicTeams?: readonly string[];
+  },
   via?: { kind: 'api' | 'mcp'; apiKey: ApiKeyScope },
 ): Actor {
   return userActor({
     userId: user.id,
     role: user.role ?? 'member',
     memberships: user.memberships ?? [],
+    publicTeams: user.publicTeams ?? [],
     ...(via ? { via } : {}),
   });
 }

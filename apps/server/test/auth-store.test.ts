@@ -47,6 +47,7 @@ describe('pgAuthStore', () => {
         role: 'member',
         last_used_at: NOW,
         memberships: [{ teamId: 't1', private: true }],
+        public_teams: ['t2', 't3'],
       },
     ]);
     const record = await pgAuthStore(db.pool).session('hash', NOW);
@@ -56,6 +57,7 @@ describe('pgAuthStore', () => {
       workspaceId: 'w1',
       role: 'member',
       memberships: [{ teamId: 't1', private: true }],
+      publicTeams: ['t2', 't3'],
       lastUsedAt: NOW,
     });
     const [select] = db.statements;

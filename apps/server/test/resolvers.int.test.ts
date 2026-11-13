@@ -52,13 +52,15 @@ const ids = {
 };
 const SEC_GROUP = `team:${ids.sec}`;
 
+// ENG and OPS are public: their issues are in `team:<id>`, which every user sees (SPEC-011 §5.6).
 const member: ResolveActor = {
   kind: 'user',
   userId: ids.alex,
   groups: ['workspace', `user:${ids.alex}`],
+  publicTeams: [ids.eng, ids.ops],
 };
 const secMember: ResolveActor = { ...member, groups: [...member.groups, SEC_GROUP] };
-const system: ResolveActor = { kind: 'system', groups: [] };
+const system: ResolveActor = { kind: 'system', groups: [], publicTeams: [] };
 
 let db: TestDatabase;
 
@@ -143,8 +145,8 @@ beforeAll(async () => {
   await q(label, [ids.engHush, ids.eng, null, 'Hush', false, [SEC_GROUP]]);
 
   const issue = 'INSERT INTO ref_fixture.issues VALUES ($1, $2, $3, $4)';
-  await q(issue, [ids.eng1, ids.eng, 1, ['workspace']]);
-  await q(issue, [ids.ops1, ids.ops, 1, ['workspace']]);
+  await q(issue, [ids.eng1, ids.eng, 1, [`team:${ids.eng}`, `user:${ids.sam}`]]);
+  await q(issue, [ids.ops1, ids.ops, 1, [`team:${ids.ops}`, `user:${ids.sam}`]]);
   await q(issue, [ids.sec1, ids.sec, 1, [SEC_GROUP]]);
 });
 
@@ -470,7 +472,7 @@ describe('IssueRef', () => {
         teamId: ids.eng,
         teamKey: 'ENG',
         number: 1,
-        syncGroups: ['workspace'],
+        syncGroups: [`team:${ids.eng}`, `user:${ids.sam}`],
       });
     },
   );

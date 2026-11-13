@@ -9,6 +9,7 @@
 import {
   FilterError,
   FilterSchema,
+  visibleGroups,
   type Actor,
   type Filter,
   type FilterContext,
@@ -193,7 +194,7 @@ export async function groupByQuery<T extends PgTable, F extends FilterFields>(
   model: ListModel<T, F>,
   args: GroupByArgs,
 ): Promise<Group[]> {
-  const groupings = model.groupings?.(ctx.actor.groups) ?? {};
+  const groupings = model.groupings?.(visibleGroups(ctx.actor)) ?? {};
   const grouping = Object.hasOwn(groupings, args.groupBy) ? groupings[args.groupBy] : undefined;
   if (grouping === undefined) {
     const names = Object.keys(groupings).sort();
@@ -254,8 +255,9 @@ export async function groupByQuery<T extends PgTable, F extends FilterFields>(
 }
 
 /**
- * Rows the actor may see: overlapping sync groups and, for an API key limited to some teams,
- * those teams only. The system actor sees everything. Shared with `ctx.query.get`.
+ * Rows the actor may see: overlapping sync groups (`visibleGroups`: every public team's too,
+ * SPEC-011 §5.6) and, for an API key limited to some teams, those teams only. The system actor
+ * sees everything. Shared with `ctx.query.get` and `lockIssueForWrite`.
  */
 export function visibleTo(
   actor: Actor,
@@ -265,7 +267,7 @@ export function visibleTo(
   if (actor.kind === 'system') return undefined;
   const keyTeams = actor.apiKey?.teamIds ?? [];
   return and(
-    arrayOverlaps(syncGroups, [...actor.groups]),
+    arrayOverlaps(syncGroups, [...visibleGroups(actor)]),
     keyTeams.length > 0 && teamColumn ? inArray(teamColumn, [...keyTeams]) : undefined,
   );
 }
@@ -299,7 +301,9 @@ function compile<F extends FilterFields>(
   ctx: ListContext,
 ): SQL {
   try {
-    return compileFilter(filter, model.filter, ctx.filterContext, { groups: ctx.actor.groups });
+    return compileFilter(filter, model.filter, ctx.filterContext, {
+      groups: visibleGroups(ctx.actor),
+    });
   } catch (error) {
     if (error instanceof FilterError) throw invalid(['filter', ...error.path], error.message);
     throw error;

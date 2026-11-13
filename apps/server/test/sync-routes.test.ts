@@ -74,7 +74,8 @@ describe('GET /sync/bootstrap refuses', () => {
     });
   });
 
-  it('a partial bootstrap (?groups=), which arrives with private teams in M7, with 400', async () => {
+  // The partial bootstrap's other answers: `sync-bootstrap-partial.test.ts` (PLAN-011 S4b).
+  it('a partial bootstrap (?groups=) of a group that is no team:<uuid>, with 400', async () => {
     const res = await (
       await app()
     ).inject({

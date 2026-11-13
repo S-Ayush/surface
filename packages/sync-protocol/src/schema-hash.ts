@@ -16,8 +16,10 @@ import { sha256Hex } from './sha256.js';
 /**
  * Bump when the wire format changes incompatibly: it is part of every schema hash, so every
  * client re-bootstraps once (SPEC-002 E7). 2: `A` and `V` carry the full row (v0.7, SPEC-011 §5.5).
+ * 3: partial issue loading (v0.8, SPEC-011 §5.7): issue groups, team subscriptions, and no archived
+ * or deleted issue in a bootstrap.
  */
-export const SYNC_PROTOCOL_VERSION = 2;
+export const SYNC_PROTOCOL_VERSION = 3;
 
 export interface SchemaHashField {
   /** Canonical type name, including anything that narrows it (e.g. enum members). */

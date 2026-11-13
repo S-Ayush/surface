@@ -171,9 +171,10 @@ describe('bootstrap for a user outside private team X', () => {
     expect(shared?.d['groups']).toEqual(['workspace']);
   });
 
-  it('lists only its own groups in meta', async () => {
+  it('lists only its own groups in meta, with its member teams', async () => {
     const { meta } = await bootstrap('engMember');
-    expect(meta.groups).toEqual(['workspace', `user:${eng.id}`]);
+    // SPEC-011 §5.7: the full bootstrap covers every member team, public ones too (PLAN-011 S4b).
+    expect(meta.groups).toEqual(['workspace', `user:${eng.id}`, `team:${h.teams.eng}`]);
   });
 });
 

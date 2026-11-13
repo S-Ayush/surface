@@ -105,6 +105,7 @@ export class SessionAuth {
         userId: record.userId,
         role: record.role,
         memberships: record.memberships,
+        publicTeams: record.publicTeams,
         sessionId: record.id,
       }),
     };

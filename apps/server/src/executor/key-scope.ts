@@ -21,8 +21,10 @@ export function keyScopeProblem(def: AnyOperation, actor: Actor): string | undef
 }
 
 /**
- * The actor as the key sees it: private-team groups and memberships outside `teamIds` are
- * dropped, so those teams' rows become invisible (`NOT_FOUND`), never `FORBIDDEN`.
+ * The actor as the key sees it: private-team groups, public teams and memberships outside
+ * `teamIds` are dropped, so those teams' rows become invisible (`NOT_FOUND`), never `FORBIDDEN`.
+ * A public team's issues also reach `user:` groups, so reads narrow by team in SQL too
+ * (`visibleTo`, SPEC-011 §5.6).
  */
 export function narrowToKeyTeams(actor: Actor): Actor {
   const teamIds = actor.apiKey?.teamIds;
@@ -31,6 +33,7 @@ export function narrowToKeyTeams(actor: Actor): Actor {
   return {
     ...actor,
     groups: actor.groups.filter((g) => !g.startsWith('team:') || allowedGroups.has(g)),
+    publicTeams: actor.publicTeams.filter((id) => teamIds.includes(id)),
     memberOf: actor.memberOf.filter((id) => teamIds.includes(id)),
   };
 }

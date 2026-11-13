@@ -413,14 +413,18 @@ export function testExecutor(pool: pg.Pool, overrides: Partial<ExecutorDeps> = {
 // Actors and data
 
 export function actors(teams: ExecutorHarness['teams']) {
+  // ENG is the harness's one public team, so every actor sees its issues (SPEC-011 §5.6).
+  const publicTeams = [teams.eng];
   const engMember = actorFor({
     id: randomUUID(),
     memberships: [{ teamId: teams.eng, private: false }],
+    publicTeams,
   });
-  const outsider = actorFor({ id: randomUUID() });
+  const outsider = actorFor({ id: randomUUID(), publicTeams });
   const secMember = actorFor({
     id: randomUUID(),
     memberships: [{ teamId: teams.sec, private: true }],
+    publicTeams,
   });
   return { engMember, outsider, secMember };
 }
