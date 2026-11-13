@@ -27,7 +27,10 @@ export function evaluatePermission(
 ): PermissionResult {
   const bound = bindPredicates(actor);
   if (def.permission(bound.p, refs, input)) return { allowed: true };
-  return { allowed: false, reason: forbiddenReason(bound.allowedWho(), def.summary) };
+  return {
+    allowed: false,
+    reason: bound.reason() ?? forbiddenReason(bound.allowedWho(), def.summary),
+  };
 }
 
 export function forbiddenReason(allowedWho: readonly string[], summary: string): string {

@@ -1,0 +1,236 @@
+/* The labels pages (SPEC-010 §3.2). Tokens only. */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.note {
+  margin: 0 0 var(--space-12);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-12);
+}
+
+.toolbar > :first-child {
+  flex: 1;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: var(--row-height);
+  padding: var(--space-4) var(--space-12);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  font-weight: 600;
+  background: var(--bg-panel);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.headerName {
+  flex: 1;
+  padding-inline-start: var(--space-24);
+}
+
+.headerDescription {
+  flex: 1;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: var(--row-height);
+  padding: var(--space-4) var(--space-12);
+  border-top: var(--border-width) solid var(--border-subtle);
+}
+
+.row[data-depth='1'] {
+  padding-inline-start: var(--space-32);
+}
+
+.row:hover,
+.row[aria-selected='true']:focus-within {
+  background: var(--bg-hover);
+}
+
+.row:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-width) * -1);
+}
+
+.toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-16);
+  padding: 0;
+  color: var(--text-secondary);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+}
+
+.toggle svg[data-open] {
+  transform: rotate(90deg);
+}
+
+.dot {
+  flex: none;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-full);
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta,
+.descriptionText {
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}
+
+.description {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-4);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm-size);
+  background: none;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.description:hover,
+.description:focus {
+  border-color: var(--border-control);
+}
+
+.description:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+}
+
+.descriptionText {
+  flex: 1;
+}
+
+.column {
+  flex: none;
+  min-width: var(--space-64);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.select {
+  padding: var(--space-4) var(--space-8);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm-size);
+  background: var(--bg-panel);
+  border: var(--border-width) solid var(--border-control);
+  border-radius: var(--radius-sm);
+}
+
+.select:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}
+
+.menuButton,
+.menuSpace {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-24);
+  height: var(--space-24);
+}
+
+.menuButton {
+  padding: 0;
+  color: var(--text-secondary);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.menuButton:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.menuButton:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  padding: var(--space-12);
+  margin-bottom: var(--space-12);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.formFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.formError {
+  margin: 0;
+  color: var(--danger);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+.footer {
+  margin: var(--space-12) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}

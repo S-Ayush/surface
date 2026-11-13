@@ -16,6 +16,7 @@ export * from './invites.js';
 export * from './fractional-key.js';
 export * from './workflow.js';
 export * from './label.js';
+export * from './label-rules.js';
 export * from './estimate.js';
 export * from './git-branch.js';
 export * from './issue-order.js';

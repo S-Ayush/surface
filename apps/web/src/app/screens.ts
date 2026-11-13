@@ -18,7 +18,9 @@ export type ScreenId =
   | 'settings/teams'
   | 'settings/teams/general'
   | 'settings/teams/members'
-  | 'settings/teams/workflow';
+  | 'settings/teams/workflow'
+  | 'settings/teams/labels'
+  | 'settings/labels';
 
 /** The route's path params (`token` for an invite, `key` for a team's settings). */
 export type ScreenProps = { readonly params: Readonly<Record<string, string>> };

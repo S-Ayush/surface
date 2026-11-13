@@ -386,11 +386,28 @@ describe('LabelRef', () => {
     ]);
   });
 
-  it('resolves a label id from the team or the workspace, not from another team', async () => {
+  it('resolves a label id to any label the actor can see, with or without a team (SPEC-010 §6)', async () => {
     expect(idOf(await resolve(labelOp, { team: 'OPS', labels: [ids.wsBug] }), 'labels')).toEqual([
       ids.wsBug,
     ]);
-    expect((await failure(labelOp, { team: 'OPS', labels: [ids.engBug] })).code).toBe('NOT_FOUND');
+    expect(idOf(await resolve(labelOp, { team: 'OPS', labels: [ids.engBug] }), 'labels')).toEqual([
+      ids.engBug,
+    ]);
+    expect(idOf(await resolve(labelOp, { labels: [ids.engBug] }), 'labels')).toEqual([ids.engBug]);
+  });
+
+  it("does not resolve a team label's name without the team (AC-18)", async () => {
+    expect((await failure(labelOp, { labels: ['Area/Perf'] })).code).toBe('NOT_FOUND');
+  });
+
+  it('resolves Group/Label with spaces around the slash, and lists the matches of a bare name (AC-18, E9)', async () => {
+    const refs = await resolve(labelOp, { team: 'ENG', labels: ['area / perf', 'Type/Perf'] });
+    expect(idOf(refs, 'labels')).toEqual([ids.engPerfArea, ids.engPerfType]);
+    const error = await failure(labelOp, { team: 'ENG', labels: ['perf'] });
+    expect(error.message).toBe(
+      "2 labels named 'Perf': Area/Perf, Type/Perf. Use Group/Label or the label id.",
+    );
+    expect((await failure(labelOp, { team: 'ENG', labels: ['Nope/Perf'] })).code).toBe('NOT_FOUND');
   });
 
   it("hides a private team's label from non-members, even by id", async () => {

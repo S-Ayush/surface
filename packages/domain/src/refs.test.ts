@@ -9,6 +9,7 @@ import {
   parseCycleRef,
   parseIdRef,
   parseIssueRef,
+  parseLabelRef,
   parseNamedRef,
   parseTeamRef,
   parseUserRef,
@@ -48,6 +49,24 @@ describe('parsing reference formats (SPEC-003 §4)', () => {
     expect(parseNamedRef(ID)).toEqual({ by: 'id', id: ID });
     expect(parseNamedRef(' In Progress ')).toEqual({ by: 'name', name: 'In Progress' });
     expect(parseNamedRef('')).toBeUndefined();
+  });
+
+  it('reads a label ref as an id, a name, or Group/Label with spaces around the slash ignored (AC-18)', () => {
+    expect(parseLabelRef(ID)).toEqual({ by: 'id', id: ID });
+    expect(parseLabelRef(' Bug ')).toEqual({ by: 'name', name: 'Bug' });
+    expect(parseLabelRef('Size/Small')).toEqual({ by: 'groupLabel', group: 'Size', name: 'Small' });
+    expect(parseLabelRef(' Size  /  Small ')).toEqual({
+      by: 'groupLabel',
+      group: 'Size',
+      name: 'Small',
+    });
+  });
+
+  it('refuses a label ref with an empty group or label part', () => {
+    expect(parseLabelRef('')).toBeUndefined();
+    expect(parseLabelRef('/Small')).toBeUndefined();
+    expect(parseLabelRef('Size/')).toBeUndefined();
+    expect(parseLabelRef(' / ')).toBeUndefined();
   });
 
   it('reads an issue ref as an id or an identifier', () => {

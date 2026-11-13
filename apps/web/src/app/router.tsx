@@ -254,6 +254,11 @@ const routeTree = rootRoute.addChildren([
         path: 'workspace',
         component: settingsScreen(SETTINGS.workspace),
       }),
+      createRoute({
+        getParentRoute: () => settingsRoute,
+        path: 'labels',
+        component: settingsScreen(SETTINGS.labels),
+      }),
       teamsRoute.addChildren([
         createRoute({
           getParentRoute: () => teamsRoute,
@@ -274,6 +279,11 @@ const routeTree = rootRoute.addChildren([
           getParentRoute: () => teamsRoute,
           path: '$key/workflow',
           component: settingsScreen(SETTINGS.teamWorkflow),
+        }),
+        createRoute({
+          getParentRoute: () => teamsRoute,
+          path: '$key/labels',
+          component: settingsScreen(SETTINGS.teamLabels),
         }),
       ]),
     ]),

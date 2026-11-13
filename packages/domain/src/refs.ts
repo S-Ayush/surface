@@ -91,6 +91,7 @@ export type ParsedRef =
   | { readonly by: 'me' }
   | { readonly by: 'email'; readonly email: string }
   | { readonly by: 'name'; readonly name: string }
+  | { readonly by: 'groupLabel'; readonly group: string; readonly name: string }
   | { readonly by: 'identifier'; readonly key: string; readonly number: number }
   | { readonly by: 'number'; readonly number: number }
   | { readonly by: 'relative'; readonly which: 'current' | 'next' | 'previous' };
@@ -119,6 +120,21 @@ export function parseNamedRef(value: string): ParsedRef | undefined {
   if (v === '') return undefined;
   if (isUuid(v)) return { by: 'id', id: v.toLowerCase() };
   return { by: 'name', name: v };
+}
+
+/**
+ * `uuid`, `Group/Label` (spaces around the `/` ignored, SPEC-010 D19), or an exact name. A name
+ * has no `/` of its own (SPEC-010 §4.2), so the first `/` always separates the group.
+ */
+export function parseLabelRef(value: string): ParsedRef | undefined {
+  const v = value.trim();
+  if (v === '') return undefined;
+  if (isUuid(v)) return { by: 'id', id: v.toLowerCase() };
+  const slash = v.indexOf('/');
+  if (slash < 0) return { by: 'name', name: v };
+  const group = v.slice(0, slash).trim();
+  const name = v.slice(slash + 1).trim();
+  return group === '' || name === '' ? undefined : { by: 'groupLabel', group, name };
 }
 
 /** `uuid` only: invites and sessions have no name to look up (PLAN-001 S5). */
@@ -212,9 +228,9 @@ export const StatusRef = refString(
 /** Team label first, then workspace label. Scoped to the input field `team` when present. */
 export const LabelRef = refString(
   'LabelRef',
-  "Label name (the team's labels first, then workspace labels), or a label id",
-  parseNamedRef,
-  'Use a label name or a label id',
+  "Label name (the team's labels first, then workspace labels), Group/Label for a label inside a group, or a label id",
+  parseLabelRef,
+  'Use a label name, Group/Label, or a label id',
   { [SURFACE_REF_SCOPE_KEY]: 'team' },
 );
 

@@ -45,6 +45,38 @@ function fixture() {
     { teamId: null, parentId: null, name: 'Feature', isGroup: false },
     { teamId: DES, parentId: null, name: 'Polish', isGroup: false },
   ]);
+  // Groups and the labels inside them (ids follow the Label rows above: 4 rows from the base).
+  const base = 100 * ('Label'.length + 1);
+  pool.loadBase('Label', [
+    {
+      row: { id: id(base + 10), teamId: ENG, parentId: null, name: 'Size', isGroup: true },
+      archived: false,
+    },
+    {
+      row: { id: id(base + 11), teamId: ENG, parentId: null, name: 'Scope', isGroup: true },
+      archived: false,
+    },
+    {
+      row: {
+        id: id(base + 12),
+        teamId: ENG,
+        parentId: id(base + 10),
+        name: 'Small',
+        isGroup: false,
+      },
+      archived: false,
+    },
+    {
+      row: {
+        id: id(base + 13),
+        teamId: ENG,
+        parentId: id(base + 11),
+        name: 'Small',
+        isGroup: false,
+      },
+      archived: false,
+    },
+  ]);
   const me = id(500); // Ada: users get ids from 500
   const resolver = createClientRefResolver(poolRefSource(pool), () => me);
   const name = (
@@ -105,6 +137,21 @@ describe('client reference resolvers', () => {
     expect(name('LabelRef', 'Feature', DES)).toBe('Feature');
     expect(name('LabelRef', 'Polish', ENG)).toBe('notFound');
     expect(name('LabelRef', 'Polish')).toBe('notFound');
+  });
+
+  it('resolves Group/Label, lists an ambiguous bare name, and an id without a team (AC-18)', () => {
+    const { resolver } = fixture();
+    const base = 100 * ('Label'.length + 1);
+    const pick = (value: string, scopeTeamId?: string) =>
+      resolver.resolve('LabelRef', value, scopeTeamId ? { scopeTeamId } : {});
+    const sized = pick(' size / small ', ENG);
+    expect(sized.status === 'found' && sized.entity.parentId).toBe(id(base + 10));
+    const ambiguous = pick('Small', ENG);
+    expect(ambiguous.status).toBe('ambiguous');
+    // A team label's name without a team does not resolve; its id does.
+    expect(pick('Size/Small').status).toBe('notFound');
+    expect(pick(id(base + 12)).status).toBe('found');
+    expect(pick('Nope/Small', ENG).status).toBe('notFound');
   });
 
   it('finds nothing for reference types whose models do not exist yet', () => {

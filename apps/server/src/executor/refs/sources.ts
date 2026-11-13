@@ -9,6 +9,7 @@
  */
 import {
   parseIdRef,
+  parseLabelRef,
   parseNamedRef,
   parseTeamRef,
   parseUserRef,
@@ -376,45 +377,51 @@ interface LabelRow extends RefEntity {
 
 async function lookupLabel(value: string, ctx: LookupContext): Promise<LabelRow> {
   const team = ctx.scopeTeam;
-  const ref = parseNamedRef(value);
+  const ref = parseLabelRef(value);
   const groups = visibleGroups(ctx.actor);
   let rows: LabelRow[] = [];
-  // `$2` is null without a team scope, so only workspace labels (team_id IS NULL) match.
+  const columns = `l.id, l.team_id AS "teamId", l.parent_id AS "parentId", p.name AS "groupName",
+              l.name, l.is_group AS "isGroup", l.sync_groups AS "syncGroups"`;
+  // `$2` is null without a team scope, so only workspace labels (team_id IS NULL) match by name.
   if (ref?.by === 'id') {
+    // SPEC-010 §6: an id resolves to any label the actor can see, with or without a team.
     ({ rows } = await ctx.db.query<LabelRow>(
-      `SELECT l.id, l.team_id AS "teamId", l.parent_id AS "parentId", p.name AS "groupName",
-              l.name, l.is_group AS "isGroup", l.sync_groups AS "syncGroups"
+      `SELECT ${columns}
          FROM labels l LEFT JOIN labels p ON p.id = l.parent_id
-        WHERE l.id = $1 AND (l.team_id IS NULL OR l.team_id = $2::uuid)
-          AND ($3::text[] IS NULL OR l.sync_groups && $3::text[])`,
-      [ref.id, team?.id ?? null, groups],
+        WHERE l.id = $1 AND ($2::text[] IS NULL OR l.sync_groups && $2::text[])`,
+      [ref.id, groups],
     ));
-  } else if (ref?.by === 'name') {
+  } else if (ref?.by === 'name' || ref?.by === 'groupLabel') {
     ({ rows } = await ctx.db.query<LabelRow>(
-      `SELECT l.id, l.team_id AS "teamId", l.parent_id AS "parentId", p.name AS "groupName",
-              l.name, l.is_group AS "isGroup", l.sync_groups AS "syncGroups"
+      `SELECT ${columns}
          FROM labels l LEFT JOIN labels p ON p.id = l.parent_id
         WHERE lower(l.name) = lower($1) AND (l.team_id IS NULL OR l.team_id = $2::uuid)
           AND ($3::text[] IS NULL OR l.sync_groups && $3::text[])
+          AND ($4::text IS NULL OR lower(p.name) = lower($4))
         ORDER BY p.name COLLATE "C" NULLS FIRST, l.name COLLATE "C", l.id`,
-      [ref.name, team?.id ?? null, groups],
+      [ref.name, team?.id ?? null, groups, ref.by === 'groupLabel' ? ref.group : null],
     ));
   }
 
   // SPEC-003 §4: the team's labels win over workspace labels with the same name.
-  const teamRows = rows.filter((row) => row.teamId !== null);
+  const teamRows = ref?.by === 'id' ? [] : rows.filter((row) => row.teamId !== null);
   const pool = teamRows.length > 0 ? teamRows : rows;
-  const where = team ? `${String(team.key)} or the workspace labels` : 'the workspace labels';
 
-  const picked = pickByName(pool, (row) => row.name === value.trim());
+  const picked = pickByName(pool, (row) => row.name === (ref && 'name' in ref ? ref.name : ''));
   if (picked === undefined) {
     throw refNotFound('LabelRef', value, ctx.path, team);
   }
   if (isAmbiguous(picked)) {
+    const names = candidates(picked.ambiguous, (l) =>
+      l.groupName ? `${l.groupName}/${l.name}` : l.name,
+    );
+    // E9: "2 labels named 'Small': Size/Small, Scope/Small. Use Group/Label or the label id."
     throw invalid(
       ctx,
-      `${picked.ambiguous.length} labels in ${where} match "${value}". Use the label id instead.`,
-      candidates(picked.ambiguous, (l) => (l.groupName ? `${l.groupName}/${l.name}` : l.name)),
+      `${picked.ambiguous.length} labels named '${picked.ambiguous[0]?.name ?? value}': ${names
+        .map((c) => c.label)
+        .join(', ')}. Use Group/Label or the label id.`,
+      names,
     );
   }
   return picked;

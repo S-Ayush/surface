@@ -7,6 +7,7 @@
 import type { OperationCommand } from '../command-menu/sources/operations.js';
 import type { PropertyCommand } from '../command-menu/sources/properties.js';
 import { INVITE_COMMANDS } from './invites/commands.js';
+import { LABEL_COMMANDS } from './labels/commands.js';
 import { STATUS_COMMANDS } from './statuses/commands.js';
 import { TEAM_COMMANDS } from './teams/commands.js';
 
@@ -14,6 +15,7 @@ export const OPERATION_COMMANDS: Readonly<Record<string, OperationCommand>> = {
   ...TEAM_COMMANDS,
   ...INVITE_COMMANDS,
   ...STATUS_COMMANDS,
+  ...LABEL_COMMANDS,
 };
 
 /**

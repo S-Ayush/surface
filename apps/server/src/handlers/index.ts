@@ -8,6 +8,11 @@ import debugTouch from './debug/touch.js';
 import debugArchive from './debug/archive.js';
 import debugUnarchive from './debug/unarchive.js';
 import userUpdatePreferences from './users/update-preferences.js';
+import labelCreate from './labels/create.js';
+import labelDelete from './labels/delete.js';
+import labelList from './labels/list.js';
+import labelMoveToWorkspace from './labels/move-to-workspace.js';
+import labelUpdate from './labels/update.js';
 import statusCreate from './statuses/create.js';
 import statusDelete from './statuses/delete.js';
 import statusList from './statuses/list.js';
@@ -74,4 +79,9 @@ export const HANDLERS: readonly Handler[] = [
   statusUpdate,
   statusReorder,
   statusDelete,
+  labelList,
+  labelCreate,
+  labelUpdate,
+  labelMoveToWorkspace,
+  labelDelete,
 ];

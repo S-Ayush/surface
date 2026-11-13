@@ -23,7 +23,7 @@ import type {
   RefLookupOptions,
   RefType,
 } from '@surface/domain';
-import { parseNamedRef, parseTeamRef, parseUserRef } from '@surface/domain';
+import { parseLabelRef, parseNamedRef, parseTeamRef, parseUserRef } from '@surface/domain';
 import { rowOf } from './instance.js';
 import type { ReadonlyPool } from './pool.js';
 
@@ -139,17 +139,22 @@ export function createClientRefResolver(
   function label(value: string, options: RefLookupOptions): RefLookup {
     const teamId = options.scopeTeamId ?? null;
     const usable = (row: RefEntity) => row.teamId === null || row.teamId === teamId;
-    const ref = parseNamedRef(value);
-    if (ref?.by === 'id') {
-      const row = byId(REF_MODELS.LabelRef, ref.id);
-      return found(row && usable(row) ? row : undefined);
+    const ref = parseLabelRef(value);
+    // SPEC-010 §6: an id resolves to any label the replica holds, with or without a team.
+    if (ref?.by === 'id') return found(byId(REF_MODELS.LabelRef, ref.id));
+    if (ref?.by !== 'name' && ref?.by !== 'groupLabel') return NOT_FOUND;
+    let matches = sameName(rows(REF_MODELS.LabelRef).filter(usable), 'name', ref.name);
+    if (ref.by === 'groupLabel') {
+      const wanted = ref.group.toLowerCase();
+      matches = matches.filter((row) => {
+        const parent = typeof row.parentId === 'string' ? byId('Label', row.parentId) : undefined;
+        return typeof parent?.name === 'string' && parent.name.toLowerCase() === wanted;
+      });
     }
-    if (ref?.by !== 'name') return NOT_FOUND;
-    const matches = sameName(rows(REF_MODELS.LabelRef).filter(usable), 'name', ref.name);
     // SPEC-003 §4: the team's labels win over workspace labels with the same name.
     const teamRows = matches.filter((row) => row.teamId !== null);
     const candidates = sortLabels(teamRows.length > 0 ? teamRows : matches);
-    return pick(candidates, (row) => row.name === value.trim());
+    return pick(candidates, (row) => row.name === ref.name);
   }
 
   /** Sorted like the server's `ORDER BY p.name NULLS FIRST, l.name, l.id` (`COLLATE "C"`). */

@@ -26,6 +26,7 @@ import { workspaceGet, workspaceUpdate } from './workspace.js';
 import { inviteCreate, inviteList, inviteRevoke } from './invite.js';
 import { userChangePassword, userMe, userUpdateProfile } from './profile.js';
 import { sessionList, sessionRevoke, sessionRevokeOthers } from './session.js';
+import { labelCreate, labelDelete, labelList, labelMoveToWorkspace, labelUpdate } from './label.js';
 import { statusCreate, statusDelete, statusList, statusReorder, statusUpdate } from './status.js';
 
 export * from './debug.js';
@@ -38,6 +39,7 @@ export * from './invite.js';
 export * from './profile.js';
 export * from './session.js';
 export * from './status.js';
+export * from './label.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -87,6 +89,13 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   statusUpdate,
   statusReorder,
   statusDelete,
+  // Create, edit, move, then delete: the examples run in this order on one seed, and each acts
+  // on the label the one before it made (SPEC-010 §6).
+  labelList,
+  labelCreate,
+  labelUpdate,
+  labelMoveToWorkspace,
+  labelDelete,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

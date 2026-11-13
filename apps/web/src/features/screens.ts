@@ -11,6 +11,7 @@ import {
   ResetScreen,
 } from './account/AccountScreens.js';
 import { InviteScreen } from './invites/InviteScreen.js';
+import { TeamLabelsScreen, WorkspaceLabelsScreen } from './labels/LabelsScreen.js';
 import { MembersScreen } from './members/MembersScreen.js';
 import { WorkflowScreen } from './statuses/WorkflowScreen.js';
 import { TeamGeneralScreen } from './teams/TeamGeneralScreen.js';
@@ -35,4 +36,6 @@ export const SCREENS: ScreenRegistry = {
   'settings/account/profile': ProfileScreen,
   'settings/account/security': SecurityScreen,
   'settings/teams/workflow': WorkflowScreen,
+  'settings/teams/labels': TeamLabelsScreen,
+  'settings/labels': WorkspaceLabelsScreen,
 };

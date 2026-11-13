@@ -73,14 +73,15 @@ describe('AC-15: admin-only settings', () => {
 
   it('never lists admin sections in a Member’s nav', async () => {
     const titles = (admin: boolean | undefined) => settingsNav(admin).map((s) => s.title);
-    expect(titles(false)).toEqual(['Profile', 'Preferences', 'Security', 'Teams']);
-    expect(titles(undefined)).toEqual(['Profile', 'Preferences', 'Security', 'Teams']);
+    expect(titles(false)).toEqual(['Profile', 'Preferences', 'Security', 'Labels', 'Teams']);
+    expect(titles(undefined)).toEqual(['Profile', 'Preferences', 'Security', 'Labels', 'Teams']);
     expect(titles(true)).toEqual([
       'Profile',
       'Preferences',
       'Security',
       'Workspace',
       'Members',
+      'Labels',
       'Teams',
     ]);
     const html = await render(SETTINGS.profile, false);

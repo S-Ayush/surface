@@ -127,6 +127,12 @@ export interface PermissionPredicates {
   canSee(entity: ResolvedRef | undefined): boolean;
   /** The actor owns the entity (`creatorId` unless another field is named). */
   owner(entity: ResolvedRef | undefined, field?: string): boolean;
+  /**
+   * The actor's API key, if any, covers every team (permissions §3.5): a key narrowed by
+   * `teamIds` fails it. Workspace-wide changes (workspace labels) need it, because they affect
+   * teams the key can't see.
+   */
+  allTeamsKey(): boolean;
 }
 
 /** Predicates bound to an actor, plus who would have passed the ones that failed. */
@@ -137,11 +143,14 @@ export interface BoundPredicates {
    * "members of Engineering"). Used to build the `FORBIDDEN` reason.
    */
   allowedWho(): readonly string[];
+  /** A complete `FORBIDDEN` reason a failed predicate gave in place of "Only … can …", if any. */
+  reason(): string | undefined;
 }
 
 /** Binds the predicate helper `p` to an actor. Use a fresh binding per check. */
 export function bindPredicates(actor: Actor): BoundPredicates {
   const who: string[] = [];
+  let fixedReason: string | undefined;
   const system = actor.kind === 'system';
 
   /** Records `phrase` when the check fails, and returns the check. */
@@ -177,8 +186,14 @@ export function bindPredicates(actor: Actor): BoundPredicates {
         isUser && every(entity, (row) => row[field] === actor.userId),
         field === 'creatorId' ? 'its creator' : 'its owner',
       ),
+    allTeamsKey: () => {
+      if (system || actor.apiKey === undefined || actor.apiKey.teamIds.length === 0) return true;
+      fixedReason ??=
+        'This API key is limited to some teams. Changing workspace labels needs a key for all teams.';
+      return false;
+    },
   };
-  return { p, allowedWho: () => [...who] };
+  return { p, allowedWho: () => [...who], reason: () => fixedReason };
 }
 
 function isRow(ref: ResolvedRef): ref is RefEntity {
