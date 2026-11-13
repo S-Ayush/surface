@@ -26,6 +26,8 @@ export type LabelRowProps = {
   readonly canEdit: boolean;
   /** "Move to workspace…" is offered (a team label or group that sits in no group). */
   readonly canMove: boolean;
+  /** The label's group is archived: it can't be unarchived alone (E14). */
+  readonly groupArchived?: boolean;
   /** The row the listbox's roving tab stop is on. */
   readonly active: boolean;
   readonly onFocus: () => void;
@@ -46,6 +48,7 @@ export function LabelRow({
   expanded,
   canEdit,
   canMove,
+  groupArchived = false,
   active,
   onFocus,
   onToggle,
@@ -99,19 +102,26 @@ export function LabelRow({
           },
         ]
       : []),
-    label.archived
-      ? {
-          type: 'item' as const,
-          label: 'Unarchive',
-          icon: <ArchiveRestore size={16} />,
-          onSelect: onUnarchive,
-        }
-      : {
-          type: 'item' as const,
-          label: 'Archive…',
-          icon: <Archive size={16} />,
-          onSelect: onArchive,
-        },
+    // An archived label of an archived group stays until the group is unarchived (E14).
+    ...(label.archived
+      ? groupArchived
+        ? []
+        : [
+            {
+              type: 'item' as const,
+              label: 'Unarchive',
+              icon: <ArchiveRestore size={16} />,
+              onSelect: onUnarchive,
+            },
+          ]
+      : [
+          {
+            type: 'item' as const,
+            label: 'Archive…',
+            icon: <Archive size={16} />,
+            onSelect: onArchive,
+          },
+        ]),
     { type: 'item' as const, label: 'Delete…', icon: <Trash2 size={16} />, onSelect: onDelete },
   ];
   return (
@@ -122,7 +132,6 @@ export function LabelRow({
       data-shortcut-scope="settings-row"
       {...{ [LABEL_ROW_ATTRIBUTE]: label.id }}
       data-depth={depth}
-      data-archived={label.archived || undefined}
       className={styles.row}
       onFocus={onFocus}
     >
@@ -146,7 +155,9 @@ export function LabelRow({
         aria-hidden="true"
         style={{ backgroundColor: `var(--label-${label.color})` }}
       />
-      <span className={styles.name}>{label.name}</span>
+      <span className={styles.name}>
+        {label.groupName === undefined ? label.name : `${label.groupName}/${label.name}`}
+      </span>
       {label.isGroup && canEdit ? (
         <select
           className={styles.select}

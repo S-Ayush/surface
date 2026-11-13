@@ -329,7 +329,15 @@ async function setArchived(
   const label = await lockedLabel(access, input.label.id, input.label.teamId);
   // Unarchiving relies on the group's state: re-read it FOR KEY SHARE (§4.4). The scope lock
   // already serialises every label operation of the scope, so the plan sees the same rows.
-  if (!archive && label.parentId !== null) await sharedGroup(access, label.parentId, label.teamId);
+  if (!archive && label.parentId !== null) {
+    const group = await access.shareLabel(label.parentId);
+    if (!group || group.teamId !== label.teamId) {
+      throw new SurfaceError(
+        'CONFLICT',
+        'That label’s group was deleted or moved. Reload and try again.',
+      );
+    }
+  }
   const scopeLabels = await access.scopeLabels(label.teamId);
   const plan = archive
     ? labelArchivePlan(scopeLabels, label)

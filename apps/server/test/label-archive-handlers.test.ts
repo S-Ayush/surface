@@ -8,9 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   labelArchive,
-  labelCreate,
   labelUnarchive,
-  labelUpdate,
   type OptimisticStore,
   type StoreRow,
 } from '@surface/operations';
@@ -77,6 +75,15 @@ describe('label.archive (AC-11)', () => {
     expect(m.rows.get(old.id)?.archivedAt).toEqual(new Date('2026-01-01'));
     expect(m.writes).toHaveLength(2);
     expect(m.writes.map((w) => w.id)).toEqual(m.writes.map((w) => w.id).sort());
+  });
+
+  it('archiving an archived group does not archive a label that is still live', async () => {
+    const m = memoryLabels();
+    const group = m.add({ name: 'Size', isGroup: true, archivedAt: NOW });
+    m.add({ name: 'Small', parentId: group.id });
+    await archive(m, group);
+    expect(m.writes).toEqual([]);
+    expect(live(m, 'Small')).toBe(true);
   });
 
   it('archiving an archived label changes nothing and writes nothing', async () => {
@@ -170,6 +177,16 @@ describe('label.unarchive (AC-11, E14)', () => {
     await unarchive(m, group);
     expect(['Size', 'Small', 'Large'].every((n) => live(m, n))).toBe(true);
     expect(m.writes).toHaveLength(2);
+  });
+
+  it('unarchiving a live group does not bring back a label archived on its own (SPEC-010 §6)', async () => {
+    const m = memoryLabels();
+    const group = m.add({ name: 'Area', isGroup: true });
+    m.add({ name: 'Web', parentId: group.id, archivedAt: NOW });
+    const done = await unarchive(m, group);
+    expect(done.archivedAt).toBeNull();
+    expect(m.writes).toEqual([]);
+    expect(live(m, 'Web')).toBe(false);
   });
 
   it('unarchiving a label that is not archived changes nothing', async () => {
@@ -287,18 +304,26 @@ describe('optimistic equals the server (AC-16)', () => {
     }
   });
 
-  it('predicts nothing for E14 and for an unknown label, like the server refuses', () => {
+  it('throws the E14 refusal for a label in an archived group, and predicts nothing for an unknown label', () => {
     const m = memoryLabels();
     const group = m.add({ name: 'Size', isGroup: true, archivedAt: NOW });
     const small = m.add({ name: 'Small', parentId: group.id, archivedAt: NOW });
     const store = storeOf(m);
-    labelUnarchive.optimistic?.(store, { label: small.id, team: 'ENG' });
+    expect(() => labelUnarchive.optimistic?.(store, { label: small.id, team: 'ENG' })).toThrow(
+      'The Size group is archived. Unarchive the group first.',
+    );
     labelArchive.optimistic?.(store, { label: randomUUID(), team: 'ENG' });
     expect(archivedOf(store.rows.get(small.id))).not.toBeNull();
   });
 
-  it('keeps label.create and label.update unchanged by the archive operations', () => {
-    expect(labelCreate.name).toBe('label.create');
-    expect(labelUpdate.name).toBe('label.update');
+  it('predicts nothing for a group already in the wanted state, like the server', async () => {
+    const m = memoryLabels();
+    const live = m.add({ name: 'Area', isGroup: true });
+    m.add({ name: 'Web', parentId: live.id, archivedAt: NOW });
+    const store = storeOf(m);
+    labelUnarchive.optimistic?.(store, { label: live.id, team: 'ENG' });
+    expect([...store.rows.values()].map((r) => archivedOf(r))).toEqual([null, NOW.getTime()]);
+    await unarchive(m, live);
+    expect(m.writes).toEqual([]);
   });
 });

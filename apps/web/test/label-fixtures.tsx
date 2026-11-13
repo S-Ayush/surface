@@ -19,6 +19,7 @@ import { ShortcutProvider } from '../src/shortcuts/ShortcutProvider.js';
 
 const AT = '2026-11-13T10:00:00.000Z';
 export const TEAM = '0192f0c1-7e5a-7b3c-9d4e-0000000000e1';
+export const RETIRED = '0192f0c1-7e5a-7b3c-9d4e-0000000000a9';
 export const SIZE = '0192f0c1-7e5a-7b3c-9d4e-0000000000a3';
 
 const team = {
@@ -67,6 +68,8 @@ const LABELS = [
   label('Bug', { teamId: null }),
   label('Feature', { teamId: null }),
   label('Archived one', { teamId: null }),
+  label('Retired', { teamId: null, id: RETIRED, isGroup: true }),
+  label('Old size', { teamId: null, parentId: RETIRED }),
 ];
 
 export class FakeApp extends AppModel {
@@ -75,6 +78,7 @@ export class FakeApp extends AppModel {
   constructor(
     private readonly memberOf: readonly string[],
     private readonly role: 'admin' | 'member' = 'member',
+    dispatch?: (op: { name: string }, input: unknown) => Promise<unknown>,
   ) {
     const unused = () => Promise.reject(new Error('unused'));
     super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
@@ -85,11 +89,17 @@ export class FakeApp extends AppModel {
         User,
         [{ id: 'u-ada', name: 'Ada', displayName: 'ada', email: 'a@example.com', active: true }],
       ],
-      [Label, LABELS.map((l) => (l.name === 'Archived one' ? { ...l, $archived: true } : l))],
+      [
+        Label,
+        LABELS.map((l) =>
+          ['Archived one', 'Retired', 'Old size'].includes(l.name) ? { ...l, $archived: true } : l,
+        ),
+      ],
     ]);
     this.#store = {
       status: 'ready',
       connection: 'online',
+      ...(dispatch === undefined ? {} : { dispatch }),
       pool: {
         all: (model: unknown) => byModel.get(model) ?? [],
         get: (model: unknown, id: string) =>

@@ -229,13 +229,15 @@ function withMembers(scopeLabels: readonly LabelFacts[], label: LabelFacts): Lab
 
 /**
  * What `label.archive` archives (AC-11, D26): the label, or a group and all its labels, keeping
- * only the rows not archived yet, so archiving an archived label changes nothing. A label inside
- * a group can be archived alone.
+ * only the rows not archived yet. Archiving an archived label changes nothing, not even the
+ * members of an archived group. A label inside a group can be archived alone.
  */
 export function labelArchivePlan(
   scopeLabels: readonly LabelFacts[],
   label: LabelFacts,
 ): LabelArchivePlan {
+  // A named label already archived changes nothing, a group's members included (SPEC-010 §6).
+  if (isArchived(label)) return { ok: true, changing: [] };
   return { ok: true, changing: withMembers(scopeLabels, label).filter((l) => !isArchived(l)) };
 }
 
@@ -248,7 +250,9 @@ export function labelUnarchivePlan(
   scopeLabels: readonly LabelFacts[],
   label: LabelFacts,
 ): LabelArchivePlan {
-  if (!label.isGroup && label.parentId !== null && isArchived(label)) {
+  // A named label that is not archived changes nothing, a group's members included.
+  if (!isArchived(label)) return { ok: true, changing: [] };
+  if (!label.isGroup && label.parentId !== null) {
     const group = scopeLabels.find((l) => l.id === label.parentId);
     if (group !== undefined && isArchived(group)) {
       return {

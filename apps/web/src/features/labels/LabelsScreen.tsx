@@ -408,7 +408,7 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
           if (!open) setArchiving(undefined);
         }}
         title={`Archive label "${archiving?.name ?? ''}"?`}
-        description="This label will no longer be available to apply to issues. Issues with the label already applied will remain unchanged."
+        description={`This label will no longer be available to apply to issues. Issues with the label already applied will remain unchanged.${archiving?.isGroup === true ? ' Its labels are archived too.' : ''}`}
         size="sm"
         footer={
           <>

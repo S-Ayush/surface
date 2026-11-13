@@ -25,6 +25,8 @@ export type LabelItem = {
   /** Groups only: single-select. */
   readonly exclusive: boolean;
   readonly archived: boolean;
+  /** Set on an archived label of a live group when the Archived section lists it on its own. */
+  readonly groupName?: string;
   readonly createdAt: string;
 };
 
@@ -58,9 +60,12 @@ export function allInScope(all: readonly LabelItem[], scope: LabelsScope): Label
 export function archivedEntries(items: readonly LabelItem[], filter: string): LabelEntry[] {
   const archived = items.filter((l) => l.archived);
   const ids = new Set(archived.filter((l) => l.isGroup).map((l) => l.id));
-  const flat = archived.map((l) =>
-    l.parentId !== null && !ids.has(l.parentId) ? { ...l, parentId: null } : l,
-  );
+  const flat = archived.map((l) => {
+    if (l.parentId === null || ids.has(l.parentId)) return l;
+    // Its group is live, so it stands alone here: name the group so two "Small" differ.
+    const group = items.find((g) => g.id === l.parentId);
+    return { ...l, parentId: null, ...(group === undefined ? {} : { groupName: group.name }) };
+  });
   return labelEntries(flat, filter);
 }
 
@@ -231,9 +236,14 @@ export function planNewGroup(
   return { ok: true, steps: [{ id: newId(), name: trimmed, isGroup: true }] };
 }
 
-/** The groups a label can move into: live groups of its scope (§3.2), by name. */
-export function groupChoices(items: readonly LabelItem[]): LabelItem[] {
-  return items.filter((l) => l.isGroup && l.parentId === null && !l.archived).sort(byName);
+/**
+ * The groups a label can move into: live groups of its scope (§3.2), by name, plus the group it
+ * is in now (`current`) even when archived, as a selected value (§4.2).
+ */
+export function groupChoices(items: readonly LabelItem[], current?: string | null): LabelItem[] {
+  return items
+    .filter((l) => l.isGroup && l.parentId === null && (!l.archived || l.id === current))
+    .sort(byName);
 }
 
 /** The text of a date as the table shows it: the day, or "—". */

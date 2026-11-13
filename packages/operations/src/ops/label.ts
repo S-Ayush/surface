@@ -4,9 +4,9 @@
  * some teams (permissions §3.5). A private team's labels are invisible to everyone else, so a
  * reference to one is `NOT_FOUND` before any permission check.
  *
- * `label.archive` and `label.unarchive` are PLAN-010 S6 (archive state travels as `A`/`V`, SPEC-011
- * §5.5), and `label.usage` is S5. The deleted
- * label's id stays in issues' `labelIds` until S5 rewrites them: no issue table exists yet.
+ * `label.archive` and `label.unarchive` are PLAN-010 S6 (archive state travels as `A`/`V`,
+ * SPEC-011 §5.5), and `label.usage` is S5. The deleted label's id stays in issues' `labelIds`
+ * until S5 rewrites them: no issue table exists yet.
  *
  * Optimistic updates call the same `label*Problem` functions as the server, so the client
  * predicts what the handlers commit.
@@ -401,7 +401,8 @@ function archiveOptimistic(
     const scope = label && scopeOfLabel(store, label);
     if (label === undefined || scope === undefined) return;
     const result = plan(scope.labels, label);
-    if (!result.ok) return;
+    // The server refuses it too (E14). Throwing drops this layer, so nothing shows meanwhile.
+    if (!result.ok) throw new Error(result.problem.message);
     const at = store.now.toISOString();
     for (const row of result.changing) {
       if (archive) store.archive('Label', row.id);
@@ -433,7 +434,7 @@ export const labelUnarchive = defineOperation({
   domain: 'label',
   summary: 'Unarchive a label or label group',
   description:
-    'Makes an archived label available again. Unarchiving a label group unarchives all its labels too. A label in an archived group stays archived until the group is unarchived. Unarchiving a label that is not archived changes nothing.',
+    'Makes an archived label available again. Unarchiving a label group unarchives all its labels too. A label in an archived group stays archived until the group is unarchived. Unarchiving a label that is not archived changes nothing. Name a team label by name together with team, or use its id.',
   keywords: ['unarchive label', 'restore label', 'bring back label', 'unarchive label group'],
   input: z.object({ label: LabelRef, team: TeamRef.optional() }),
   output: LabelSchema,

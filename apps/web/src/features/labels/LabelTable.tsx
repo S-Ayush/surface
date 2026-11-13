@@ -61,7 +61,7 @@ function archivedCount(entries: readonly LabelEntry[]): number {
 
 export function LabelTable(props: LabelTableProps) {
   const { entries, editing, canEdit, canMove, tabStop, filtering } = props;
-  const row = (label: LabelItem, depth: 0 | 1, isExpanded?: boolean) =>
+  const row = (label: LabelItem, depth: 0 | 1, isExpanded?: boolean, groupArchived = false) =>
     editing === label.id ? (
       <LabelForm
         key={label.id}
@@ -79,6 +79,7 @@ export function LabelTable(props: LabelTableProps) {
         {...(isExpanded === undefined ? {} : { expanded: isExpanded })}
         canEdit={canEdit}
         canMove={canMove && depth === 0}
+        groupArchived={groupArchived}
         active={label.id === tabStop}
         onFocus={() => props.onFocusRow(label.id)}
         onToggle={() => props.onToggle(label.id)}
@@ -97,28 +98,31 @@ export function LabelTable(props: LabelTableProps) {
     return (
       <div key={label.id} role="presentation">
         {row(label, 0, label.isGroup ? open : undefined)}
-        {open && children.map((child) => row(child, 1))}
+        {open && children.map((child) => row(child, 1, undefined, label.archived))}
       </div>
     );
   };
   return (
-    <div
-      role="listbox"
-      aria-label={props.ariaLabel}
-      className={styles.list}
-      onKeyDown={props.onKeyDown}
-    >
-      <div className={styles.header} aria-hidden="true">
-        <span className={styles.headerName}>Name</span>
-        <span className={styles.headerDescription}>Description</span>
-        <span className={styles.column}>Used in</span>
-        <span className={styles.column}>Issues</span>
-        <span className={styles.column}>Last applied</span>
-        <span className={styles.column}>Created</span>
+    <>
+      <div
+        role="listbox"
+        aria-label={props.ariaLabel}
+        className={styles.list}
+        onKeyDown={props.onKeyDown}
+      >
+        <div className={styles.header} aria-hidden="true">
+          <span className={styles.headerName}>Name</span>
+          <span className={styles.headerDescription}>Description</span>
+          <span className={styles.column}>Used in</span>
+          <span className={styles.column}>Issues</span>
+          <span className={styles.column}>Last applied</span>
+          <span className={styles.column}>Created</span>
+        </div>
+        {entries.map(renderEntry)}
       </div>
-      {entries.map(renderEntry)}
+      {/* Outside the listbox, whose only children are rows; a native button, so Tab and Enter work. */}
       {props.archived.length > 0 && (
-        <div role="presentation">
+        <section aria-label="Archived labels">
           <button
             type="button"
             className={styles.archivedToggle}
@@ -132,9 +136,18 @@ export function LabelTable(props: LabelTableProps) {
             />
             Archived ({archivedCount(props.archived)})
           </button>
-          {props.archivedOpen && props.archived.map(renderEntry)}
-        </div>
+          {props.archivedOpen && (
+            <div
+              role="listbox"
+              aria-label={`Archived ${props.ariaLabel}`}
+              className={styles.list}
+              onKeyDown={props.onKeyDown}
+            >
+              {props.archived.map(renderEntry)}
+            </div>
+          )}
+        </section>
       )}
-    </div>
+    </>
   );
 }

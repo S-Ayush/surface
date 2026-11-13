@@ -259,6 +259,15 @@ describe('labelArchivePlan and labelUnarchivePlan (AC-11, D26, E14)', () => {
     expect(names(labelUnarchivePlan(all, group))).toEqual(['Size', 'Small']);
   });
 
+  it('changes nothing when the named label is already in the wanted state, members included', () => {
+    const live = label({ name: 'Area', isGroup: true });
+    const web = label({ name: 'Web', parentId: live.id, archivedAt: AT });
+    expect(names(labelUnarchivePlan([live, web], live))).toEqual([]);
+    const old = label({ name: 'Size', isGroup: true, archivedAt: AT });
+    const small = label({ name: 'Small', parentId: old.id });
+    expect(names(labelArchivePlan([old, small], old))).toEqual([]);
+  });
+
   it('refuses to unarchive a label whose group is archived (E14), and allows it when the group is live', () => {
     const group = label({ name: 'Size', isGroup: true, archivedAt: AT });
     const small = label({ name: 'Small', parentId: group.id, archivedAt: AT });

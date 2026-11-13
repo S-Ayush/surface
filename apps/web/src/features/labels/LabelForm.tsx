@@ -86,7 +86,7 @@ export function LabelForm({ label, scope, scopeLabels, onSubmit, onCancel }: Lab
     if (refusal !== undefined) setError(refusal);
   };
 
-  const choices = groupChoices(scopeLabels).filter((g) => g.id !== label.id);
+  const choices = groupChoices(scopeLabels, label.parentId).filter((g) => g.id !== label.id);
   return (
     <form
       className={styles.form}
@@ -123,7 +123,7 @@ export function LabelForm({ label, scope, scopeLabels, onSubmit, onCancel }: Lab
               <option value="">No group</option>
               {choices.map((g) => (
                 <option key={g.id} value={g.id}>
-                  {g.name}
+                  {g.archived ? `${g.name} (archived)` : g.name}
                 </option>
               ))}
             </select>
