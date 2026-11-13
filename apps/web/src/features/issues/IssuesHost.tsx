@@ -1,6 +1,7 @@
 // The composer's host (SPEC-012 §3.1, §3.2; PLAN-012 S5), mounted once in the shell
 // (`SHELL_HOSTS`): it registers `issue:create` and `nav:drafts`, decides what the composer opens
-// with (context, a group's `+`, a draft, a rejected create), asks "Save as draft?" on close, and
+// with (context, a group's `+`, a draft, a rejected create), asks "Save as draft?" on close (and
+// "Replace the ENG draft?" before **Save** would overwrite another draft of the team), and
 // creates the issue: toast, announcement, the team's draft cleared, and on a rejection the toast
 // with **Restore in composer** (and the replace prompt, E20).
 import { uuidv7 } from '@surface/domain';
@@ -40,6 +41,9 @@ import { routeTeamKey } from './IssueNavHost.js';
 export const NO_TEAM_MESSAGE = 'Create a team first. You can do it in Settings → Teams.';
 export const REPLACE_QUESTION = 'Replace what is in the composer with the rejected issue?';
 const CREATE_MORE_KEY = 'surface.composer.createMore';
+
+/** §3.2: asked when **Save** would replace another saved draft of the team. */
+export const replaceDraftQuestion = (teamKey: string) => `Replace the ${teamKey} draft?`;
 
 function storage(): Storage | undefined {
   try {
@@ -97,6 +101,8 @@ export function IssuesHost() {
     readonly adjusted: Adjusted;
     readonly reshow: () => void;
   } | null>(null);
+  /** The team whose saved draft **Save** would replace, while the replace prompt asks (§3.2). */
+  const [clash, setClash] = useState<string | null>(null);
   const [createMore, setCreateMore] = useState(readCreateMore);
   // The handlers below run from commands and toasts, after renders: they read the latest session.
   const current = useRef<Session | null>(null);
@@ -128,6 +134,7 @@ export function IssuesHost() {
     current.current = null;
     setSession(null);
     setAsking(false);
+    setClash(null);
   }, []);
 
   const noTeam = useCallback(() => {
@@ -261,7 +268,22 @@ export function IssuesHost() {
     }
   };
 
+  /** **Save**: the session's content becomes its team's draft, and the draft it came from moves. */
+  const saveDraft = (now: Session) => {
+    const store = app.readyStore;
+    if (store !== null) {
+      const adapter = draftAdapterFor(store);
+      adapter.saveComposer(now.state.teamId, draftData(now.state));
+      // The draft moved with the composer to another team: one draft, not two.
+      if (now.draftTeamId !== undefined && now.draftTeamId !== now.state.teamId) {
+        adapter.discardComposer(now.draftTeamId);
+      }
+    }
+    close();
+  };
+
   const store = app.readyStore;
+  const clashKey = world?.teams.find((t) => t.id === clash)?.key ?? 'team';
   return (
     <>
       {session !== null && world !== null && (
@@ -321,18 +343,54 @@ export function IssuesHost() {
               variant="primary"
               onClick={() => {
                 const now = current.current;
-                if (store !== null && now !== null) {
-                  const adapter = draftAdapterFor(store);
-                  adapter.saveComposer(now.state.teamId, draftData(now.state));
-                  // The draft moved with the composer to another team: one draft, not two.
-                  if (now.draftTeamId !== undefined && now.draftTeamId !== now.state.teamId) {
-                    adapter.discardComposer(now.draftTeamId);
-                  }
+                if (store === null || now === null) return close();
+                const target = now.state.teamId;
+                // §3.2: Save never replaces another draft of the team silently (a team change, or a
+                // hidden team's draft opened in the default team, E7).
+                if (
+                  target !== now.draftTeamId &&
+                  draftAdapterFor(store).composerDraft(target) !== undefined
+                ) {
+                  setAsking(false);
+                  setClash(target);
+                  return;
                 }
-                close();
+                saveDraft(now);
               }}
             >
               Save
+            </Button>
+          </>
+        }
+      />
+      <Dialog
+        open={clash !== null}
+        size="sm"
+        title={replaceDraftQuestion(clashKey)}
+        description="Its saved draft is deleted, and this one takes its place."
+        // Cancel and `Esc` go back to the composer with nothing lost.
+        onOpenChange={(next) => {
+          if (!next) setClash(null);
+        }}
+        footer={
+          <>
+            <Button
+              onClick={() => {
+                setClash(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const now = current.current;
+                setClash(null);
+                if (now === null) return close();
+                saveDraft(now);
+              }}
+            >
+              Replace
             </Button>
           </>
         }

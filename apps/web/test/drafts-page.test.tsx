@@ -4,7 +4,8 @@
 // PLAN-012 S5 (SPEC-012 §3.2, AC-3, E7, E18): the Drafts page lists composer drafts and unsent
 // comments, opens them, and deletes them from the row menu; a comment draft whose issue the
 // replica doesn't hold is asked about with `issue.get` while online (live shows; archived, deleted
-// or not found hides) and shows as "Issue not loaded" offline.
+// or NOT_FOUND hides, and is asked again on focus; any other answer, and offline, shows "Issue
+// not loaded").
 import { overlayManager } from '@surface/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { IssueApi } from '../src/features/issues/issue-api.js';
@@ -156,6 +157,85 @@ describe('the Drafts page', () => {
     expect(rows()).toEqual([expect.stringContaining('Issue not loaded')]);
   });
 
+  it('E18: a deleted issue hides; only NOT_FOUND among errors hides, others say "Issue not loaded"', async () => {
+    const [deleted, missing, unreachable, failing] = [id(511), id(512), id(513), id(514)];
+    const answers = new Map<string, Awaited<ReturnType<IssueApi['get']>>>([
+      [
+        deleted,
+        {
+          ok: true,
+          result: {
+            identifier: 'OPS-9',
+            title: 'In the bin',
+            archivedAt: null,
+            deletedAt: recent(3),
+          },
+        } as never,
+      ],
+      [missing, { ok: false, code: 'NOT_FOUND', message: 'No such issue.' }],
+      [unreachable, { ok: false, code: 'UNREACHABLE', message: 'The server can’t be reached.' }],
+      [failing, { ok: false, code: 'INTERNAL', message: 'Something went wrong.' }],
+    ]);
+    const app = new ComposerApp({
+      drafts: [deleted, missing, unreachable, failing].map((issueId, i) =>
+        draftRow({
+          kind: 'comment',
+          teamId: null,
+          issueId,
+          data: { text: doc(`draft ${String(i)}`) },
+          updatedAt: recent(i),
+        }),
+      ),
+    });
+    const api: IssueApi = {
+      get: (ref) =>
+        Promise.resolve(answers.get(ref) ?? { ok: false, code: 'NOT_FOUND', message: '' }),
+    };
+    mounted = await mountComposer(app, '/drafts', api);
+    await settle();
+    expect(rows()).toEqual([
+      expect.stringContaining('Issue not loaded'),
+      expect.stringContaining('Issue not loaded'),
+    ]);
+    expect(rows()[0]).toContain('draft 2');
+    expect(rows()[1]).toContain('draft 3');
+  });
+
+  it('E18: a hidden draft is asked about again on focus, and shows once its issue is restored', async () => {
+    const asked: string[] = [];
+    let restored = false;
+    const app = new ComposerApp({
+      drafts: [
+        draftRow({
+          kind: 'comment',
+          teamId: null,
+          issueId: REMOTE_MISSING,
+          data: { text: doc('Back') },
+        }),
+      ],
+    });
+    const api: IssueApi = {
+      get: (ref) => {
+        asked.push(ref);
+        return Promise.resolve(
+          restored
+            ? (answer('OPS-10', 'Restored one', false) as never)
+            : { ok: false, code: 'NOT_FOUND', message: 'No such issue.' },
+        );
+      },
+    };
+    mounted = await mountComposer(app, '/drafts', api);
+    await settle();
+    expect(rows()).toEqual([]);
+    restored = true;
+    await inAct(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    await settle();
+    expect(asked).toEqual([REMOTE_MISSING, REMOTE_MISSING]);
+    expect(rows()).toEqual([expect.stringContaining('OPS-10 Restored one')]);
+  });
+
   it('opening a composer draft opens the composer with it; a hidden team’s opens in the default team (E7)', async () => {
     const app = new ComposerApp({
       drafts: [draftRow({ teamId: HIDDEN_TEAM, data: { title: 'From a private team' } })],
@@ -185,6 +265,25 @@ describe('the Drafts page', () => {
       row?.click();
     });
     expect(mounted.path()).toBe('/issue/ENG-42/fix-login');
+  });
+
+  it('a comment draft older than 30 days isn’t listed, and is discarded after the render', async () => {
+    const app = new ComposerApp({
+      drafts: [
+        draftRow({
+          kind: 'comment',
+          teamId: null,
+          issueId: LIVE,
+          data: { text: doc('Too old') },
+          updatedAt: new Date(Date.now() - 31 * 24 * 60 * 60_000).toISOString(),
+        }),
+      ],
+      issues: [issueRow(LIVE, 42, 'Fix login')],
+    });
+    mounted = await mountComposer(app, '/drafts');
+    expect(rows()).toEqual([]);
+    expect(app.ops()).toEqual(['draft.discard']);
+    expect(app.dispatched[0]?.input).toEqual({ kind: 'comment', issueId: LIVE });
   });
 
   it('the row menu’s Delete draft sends draft.discard for it', async () => {

@@ -4,7 +4,8 @@
 // - discarding the same key as another user deletes nothing of the owner's;
 // - a draft for private team SEC, kept after its owner left SEC, holds only what the owner sent:
 //   its row carries no SEC group and nothing of SEC beyond the id the owner had, and SEC's other
-//   member never gets it.
+//   member never gets it;
+// - the executor's logs hold no draft text, saved or refused (CLAUDE.md rule 6).
 // Through the real path: the executor, the repo's `sync_log` and `NOTIFY`, the hub's catch-up and
 // `LISTEN`, the delta writer, a WebSocket, the bootstrap route, and the client's decoders.
 //
@@ -27,6 +28,7 @@ import {
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type { FastifyInstance } from 'fastify';
 import pg from 'pg';
+import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import type { Executor } from '../src/executor/execute.js';
@@ -376,5 +378,48 @@ describe('a draft for private team SEC after its owner left SEC', () => {
       actors['anaLeft'] ?? actorFor({ id: '' }),
     );
     expect(result).toMatchObject({ ok: true, result: { discarded: true } });
+  });
+});
+
+describe('logs (rule 6)', () => {
+  it('hold no draft title, description or comment text, saved or refused', async () => {
+    const logs = captureLogs();
+    const { executor: logged } = testExecutor(h.pool, {
+      log: pino({ level: 'trace' }, logs.stream),
+    });
+    const title = `Title in the logs ${randomUUID()}`;
+    const body = `Description in the logs ${randomUUID()}`;
+    const comment = `Comment in the logs ${randomUUID()}`;
+    const actor = actors['bob'] ?? actorFor({ id: '' });
+    const saved = await logged.execute(
+      'draft.save',
+      {
+        kind: 'composer',
+        teamId: h.teams.eng,
+        data: { ...EMPTY_COMPOSER_DRAFT, title, description: doc(body) },
+      },
+      actor,
+    );
+    expect(saved.ok).toBe(true);
+    const commented = await logged.execute(
+      'draft.save',
+      { kind: 'comment', issueId: ISSUE, data: { text: doc(comment) } },
+      actor,
+    );
+    expect(commented.ok).toBe(true);
+    // Refused: composer data under a comment key, so the input error path runs with the title.
+    const refused = await logged.execute(
+      'draft.save',
+      { kind: 'comment', issueId: ISSUE, data: { ...EMPTY_COMPOSER_DRAFT, title } },
+      actor,
+    );
+    expect(refused.ok).toBe(false);
+    // The executor logged each call, so what is missing below was left out, not unlogged.
+    expect(logs.lines.length).toBeGreaterThanOrEqual(3);
+    expect(logs.text()).toContain('draft.save');
+    for (const secret of [title, body, comment]) {
+      expect(logs.text()).not.toContain(secret);
+      if (!refused.ok) expect(refused.error.message).not.toContain(secret);
+    }
   });
 });

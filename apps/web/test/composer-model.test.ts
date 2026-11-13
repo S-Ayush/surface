@@ -312,6 +312,28 @@ describe('the payload and the draft (§3.1 item 6, §4.3)', () => {
     expect(stateFromCreateInput(world(), 'nonsense')).toBeUndefined();
   });
 
+  it('sameContent compares field by field: key order and label order don’t matter, values do', () => {
+    const description = { type: 'doc', content: [{ type: 'paragraph', attrs: { a: 1, b: 2 } }] };
+    const reordered = { content: [{ attrs: { b: 2, a: 1 }, type: 'paragraph' }], type: 'doc' };
+    const a = { ...state, labelIds: ['l-bug', 'l-front'], description };
+    expect(sameContent(a, { ...a, labelIds: ['l-front', 'l-bug'], description: reordered })).toBe(
+      true,
+    );
+    for (const change of [
+      { title: 'Fix it now' },
+      { teamId: 'des' },
+      { statusId: null },
+      { priority: 2 },
+      { assigneeId: null },
+      { labelIds: ['l-bug', 'l-front', 'l-x'] },
+      { estimate: 5 },
+      { dueDate: null },
+      { description: { type: 'doc', content: [] } },
+    ]) {
+      expect(sameContent(a, { ...a, ...change }), JSON.stringify(change)).toBe(false);
+    }
+  });
+
   it('a title is required; content is a title or a description', () => {
     expect(createProblem({ ...state, title: '   ' })).toBeDefined();
     expect(createProblem(state)).toBeUndefined();

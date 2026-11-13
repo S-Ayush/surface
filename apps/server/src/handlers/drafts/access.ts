@@ -56,11 +56,11 @@ export function draftAccess(ctx: HandlerContext): DraftAccess {
         );
       return row;
     },
-    async commentDraftsBeyond(userId, keep) {
+    async draftsBeyond(userId, kind, keep) {
       const rows = await tx
         .select({ id: drafts.id })
         .from(drafts)
-        .where(and(eq(drafts.userId, userId), eq(drafts.kind, 'comment')))
+        .where(and(eq(drafts.userId, userId), eq(drafts.kind, kind)))
         .orderBy(desc(drafts.updatedAt), desc(drafts.id))
         .offset(keep);
       return rows.map((row) => row.id);

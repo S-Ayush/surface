@@ -5,7 +5,7 @@
 import { Draft, EMPTY_COMPOSER_DRAFT } from '@surface/domain/model';
 import { describe, expect, it } from 'vitest';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
-import { commentDraftsOverLimit, draftDiscard, draftKeyProblem, draftSave } from './draft.js';
+import { draftsOverLimit, draftDiscard, draftKeyProblem, draftSave } from './draft.js';
 
 const ME = '0192f0c1-7e5a-7b3c-9d4e-000000000001';
 const OTHER = '0192f0c1-7e5a-7b3c-9d4e-000000000002';
@@ -188,6 +188,30 @@ describe('draft.save optimistic (AC-3)', () => {
     // Composer drafts don't count.
     expect(rows.has(NEW_ID)).toBe(true);
   });
+
+  it('deletes the oldest composer draft when a 51st is saved; comment drafts don’t count', () => {
+    const composers = Array.from({ length: 50 }, (_, n) =>
+      draft({
+        id: `0192f0c1-7e5a-7b3c-9d4e-${String(2000 + n).padStart(12, '0')}`,
+        teamId: `0192f0c1-7e5a-7b3c-9d4e-${String(6000 + n).padStart(12, '0')}`,
+        updatedAt: new Date(Date.UTC(2026, 10, 1, 0, n)).toISOString(),
+      }),
+    );
+    const comment = draft({
+      id: '0192f0c1-7e5a-7b3c-9d4e-0000000000d5',
+      kind: 'comment',
+      teamId: null,
+      issueId: ISSUE,
+      data: { text: doc('kept') },
+      updatedAt: new Date(Date.UTC(2026, 9, 1)).toISOString(),
+    });
+    const { store, rows } = fakeStore([...composers, comment]);
+    save(store, { id: NEW_ID, kind: 'composer', teamId: ENG, data: composerData });
+    expect([...rows.values()].filter((r) => r['kind'] === 'composer')).toHaveLength(50);
+    expect(rows.has(String(composers[0]?.['id']))).toBe(false);
+    expect(rows.has(NEW_ID)).toBe(true);
+    expect(rows.has(String(comment['id']))).toBe(true);
+  });
 });
 
 describe('draft.discard optimistic', () => {
@@ -211,13 +235,13 @@ describe('draft.discard optimistic', () => {
   });
 });
 
-describe('commentDraftsOverLimit', () => {
+describe('draftsOverLimit', () => {
   it('orders by time, not by how the offset is written, then by id', () => {
     const rows = [
       { id: 'b', updatedAt: '2026-11-13T10:00:00.000+00:00' },
       { id: 'a', updatedAt: '2026-11-13T10:00:00.000Z' },
       { id: 'c', updatedAt: '2026-11-13T09:00:00.000Z' },
     ];
-    expect(commentDraftsOverLimit(rows, 1).map((r) => r.id)).toEqual(['a', 'c']);
+    expect(draftsOverLimit(rows, 1).map((r) => r.id)).toEqual(['a', 'c']);
   });
 });

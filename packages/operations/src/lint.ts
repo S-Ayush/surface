@@ -184,6 +184,13 @@ function optimisticForUi(op: AnyOperation, add: Add): void {
 }
 
 /**
+ * The only operations whose inputs may hold opaque ids (`opaqueIds`, SPEC-003 §3.1): ids the
+ * server stores without resolving, so it never checks or reveals what they name. A draft's team,
+ * issue and choices (SPEC-012 §4.3, D23). Adding one needs review and an ADR (ADR-0025).
+ */
+export const OPAQUE_ID_OPERATIONS: readonly string[] = ['draft.save', 'draft.discard'];
+
+/**
  * A raw uuid names another entity in a form people and AI can't type; reference types accept
  * keys, identifiers and "me" too (§4). Exempt: a `create*` op's own top-level `id` (a
  * client-generated id, E7), internal ops, which only tests call, and `systemOnly` ops, which
@@ -192,6 +199,14 @@ function optimisticForUi(op: AnyOperation, add: Add): void {
 function referenceTypes(op: AnyOperation, add: Add): void {
   if (!isPublicOperation(op)) return;
   const ownId = verbOf(op).startsWith('create') ? 'id' : undefined;
+  // ADR-0025: only reviewed operations may skip resolution. Listing one more is a decision.
+  if (op.opaqueIds !== undefined && !OPAQUE_ID_OPERATIONS.includes(op.name)) {
+    add(
+      4,
+      'has opaqueIds, which only the operations in OPAQUE_ID_OPERATIONS may use. Use reference types, or record why in an ADR (ADR-0025)',
+    );
+    return;
+  }
   const opaque = new Set(op.opaqueIds ?? []);
   const paths = rawUuidPaths(toJsonSchema(op.input, 'input'));
   for (const path of paths) {

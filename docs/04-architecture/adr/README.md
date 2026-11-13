@@ -26,5 +26,6 @@
 | [0022](0022-purge-content-unlogged.md) | Purging an issue logs no `D` for its content rows (exception to architecture rule 2) |
 | [0023](0023-document-migration-unlogged.md) | Document schema migrations rewrite synced rows without logging them (exception to architecture rule 2) |
 | [0024](0024-job-queues.md) | Job queue names and the M1 queues (supersedes the queue list of 0010) |
+| [0025](0025-opaque-draft-ids.md) | Opaque ids in draft operations (exception to registry rule 4) |
 
 Format: context → options → decision → consequences. An accepted ADR is never edited in substance; a new ADR supersedes it.

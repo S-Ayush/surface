@@ -1,10 +1,10 @@
 // PLAN-012 S5 (SPEC-012 §4.3, AC-3): the rules of `draft.save` and `draft.discard` on memory
-// fakes. Upserting twice makes one row; the 51st comment draft deletes the oldest; discarding a
+// fakes. Upserting twice makes one row; the 51st draft of a kind deletes the oldest; discarding a
 // missing draft succeeds; the owner is the actor; nothing reads a team or an issue, and neither
 // operation names a reference type, so the executor resolves nothing either. The SQL of the access
 // and the sync groups are covered by `draft-groups.int.test.ts` (leak test, not held).
 import { randomUUID } from 'node:crypto';
-import { userActor, systemActor } from '@surface/domain';
+import { userActor, systemActor, type ApiKeyScope } from '@surface/domain';
 import { EMPTY_COMPOSER_DRAFT } from '@surface/domain/model';
 import { draftDiscard, draftSave, toJsonSchema, type DraftKey } from '@surface/operations';
 import { describe, expect, it } from 'vitest';
@@ -65,10 +65,10 @@ function memoryDrafts(initial: readonly DraftRow[] = []) {
       calls.push('find');
       return Promise.resolve([...rows.values()].find((row) => matches(row, userId, key)));
     },
-    commentDraftsBeyond: (userId, keep) => {
+    draftsBeyond: (userId, kind, keep) => {
       calls.push('beyond');
       const newestFirst = [...rows.values()]
-        .filter((row) => row.userId === userId && row.kind === 'comment')
+        .filter((row) => row.userId === userId && row.kind === kind)
         .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || (a.id < b.id ? 1 : -1));
       return Promise.resolve(newestFirst.slice(keep).map((row) => row.id));
     },
@@ -127,7 +127,16 @@ describe('draft.save', () => {
       issueId: null,
       data: again,
     });
-    expect(m.calls).toEqual(['lock:me', 'find', 'insert:Draft', 'lock:me', 'find', 'update:Draft']);
+    expect(m.calls).toEqual([
+      'lock:me',
+      'find',
+      'insert:Draft',
+      'beyond',
+      'lock:me',
+      'find',
+      'update:Draft',
+      'beyond',
+    ]);
   });
 
   it('stores a comment draft under its issue, with no team', async () => {
@@ -163,6 +172,32 @@ describe('draft.save', () => {
     expect(m.rows.has(ids[0] ?? '')).toBe(false);
     expect(m.rows.has(ids[1] ?? '')).toBe(true);
     expect([...m.rows.values()].some((r) => r.kind === 'composer')).toBe(true);
+  });
+
+  it('keeps 50 composer drafts: the 51st deletes the oldest, comment drafts never count', async () => {
+    const m = memoryDrafts();
+    await saveDraft(m.access, m.repo, ME, {
+      key: { kind: 'comment', issueId: ISSUE },
+      data: { text: doc('kept') },
+      newId: randomUUID(),
+    });
+    const ids: string[] = [];
+    for (let n = 0; n < 50; n += 1) {
+      const row = await saveDraft(m.access, m.repo, ME, {
+        key: { kind: 'composer', teamId: randomUUID() },
+        data: { ...data, title: String(n) },
+        newId: randomUUID(),
+      });
+      ids.push(row.id);
+    }
+    expect([...m.rows.values()].filter((r) => r.kind === 'composer')).toHaveLength(50);
+    await saveDraft(m.access, m.repo, ME, { key: composer, data, newId: randomUUID() });
+    const composers = [...m.rows.values()].filter((r) => r.kind === 'composer');
+    expect(composers).toHaveLength(50);
+    expect(m.rows.has(ids[0] ?? '')).toBe(false);
+    expect(m.rows.has(ids[1] ?? '')).toBe(true);
+    expect(composers.some((r) => r.teamId === ENG)).toBe(true);
+    expect([...m.rows.values()].some((r) => r.kind === 'comment')).toBe(true);
   });
 
   it('never counts another user’s comment drafts', async () => {
@@ -209,8 +244,23 @@ describe('draft.discard', () => {
 });
 
 describe('the owner and the references', () => {
-  it('is the actor; an actor with no user (the system) is refused', () => {
+  it('is the user the actor acts for, through an API key or MCP too; the system is refused', () => {
     expect(draftOwner(userActor({ userId: ME, role: 'member', memberships: [] }))).toBe(ME);
+    const apiKey: ApiKeyScope = {
+      id: randomUUID(),
+      scope: 'read_write',
+      teamIds: [],
+      allowDestructive: false,
+    };
+    for (const kind of ['api', 'mcp'] as const) {
+      const actor = userActor({
+        userId: ME,
+        role: 'member',
+        memberships: [],
+        via: { kind, apiKey },
+      });
+      expect(draftOwner(actor)).toBe(ME);
+    }
     expect(() => draftOwner(systemActor())).toThrow(SurfaceError);
   });
 

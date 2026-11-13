@@ -1,8 +1,9 @@
 // The Drafts page (`/drafts`, `G` `D`; SPEC-012 §3.2): every composer draft (title, team, saved
 // time) and every unsent comment (issue identifier and title, first line, saved time), newest
 // first. A comment draft whose issue the replica doesn't hold is looked up with `issue.get` while
-// online: a live issue shows, an archived, deleted or unknown one is hidden; offline it shows as
-// "Issue not loaded" (E18). Each row's menu has **Delete draft**.
+// online: a live issue shows; an archived or deleted one, or `NOT_FOUND`, is hidden; any other
+// answer, and offline, shows as "Issue not loaded" (E18). A hidden answer is asked again when the
+// window regains focus, so a restored issue comes back. Each row's menu has **Delete draft**.
 import { issueIdentifier, issuePath } from '@surface/domain';
 import { docFirstLine, Issue, readComposerDraft, Team } from '@surface/domain/model';
 import { EmptyState, IconButton, Menu } from '@surface/ui';
@@ -15,15 +16,27 @@ import { useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
 import styles from './composer.module.css';
 import { openComposerWith } from './composer-request.js';
 import { draftAdapterFor, type DraftEntry } from './draft-adapter.js';
-import { useIssueApi } from './issue-api.js';
+import { useIssueApi, type IssueApi } from './issue-api.js';
 import { canonicalIssuePath } from './issue-url.js';
 import { agoText } from './issue-view.js';
 
 /** What `issue.get` said about an issue the replica doesn't hold. */
-type Remote =
+export type Remote =
   | { readonly kind: 'live'; readonly identifier: string; readonly title: string }
+  /** Archived, deleted or `NOT_FOUND`: the row hides until an answer says otherwise. */
   | { readonly kind: 'hidden' }
-  | { readonly kind: 'offline' };
+  /** Unreachable, or any other error: nothing is known, so the row says "Issue not loaded". */
+  | { readonly kind: 'unknown' };
+
+/** E18: only an answer that the issue is gone or not there hides a draft. */
+export function remoteOf(answer: Awaited<ReturnType<IssueApi['get']>>): Remote {
+  if (answer.ok) {
+    return answer.result.archivedAt === null && answer.result.deletedAt === null
+      ? { kind: 'live', identifier: answer.result.identifier, title: answer.result.title }
+      : { kind: 'hidden' };
+  }
+  return answer.code === 'NOT_FOUND' ? { kind: 'hidden' } : { kind: 'unknown' };
+}
 
 /** One row, as the page shows it; null when it is hidden (E18). */
 export interface DraftLine {
@@ -148,6 +161,26 @@ export function DraftsPage() {
     }, [app]),
   );
 
+  // §3.2: comment drafts older than 30 days aren't listed; they are discarded after the render.
+  useEffect(() => {
+    const store = app.readyStore;
+    if (store !== null) draftAdapterFor(store).expireOld();
+  }, [app, view]);
+
+  // E18: a hidden issue may be restored meanwhile, so coming back to the page asks again.
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    const again = () => {
+      if (document.visibilityState !== 'hidden') setRound((n) => n + 1);
+    };
+    window.addEventListener('focus', again);
+    document.addEventListener('visibilitychange', again);
+    return () => {
+      window.removeEventListener('focus', again);
+      document.removeEventListener('visibilitychange', again);
+    };
+  }, []);
+
   // E18: ask the server about comment drafts whose issue the replica doesn't hold, when online.
   const missing = view?.missing.join(',') ?? '';
   useEffect(() => {
@@ -157,20 +190,13 @@ export function DraftsPage() {
     for (const issueId of missing.split(',')) {
       void api.get(issueId).then((answer) => {
         if (cancelled) return;
-        const next: Remote = answer.ok
-          ? answer.result.archivedAt === null && answer.result.deletedAt === null
-            ? { kind: 'live', identifier: answer.result.identifier, title: answer.result.title }
-            : { kind: 'hidden' }
-          : answer.code === 'UNREACHABLE'
-            ? { kind: 'offline' }
-            : { kind: 'hidden' };
-        setRemote((before) => new Map(before).set(issueId, next));
+        setRemote((before) => new Map(before).set(issueId, remoteOf(answer)));
       });
     }
     return () => {
       cancelled = true;
     };
-  }, [missing, online, api]);
+  }, [missing, online, api, round]);
 
   const store = app.readyStore;
   if (view === null || store === null) return <PageHeader crumbs={['Drafts']} title="Drafts" />;

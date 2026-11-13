@@ -7,10 +7,11 @@
  * are opaque (`opaqueIds`, SPEC-012 D23), not reference types.
  *
  * Both are optimistic, so drafts save offline and queue like any change (E19). The optimistic
- * updates make the same choices as the handlers: the same key, the same 50-draft cap.
+ * updates make the same choices as the handlers: the same key, the same cap of 50 drafts of each
+ * kind.
  */
 import {
-  COMMENT_DRAFT_LIMIT,
+  DRAFT_LIMITS,
   CommentDraftData,
   ComposerDraftData,
   DRAFT_KINDS,
@@ -85,10 +86,11 @@ const text = (row: StoreRow | undefined, field: string): string | undefined => {
   return typeof value === 'string' ? value : undefined;
 };
 
-/** The comment drafts beyond the cap, oldest first: by `updatedAt`, then id (the handler's order). */
-export function commentDraftsOverLimit<
-  R extends { readonly id: string; readonly updatedAt: string },
->(drafts: readonly R[], limit: number = COMMENT_DRAFT_LIMIT): R[] {
+/** The drafts beyond `limit`, oldest first: by `updatedAt`, then id (the handler's order). */
+export function draftsOverLimit<R extends { readonly id: string; readonly updatedAt: string }>(
+  drafts: readonly R[],
+  limit: number,
+): R[] {
   // Instants compare as times (a wire row may write the offset as `Z` or `+00:00`); ids as the
   // server's `uuid` order, which is the lowercase text order.
   const newestFirst = [...drafts].sort(
@@ -109,7 +111,7 @@ export const draftSave = defineOperation({
   domain: 'draft',
   summary: 'Save a composer or comment draft',
   description:
-    'Saves your draft of a new issue in a team (kind composer, teamId) or of a comment on an issue (kind comment, issueId), replacing the one you had there. Drafts are yours only and sync to your devices. Saving a 51st comment draft deletes your oldest one.',
+    'Saves your draft of a new issue in a team (kind composer, teamId) or of a comment on an issue (kind comment, issueId), replacing the one you had there. Drafts are yours only and sync to your devices. You keep at most 50 of each kind: saving one more deletes your oldest of that kind.',
   keywords: ['save draft', 'keep draft', 'save issue for later', 'unsent comment'],
   input: z
     .object({
@@ -189,13 +191,15 @@ export const draftSave = defineOperation({
     } else {
       return;
     }
-    if (key.kind !== 'comment') return;
-    const comments = store.find('Draft', { userId: me, kind: 'comment' }).flatMap((row) => {
+    // 50 of each kind, like the handler (SPEC-012 §3.2, §4.3).
+    const sameKind = store.find('Draft', { userId: me, kind: key.kind }).flatMap((row) => {
       const id = text(row, 'id');
       const updatedAt = text(row, 'updatedAt');
       return id === undefined || updatedAt === undefined ? [] : [{ id, updatedAt }];
     });
-    for (const old of commentDraftsOverLimit(comments)) store.remove('Draft', old.id);
+    for (const old of draftsOverLimit(sameKind, DRAFT_LIMITS[key.kind])) {
+      store.remove('Draft', old.id);
+    }
   },
 });
 

@@ -1,9 +1,10 @@
 // PLAN-012 S5 (SPEC-012 §3.2, §4.3): the draft adapter over a fake dispatcher and fake timers.
-// AC-3 (save and discard, one composer draft per team, 30-day expiry, the 51st comment draft is
-// the server's and the optimistic upsert's job: `operations/src/ops/draft.test.ts` and
-// `server/test/draft-handlers.test.ts`), AC-21 and E19 (a draft saved offline is dispatched like
-// any operation, so it queues), E13 (the replica's latest row wins), AC-24 (rejected comment text).
+// AC-3 (save and discard, one composer draft per team, 30-day expiry retried after a failure; the
+// 51st draft of a kind is the server's and the optimistic upsert's job:
+// `operations/src/ops/draft.test.ts` and `server/test/draft-handlers.test.ts`), AC-21 and E19 (a
+// draft saved offline is dispatched like any operation, so it queues), E13 (the replica's latest row wins), AC-24 (rejected comment text).
 import type { DocNodeJSON } from '@surface/domain';
+import type { MutationOutcome } from '@surface/sync-client';
 import { observable, runInAction } from 'mobx';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -174,7 +175,7 @@ describe('comment drafts (§3.2)', () => {
     expect(sent).toHaveLength(1);
   });
 
-  it('shows the saved draft, and discards one older than 30 days when it is read', async () => {
+  it('shows the saved draft; one older than 30 days reads as none, and expireOld discards it once', () => {
     const fresh = row({ updatedAt: new Date(NOW - 29 * DAY).toISOString() });
     const old = row({
       issueId: OTHER_ISSUE,
@@ -183,14 +184,36 @@ describe('comment drafts (§3.2)', () => {
     const { adapter, sent } = setup([fresh, old]);
     expect(adapter.commentText(ISSUE)).toEqual(doc('saved'));
     expect(adapter.commentText(OTHER_ISSUE)).toBeUndefined();
-    expect(adapter.commentText(OTHER_ISSUE)).toBeUndefined();
-    // After the read, never during it (a render), and once however often it is read.
+    expect(adapter.list().map((e) => e.row.id)).toEqual([fresh.id]);
+    // Reading never dispatches (it runs in a render or a derivation); the effect does.
     expect(sent).toEqual([]);
-    await Promise.resolve();
+    adapter.expireOld();
+    adapter.expireOld();
     expect(sent).toEqual([
       { op: 'draft.discard', input: { kind: 'comment', issueId: OTHER_ISSUE } },
     ]);
-    expect(adapter.list().map((e) => e.row.id)).toEqual([fresh.id]);
+  });
+
+  it('an expiry that fails is tried again on the next call', async () => {
+    const old = row({ updatedAt: new Date(NOW - 31 * DAY).toISOString() });
+    const outcomes: ((outcome: MutationOutcome) => void)[] = [];
+    const sent: string[] = [];
+    const adapter = new DraftAdapter({
+      rows: () => [old],
+      dispatch: (op) => {
+        sent.push(op.name);
+        return new Promise((resolve) => outcomes.push(resolve));
+      },
+      now: () => Date.now(),
+      failed: () => undefined,
+    });
+    adapter.expireOld();
+    adapter.expireOld();
+    expect(sent).toEqual(['draft.discard']);
+    outcomes[0]?.({ status: 'rejected', error: { code: 'INTERNAL', message: 'Try again.' } });
+    await vi.runAllTimersAsync();
+    adapter.expireOld();
+    expect(sent).toEqual(['draft.discard', 'draft.discard']);
   });
 
   it('sending the comment discards the draft and cancels a save still waiting', () => {

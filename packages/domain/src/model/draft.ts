@@ -21,6 +21,15 @@ export type DraftKind = (typeof DRAFT_KINDS)[number];
 /** At most this many comment drafts per user; saving one more deletes the oldest (SPEC-012 §3.2). */
 export const COMMENT_DRAFT_LIMIT = 50;
 
+/** At most this many composer drafts per user, the same way (SPEC-012 §4.3, D27). */
+export const COMPOSER_DRAFT_LIMIT = 50;
+
+/** The cap of each kind of draft. */
+export const DRAFT_LIMITS: Readonly<Record<DraftKind, number>> = {
+  composer: COMPOSER_DRAFT_LIMIT,
+  comment: COMMENT_DRAFT_LIMIT,
+};
+
 /** The client discards a comment draft older than this when it reads it (SPEC-012 §3.2). */
 export const COMMENT_DRAFT_MAX_AGE_DAYS = 30;
 

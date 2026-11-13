@@ -74,7 +74,7 @@ export interface OperationDef<
    * stores without resolving them, so a reference type would be wrong: resolving checks
    * visibility, and these must not (a draft's team and issue, and the choices it keeps, SPEC-012
    * §4.3, D23). Exempt from §11 rule 4; each must name a uuid path of the input, or rule 4 flags
-   * it.
+   * it. Only the operations in `OPAQUE_ID_OPERATIONS` (`lint.ts`) may set it (ADR-0025).
    */
   readonly opaqueIds?: readonly string[];
   /** Hidden from the API, the catalog and MCP (`debug.*`). Dev-only debug operations. */

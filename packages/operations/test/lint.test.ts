@@ -3,7 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { ALL_OPERATIONS, connectionOf, defineOperation, listInput } from '../src/index.js';
 import type { AnyOperation } from '../src/index.js';
-import { catalogSnapshot, lintOperations, parseSnapshot, type LintRule } from '../src/lint.js';
+import {
+  catalogSnapshot,
+  lintOperations,
+  OPAQUE_ID_OPERATIONS,
+  parseSnapshot,
+  type LintRule,
+} from '../src/lint.js';
 import { TeamRef, teamUpdate } from './fixtures.js';
 import committedSnapshot from '../catalog.snapshot.json' with { type: 'json' };
 import { LINT_FIXTURES } from './lint-fixtures/index.js';
@@ -112,7 +118,10 @@ describe('rule 4: reference types', () => {
 
   it('exempts the opaqueIds an op names, and flags a name that is no uuid path (SPEC-012 D23)', () => {
     const input = z.object({ teamId: z.uuid(), data: z.object({ ids: z.array(z.uuid()) }) });
-    const op = { ...mutation('team.keep', input), examples: [{ teamId: uuid, data: { ids: [] } }] };
+    const op = {
+      ...mutation('draft.save', input),
+      examples: [{ teamId: uuid, data: { ids: [] } }],
+    };
     expect(rules([op]).map(([rule]) => rule)).toEqual([4, 4]);
     expect(rules([{ ...op, opaqueIds: ['teamId', 'data.ids[]'] }])).toEqual([]);
     // Only the named path is exempt.
@@ -121,6 +130,30 @@ describe('rule 4: reference types', () => {
     ]);
     expect(rules([{ ...op, opaqueIds: ['teamId', 'data.ids[]', 'gone'] }])).toEqual([
       [4, 'opaqueIds names gone, which is not a uuid in the input. Remove it'],
+    ]);
+  });
+
+  it('allows opaqueIds only on the reviewed operations (ADR-0025)', () => {
+    const input = z.object({ teamId: z.uuid() });
+    const op = {
+      ...mutation('team.keep', input),
+      examples: [{ teamId: uuid }],
+      opaqueIds: ['teamId'],
+    };
+    expect(rules([op])).toEqual([
+      [
+        4,
+        'has opaqueIds, which only the operations in OPAQUE_ID_OPERATIONS may use. Use reference types, or record why in an ADR (ADR-0025)',
+      ],
+    ]);
+  });
+
+  it('the allowlist is exactly draft.save and draft.discard, and they are the ones that use it', () => {
+    // Changing either list is a reviewed decision (ADR-0025), so this test changes with it.
+    expect(OPAQUE_ID_OPERATIONS).toEqual(['draft.save', 'draft.discard']);
+    expect(ALL_OPERATIONS.filter((op) => op.opaqueIds !== undefined).map((op) => op.name)).toEqual([
+      'draft.save',
+      'draft.discard',
     ]);
   });
 

@@ -19,11 +19,16 @@ import {
   ENG_TODO,
   LABEL_BUG,
   LABEL_FRONTEND,
+  SEC,
   mountComposer,
   titleInput,
   type Mounted,
 } from './composer-harness.js';
-import { NO_TEAM_MESSAGE, REPLACE_QUESTION } from '../src/features/issues/IssuesHost.js';
+import {
+  NO_TEAM_MESSAGE,
+  REPLACE_QUESTION,
+  replaceDraftQuestion,
+} from '../src/features/issues/IssuesHost.js';
 import { announcer } from '../src/features/issues/announcer.js';
 import { openComposerWith } from '../src/features/issues/composer-request.js';
 import { overlayManager } from '@surface/ui';
@@ -56,6 +61,18 @@ async function click(element: Element): Promise<void> {
   await inAct(() => {
     (element as HTMLElement).click();
   });
+}
+
+/** Picks another team in the header's team picker. */
+async function chooseTeam(name: string): Promise<void> {
+  const team = pill('Team');
+  if (team === undefined) throw new Error('no team pill');
+  await click(team);
+  const option = [...document.querySelectorAll('[role="option"]')].find((o) =>
+    o.textContent?.includes(name),
+  );
+  if (option === undefined) throw new Error(`no ${name} option`);
+  await click(option);
 }
 
 /** Lets the dispatcher's settled promises reach the host. */
@@ -308,6 +325,63 @@ describe('drafts (AC-3, E25)', () => {
     expect(app.drafts.get()).toEqual([saved]);
   });
 
+  it('Save after a team change asks before replacing that team’s draft; Cancel keeps the composer', async () => {
+    const theirs = draftRow({ teamId: DES, data: { title: 'Design draft' } });
+    const app = new ComposerApp({ drafts: [theirs] });
+    await open(app);
+    await setValue(titleInput(), 'Started in ENG');
+    await chooseTeam('Design');
+    await keydown(titleInput(), 'Escape');
+    await click(buttonNamed('Save', dialogNamed('Save as draft?')));
+    const ask = dialogNamed(replaceDraftQuestion('DES'));
+    expect(ask).toBeDefined();
+    expect(app.ops()).toEqual([]);
+    await click(buttonNamed('Cancel', ask));
+    expect(dialogNamed(replaceDraftQuestion('DES'))).toBeUndefined();
+    expect(titleInput().value).toBe('Started in ENG');
+    expect(app.drafts.get()).toEqual([theirs]);
+    // Asked again, Replace saves over it.
+    await keydown(titleInput(), 'Escape');
+    await click(buttonNamed('Save', dialogNamed('Save as draft?')));
+    await click(buttonNamed('Replace', dialogNamed(replaceDraftQuestion('DES'))));
+    expect(app.ops()).toEqual(['draft.save']);
+    expect(app.dispatched[0]?.input).toMatchObject({
+      teamId: DES,
+      data: { title: 'Started in ENG' },
+    });
+    expect(composer()).toBeUndefined();
+  });
+
+  it('E7: a hidden team’s draft opened in the default team asks before replacing its draft', async () => {
+    const hidden = draftRow({ teamId: SEC, data: { title: 'From SEC' } });
+    const engs = draftRow({ teamId: ENG, data: { title: 'ENG draft' } });
+    const app = new ComposerApp({ drafts: [hidden, engs] });
+    mounted = await mountComposer(app, '/team/ENG/issues');
+    const m = mounted;
+    await inAct(() => {
+      openComposerWith({ kind: 'draft', teamId: SEC }, (c) => m.commands().run(c));
+    });
+    expect(titleInput().value).toBe('From SEC');
+    await keydown(titleInput(), 'Escape');
+    await click(buttonNamed('Save', dialogNamed('Save as draft?')));
+    expect(app.ops()).toEqual([]);
+    await click(buttonNamed('Replace', dialogNamed(replaceDraftQuestion('ENG'))));
+    // ENG's draft becomes this one, and the hidden team's draft moves with it.
+    expect(app.ops()).toEqual(['draft.save', 'draft.discard']);
+    expect(app.dispatched[0]?.input).toMatchObject({ teamId: ENG, data: { title: 'From SEC' } });
+    expect(app.dispatched[1]?.input).toMatchObject({ kind: 'composer', teamId: SEC });
+  });
+
+  it('Save over the draft the composer restored asks nothing', async () => {
+    const app = new ComposerApp({ drafts: [draftRow({ teamId: ENG, data: { title: 'Mine' } })] });
+    await open(app);
+    await setValue(titleInput(), 'Mine, edited');
+    await keydown(titleInput(), 'Escape');
+    await click(buttonNamed('Save', dialogNamed('Save as draft?')));
+    expect(dialogNamed(replaceDraftQuestion('ENG'))).toBeUndefined();
+    expect(app.ops()).toEqual(['draft.save']);
+  });
+
   it('an empty composer closes without a prompt', async () => {
     const app = new ComposerApp();
     await open(app);
@@ -352,14 +426,7 @@ describe('changing team (AC-2, E8)', () => {
     });
     await open(app);
     expect(pill('Estimate')?.textContent).toContain('3');
-    const team = pill('Team');
-    if (team === undefined) throw new Error('no team pill');
-    await click(team);
-    const design = [...document.querySelectorAll('[role="option"]')].find((o) =>
-      o.textContent?.includes('Design'),
-    );
-    if (design === undefined) throw new Error('no Design option');
-    await click(design);
+    await chooseTeam('Design');
     expect(pill('Team')?.textContent).toContain('DES');
     expect(pill('Estimate')).toBeUndefined();
     expect(composer()?.textContent).toContain('Dropped: estimate 3.');

@@ -5,7 +5,7 @@
  * A draft belongs to the actor. Nothing here reads a team or an issue, or checks a permission on
  * one: the key's ids are stored as given (permissions.md §2, "Drafts").
  */
-import { COMMENT_DRAFT_LIMIT, type DraftKind } from '@surface/domain/model';
+import { DRAFT_LIMITS, type DraftKind } from '@surface/domain/model';
 import type { DraftKey } from '@surface/operations';
 import type { CommentDraftData, ComposerDraftData } from '@surface/domain/model';
 import { SurfaceError } from '../../executor/errors.js';
@@ -33,16 +33,19 @@ export interface DraftAccess {
   lockOwner(userId: string): Promise<void>;
   /** The owner's draft with this key, if any. */
   find(userId: string, key: DraftKey): Promise<DraftRow | undefined>;
-  /** Ids of the owner's comment drafts beyond the newest `keep`, by `updatedAt` then id. */
-  commentDraftsBeyond(userId: string, keep: number): Promise<string[]>;
+  /** Ids of the owner's drafts of `kind` beyond the newest `keep`, by `updatedAt` then id. */
+  draftsBeyond(userId: string, kind: DraftKind, keep: number): Promise<string[]>;
 }
 
 export type DraftRepo = Pick<Repo, 'insert' | 'update' | 'purge'>;
 
-/** The owner: the signed-in user. A draft has no meaning for an API key or the system actor. */
+/**
+ * The owner: the user the actor acts for. A session, an API key and an MCP client all act for a
+ * user, so they own that user's drafts; only the system actor has no user, and is refused.
+ */
 export function draftOwner(actor: Actor): string {
   if (actor.userId === undefined) {
-    throw new SurfaceError('FORBIDDEN', 'Only a signed-in person has drafts.');
+    throw new SurfaceError('FORBIDDEN', 'Drafts belong to a user. The system actor has none.');
   }
   return actor.userId;
 }
@@ -55,8 +58,8 @@ export interface SaveInput {
 }
 
 /**
- * Upserts the owner's draft with this key (a retry makes no duplicate), then, for a comment draft,
- * deletes the oldest beyond the 50 the owner may keep.
+ * Upserts the owner's draft with this key (a retry makes no duplicate), then deletes the oldest
+ * drafts of its kind beyond the 50 the owner may keep.
  */
 export async function saveDraft(
   access: DraftAccess,
@@ -77,10 +80,9 @@ export async function saveDraft(
           data,
         })
       : await repo.update('Draft', existing.id, { data });
-  if (key.kind === 'comment') {
-    for (const id of await access.commentDraftsBeyond(userId, COMMENT_DRAFT_LIMIT)) {
-      await repo.purge('Draft', id);
-    }
+  // 50 of each kind (SPEC-012 §3.2, §4.3): the oldest beyond go. The one just saved is the newest.
+  for (const id of await access.draftsBeyond(userId, key.kind, DRAFT_LIMITS[key.kind])) {
+    await repo.purge('Draft', id);
   }
   return row;
 }
