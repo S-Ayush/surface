@@ -309,7 +309,7 @@ First use of sync-protocol §4.2. This is the full contract; it replaces §4.2's
 
 | Status | When |
 |---|---|
-| `400` | No parents, more than 50, or a malformed or duplicate parent; a `userId` that isn't a UUID |
+| `400` | No parents, more than 50, or a malformed or duplicate parent; a `userId` that isn't a UUID; no `schemaHash` (as `POST /sync/mutate`; PLAN-011 S5a) |
 | `401` | Not signed in, or signed in as someone other than `userId` |
 | `403` | An API key. Content is for sync clients; API callers use `issue.get`. |
 | `426 CLIENT_OUTDATED` | No `userId`, or a `schemaHash` that differs from the server's. The client reloads, as for bootstrap. |

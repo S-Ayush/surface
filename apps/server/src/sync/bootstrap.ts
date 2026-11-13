@@ -117,7 +117,7 @@ export async function* bootstrapFrames({
  * Aliases for the row's groups and archive state. `defineModel` accepts camelCase field names
  * only, so these never collide with a declared field.
  */
-const GROUPS_ALIAS = '__groups';
+export const GROUPS_ALIAS = '__groups';
 const ARCHIVED_ALIAS = '__archived';
 
 /**
@@ -144,6 +144,6 @@ export function selectRows(model: SyncModel): string {
 }
 
 /** A SQL identifier from the registry (never from input): table and column names. */
-function quote(identifier: string): string {
+export function quote(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }

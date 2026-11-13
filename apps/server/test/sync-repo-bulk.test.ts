@@ -9,6 +9,7 @@ import { debugItems, labels } from '../src/db/schema/index.js';
 import {
   ascendingIds,
   chunked,
+  contentOrderProblem,
   deleteWhereStatements,
   removedKey,
   SYNC_LOG_CHUNK,
@@ -23,6 +24,7 @@ import { scriptedDb, type Row } from './support/scripted-db.js';
 
 const NOW = new Date('2026-11-12T10:00:00.000Z');
 const STORED_AT = '2026-01-01T00:00:00.000Z';
+const TEAM = '0190f0c0-0000-7000-8000-00000000e000';
 
 /** `id(1)` → `00000000-0000-7000-8000-000000000001`. */
 const id = (n: number) => `00000000-0000-7000-8000-${n.toString(16).padStart(12, '0')}`;
@@ -431,12 +433,166 @@ describe('the unlogged content delete (ADR-0022)', () => {
     });
   });
 
-  it('reads each synced model’s shape from its definition: no content model before S5a', () => {
-    // So every `log: false` is refused at the call until PLAN-011 S5a declares content models
-    // with a parent; S5a's tests then run the flush assertion through the repo.
+  it('reads each synced model’s shape from its typed definition (PLAN-011 S5a)', () => {
+    const parent = { model: 'Issue', field: 'issueId' };
     for (const model of Object.keys(SYNCED_MODELS)) {
-      expect(modelShape(model)).toEqual({ load: 'eager' });
+      expect(modelShape(model)).toEqual(
+        model === 'IssueContent' || model === 'IssueHistory'
+          ? { load: 'content', parent }
+          : { load: 'eager' },
+      );
     }
     expect(modelShape('Nope')).toBeUndefined();
+  });
+
+  // PLAN-011 S5a handoff: the flush assertion through the repo, with the real content models and
+  // no `shapeOf` seam, as PLAN-015's purge will call it.
+  describe('through the repo, with the real IssueContent and IssueHistory', () => {
+    const issue = (n: number): Row => ({ id: id(n), team_id: TEAM, sync_groups: [`team:${TEAM}`] });
+    const content = (n: number): Row => ({
+      id: id(n),
+      issue_id: id(n),
+      team_id: TEAM,
+      sync_groups: [`team:${TEAM}`],
+    });
+    const history = (n: number, issueN: number): Row => ({
+      id: id(n),
+      issue_id: id(issueN),
+      team_id: TEAM,
+      sync_groups: [`team:${TEAM}`],
+    });
+    const setup = () =>
+      fakeDb({
+        issues: [issue(1), issue(2)],
+        issue_content: [content(1), content(2)],
+        issue_history: [history(11, 1), history(12, 1), history(21, 2)],
+      });
+
+    it('purges an issue’s content unlogged when the issue is purged, logging only its D', async () => {
+      const { repo, rowsOf } = setup();
+      expect(await repo.deleteWhere('IssueContent', 'issueId', [id(1)], { log: false })).toEqual([
+        id(1),
+      ]);
+      expect(await repo.deleteWhere('IssueHistory', 'issueId', [id(1)], { log: false })).toEqual([
+        id(11),
+        id(12),
+      ]);
+      await repo.purge('Issue', id(1));
+      await expect(repo.flush({})).resolves.toMatchObject({ lastSyncId: 101 });
+      expect(logged(repo.changes())).toEqual([`D ${id(1)}`]);
+      expect([...rowsOf('issue_history').keys()]).toEqual([id(21)]);
+      expect([...rowsOf('issue_content').keys()]).toEqual([id(2)]);
+    });
+
+    it('fails the flush when the issue is not purged in the transaction', async () => {
+      const { repo } = setup();
+      await repo.deleteWhere('IssueHistory', 'issueId', [id(1)], { log: false });
+      await expect(repo.flush({})).rejects.toThrow(
+        `parent Issue ${id(1)} is not deleted with a logged D in this transaction (ADR-0022)`,
+      );
+    });
+
+    it('fails the flush when only another issue is purged', async () => {
+      const { repo } = setup();
+      await repo.deleteWhere('IssueContent', 'issueId', [id(1)], { log: false });
+      await repo.purge('Issue', id(2));
+      await expect(repo.flush({})).rejects.toThrow(`parent Issue ${id(1)} is not deleted`);
+    });
+
+    it('refuses log: false matched on another column than the parent field', async () => {
+      const { repo } = setup();
+      await expect(
+        repo.deleteWhere('IssueHistory', 'teamId', [TEAM], { log: false }),
+      ).rejects.toThrow('it must match on the parent field issueId, not teamId (ADR-0022)');
+    });
+  });
+});
+
+// PLAN-011 S5a, SPEC-011 §5.1 and §5.3 step 5: a client marks an issue hydrated on its `I`, so a
+// transaction that creates an issue logs it before any of its content rows.
+describe('an issue is logged before its content rows', () => {
+  const change = (action: string, model: string, rowId: string, issueId?: string) => ({
+    action,
+    model,
+    id: rowId,
+    ...(issueId === undefined ? {} : { row: { id: rowId, issueId } }),
+  });
+
+  it('passes when the issue’s I comes first, or the issue was created earlier', () => {
+    expect(
+      contentOrderProblem(
+        [
+          change('I', 'Issue', id(1)),
+          change('I', 'IssueContent', id(1), id(1)),
+          change('I', 'IssueHistory', id(2), id(1)),
+        ],
+        modelShape,
+      ),
+    ).toBeUndefined();
+    // An existing issue (no `I` here): its new history needs no order.
+    expect(
+      contentOrderProblem([change('I', 'IssueHistory', id(2), id(1))], modelShape),
+    ).toBeUndefined();
+  });
+
+  it('fails when a content row is logged before the I of its issue', () => {
+    expect(
+      contentOrderProblem(
+        [change('I', 'IssueHistory', id(2), id(1)), change('I', 'Issue', id(1))],
+        modelShape,
+      ),
+    ).toBe(
+      `IssueHistory ${id(2)} is logged before its parent Issue ${id(1)} is created. Insert the Issue first (SPEC-011 §5.1).`,
+    );
+    expect(
+      contentOrderProblem(
+        [
+          change('I', 'Issue', id(3)),
+          change('U', 'IssueContent', id(1), id(1)),
+          change('I', 'Issue', id(1)),
+        ],
+        modelShape,
+      ),
+    ).toMatch(/IssueContent .* is logged before its parent Issue/);
+  });
+
+  it('ignores content deletes, which carry no row, and rows of eager models', () => {
+    expect(
+      contentOrderProblem(
+        [
+          change('D', 'IssueHistory', id(2)),
+          change('I', 'Label', id(5)),
+          change('I', 'Issue', id(1)),
+        ],
+        modelShape,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('fails repo.flush before it takes the sync lock', async () => {
+    const { repo, statements } = fakeDb({ teams: [{ id: TEAM, private: false }] });
+    // History written before its issue is inserted: Postgres's foreign key would refuse it too,
+    // but the repo refuses it before anything is logged.
+    await repo.insert('IssueHistory', {
+      id: id(2),
+      issueId: id(1),
+      teamId: TEAM,
+      actorKind: 'system',
+      actorId: null,
+      kind: 'archived',
+      changes: {},
+    });
+    await repo.insert('Issue', {
+      id: id(1),
+      teamId: TEAM,
+      number: 1,
+      title: 'Fix login',
+      statusId: id(9),
+      sortOrder: 'a0',
+      creatorId: id(8),
+    });
+    statements.length = 0;
+    await expect(repo.flush({})).rejects.toThrow('is logged before its parent Issue');
+    expect(statements).toEqual([]);
   });
 });

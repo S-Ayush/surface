@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import type { RowOfModel, DebugItem } from './index.js';
+import type { AnyField, DebugItem, ModelSpec, RowOfModel } from './index.js';
 import {
   array,
   backRef,
@@ -163,6 +163,50 @@ describe('defineModel', () => {
         defineModel('Thing', { load: 'eager', fields: {}, refs: { [name]: backRef('Team', 'x') } }),
       ).toThrow(`Model Thing: ${name} is reserved; choose another ref name`);
     }
+  });
+});
+
+describe('a content model’s parent (PLAN-011 S5a, sync-protocol §2)', () => {
+  /** Any spec: field names are plain strings here, so a wrong parent field type-checks. */
+  const define = (name: string, spec: ModelSpec<Record<string, AnyField>>) =>
+    defineModel(name, spec);
+  const note = (parent?: { model: string; field: string }) =>
+    define('Note', {
+      load: 'content',
+      ...(parent === undefined ? {} : { parent }),
+      fields: { issueId: uuid() },
+    });
+
+  it('is kept, frozen, on a content model', () => {
+    const def = note({ model: 'Issue', field: 'issueId' });
+    expect(def.parent).toEqual({ model: 'Issue', field: 'issueId' });
+    expect(Object.isFrozen(def.parent)).toBe(true);
+    expect(Team.parent).toBeUndefined();
+    expect('parent' in Team).toBe(false);
+  });
+
+  it('is required for a content model', () => {
+    expect(() => note()).toThrow('Model Note: a content model needs a parent');
+  });
+
+  it('is refused on an eager model', () => {
+    expect(() =>
+      define('Thing', {
+        load: 'eager',
+        parent: { model: 'Issue', field: 'issueId' },
+        fields: { issueId: uuid() },
+      }),
+    ).toThrow('Model Thing: only a content model has a parent');
+  });
+
+  it.each<[string, { model: string; field: string }, Record<string, AnyField>]>([
+    ['a field the model lacks', { model: 'Issue', field: 'parentId' }, { issueId: uuid() }],
+    ['a field that is not a uuid', { model: 'Issue', field: 'issueId' }, { issueId: str() }],
+    ['a nullable field', { model: 'Issue', field: 'issueId' }, { issueId: uuid().nullable() }],
+    ['an invalid model name', { model: 'issue', field: 'issueId' }, { issueId: uuid() }],
+    ['the model itself', { model: 'Note', field: 'issueId' }, { issueId: uuid() }],
+  ])('refuses %s', (_case, parent, fields) => {
+    expect(() => define('Note', { load: 'content', parent, fields })).toThrow(/^Model Note: /);
   });
 });
 

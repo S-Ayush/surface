@@ -218,3 +218,37 @@ export function unloggedDeleteProblem(
   }
   return undefined;
 }
+
+/**
+ * The assertion `flush` runs with the unlogged-delete rule (SPEC-011 §5.1, §5.3 step 5): when a
+ * transaction creates a parent (an Issue `I`) and writes content rows of it, the parent's `I`
+ * comes first. A client marks an issue hydrated on its `I` packet, so content logged before it
+ * would be dropped as the content of an unhydrated parent. Content deletes carry no row, so they
+ * can't name a parent and are not checked. Returns the first problem.
+ */
+export function contentOrderProblem(
+  changes: readonly {
+    readonly action: string;
+    readonly model: string;
+    readonly id: string;
+    readonly row?: Readonly<Record<string, unknown>>;
+  }[],
+  shapeOf: (model: string) => ModelShape | undefined,
+): string | undefined {
+  const created = new Map<string, number>();
+  changes.forEach((change, index) => {
+    const key = removedKey(change.model, change.id);
+    if (change.action === 'I' && !created.has(key)) created.set(key, index);
+  });
+  for (const [index, change] of changes.entries()) {
+    const parent = shapeOf(change.model)?.parent;
+    if (parent === undefined || change.row === undefined) continue;
+    const parentId = change.row[parent.field];
+    if (typeof parentId !== 'string') continue;
+    const at = created.get(removedKey(parent.model, parentId));
+    if (at !== undefined && at > index) {
+      return `${change.model} ${change.id} is logged before its parent ${parent.model} ${parentId} is created. Insert the ${parent.model} first (SPEC-011 §5.1).`;
+    }
+  }
+  return undefined;
+}

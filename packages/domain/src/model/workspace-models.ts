@@ -11,7 +11,7 @@ import { STATUS_CATEGORIES } from '../status-category.js';
 import { COLOR_HUES, ESTIMATE_SCALES, SIGNUP_POLICIES, USER_ROLES } from '../workspace.js';
 import { backRef, defineModel, ref } from './define-model.js';
 import { array, bool, enumOf, int, json, str, timestamp, uuid } from './fields.js';
-import { Issue } from './issue-models.js';
+import { Issue, IssueContent, IssueHistory } from './issue-models.js';
 
 const audit = { createdAt: timestamp(), updatedAt: timestamp() };
 
@@ -165,4 +165,6 @@ export const PRODUCTION_MODELS = [
   WorkflowStatus,
   Label,
   Issue,
+  IssueContent,
+  IssueHistory,
 ] as const;

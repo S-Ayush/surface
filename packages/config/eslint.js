@@ -34,6 +34,8 @@ export const SYNCED_TABLES = [
   { identifier: 'workflowStatuses', name: 'workflow_statuses' },
   { identifier: 'labels', name: 'labels' },
   { identifier: 'issues', name: 'issues' },
+  { identifier: 'issueContent', name: 'issue_content' },
+  { identifier: 'issueHistory', name: 'issue_history' },
   { identifier: 'syncLog', name: 'sync_log' },
   { identifier: 'syncState', name: 'sync_state' },
 ];

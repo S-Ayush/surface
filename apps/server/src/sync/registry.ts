@@ -32,6 +32,8 @@ export interface SyncRegistry {
   readonly models: readonly SyncModel[];
   /** Models in the bootstrap (sync-protocol §2). */
   readonly eager: readonly SyncModel[];
+  /** Content models, loaded per parent by `GET /sync/content` (sync-protocol §4.2). */
+  readonly content: readonly SyncModel[];
   readonly schemaHash: string;
 }
 
@@ -51,9 +53,12 @@ export function syncRegistry({ includeFixtures }: RegistryOptions): SyncRegistry
     if (entry.fixture && !includeFixtures) continue;
     models.push(syncModel(name, entry.def, entry.table));
   }
+  const parentProblem = contentParentProblem(models);
+  if (parentProblem !== undefined) throw new Error(parentProblem);
   return {
     models,
     eager: models.filter((m) => m.def.load === 'eager'),
+    content: models.filter((m) => m.def.load === 'content'),
     schemaHash: computeSchemaHash(models.map((m) => m.def)),
   };
 }
@@ -81,6 +86,24 @@ export function issueChildProblem(
     !(Array.isArray(fields) && fields.includes('issueId') && fields.includes('teamId'))
   ) {
     return `Issue child ${name} must list issueId and teamId in groupFields, so updateWhere can't move it to another team.`;
+  }
+  return undefined;
+}
+
+/**
+ * Why a content model's parent can't be loaded from, or `undefined` (sync-protocol §2): the
+ * parent must be a synced eager model of the same registry, since clients drop the content of a
+ * parent they don't hold. `defineModel` has already checked the field is a uuid of the model.
+ * Exported for tests.
+ */
+export function contentParentProblem(models: readonly SyncModel[]): string | undefined {
+  for (const model of models) {
+    const parent = model.def.parent;
+    if (parent === undefined) continue;
+    const owner = models.find((m) => m.name === parent.model);
+    if (owner?.def.load !== 'eager') {
+      return `Content model ${model.name} names parent ${parent.model}, which is not a synced eager model.`;
+    }
   }
   return undefined;
 }

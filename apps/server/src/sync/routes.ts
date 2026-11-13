@@ -1,23 +1,28 @@
 /**
  * Sync HTTP routes (SPEC-002 §4, sync-protocol §4). PLAN-002 S3: `GET /sync/bootstrap`; S4: the
- * WebSocket (`socket-route.ts`); S5: `POST /sync/mutate` (`mutate.ts`).
+ * WebSocket (`socket-route.ts`); S5: `POST /sync/mutate` (`mutate.ts`). PLAN-011 S5a:
+ * `GET /sync/content` (`content.ts`).
  */
 import { pipeline, Readable } from 'node:stream';
 import { createGzip } from 'node:zlib';
 import {
   BOOTSTRAP_PATH,
+  CONTENT_PATH,
   decodeBootstrapQuery,
+  decodeContentQuery,
   encodeNdjsonLine,
   MissingUserIdError,
   NDJSON_CONTENT_TYPE,
   ProtocolError,
   type BootstrapQuery,
+  type ContentQuery,
 } from '@surface/sync-protocol';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { errorBody } from '../http/errors.js';
 import { signedIn, type ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { bootstrapFrames, type BootstrapPool } from './bootstrap.js';
+import { contentFrames } from './content.js';
 import type { Executor } from '../executor/execute.js';
 import type { SyncHub } from './hub.js';
 import { sendClientOutdated, sendOtherUser } from './identity.js';
@@ -120,17 +125,58 @@ export function registerSyncRoutes(
       })(),
     );
 
-    reply
-      .header('content-type', NDJSON_CONTENT_TYPE)
-      .header('cache-control', 'no-store')
-      .header('vary', 'accept-encoding');
-    // A stream that fails after the headers went out is logged by Fastify; the client sees a
-    // stream without `end` and starts over.
-    if (!acceptsGzip(request.headers['accept-encoding'])) return reply.send(lines);
-    reply.header('content-encoding', 'gzip');
-    // `pipeline` passes an error on to the gzip stream, where Fastify sees it.
-    return reply.send(pipeline(lines, createGzip(), () => {}));
+    return sendNdjson(request, reply, lines);
   });
+
+  // SPEC-011 §5.2 (PLAN-011 S5a): content per issue. The same checks as bootstrap, in the same
+  // order, plus the schema hash, all before the first frame.
+  app.get(CONTENT_PATH, async (request, reply) => {
+    const actor = await signedIn(request, reply, deps);
+    if (!actor) return reply;
+    if (actor.kind !== 'user') {
+      return reply
+        .code(403)
+        .send(
+          errorBody(
+            request,
+            'FORBIDDEN',
+            'Sync is for signed-in users. Use issue.get in the operations API.',
+          ),
+        );
+    }
+    let query: ContentQuery;
+    try {
+      query = decodeContentQuery(request.query);
+    } catch (error) {
+      if (error instanceof MissingUserIdError) return sendClientOutdated(request, reply);
+      if (!(error instanceof ProtocolError)) throw error;
+      return reply.code(400).send(errorBody(request, 'INVALID_INPUT', error.message));
+    }
+    if (query.userId !== actor.userId) return sendOtherUser(request, reply);
+    if (query.schemaHash !== deps.registry.schemaHash) return sendClientOutdated(request, reply);
+    // Read whole before answering, so a database error is a 500, not a 200 with a cut-off body.
+    const frames = await contentFrames({
+      pool: deps.pool,
+      registry: deps.registry,
+      actor,
+      parents: query.parents,
+    });
+    return sendNdjson(request, reply, Readable.from(frames.map((f) => encodeNdjsonLine(f))));
+  });
+}
+
+/** Sends NDJSON lines, gzip-encoded when the client accepts it (sync-protocol §4.1, §4.2). */
+function sendNdjson(request: FastifyRequest, reply: FastifyReply, lines: Readable): FastifyReply {
+  reply
+    .header('content-type', NDJSON_CONTENT_TYPE)
+    .header('cache-control', 'no-store')
+    .header('vary', 'accept-encoding');
+  // A stream that fails after the headers went out is logged by Fastify; the client sees a
+  // stream without `end` and starts over.
+  if (!acceptsGzip(request.headers['accept-encoding'])) return reply.send(lines);
+  reply.header('content-encoding', 'gzip');
+  // `pipeline` passes an error on to the gzip stream, where Fastify sees it.
+  return reply.send(pipeline(lines, createGzip(), () => {}));
 }
 
 function hasQuery(request: FastifyRequest, name: string): boolean {

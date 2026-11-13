@@ -39,6 +39,17 @@ export const backRef = (model: string, field: string): RefDef => ({
   field,
 });
 
+/**
+ * A content model's parent (sync-protocol §2, SPEC-011 §5.1): the model whose row the content
+ * belongs to, and the uuid field of the content row that holds the parent's id. Clients load
+ * content per parent (`GET /sync/content`) and drop it when the parent is gone; the repo's one
+ * unlogged delete (ADR-0022) names it. Part of the schema hash.
+ */
+export interface ModelParent {
+  readonly model: string;
+  readonly field: string;
+}
+
 type Simplify<T> = { [K in keyof T]: T[K] } & {};
 
 /** The row type of a model with fields `F`: an `id` plus every field. */
@@ -49,6 +60,8 @@ export type RowOf<F> = Simplify<
 export interface ModelDef<Name extends string = string, Row extends ModelRow = ModelRow> {
   readonly name: Name;
   readonly load: LoadStrategy;
+  /** Set exactly for `load: 'content'` models. */
+  readonly parent?: ModelParent;
   /** Every field, including the implicit `id`. */
   readonly fields: Readonly<Record<string, FieldDef>>;
   readonly refs: Readonly<Record<string, RefDef>>;
@@ -71,6 +84,8 @@ export type RowOfModel<M> = M extends ModelDef<string, infer Row> ? Row : never;
 
 export interface ModelSpec<F extends Record<string, AnyField>> {
   readonly load: LoadStrategy;
+  /** Required for `load: 'content'`, refused for `eager`. `field` is a uuid field of `fields`. */
+  readonly parent?: { readonly model: string; readonly field: keyof F & string };
   readonly fields: F;
   readonly refs?: Readonly<Record<string, RefDef>>;
   readonly indexes?: readonly (keyof F & string)[];
@@ -117,6 +132,24 @@ export function defineModel<const Name extends string, F extends Record<string, 
     refs[refName] = Object.freeze({ ...refDef });
   }
 
+  let parent: ModelParent | undefined;
+  if (spec.load === 'content') {
+    if (spec.parent === undefined) {
+      throw problem('a content model needs a parent, like { model: "Issue", field: "issueId" }');
+    }
+    if (!MODEL_NAME.test(spec.parent.model)) throw problem('parent names an invalid model');
+    if (spec.parent.model === name) throw problem('a model cannot be its own parent');
+    if (fields[spec.parent.field]?.kind !== 'uuid') {
+      throw problem(`parent needs a uuid field ${spec.parent.field} on this model`);
+    }
+    if (fields[spec.parent.field]?.nullable === true) {
+      throw problem(`parent field ${spec.parent.field} cannot be nullable`);
+    }
+    parent = Object.freeze({ model: spec.parent.model, field: spec.parent.field });
+  } else if (spec.parent !== undefined) {
+    throw problem('only a content model has a parent; eager models are loaded whole');
+  }
+
   const indexes = [...new Set(spec.indexes ?? [])];
   for (const field of indexes) {
     if (!fields[field]?.indexable) throw problem(`index on ${field} needs a scalar field`);
@@ -130,6 +163,7 @@ export function defineModel<const Name extends string, F extends Record<string, 
   return Object.freeze({
     name,
     load: spec.load,
+    ...(parent === undefined ? {} : { parent }),
     fields: Object.freeze(fields),
     refs: Object.freeze(refs),
     indexes: Object.freeze(indexes),

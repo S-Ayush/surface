@@ -5,8 +5,8 @@
  *
  * The input is structural, so the declarative `defineModel` output (PLAN-002 S6)
  * can be passed directly. Only what changes the meaning of synced rows is
- * hashed: model name, load strategy, and each field's name, type and
- * nullability, plus `DOC_SCHEMA_VERSION` (SPEC-013 §4.4). Client-only metadata (refs, indexes) is not, so changing it does
+ * hashed: model name, load strategy, a content model's parent, and each field's
+ * name, type and nullability, plus `DOC_SCHEMA_VERSION` (SPEC-013 §4.4). Client-only metadata (refs, indexes) is not, so changing it does
  * not force every client to re-bootstrap.
  */
 import { DOC_SCHEMA_VERSION } from '@surface/domain';
@@ -29,6 +29,11 @@ export interface SchemaHashModel {
   readonly name: string;
   /** `eager` or `content` (sync-protocol.md §2). */
   readonly load: string;
+  /**
+   * A content model's parent (sync-protocol §2, v0.7): clients load and drop its rows per parent,
+   * so a change to it changes what a replica holds. Absent for eager models.
+   */
+  readonly parent?: { readonly model: string; readonly field: string };
   readonly fields: Readonly<Record<string, SchemaHashField>>;
 }
 
@@ -56,7 +61,13 @@ export function computeSchemaHash(
     const fields = Object.entries(model.fields)
       .sort(byKey)
       .map(([name, field]) => [name, field.type, field.nullable] as const);
-    return [model.name, [model.load, fields]] as const;
+    // An eager model's canonical form is unchanged from before parents existed, so adding the
+    // field changed no hash but the content models' (PLAN-011 S5a).
+    const shape =
+      model.parent === undefined
+        ? [model.load, fields]
+        : [model.load, fields, [model.parent.model, model.parent.field]];
+    return [model.name, shape] as const;
   }).sort(byKey);
   return sha256Hex(JSON.stringify([SYNC_PROTOCOL_VERSION, docSchemaVersion, canonical]));
 }

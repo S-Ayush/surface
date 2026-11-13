@@ -118,6 +118,25 @@ describe('computeSchemaHash', () => {
     );
   });
 
+  it('changes with a content model’s parent, model or field (PLAN-011 S5a)', () => {
+    const content = (parent: { model: string; field: string }): SchemaHashModel => ({
+      name: 'Note',
+      load: 'content',
+      parent,
+      fields: {
+        id: { type: 'uuid', nullable: false },
+        issueId: { type: 'uuid', nullable: false },
+        itemId: { type: 'uuid', nullable: false },
+      },
+    });
+    const hash = (model: SchemaHashModel) => computeSchemaHash([TEAM, model]);
+    const base = hash(content({ model: 'Issue', field: 'issueId' }));
+    expect(hash(content({ model: 'DebugItem', field: 'issueId' }))).not.toBe(base);
+    expect(hash(content({ model: 'Issue', field: 'itemId' }))).not.toBe(base);
+    const { parent: _parent, ...withoutParent } = content({ model: 'Issue', field: 'issueId' });
+    expect(hash(withoutParent)).not.toBe(base);
+  });
+
   it('changes when a model is added', () => {
     expect(computeSchemaHash([DEBUG_ITEM, TEAM])).not.toBe(computeSchemaHash([TEAM]));
   });

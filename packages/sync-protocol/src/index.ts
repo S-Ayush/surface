@@ -6,6 +6,7 @@
 export * from './scalars.js';
 export * from './errors.js';
 export * from './bootstrap.js';
+export * from './content.js';
 export * from './socket.js';
 export * from './mutate.js';
 export * from './csrf.js';

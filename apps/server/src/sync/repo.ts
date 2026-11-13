@@ -14,6 +14,7 @@ import { SurfaceError } from '../executor/errors.js';
 import {
   chunked,
   columnOf,
+  contentOrderProblem,
   deleteWhereStatements,
   patchedFields,
   removedKey,
@@ -21,7 +22,6 @@ import {
   unloggedParent,
   updateWhereProblem,
   updateWhereStatements,
-  type ContentParent,
   type ModelShape,
   type UnloggedDelete,
 } from './bulk.js';
@@ -121,31 +121,19 @@ export interface TransactionRepo extends Repo {
   /**
    * Step 11: appends the buffered changes to `sync_log`, in chunks of `SYNC_LOG_CHUNK` rows under
    * one lock and one `sync_state` bump. Takes no lock when nothing changed. First asserts the
-   * unlogged-delete rule (ADR-0022), and throws if it is broken.
+   * unlogged-delete rule (ADR-0022) and that a parent created here is logged before its content
+   * rows (SPEC-011 §5.1), and throws if either is broken.
    */
   flush(origin: ChangeOrigin): Promise<Flushed>;
   /** The `deleteWhere(…, { log: false })` calls so far, for the test write audit (SPEC-002 AC-12). */
   unloggedDeletes(): readonly UnloggedDelete[];
 }
 
-function isContentParent(value: unknown): value is ContentParent {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof Reflect.get(value, 'model') === 'string' &&
-    typeof Reflect.get(value, 'field') === 'string'
-  );
-}
-
-/**
- * A synced model's load strategy and, for a content model, its parent. `parent` is declared by
- * `defineModel` from PLAN-011 S5a; until then no model has one, so no unlogged delete can pass.
- */
+/** A synced model's load strategy and, for a content model, its parent (`defineModel`). */
 export function modelShape(model: string): ModelShape | undefined {
   if (!isModelName(model)) return undefined;
   const { def } = SYNCED_MODELS[model];
-  const parent: unknown = Reflect.get(def, 'parent');
-  return { load: def.load, ...(isContentParent(parent) ? { parent } : {}) };
+  return { load: def.load, ...(def.parent === undefined ? {} : { parent: def.parent }) };
 }
 
 export type RepoFactory = (db: NodePgDatabase, now: Date) => TransactionRepo;
@@ -153,8 +141,8 @@ export type RepoFactory = (db: NodePgDatabase, now: Date) => TransactionRepo;
 /** Test seams of `syncRepo`. Production code passes none. */
 export interface SyncRepoOptions {
   /**
-   * Each model's load strategy and content parent. Default `modelShape`. Tests pass a stand-in
-   * content model, since no production model is one before PLAN-011 S5a.
+   * Each model's load strategy and content parent. Default `modelShape`. Tests pass stand-in
+   * content models over tables their scripted connection holds.
    */
   readonly shapeOf?: (model: string) => ModelShape | undefined;
 }
@@ -358,7 +346,11 @@ export function syncRepo(
 
     async flush(origin) {
       // ADR-0022: the content deletes that logged nothing must sit next to their parent's `D`.
-      const problem = unloggedDeleteProblem(unlogged, removed, shapeOf);
+      const problem =
+        unloggedDeleteProblem(unlogged, removed, shapeOf) ??
+        // SPEC-011 §5.1, §5.3 step 5: a created Issue is logged before its content rows, so the
+        // Issue's `I` packet may mark it hydrated on every client that receives it.
+        contentOrderProblem(buffered, shapeOf);
       if (problem !== undefined) throw new Error(problem);
       if (buffered.length === 0) return {};
       await db.execute(sql`SELECT pg_advisory_xact_lock(${LOCKS.sync}::bigint)`);

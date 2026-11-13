@@ -20,7 +20,12 @@ const user = actorFor({ id: randomUUID() });
 /** One model, so the fake pool below answers for every query the bootstrap makes. */
 const debugOnly: SyncRegistry = (() => {
   const model = syncModel('DebugItem', DebugItem, debugItems);
-  return { models: [model], eager: [model], schemaHash: computeSchemaHash([DebugItem]) };
+  return {
+    models: [model],
+    eager: [model],
+    content: [],
+    schemaHash: computeSchemaHash([DebugItem]),
+  };
 })();
 
 /** A pool with one connection. Its row count waits until `openCount()`; it records every call. */

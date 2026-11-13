@@ -7,6 +7,8 @@ import { teamGroup, userGroup, WORKSPACE_GROUP } from '@surface/domain';
 import {
   DebugItem,
   Issue,
+  IssueContent,
+  IssueHistory,
   Label,
   Team,
   TeamMembership,
@@ -21,6 +23,8 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import {
   debugItems,
+  issueContent,
+  issueHistory,
   issues,
   labels,
   teamMemberships,
@@ -234,6 +238,26 @@ export const SYNCED_MODELS = {
     groupFields: ['teamId'],
     teamColumn: issues.teamId,
   },
+  // PLAN-011 S5a (SPEC-011 §5.1): content models, loaded per issue (`sync/content.ts`). Their
+  // `teamId` and groups come from the issue row (`issueChild`); nothing writes them before S6.
+  IssueContent: {
+    table: issueContent,
+    def: IssueContent,
+    fixture: false,
+    issueChild: true,
+    groupsOf: groupsOfIssueChild,
+    groupFields: ['issueId', 'teamId'],
+    teamColumn: issueContent.teamId,
+  },
+  IssueHistory: {
+    table: issueHistory,
+    def: IssueHistory,
+    fixture: false,
+    issueChild: true,
+    groupsOf: groupsOfIssueChild,
+    groupFields: ['issueId', 'teamId'],
+    teamColumn: issueHistory.teamId,
+  },
 } as const satisfies Record<
   string,
   {
@@ -279,7 +303,7 @@ export function isModelName(value: string): value is ModelName {
  * `groupsOf: groupsOfIssueChild` and `groupFields: ['issueId', 'teamId']` (`issueChildProblem`
  * in `registry.ts` checks all three at startup). The repo then stores the issue's team as the
  * row's `teamId` on insert, never writes one from a patch, and refuses a patch of `issueId`.
- * PLAN-011 S5a registers the first ones.
+ * IssueContent and IssueHistory are the first (PLAN-011 S5a).
  */
 export function isIssueChild(model: ModelName): boolean {
   const entry: Readonly<Record<string, unknown>> = SYNCED_MODELS[model];

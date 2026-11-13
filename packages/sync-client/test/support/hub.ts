@@ -3,11 +3,17 @@
  * the S1 protocol: a `sync_log` of `DebugItem` changes, a bootstrap from the
  * same state, and WebSocket connections with catch-up, live delivery, `prev`,
  * `resync` and close codes. Faults are injected per connection.
+ *
+ * PLAN-011 S5a: `GET /sync/content` for the `Note` content model (parent `DebugItem` by
+ * `itemId`), answered from one snapshot at the current head, with faults (a failed request, an
+ * error status, a cut-off stream, an answer held while more packets commit).
  */
 import type { ModelRow } from '@surface/domain/model';
 import type {
   Ack,
   BootstrapFrame,
+  ContentFrame,
+  ContentParent,
   ClientMessage,
   DeltaPacket,
   MutateRequest,
@@ -18,20 +24,23 @@ import {
   CSRF_COOKIE,
   CSRF_HEADER,
   CSRF_INVALID,
+  CONTENT_PATH,
   CloseCode,
   MAX_MUTATION_BATCH_BYTES,
   MUTATE_PATH,
   SESSION_PATH,
   decodeBootstrapQuery,
   decodeClientMessage,
+  decodeContentQuery,
   decodeMutateRequest,
   decodeSocketConnectParams,
   encodeSocketMessage,
+  parentIssueId,
 } from '@surface/sync-protocol';
 import type { FetchLike } from '../../src/bootstrap.js';
 import type { SocketConnection, SocketFactory, SocketHandlers } from '../../src/socket.js';
 import type { ConnectionOptions } from '../../src/store.js';
-import { USER_ID, debugRow, id } from './models.js';
+import { USER_ID, debugRow, id, noteRow } from './models.js';
 import { TEST_SCHEMA_HASH, bootstrapFrames, ndjsonResponse } from './server.js';
 import { ManualTimers } from './timers.js';
 
@@ -122,6 +131,27 @@ export class FakeHub {
   /** The headers of every mutate request, in order. */
   readonly mutateHeaders: Headers[] = [];
 
+  // GET /sync/content (PLAN-011 S5a, SPEC-011 §5.2)
+
+  /** `Note` rows by id: the content of debug items, parent `itemId`. */
+  readonly notes = new Map<string, ModelRow>();
+  /** Items the user can't see: left out of a content answer exactly like unknown ones. */
+  readonly hiddenParents = new Set<string>();
+  /** The parents of every content request, in order. */
+  readonly contentRequests: ContentParent[][] = [];
+  /** Fail the next N content requests before they reach the server (a network error). */
+  failContent = 0;
+  /** Answer content requests with this status and a SPEC-003 error body, when not 200. */
+  contentStatus = 200;
+  /** Cut the answer before its `end` frame, as a dropped connection would. */
+  truncateContent = false;
+  /**
+   * Take the snapshot at once but hold the answer until `releaseContent()`, so packets above
+   * its `lastSyncId` can commit and be delivered first (SPEC-011 §5.3 buffering, E17).
+   */
+  holdContent = false;
+  readonly #heldContent: (() => void)[] = [];
+
   constructor(head = 100) {
     this.head = head;
   }
@@ -129,6 +159,7 @@ export class FakeHub {
   /** `GET /sync/bootstrap` from the current state, `POST /sync/mutate`, or `GET /auth/session`. */
   readonly fetch: FetchLike = (url, init) => {
     if (url.endsWith(MUTATE_PATH)) return this.#mutate(init);
+    if (new URL(url).pathname === CONTENT_PATH) return this.#content(url);
     if (url.endsWith(SESSION_PATH)) {
       this.sessionRequests += 1;
       if (this.sessionStatus !== 200) {
@@ -147,6 +178,49 @@ export class FakeHub {
     this.bootstraps += 1;
     return Promise.resolve(ndjsonResponse(this.snapshot()));
   };
+
+  /** Let held content answers through, in order. */
+  releaseContent(): void {
+    for (const send of this.#heldContent.splice(0)) send();
+  }
+
+  /** The content answer for `parents` at the current head: visible items and their notes. */
+  contentSnapshot(parents: readonly ContentParent[]): ContentFrame[] {
+    const found = parents.filter((parent) => {
+      const itemId = parentIssueId(parent);
+      return this.rows.has(itemId) && !this.hiddenParents.has(itemId);
+    });
+    const ids = new Set(found.map(parentIssueId));
+    const rows = [...this.notes.values()]
+      .filter((row) => ids.has(String(row['itemId'])))
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+      .map((row): ContentFrame => ({ t: 'row', m: 'Note', d: { ...row } }));
+    return [
+      { t: 'meta', lastSyncId: this.head, parents: found, rows: rows.length },
+      ...rows,
+      { t: 'end', rows: rows.length },
+    ];
+  }
+
+  #content(url: string): Promise<Response> {
+    if (this.failContent > 0) {
+      this.failContent -= 1;
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }
+    if (this.signedOut) return Promise.resolve(errorResponse(401, 'UNAUTHENTICATED'));
+    if (this.contentStatus !== 200) {
+      return Promise.resolve(errorResponse(this.contentStatus, 'UNAVAILABLE'));
+    }
+    const query = decodeContentQuery(Object.fromEntries(new URL(url).searchParams));
+    this.contentRequests.push([...query.parents]);
+    if (query.schemaHash !== this.schemaHash) {
+      return Promise.resolve(errorResponse(426, 'CLIENT_OUTDATED'));
+    }
+    const frames = this.contentSnapshot(query.parents);
+    const sent = this.truncateContent ? frames.slice(0, -1) : frames;
+    if (!this.holdContent) return Promise.resolve(ndjsonResponse(sent));
+    return new Promise((resolve) => this.#heldContent.push(() => resolve(ndjsonResponse(sent))));
+  }
 
   /** Let held mutate responses through, in order. */
   release(): void {
@@ -380,6 +454,32 @@ export class FakeHub {
     const row = { ...existing.row, archivedAt };
     this.rows.set(rowId, { row, archived });
     this.#commit({ id: this.head + 1, a: archived ? 'A' : 'V', m: 'DebugItem', d: { ...row } });
+  }
+
+  /** Insert or update note `n` of item `item`: an `I` or `U` content packet. */
+  upsertNote(n: number, item: number, body?: string): void {
+    const existing = this.notes.get(id(n));
+    const kept = existing?.['body'];
+    const row = noteRow(n, item, body ?? (typeof kept === 'string' ? kept : `Note ${n}`));
+    this.notes.set(row.id, row);
+    this.#commit({ id: this.head + 1, a: existing ? 'U' : 'I', m: 'Note', d: { ...row } });
+  }
+
+  /** Delete note `n`: a content `D`, which carries only the id (SPEC-011 §5.3 step 4). */
+  removeNote(n: number): void {
+    if (!this.notes.delete(id(n))) return;
+    this.#commit({ id: this.head + 1, a: 'D', m: 'Note', mid: id(n) });
+  }
+
+  /**
+   * Purge item `n` with its notes, as the server's purge does: the item's `D` is logged, its
+   * content deletes are not (ADR-0022).
+   */
+  purge(n: number): void {
+    for (const [noteId, row] of this.notes) {
+      if (row['itemId'] === id(n)) this.notes.delete(noteId);
+    }
+    this.remove(n);
   }
 
   remove(n: number): void {

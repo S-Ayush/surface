@@ -60,8 +60,11 @@ describe('the production model list', () => {
     expect(production.schemaHash).toBe(computeSchemaHash(PRODUCTION_MODELS));
   });
 
-  it('is all bootstrapped', () => {
-    expect(production.eager.map((m) => m.name)).toEqual(PRODUCTION_MODELS.map((m) => m.name));
+  it('is bootstrapped, except the content models, which load per issue (PLAN-011 S5a)', () => {
+    expect(production.eager.map((m) => m.name)).toEqual(
+      PRODUCTION_MODELS.filter((m) => m.load === 'eager').map((m) => m.name),
+    );
+    expect(production.content.map((m) => m.name)).toEqual(['IssueContent', 'IssueHistory']);
   });
 });
 
@@ -89,8 +92,10 @@ describe.each(PRODUCTION_MODELS.map((def) => [def.name, def] as const))('%s', (n
     expect(undeclared).toEqual([]);
   });
 
-  it('carries its groups to the client exactly when it belongs to a team', () => {
-    expect(GROUPS_FIELD in def.fields).toBe(entry.teamColumn !== null);
+  // A content row needs no groups on the client: it leaves the replica with its parent (SPEC-011
+  // §5.3 step 4), and its parent carries the groups.
+  it('carries its groups to the client exactly when it is an eager row of a team', () => {
+    expect(GROUPS_FIELD in def.fields).toBe(entry.teamColumn !== null && def.load === 'eager');
   });
 });
 

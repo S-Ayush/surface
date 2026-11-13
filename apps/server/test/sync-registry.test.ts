@@ -9,6 +9,7 @@ import {
   PRODUCTION_MODELS,
   str,
   timestamp,
+  uuid,
 } from '@surface/domain/model';
 import { computeSchemaHash, decodeBootstrapFrame } from '@surface/sync-protocol';
 import { describe, expect, it } from 'vitest';
@@ -17,6 +18,7 @@ import { selectRows } from '../src/sync/bootstrap.js';
 import { groupsOfIssueChild, SYNCED_MODELS } from '../src/sync/models.js';
 import {
   clientRow,
+  contentParentProblem,
   issueChildProblem,
   serverSyncRegistry,
   syncModel,
@@ -27,7 +29,10 @@ describe('the sync registry', () => {
   it('with fixtures, syncs DebugItem too, with the hash the sync-engine tests compute', () => {
     const registry = syncRegistry({ includeFixtures: true });
     const models = [DebugItem, ...PRODUCTION_MODELS];
-    expect(registry.eager.map((m) => m.name)).toEqual(models.map((m) => m.name));
+    expect(registry.models.map((m) => m.name)).toEqual(models.map((m) => m.name));
+    expect(registry.eager.map((m) => m.name)).toEqual(
+      models.filter((m) => m.load === 'eager').map((m) => m.name),
+    );
     // The client store hashes its model list the same way (sync-client `store.ts`).
     expect(registry.schemaHash).toBe(computeSchemaHash(models));
   });
@@ -84,6 +89,56 @@ describe('the sync registry', () => {
     });
     expect(() => syncModel('DebugItem', extra, debugItems)).toThrow(
       'DebugItem.colour is declared in @surface/domain/model but debug_items has no such column.',
+    );
+  });
+});
+
+// PLAN-011 S5a (sync-protocol §2, §8): content models and their parents.
+describe('content models', () => {
+  const registry = syncRegistry({ includeFixtures: false });
+  const registered = (name: string) => {
+    const model = registry.content.find((m) => m.name === name);
+    if (model === undefined) throw new Error(`${name} is not registered`);
+    return model;
+  };
+
+  it('are IssueContent and IssueHistory, outside the bootstrap, with parent Issue by issueId', () => {
+    expect(registry.content.map((m) => [m.name, m.def.parent])).toEqual([
+      ['IssueContent', { model: 'Issue', field: 'issueId' }],
+      ['IssueHistory', { model: 'Issue', field: 'issueId' }],
+    ]);
+    expect(registry.eager.map((m) => m.name)).not.toContain('IssueContent');
+    expect(registry.models.filter((m) => m.def.load === 'content')).toEqual(registry.content);
+  });
+
+  it('change the schema hash with their parent, so clients re-bootstrap when it changes', () => {
+    const others = PRODUCTION_MODELS.filter((m) => m.name !== 'IssueHistory');
+    const history = registered('IssueHistory').def;
+    expect(computeSchemaHash([...others, history])).toBe(registry.schemaHash);
+    const reparented = { ...history, parent: { model: 'Issue', field: 'teamId' } };
+    expect(computeSchemaHash([...others, reparented])).not.toBe(registry.schemaHash);
+    const { parent: _parent, ...orphan } = history;
+    expect(computeSchemaHash([...others, orphan])).not.toBe(registry.schemaHash);
+  });
+
+  it('can’t be defined without a parent', () => {
+    expect(() =>
+      defineModel('IssueHistory', { load: 'content', fields: { issueId: uuid() } }),
+    ).toThrow('Model IssueHistory: a content model needs a parent');
+  });
+
+  it('must name a synced eager parent in the same registry', () => {
+    const history = registered('IssueHistory');
+    expect(contentParentProblem(registry.models)).toBeUndefined();
+    const withParent = (model: string) => ({
+      ...history,
+      def: { ...history.def, parent: { model, field: 'issueId' } },
+    });
+    expect(contentParentProblem([...registry.models, withParent('Project')])).toBe(
+      'Content model IssueHistory names parent Project, which is not a synced eager model.',
+    );
+    expect(contentParentProblem([...registry.models, withParent('IssueContent')])).toBe(
+      'Content model IssueHistory names parent IssueContent, which is not a synced eager model.',
     );
   });
 });

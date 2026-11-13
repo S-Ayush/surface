@@ -3,52 +3,11 @@
 // (only a team move, M3, reads one); an Issue insert reads its team `FOR SHARE`. A child row's
 // `teamId` is its issue's, whatever the handler passed, and its groups are `team:<teamId>` only.
 //
-// No child model is registered before PLAN-011 S5a, so the child half runs through the real repo
-// with a stand-in `IssueHistory` entry over the real `issue_history` table, added by `vi.mock`.
+// The child half runs through the real repo with the real `IssueHistory` entry (PLAN-011 S5a).
 import { teamGroup, userGroup } from '@surface/domain';
-import { defineModel, enumOf, json, timestamp, uuid } from '@surface/domain/model';
-import { describe, expect, it, vi } from 'vitest';
-import type * as Models from '../src/sync/models.js';
-import type { RowChange, TransactionRepo } from '../src/sync/repo.js';
+import { describe, expect, it } from 'vitest';
+import type { RowChange } from '../src/sync/repo.js';
 import { scriptedDb, type Row, type Statement } from './support/scripted-db.js';
-
-vi.mock('../src/sync/models.js', async (importOriginal) => {
-  const original = await importOriginal<typeof Models>();
-  const { issueHistory } = await import('../src/db/schema/index.js');
-  const IssueHistory = defineModel('IssueHistory', {
-    load: 'content',
-    fields: {
-      issueId: uuid(),
-      teamId: uuid(),
-      actorKind: enumOf(['user', 'api', 'mcp', 'system']),
-      actorId: uuid().nullable(),
-      apiKeyId: uuid().nullable(),
-      kind: enumOf(['created', 'updated', 'deleted', 'restored', 'archived']),
-      changes: json(),
-      createdAt: timestamp(),
-      updatedAt: timestamp(),
-    },
-  });
-  const SYNCED_MODELS = {
-    ...original.SYNCED_MODELS,
-    IssueHistory: {
-      table: issueHistory,
-      def: IssueHistory,
-      fixture: true,
-      issueChild: true,
-      groupsOf: original.groupsOfIssueChild,
-      groupFields: ['issueId', 'teamId'],
-      teamColumn: issueHistory.teamId,
-    },
-  };
-  return {
-    ...original,
-    SYNCED_MODELS,
-    isModelName: (value: string) => Object.hasOwn(SYNCED_MODELS, value),
-    isIssueChild: (model: string) =>
-      model === 'IssueHistory' || (original.isModelName(model) && original.isIssueChild(model)),
-  };
-});
 
 const NOW = new Date('2026-11-13T10:00:00.000Z');
 const AT = '2026-11-01T09:00:00.000Z';
@@ -98,16 +57,6 @@ const teamReads = (statements: readonly Statement[]) =>
 
 const logged = (changes: readonly RowChange[]) =>
   changes.map((c) => ({ action: c.action, model: c.model, groups: [...c.groups] }));
-
-/**
- * The repo as a handler of a model the real `ModelName` doesn't list yet would call it. (Method
- * parameters are bivariant, so the generic repo already fits this shape.)
- */
-interface UntypedRepo {
-  insert(model: string, row: Row): Promise<Row>;
-  update(model: string, id: string, patch: Row): Promise<Row>;
-}
-const untyped = (repo: TransactionRepo): UntypedRepo => repo;
 
 function world(groups: string[] = ['workspace']) {
   return scriptedDb(
@@ -186,27 +135,27 @@ describe('Issue groups (SPEC-011 §4.8, D5)', () => {
 });
 
 describe('issue child rows (SPEC-011 §5.1, AC-19)', () => {
-  const entry = (teamId: string): Row => ({
+  const entry = (teamId: string) => ({
     id: ENTRY,
     issueId: ISSUE,
     teamId,
-    actorKind: 'user',
+    actorKind: 'user' as const,
     actorId: ADA,
-    kind: 'created',
+    kind: 'created' as const,
     changes: {},
   });
 
   it('take the team of their issue’s row, whatever teamId the handler passed', async () => {
     const { repo, rowsOf } = world();
-    const row = await untyped(repo).insert('IssueHistory', entry(OTHER));
-    expect(row['teamId']).toBe(ENG);
+    const row = await repo.insert('IssueHistory', entry(OTHER));
+    expect(row.teamId).toBe(ENG);
     expect(rowsOf('issue_history').get(ENTRY)?.['team_id']).toBe(ENG);
   });
 
   it('are in team:<teamId> only, never the issue’s user: groups', async () => {
     // A public team's issue as S4b stores it: its team and the creator's and assignee's groups.
     const { repo } = world([teamGroup(ENG), userGroup(ADA), userGroup(OTHER)]);
-    await untyped(repo).insert('IssueHistory', entry(OTHER));
+    await repo.insert('IssueHistory', entry(OTHER));
     expect(logged(repo.changes())).toEqual([
       { action: 'I', model: 'IssueHistory', groups: [teamGroup(ENG)] },
     ]);
@@ -214,16 +163,16 @@ describe('issue child rows (SPEC-011 §5.1, AC-19)', () => {
 
   it('read the issue row, never a team row', async () => {
     const { repo, statements } = world();
-    await untyped(repo).insert('IssueHistory', entry(ENG));
+    await repo.insert('IssueHistory', entry(ENG));
     expect(teamReads(statements)).toEqual([]);
     expect(statements[0]?.text).toBe('select "team_id" from "issues" where "issues"."id" = $1');
   });
 
   it('never move to another team through a patch', async () => {
     const { repo, rowsOf, statements } = world();
-    await untyped(repo).insert('IssueHistory', entry(ENG));
+    await repo.insert('IssueHistory', entry(ENG));
     const before = statements.length;
-    await untyped(repo).update('IssueHistory', ENTRY, { teamId: OTHER, changes: { title: true } });
+    await repo.update('IssueHistory', ENTRY, { teamId: OTHER, changes: { title: true } });
     const update = statements.slice(before).find(({ text }) => text.startsWith('update'));
     expect(update?.text.split(' where ')[0]).not.toContain('"team_id"');
     expect(rowsOf('issue_history').get(ENTRY)?.['team_id']).toBe(ENG);
@@ -237,11 +186,11 @@ describe('issue child rows (SPEC-011 §5.1, AC-19)', () => {
   it('never move to another team through a patch of their issue', async () => {
     // Re-parented under SEC's issue, the row would keep ENG's team and groups: a leak (§5.1).
     const { repo, rowsOf, statements } = world();
-    await untyped(repo).insert('IssueHistory', entry(ENG));
+    await repo.insert('IssueHistory', entry(ENG));
     const before = statements.length;
-    await expect(
-      untyped(repo).update('IssueHistory', ENTRY, { issueId: SEC_ISSUE }),
-    ).rejects.toThrow(/IssueHistory can't move to another issue/);
+    await expect(repo.update('IssueHistory', ENTRY, { issueId: SEC_ISSUE })).rejects.toThrow(
+      /IssueHistory can't move to another issue/,
+    );
     expect(statements.slice(before)).toEqual([]);
     expect(rowsOf('issue_history').get(ENTRY)).toMatchObject({ issue_id: ISSUE, team_id: ENG });
     expect(logged(repo.changes()).map((c) => c.action)).toEqual(['I']);
@@ -249,7 +198,7 @@ describe('issue child rows (SPEC-011 §5.1, AC-19)', () => {
 
   it('get no groups, and no team, when their issue does not exist', async () => {
     const { repo, rowsOf } = scriptedDb({ teams: [team(ENG, false)] }, { now: NOW });
-    await untyped(repo).insert('IssueHistory', entry(ENG));
+    await repo.insert('IssueHistory', entry(ENG));
     // The NOT NULL and foreign key on `team_id` fail the transaction in Postgres.
     expect(rowsOf('issue_history').get(ENTRY)?.['team_id']).toBeNull();
     expect(logged(repo.changes())).toEqual([{ action: 'I', model: 'IssueHistory', groups: [] }]);
