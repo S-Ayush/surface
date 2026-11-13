@@ -4,6 +4,7 @@
 import { userActor, type Actor } from '@surface/domain';
 import { Issue, Label, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
 import { OverlayProvider } from '@surface/ui';
+import { SyncStoreProvider } from '@surface/sync-react';
 import type { SyncStore } from '@surface/sync-client';
 import {
   createMemoryHistory,
@@ -30,7 +31,7 @@ import { ShellContext } from '../src/shell/ShellContext.js';
 import { ShellStore } from '../src/shell/ShellStore.js';
 import { ShortcutProvider, useCommandRegistry } from '../src/shortcuts/ShortcutProvider.js';
 import type { CommandRegistry } from '../src/commands/registry.js';
-import { DES, ENG, ME, STATUSES, issue, uuid } from './issue-list-fixtures.js';
+import { DES, DES_DONE, DES_TODO, ENG, ME, STATUSES, issue, uuid } from './issue-list-fixtures.js';
 
 // jsdom has no matchMedia: a wide screen, which never changes.
 if (typeof Reflect.get(window, 'matchMedia') !== 'function') {
@@ -63,6 +64,10 @@ export class IssueApp extends AppModel {
   readonly issues = observable.box<readonly ListIssue[]>([], { deep: false });
   readonly #store: SyncStore;
   readonly #connection = observable.box<'online' | 'offline'>('online');
+  /** Non-member teams whose partial bootstrap the fake store has applied (`loadTeam`). */
+  readonly #loadedTeams = observable.set<string>();
+  /** The teams pages opened (`store.openTeam`), in order. */
+  readonly opened: string[] = [];
 
   constructor(
     initial: readonly ListIssue[],
@@ -83,16 +88,33 @@ export class IssueApp extends AppModel {
       ],
       [
         WorkflowStatus,
-        () => STATUSES.map((s) => ({ ...s, teamId: ENG, groups: [], createdAt: AT })),
+        () =>
+          STATUSES.map((s) => ({
+            ...s,
+            teamId: s.id === DES_TODO || s.id === DES_DONE ? DES : ENG,
+            groups: [],
+            createdAt: AT,
+          })),
       ],
       [Label, () => [{ id: uuid(1), name: 'Perf', color: 'blue', teamId: ENG }]],
       [Issue, () => this.issues.get()],
     ]);
     const connection = this.#connection;
+    const loadedTeams = this.#loadedTeams;
+    const opened = this.opened;
     this.#store = {
       status: 'ready',
       get connection() {
         return connection.get();
+      },
+      // The store's rule (sync-client `TeamSubscriptions.loadState`): a member team is in the
+      // replica; another is loading until its partial bootstrap, offline if never loaded.
+      teamLoadState: (teamId: string) => {
+        if (this.memberOf.includes(teamId) || loadedTeams.has(teamId)) return 'ready';
+        return connection.get() === 'online' ? 'loading' : 'offline';
+      },
+      openTeam: (teamId: string) => {
+        opened.push(teamId);
       },
       pool: {
         all: (model: unknown) => byModel.get(model)?.() ?? [],
@@ -120,6 +142,13 @@ export class IssueApp extends AppModel {
   setIssues(next: readonly ListIssue[]): void {
     runInAction(() => {
       this.issues.set(next);
+    });
+  }
+
+  /** The fake store applied the team's partial bootstrap. */
+  loadTeam(teamId: string): void {
+    runInAction(() => {
+      this.#loadedTeams.add(teamId);
     });
   }
 
@@ -209,15 +238,17 @@ export async function mountLists(app: AppModel, path: string): Promise<Mounted> 
   await act(async () => {
     mounted.render(
       <AppContext value={app}>
-        <ShellContext value={new ShellStore(null)}>
-          <OverlayProvider>
-            <TargetContext value={new TargetStore()}>
-              <ShortcutProvider>
-                <RouterProvider router={router} />
-              </ShortcutProvider>
-            </TargetContext>
-          </OverlayProvider>
-        </ShellContext>
+        <SyncStoreProvider store={storeOf(app)}>
+          <ShellContext value={new ShellStore(null)}>
+            <OverlayProvider>
+              <TargetContext value={new TargetStore()}>
+                <ShortcutProvider>
+                  <RouterProvider router={router} />
+                </ShortcutProvider>
+              </TargetContext>
+            </OverlayProvider>
+          </ShellContext>
+        </SyncStoreProvider>
       </AppContext>,
     );
     await Promise.resolve();
@@ -241,6 +272,13 @@ export async function mountLists(app: AppModel, path: string): Promise<Mounted> 
       return Promise.resolve();
     },
   };
+}
+
+/** The app's store, as the shell provides it to pages (`StoreGate`). */
+function storeOf(app: AppModel): SyncStore {
+  const store = app.store;
+  if (store === null) throw new Error('The list harness needs an app with a store.');
+  return store;
 }
 
 import { Outlet } from '@tanstack/react-router';

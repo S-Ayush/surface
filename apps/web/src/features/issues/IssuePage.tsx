@@ -48,7 +48,7 @@ import {
   findRejectedCreate,
   heldRejection,
   loadMissingIssue,
-  NO_TEAM_SUBSCRIPTION,
+  storeTeamSubscription,
   type IssueLoadResult,
 } from './issue-loader.js';
 import {
@@ -113,7 +113,7 @@ function useIssueSource(issueRef: string) {
       get: (ref) => api.get(ref),
       online: () => app.store?.connection === 'online',
       pool: app.store?.pool,
-      subscribeTeam: NO_TEAM_SUBSCRIPTION,
+      subscribeTeam: storeTeamSubscription(app.store),
     }).then((result) => {
       if (current) setLoaded({ ref: issueRef, result });
     });

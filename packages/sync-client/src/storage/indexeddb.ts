@@ -1,8 +1,8 @@
 /**
  * IndexedDB storage (PLAN-002 S6), meant to run inside the storage worker.
  * Object stores: `meta`, the mutation queue (`clients`, and `pending` keyed by
- * `[clientId, seq]`; PLAN-002 S8) and one `row:<Model>` store per synced
- * model, keyed by row id. When the store list changes, the database version is
+ * `[clientId, seq]`; PLAN-002 S8), the on-demand teams (`subscriptions`; PLAN-011 S4c) and one
+ * `row:<Model>` store per synced model, keyed by row id. When the store list changes, the database version is
  * bumped and the row stores are rebuilt; the queue survives.
  *
  * Every write transaction re-reads `meta` and checks the generation first (the
@@ -13,6 +13,8 @@ import { openDB } from 'idb';
 import type {
   BootstrapRecord,
   BootstrapStart,
+  OnDemandTeams,
+  PartialWrite,
   PendingRecord,
   ClaimedQueue,
   QueueClaim,
@@ -24,22 +26,37 @@ import type {
   StoredMeta,
   StoredRecord,
   SyncStorage,
+  TeamRemoval,
 } from './types.js';
+import type { ReadRecords } from './partial-plan.js';
+import {
+  partialWriteModels,
+  planPartialWrite,
+  planTeamRemoval,
+  shapeModels,
+} from './partial-plan.js';
 import {
   META_KEY,
   QueueFencedError,
   StorageClosedError,
   StorageFencedError,
+  advanceTeamThrough,
   changedId,
+  dropTeamThrough,
   newGeneration,
   planClaim,
   recordFor,
+  startingTeamThrough,
+  touchedOnDemand,
 } from './types.js';
 
 const META_STORE = 'meta';
 const PENDING_STORE = 'pending';
 const CLIENTS_STORE = 'clients';
 const QUEUE_STORES = [CLIENTS_STORE, PENDING_STORE];
+/** Survives bootstraps and upgrades, like the queue (SPEC-011 §5.7: per replica). */
+const SUBSCRIPTIONS_STORE = 'subscriptions';
+const ON_DEMAND_KEY = 'onDemand';
 const rowStore = (model: string) => `row:${model}`;
 
 type Tx = IDBPTransaction<unknown, string[], 'readwrite'>;
@@ -57,7 +74,12 @@ export class IndexedDbStorage implements SyncStorage {
 
   /** Open (or create, or migrate) the replica database `name` for these models. */
   static async open(name: string, models: readonly string[]): Promise<IndexedDbStorage> {
-    const wanted = new Set([META_STORE, ...QUEUE_STORES, ...models.map(rowStore)]);
+    const wanted = new Set([
+      META_STORE,
+      ...QUEUE_STORES,
+      SUBSCRIPTIONS_STORE,
+      ...models.map(rowStore),
+    ]);
     // Filled in once open; the version-change callbacks below may fire any time after.
     const opened: { storage?: IndexedDbStorage } = {};
     const callbacks = {
@@ -68,10 +90,8 @@ export class IndexedDbStorage implements SyncStorage {
         }
         for (const store of wanted) {
           if (!db.objectStoreNames.contains(store)) {
-            db.createObjectStore(
-              store,
-              store === META_STORE ? undefined : { keyPath: storeKey(store) },
-            );
+            const outOfLine = store === META_STORE || store === SUBSCRIPTIONS_STORE;
+            db.createObjectStore(store, outOfLine ? undefined : { keyPath: storeKey(store) });
           }
         }
       },
@@ -110,7 +130,12 @@ export class IndexedDbStorage implements SyncStorage {
     const generation = newGeneration();
     const tx = this.#write([...this.#models].map(rowStore));
     for (const model of this.#models) await tx.objectStore(rowStore(model)).clear();
-    const meta: StoredMeta = { ...start, generation, state: 'bootstrapping' };
+    const meta: StoredMeta = {
+      ...start,
+      generation,
+      state: 'bootstrapping',
+      teamThrough: startingTeamThrough(start),
+    };
     await tx.objectStore(META_STORE).put(meta, META_KEY);
     await tx.done;
     return generation;
@@ -162,6 +187,7 @@ export class IndexedDbStorage implements SyncStorage {
     generation: string,
     changes: readonly StoredChange[],
     lastSyncId: number,
+    teams?: readonly string[],
   ): Promise<void> {
     const models = [...new Set(changes.map((c) => c.model))];
     const tx = this.#write(models.map((m) => this.#rowStore(m)));
@@ -173,9 +199,54 @@ export class IndexedDbStorage implements SyncStorage {
       const record = recordFor(change, isStoredRecord(existing) ? existing : undefined);
       if (record) await store.put(record);
     }
-    const next: StoredMeta = { ...meta, lastSyncId: Math.max(meta.lastSyncId, lastSyncId) };
+    const teamThrough = advanceTeamThrough(meta.teamThrough, teams, lastSyncId);
+    const next: StoredMeta = {
+      ...meta,
+      lastSyncId: Math.max(meta.lastSyncId, lastSyncId),
+      ...(teamThrough === undefined ? {} : { teamThrough }),
+    };
     await tx.objectStore(META_STORE).put(next, META_KEY);
     await tx.done;
+  }
+
+  async writePartialRows(generation: string, write: PartialWrite): Promise<void> {
+    const models = partialWriteModels(write);
+    const tx = this.#write(models.map((m) => this.#rowStore(m)));
+    const meta = await fence(tx, generation);
+    const read = await readAll(tx, models);
+    for (const { model, record } of planPartialWrite(write, read)) {
+      await tx.objectStore(rowStore(model)).put(record);
+    }
+    const teamThrough = advanceTeamThrough(meta.teamThrough, write.teams, write.through) ?? {};
+    await tx.objectStore(META_STORE).put({ ...meta, teamThrough } satisfies StoredMeta, META_KEY);
+    await tx.done;
+  }
+
+  async removeTeamRows(generation: string, removal: TeamRemoval): Promise<void> {
+    const models = shapeModels(removal.shape);
+    const tx = this.#write(models.map((m) => this.#rowStore(m)));
+    const meta = await fence(tx, generation);
+    const read = await readAll(tx, models);
+    for (const { model, id } of planTeamRemoval(removal, read)) {
+      await tx.objectStore(rowStore(model)).delete(id);
+    }
+    const teamThrough = dropTeamThrough(meta.teamThrough, removal.teams);
+    await tx.objectStore(META_STORE).put({ ...meta, teamThrough } satisfies StoredMeta, META_KEY);
+    await tx.done;
+  }
+
+  async readOnDemand(): Promise<readonly string[]> {
+    const value: unknown = await this.#open().get(SUBSCRIPTIONS_STORE, ON_DEMAND_KEY);
+    return isTeamList(value) ? value : [];
+  }
+
+  async touchOnDemand(teamId: string, limit: number): Promise<OnDemandTeams> {
+    const tx = this.#open().transaction(SUBSCRIPTIONS_STORE, 'readwrite');
+    const value: unknown = await tx.store.get(ON_DEMAND_KEY);
+    const result = touchedOnDemand(isTeamList(value) ? value : [], teamId, limit);
+    await tx.store.put([...result.teams], ON_DEMAND_KEY);
+    await tx.done;
+    return result;
   }
 
   async readQueue(): Promise<QueueSnapshot> {
@@ -322,6 +393,20 @@ async function fence(tx: Tx, generation: string): Promise<StoredMeta> {
   throw new StorageFencedError();
 }
 
+/** Every record of `models`, read in `tx` before it writes. */
+async function readAll(tx: Tx, models: readonly string[]): Promise<ReadRecords> {
+  const records = new Map<string, StoredRecord[]>();
+  for (const model of models) {
+    const values: unknown[] = await tx.objectStore(rowStore(model)).getAll();
+    records.set(model, values.filter(isStoredRecord));
+  }
+  return (model) => records.get(model) ?? [];
+}
+
+function isTeamList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((team) => typeof team === 'string');
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -334,8 +419,13 @@ function isStoredMeta(value: unknown): value is StoredMeta {
     typeof value.generation === 'string' &&
     typeof value.lastSyncId === 'number' &&
     Array.isArray(value.groups) &&
-    (value.state === 'bootstrapping' || value.state === 'ready')
+    (value.state === 'bootstrapping' || value.state === 'ready') &&
+    (value.teamThrough === undefined || isTeamThrough(value.teamThrough))
   );
+}
+
+function isTeamThrough(value: unknown): value is Record<string, number> {
+  return isObject(value) && Object.values(value).every((id) => typeof id === 'number');
 }
 
 function isStoredClient(value: unknown): value is StoredClient {

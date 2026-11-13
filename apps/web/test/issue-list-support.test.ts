@@ -10,7 +10,7 @@ import {
   myIssuesPath,
   rememberMyIssuesTab,
 } from '../src/features/issues/my-issues-tab.js';
-import { teamLoadState } from '../src/features/issues/team-load.js';
+import { listLoadState } from '../src/features/issues/team-load.js';
 
 function fakeStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -53,14 +53,13 @@ describe('collapse state (§3.3 item 3)', () => {
 });
 
 describe('team load seam (§3.3 item 10, §7.2)', () => {
-  it('renders a member team, or any team the replica holds rows of, at once', () => {
-    expect(teamLoadState({ member: true, online: false, hasRows: false })).toBe('loaded');
-    expect(teamLoadState({ member: false, online: false, hasRows: true })).toBe('loaded');
+  it("renders the list once the store's team is ready (a member team at once)", () => {
+    expect(listLoadState('ready')).toBe('loaded');
   });
 
-  it('says Loading while a non-member team is online, and offline when it never loaded', () => {
-    expect(teamLoadState({ member: false, online: true, hasRows: false })).toBe('loading');
-    expect(teamLoadState({ member: false, online: false, hasRows: false })).toBe('offline');
+  it('says Loading while the team is being subscribed, and offline when it never loaded', () => {
+    expect(listLoadState('loading')).toBe('loading');
+    expect(listLoadState('offline')).toBe('offline');
   });
 });
 

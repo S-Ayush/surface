@@ -86,6 +86,10 @@ async function startedStore(): Promise<SyncStore> {
     fetch: fakeFetch(() => ndjsonResponse(frames)),
     connectStorage: memoryStorage,
     connection: quietConnection(),
+    // With partial loading the replica never holds an archived or deleted issue (SPEC-011 AC-29,
+    // PLAN-011 S4c), and no team here is followed. This test is about how the ops read the
+    // store's pool, so it turns partial loading off to feed those rows in.
+    partial: null,
   });
   await store.start();
   expect(store.pool.count(Issue)).toBe(names.length);

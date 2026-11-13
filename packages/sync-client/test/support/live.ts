@@ -4,7 +4,13 @@ import type { StorageConnector } from '../../src/storage/open.js';
 import type { SyncStoreOptions } from '../../src/store.js';
 import { SyncStore } from '../../src/store.js';
 import type { FakeHub } from './hub.js';
-import { DebugItem, TEST_MODELS, USER_ID } from './models.js';
+import {
+  DebugItem,
+  PARTIAL_TEST_LOADING,
+  PARTIAL_TEST_MODELS,
+  TEST_MODELS,
+  USER_ID,
+} from './models.js';
 import { FIXTURE_OPS } from './ops.js';
 import { uniqueName } from './storage.js';
 import { ManualTimers } from './timers.js';
@@ -69,7 +75,12 @@ export function keptMemoryStorage() {
   const persisted = async () => (await pending()).length;
   /** Whether the mutation with this seq is persisted. */
   const has = async (seq: number) => (await pending()).some((record) => record.seq === seq);
-  return { connect, persisted, has };
+  /** The ids of a model's stored live rows. */
+  const stored = async (model: string) =>
+    ((await kept.storage?.readRows(model, undefined, 10_000))?.rows ?? []).map((r) => r.row.id);
+  /** The stored replica's `lastSyncId`. */
+  const lastSyncId = async () => (await kept.storage?.readMeta())?.lastSyncId ?? 0;
+  return { connect, persisted, has, stored, lastSyncId };
 }
 
 /** Wait for an observable condition on the store; fails after `ms` instead of hanging. */
@@ -96,6 +107,33 @@ export function clientItems(store: SyncStore): Record<string, ItemView> {
     },
   ]);
   return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/** A store on the stand-in team world (PLAN-011 S4c): `hub.withTeams()` first. */
+export function teamStore(
+  hub: FakeHub,
+  options: Partial<SyncStoreOptions> & { timers?: ManualTimers } = {},
+) {
+  return liveStore(hub, {
+    models: PARTIAL_TEST_MODELS,
+    partial: PARTIAL_TEST_LOADING,
+    ...options,
+  });
+}
+
+/** What a store shows of the team world: tasks (title and groups), parts and notes, by id. */
+export function teamView(store: SyncStore) {
+  const byId = <T>(entries: [string, T][]) =>
+    Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  return {
+    tasks: byId(
+      store.pool
+        .all('Task')
+        .map((t): [string, unknown] => [t.id, { title: t['title'], groups: t['groups'] }]),
+    ),
+    parts: byId(store.pool.all('TaskPart').map((p): [string, unknown] => [p.id, p['issueId']])),
+    notes: byId(store.pool.all('TaskNote').map((n): [string, unknown] => [n.id, n['issueId']])),
+  };
 }
 
 /** The server's DebugItems, by id, in the same shape. */

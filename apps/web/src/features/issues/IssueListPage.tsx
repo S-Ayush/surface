@@ -44,8 +44,7 @@ export function IssueListPage({ teamKey }: { teamKey: string }) {
 
   const scope = useMemo<ListScope>(() => ({ kind: 'team', teamId: team?.id ?? '' }), [team?.id]);
   const rows = useIssueRows(scope);
-  const hasRows = rows.ready && rows.groups.length > 0;
-  const load = useTeamLoadState(team?.id ?? '', hasRows);
+  const load = useTeamLoadState(team?.id ?? '');
 
   if (state === 'not-found') return <NotFoundPage />;
   if (team === null || !rows.ready) return undefined;

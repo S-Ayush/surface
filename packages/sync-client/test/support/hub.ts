@@ -7,6 +7,13 @@
  * PLAN-011 S5a: `GET /sync/content` for the `Note` content model (parent `DebugItem` by
  * `itemId`), answered from one snapshot at the current head, with faults (a failed request, an
  * error status, a cut-off stream, an answer held while more packets commit).
+ *
+ * PLAN-011 S4c (after `withTeams()`): partial issue loading on the stand-in models (`Squad`,
+ * `SquadMember`, `Task`, `TaskPart`, `TaskNote`). Packets carry sync groups and reach a connection
+ * only through one of its groups, with a Task's `groups` cut to the connection's; `teams=` on the
+ * URL, `subscribe`/`unsubscribe` with their acks queued in order with the deltas; the full and the
+ * partial bootstrap (`?groups=team:<id>`); `user:` groups on public tasks, and the `D`+`U` pair
+ * when they change.
  */
 import type { ModelRow } from '@surface/domain/model';
 import type {
@@ -20,6 +27,7 @@ import type {
   MutateRequest,
   MutationResult,
   ServerMessage,
+  SyncGroup,
 } from '@surface/sync-protocol';
 import {
   CSRF_COOKIE,
@@ -32,6 +40,7 @@ import {
   MissingUserIdError,
   ProtocolError,
   SESSION_PATH,
+  computeSchemaHash,
   decodeBootstrapQuery,
   decodeClientMessage,
   decodeContentQuery,
@@ -43,7 +52,7 @@ import {
 import type { FetchLike } from '../../src/bootstrap.js';
 import type { SocketConnection, SocketFactory, SocketHandlers } from '../../src/socket.js';
 import type { ConnectionOptions } from '../../src/store.js';
-import { USER_ID, debugRow, id, noteRow } from './models.js';
+import { PARTIAL_TEST_MODELS, USER_ID, debugRow, id, noteRow } from './models.js';
 import { TEST_SCHEMA_HASH, bootstrapFrames, ndjsonResponse } from './server.js';
 import { ManualTimers } from './timers.js';
 
@@ -164,8 +173,313 @@ export class FakeHub {
   holdContent = false;
   readonly #heldContent: (() => void)[] = [];
 
+  // Partial issue loading (PLAN-011 S4c), on after `withTeams()`
+
+  teamsOn = false;
+  /** Squad rows by id. */
+  readonly squads = new Map<string, ModelRow>();
+  /** SquadMember rows by id. */
+  readonly members = new Map<string, ModelRow>();
+  /** Task rows by id, archived and deleted ones included (the server's table). */
+  readonly tasks = new Map<string, ModelRow>();
+  readonly parts = new Map<string, ModelRow>();
+  readonly taskNotes = new Map<string, ModelRow>();
+  /** The sync groups of each logged packet; a packet without is for everyone (DebugItem). */
+  readonly packetGroups = new Map<number, readonly string[]>();
+  /** The teams of every partial bootstrap answered, in order. */
+  readonly partialRequests: string[][] = [];
+  /** Fail the next N partial bootstraps before they reach the server (a network error). */
+  failPartial = 0;
+  /** Snapshot partial bootstraps at once but answer them on `releasePartial()`. */
+  holdPartial = false;
+  readonly #heldPartial: (() => void)[] = [];
+
   constructor(head = 100) {
     this.head = head;
+  }
+
+  /** Turn on the stand-in team world, with the schema hash of `PARTIAL_TEST_MODELS`. */
+  withTeams(): this {
+    this.teamsOn = true;
+    this.schemaHash = computeSchemaHash(PARTIAL_TEST_MODELS);
+    return this;
+  }
+
+  releasePartial(): void {
+    for (const send of this.#heldPartial.splice(0)) send();
+  }
+
+  /** Squad `n` (id `id(n)`): a public team unless `private`. */
+  addSquad(n: number, options: { private?: boolean } = {}): string {
+    const row = { id: id(n), name: `Squad ${n}`, private: options.private ?? false };
+    this.squads.set(row.id, row);
+    this.#commit({ id: this.head + 1, a: 'I', m: 'Squad', d: { ...row } });
+    return row.id;
+  }
+
+  /** Make `userId` a member of squad `n`; the membership row's id is `id(n * 1000 + k)`. */
+  join(userId: string, n: number): string {
+    const rowId = id(5_000_000 + this.members.size + 1);
+    const row = { id: rowId, teamId: id(n), userId };
+    this.members.set(rowId, row);
+    this.#commit({ id: this.head + 1, a: 'I', m: 'SquadMember', d: { ...row } });
+    return rowId;
+  }
+
+  /** Remove `userId` from squad `n`. A private squad's change resyncs its member (§6). */
+  leave(userId: string, n: number): void {
+    for (const [rowId, row] of this.members) {
+      if (row['userId'] !== userId || row['teamId'] !== id(n)) continue;
+      this.members.delete(rowId);
+      this.#commit({ id: this.head + 1, a: 'D', m: 'SquadMember', mid: rowId });
+    }
+  }
+
+  isMember(userId: string, teamId: string): boolean {
+    return [...this.members.values()].some((m) => m['userId'] === userId && m['teamId'] === teamId);
+  }
+
+  isPrivate(teamId: string): boolean {
+    return this.squads.get(teamId)?.['private'] === true;
+  }
+
+  /** A user's home groups: workspace, `user:<id>` and the private squads they are in. */
+  homeGroups(userId: string): SyncGroup[] {
+    const teams = [...this.squads.keys()].filter(
+      (t) => this.isPrivate(t) && this.isMember(userId, t),
+    );
+    return ['workspace', `user:${userId}`, ...teams.map((t): SyncGroup => `team:${t}`)];
+  }
+
+  /** The full bootstrap's groups: home groups plus every squad the user is in (§4.1). */
+  memberGroups(userId: string): SyncGroup[] {
+    const teams = [...this.squads.keys()].filter(
+      (t) => !this.isPrivate(t) && this.isMember(userId, t),
+    );
+    return [...this.homeGroups(userId), ...teams.map((t): SyncGroup => `team:${t}`)];
+  }
+
+  /** Of `teams`, those `userId` may follow: public, or private and a member (E32). */
+  accept(userId: string, teams: readonly string[]): string[] {
+    return [...new Set(teams)].filter(
+      (t) => this.squads.has(t) && (!this.isPrivate(t) || this.isMember(userId, t)),
+    );
+  }
+
+  /** A task's groups (SPEC-011 §5.7): the team's, plus creator and assignee for a public team. */
+  taskGroups(row: ModelRow): string[] {
+    const team = String(row['teamId']);
+    if (this.isPrivate(team)) return [`team:${team}`];
+    const users = [row['creatorId'], row['assigneeId']].filter(
+      (u): u is string => typeof u === 'string',
+    );
+    return [`team:${team}`, ...new Set(users.map((u) => `user:${u}`))];
+  }
+
+  /**
+   * Insert or update task `n` of squad `squad`. A change of its groups (a new assignee) logs `D`
+   * with the old groups, then `U` with the new ones, as the repo does (sync-protocol §6).
+   */
+  putTask(
+    n: number,
+    squad: number,
+    fields: { title?: string; creatorId?: string; assigneeId?: string | null } = {},
+  ): void {
+    const existing = this.tasks.get(id(n));
+    const base: ModelRow = existing ?? {
+      id: id(n),
+      teamId: id(squad),
+      title: `Task ${n}`,
+      creatorId: USER_ID,
+      assigneeId: null,
+      groups: [],
+      archivedAt: null,
+      deletedAt: null,
+    };
+    const next: ModelRow = { ...base, ...fields };
+    const row = { ...next, groups: this.taskGroups(next) };
+    this.tasks.set(row.id, row);
+    const before = existing === undefined ? undefined : this.taskGroups(existing);
+    if (before !== undefined && before.join() !== row.groups.join()) {
+      this.#commit({ id: this.head + 1, a: 'D', m: 'Task', mid: row.id }, before, false);
+      this.#commit({ id: this.head + 1, a: 'U', m: 'Task', d: { ...row } }, row.groups);
+      return;
+    }
+    this.#commit(
+      { id: this.head + 1, a: existing ? 'U' : 'I', m: 'Task', d: { ...row } },
+      row.groups,
+    );
+  }
+
+  /** Archive task `n` (an `A`), as the auto-archive job does. */
+  archiveTask(n: number): void {
+    this.#lifecycle(n, 'A', { archivedAt: new Date(Date.now()).toISOString() });
+  }
+
+  /** Delete task `n`: a `U` with `deletedAt` set (SPEC-015). */
+  deleteTask(n: number): void {
+    this.#lifecycle(n, 'U', { deletedAt: new Date(Date.now()).toISOString() });
+  }
+
+  /** Restore task `n`: a `V` (or, with `as: 'U'`, a `U`) with both cleared. */
+  restoreTask(n: number, as: 'V' | 'U' = 'V'): void {
+    this.#lifecycle(n, as, { archivedAt: null, deletedAt: null });
+    // `issue.restore` logs the issue's eager children again, after it (SPEC-011 §5.7).
+    for (const part of this.parts.values()) {
+      if (part['issueId'] !== id(n)) continue;
+      this.#commit({ id: this.head + 1, a: 'U', m: 'TaskPart', d: { ...part } }, [
+        `team:${String(part['teamId'])}`,
+      ]);
+    }
+  }
+
+  /** Purge task `n`: its `D`; its parts' and notes' deletes are not logged (ADR-0022). */
+  purgeTask(n: number): void {
+    const row = this.tasks.get(id(n));
+    if (row === undefined) return;
+    this.tasks.delete(row.id);
+    for (const [k, part] of this.parts) if (part['issueId'] === row.id) this.parts.delete(k);
+    for (const [k, note] of this.taskNotes)
+      if (note['issueId'] === row.id) this.taskNotes.delete(k);
+    this.#commit({ id: this.head + 1, a: 'D', m: 'Task', mid: row.id }, this.taskGroups(row));
+  }
+
+  #lifecycle(n: number, a: 'A' | 'U' | 'V', fields: Record<string, string | null>): void {
+    const existing = this.tasks.get(id(n));
+    if (existing === undefined) return;
+    const row = { ...existing, ...fields };
+    this.tasks.set(row.id, row);
+    this.#commit({ id: this.head + 1, a, m: 'Task', d: { ...row } }, this.taskGroups(row));
+  }
+
+  /** Insert or update part `n` of task `task` (an eager child, in its team's group only). */
+  putPart(n: number, task: number, body = `Part ${n}`): void {
+    const parent = this.tasks.get(id(task));
+    if (parent === undefined) throw new Error(`no task ${task}`);
+    const existing = this.parts.get(id(n));
+    const row = { id: id(n), issueId: parent.id, teamId: String(parent['teamId']), body };
+    this.parts.set(row.id, row);
+    this.#commit({ id: this.head + 1, a: existing ? 'U' : 'I', m: 'TaskPart', d: { ...row } }, [
+      `team:${row.teamId}`,
+    ]);
+  }
+
+  /** Insert note `n` of task `task` (content, in its team's group only). */
+  putTaskNote(n: number, task: number, body = `Note ${n}`): void {
+    const parent = this.tasks.get(id(task));
+    if (parent === undefined) throw new Error(`no task ${task}`);
+    const existing = this.taskNotes.get(id(n));
+    const row = { id: id(n), issueId: parent.id, body };
+    this.taskNotes.set(row.id, row);
+    this.#commit({ id: this.head + 1, a: existing ? 'U' : 'I', m: 'TaskNote', d: { ...row } }, [
+      `team:${String(parent['teamId'])}`,
+    ]);
+  }
+
+  /** A row's `groups` cut to `groups` (SPEC-002 Q6), for models that declare them. */
+  cut(model: string, row: ModelRow, groups: ReadonlySet<string>): ModelRow {
+    if (model !== 'Task') return row;
+    const own = Array.isArray(row['groups']) ? row['groups'] : [];
+    return { ...row, groups: own.filter((g) => typeof g === 'string' && groups.has(g)) };
+  }
+
+  #live(row: ModelRow): boolean {
+    return row['archivedAt'] === null && row['deletedAt'] === null;
+  }
+
+  /** The full bootstrap of `userId` (with the team world on): its member groups' rows. */
+  #fullSnapshot(userId: string): BootstrapFrame[] {
+    const groups = this.memberGroups(userId);
+    const visible = new Set<string>(groups);
+    const sorted = <T extends { row: ModelRow }>(rows: T[]) =>
+      rows.sort((a, b) => (a.row.id < b.row.id ? -1 : 1));
+    const tasks = [...this.tasks.values()].filter(
+      (row) => this.#live(row) && this.taskGroups(row).some((g) => visible.has(g)),
+    );
+    const followed = new Set(groups);
+    const parts = [...this.parts.values()].filter((part) => {
+      const task = this.tasks.get(String(part['issueId']));
+      return (
+        task !== undefined && this.#live(task) && followed.has(`team:${String(part['teamId'])}`)
+      );
+    });
+    const rows = [
+      ...sorted(
+        [...this.rows.values()].map(({ row, archived }) => ({ model: 'DebugItem', row, archived })),
+      ),
+      ...[...this.squads.values()].map((row) => ({ model: 'Squad', row, archived: false })),
+      ...[...this.members.values()].map((row) => ({ model: 'SquadMember', row, archived: false })),
+      ...sorted(
+        tasks.map((row) => ({
+          model: 'Task',
+          row: this.cut('Task', row, visible),
+          archived: false,
+        })),
+      ),
+      ...sorted(parts.map((row) => ({ model: 'TaskPart', row, archived: false }))),
+    ];
+    return bootstrapFrames(rows, { lastSyncId: this.head, schemaHash: this.schemaHash, groups });
+  }
+
+  /** `?groups=team:<id>,…`: the accepted teams' live tasks and their parts (§4.1, AC-28). */
+  #partialSnapshot(userId: string, teams: readonly string[]): BootstrapFrame[] {
+    const accepted = this.accept(userId, teams);
+    const cutTo = new Set<string>([
+      ...this.homeGroups(userId),
+      ...accepted.map((t) => `team:${t}`),
+    ]);
+    const tasks = [...this.tasks.values()]
+      .filter((row) => this.#live(row) && accepted.includes(String(row['teamId'])))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    const ids = new Set(tasks.map((row) => row.id));
+    const parts = [...this.parts.values()]
+      .filter((row) => ids.has(String(row['issueId'])))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    const rows = [
+      ...tasks.map((row) => ({
+        model: 'Task',
+        row: this.cut('Task', row, cutTo),
+        archived: false,
+      })),
+      ...parts.map((row) => ({ model: 'TaskPart', row, archived: false })),
+    ];
+    return bootstrapFrames(rows, {
+      lastSyncId: this.head,
+      schemaHash: this.schemaHash,
+      groups: accepted.map((t): SyncGroup => `team:${t}`),
+    });
+  }
+
+  /** `GET /sync/bootstrap`, full or partial, with the server's answers before the first frame. */
+  #bootstrap(url: string): Promise<Response> {
+    let query;
+    try {
+      query = decodeBootstrapQuery(Object.fromEntries(new URL(url).searchParams));
+    } catch (error) {
+      if (error instanceof MissingUserIdError)
+        return Promise.resolve(errorResponse(426, 'CLIENT_OUTDATED'));
+      if (error instanceof ProtocolError)
+        return Promise.resolve(errorResponse(400, 'INVALID_INPUT'));
+      throw error;
+    }
+    this.users.bootstrap.push(query.userId);
+    if (query.schemaHash !== undefined && query.schemaHash !== this.schemaHash) {
+      return Promise.resolve(errorResponse(426, 'CLIENT_OUTDATED'));
+    }
+    if (query.groups === undefined) {
+      this.bootstraps += 1;
+      const frames = this.teamsOn ? this.#fullSnapshot(query.userId) : this.snapshot();
+      return Promise.resolve(ndjsonResponse(frames));
+    }
+    if (this.failPartial > 0) {
+      this.failPartial -= 1;
+      return Promise.reject(new TypeError('Failed to fetch'));
+    }
+    const teams = query.groups.map((group) => group.slice('team:'.length));
+    this.partialRequests.push(teams);
+    const frames = this.#partialSnapshot(query.userId, teams);
+    if (!this.holdPartial) return Promise.resolve(ndjsonResponse(frames));
+    return new Promise((resolve) => this.#heldPartial.push(() => resolve(ndjsonResponse(frames))));
   }
 
   /** `GET /sync/bootstrap` from the current state, `POST /sync/mutate`, or `GET /auth/session`. */
@@ -185,10 +499,7 @@ export class FakeHub {
         }),
       );
     }
-    const query = decodeBootstrapQuery(Object.fromEntries(new URL(url).searchParams));
-    this.users.bootstrap.push(query.userId);
-    this.bootstraps += 1;
-    return Promise.resolve(ndjsonResponse(this.snapshot()));
+    return this.#bootstrap(url);
   };
 
   /** Let held content answers through, in order. */
@@ -519,11 +830,13 @@ export class FakeHub {
     this.head += 1;
   }
 
-  #commit(packet: DeltaPacket): void {
+  /** Log a packet and deliver it; `deliver: false` keeps it for the next (a `D`+`U` pair goes together). */
+  #commit(packet: DeltaPacket, groups?: readonly string[], deliver = true): void {
     this.head = packet.id;
     this.log.push(packet);
+    if (groups !== undefined) this.packetGroups.set(packet.id, groups);
     if (this.#acking) this.acks.set(packet.id, this.#acking);
-    for (const connection of this.live) connection.deliver();
+    if (deliver) for (const connection of this.live) connection.deliver();
   }
 }
 
@@ -543,6 +856,16 @@ export class HubConnection {
   closedWith: number | undefined;
   /** When set, `deliver` holds packets back (a slow or stalled server). */
   paused = false;
+  /** `teams` on the URL (v0.8); undefined when absent. */
+  readonly teams: readonly string[] | undefined;
+  /** The connection's sync groups (with the team world on). */
+  readonly groups = new Set<string>();
+  /** `subscribe`/`unsubscribe` not yet handled, in order. */
+  readonly #requests: ClientMessage[] = [];
+  /** The `subscribed` of a URL with `teams` goes first, before catch-up. */
+  #greeted = false;
+  /** The last logged id looked at, sent or filtered out. */
+  #through = 0;
 
   readonly client: SocketConnection;
 
@@ -560,9 +883,26 @@ export class HubConnection {
     this.schemaHash = params.schemaHash;
     this.sent = params.since;
     this.ackedThrough = params.since;
+    this.teams = params.teams;
+    if (hub.teamsOn) {
+      const groups =
+        params.teams === undefined
+          ? hub.memberGroups(params.userId)
+          : [
+              ...hub.homeGroups(params.userId),
+              ...hub.accept(params.userId, params.teams).map((t) => `team:${t}`),
+            ];
+      for (const group of groups) this.groups.add(group);
+    }
     this.client = {
       send: (data) => {
-        this.received.push(decodeClientMessage(data));
+        const message = decodeClientMessage(data);
+        this.received.push(message);
+        if (message.t === 'subscribe' || message.t === 'unsubscribe') {
+          this.#requests.push(message);
+          // The hub handles requests once live, after what it has to send (sync-protocol §6.1).
+          queueMicrotask(() => this.deliver());
+        }
       },
       close: (code) => {
         this.isOpen = false;
@@ -592,7 +932,45 @@ export class HubConnection {
    */
   deliver(): void {
     if (!this.isOpen || this.paused) return;
-    const packets = this.hub.log.filter((packet) => packet.id > this.sent);
+    if (this.teams !== undefined && !this.#greeted) {
+      this.#greeted = true;
+      const accepted = this.hub.accept(this.userId, this.teams);
+      this.send({ t: 'subscribed', teams: accepted, at: this.since });
+    }
+    this.#deliverPackets();
+    while (this.isOpen && !this.paused && this.#requests.length > 0) {
+      const request = this.#requests.shift();
+      if (request === undefined) break;
+      if (request.t === 'subscribe') {
+        const accepted = this.hub.accept(this.userId, request.teams);
+        for (const team of accepted) this.groups.add(`team:${team}`);
+        this.send({ t: 'subscribed', teams: accepted, at: this.hub.head });
+      } else if (request.t === 'unsubscribe') {
+        const home = new Set(this.hub.homeGroups(this.userId));
+        const teams = request.teams.filter((t) => !home.has(`team:${t}`));
+        for (const team of teams) this.groups.delete(`team:${team}`);
+        this.send({ t: 'unsubscribed', teams, at: this.hub.head });
+      }
+      this.#deliverPackets();
+    }
+  }
+
+  /** Whether `packet` reaches this connection, and as what (its groups cut to the connection's). */
+  #visible(packet: DeltaPacket): DeltaPacket | undefined {
+    const groups = this.hub.packetGroups.get(packet.id);
+    if (groups === undefined) return packet;
+    if (!groups.some((group) => this.groups.has(group))) return undefined;
+    if (packet.a === 'D' || packet.a === 'G') return packet;
+    return { ...packet, d: this.hub.cut(packet.m, packet.d, this.groups) };
+  }
+
+  #deliverPackets(): void {
+    // Every logged packet is looked at once, under the groups of that moment: one a later
+    // `subscribe` makes visible is before its `at`, and never sent (sync-protocol §6.1).
+    const fresh = this.hub.log.filter((packet) => packet.id > Math.max(this.sent, this.#through));
+    const seen = fresh.at(-1);
+    if (seen !== undefined) this.#through = seen.id;
+    const packets = fresh.flatMap((packet) => this.#visible(packet) ?? []);
     for (let start = 0; start < packets.length; start += this.hub.pageSize) {
       const page = packets.slice(start, start + this.hub.pageSize);
       const last = page.at(-1);

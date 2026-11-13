@@ -3,7 +3,9 @@
 // `issue.get` and shows what comes back. The parts that need later slices sit behind two seams
 // (`IssueLoaderDeps`), so this file doesn't change when they land.
 import { parseIssueRef } from '@surface/domain';
-import type { ReadonlyPool } from '@surface/sync-client';
+import { Issue, Team } from '@surface/domain/model';
+import type { ReadonlyPool, SyncStore } from '@surface/sync-client';
+import { teamByKey } from '../../app/workspace.js';
 import type { OperationAnswer } from '../files/operation.js';
 import { issueViewFromOutput, type IssueOutput, type IssueView } from './issue-view.js';
 
@@ -28,17 +30,31 @@ export interface IssueLoaderDeps {
   readonly pool?: ReadonlyPool | undefined;
   /**
    * Subscribes the issue's (public) team on demand and resolves when the row is in the replica
-   * ('local'), or 'unavailable' when it can't be done.
-   *
-   * TODO(PLAN-011 S4c): the team subscription and `useTeamLoadState` aren't built. Until they are,
-   * a live issue the replica doesn't hold is shown read-only from the `issue.get` answer.
+   * ('local'), or 'unavailable' when it can't be done (`storeTeamSubscription`).
    */
   readonly subscribeTeam: (teamKey: string, issueId: string) => Promise<'local' | 'unavailable'>;
 }
 
-/** Until PLAN-011 S4c: no subscription, so the answer is shown read-only. */
+/** No subscription: the answer is shown read-only (no store, or tests of the read-only view). */
 export const NO_TEAM_SUBSCRIPTION: IssueLoaderDeps['subscribeTeam'] = () =>
   Promise.resolve('unavailable');
+
+/**
+ * Subscribe the issue's team through the store (SPEC-011 §5.7, PLAN-011 S4c): open it as an
+ * on-demand team, wait for its partial bootstrap, then read the row from the replica. A team the
+ * replica doesn't hold, or one that can't be loaded now (offline), is 'unavailable', and so is a
+ * row the loaded team doesn't have (it left the team, or was deleted meanwhile).
+ */
+export function storeTeamSubscription(store: SyncStore | null): IssueLoaderDeps['subscribeTeam'] {
+  return async (teamKey, issueId) => {
+    if (store === null) return 'unavailable';
+    const team = teamByKey(store.pool.all(Team), teamKey);
+    if (team === undefined) return 'unavailable';
+    store.openTeam(team.id);
+    if ((await store.whenTeamLoaded(team.id)) !== 'ready') return 'unavailable';
+    return store.pool.get(Issue, issueId) === undefined ? 'unavailable' : 'local';
+  };
+}
 
 export async function loadMissingIssue(
   ref: string,

@@ -58,3 +58,6 @@ export type { BootstrapProgress, FetchLike } from './bootstrap.js';
 export { StorageUnavailableError } from './storage/rpc.js';
 export type { StorageConnector } from './storage/open.js';
 export type { LockMode, ReplicaLocks } from './locks.js';
+// Partial issue loading (SPEC-011 §5.7, PLAN-011 S4c): team load states for the views.
+export type { TeamLoadState } from './subscriptions.js';
+export type { PartialLoading } from './partial.js';

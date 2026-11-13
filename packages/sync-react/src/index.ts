@@ -7,6 +7,7 @@ export {
   useInspector,
   usePendingCount,
   useStorageWarning,
+  useTeamLoadState,
 } from './hooks.js';
 export { SyncInspector } from './SyncInspector.js';
 export type { SyncInspectorProps } from './SyncInspector.js';

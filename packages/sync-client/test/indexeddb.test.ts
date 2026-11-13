@@ -19,6 +19,7 @@ describe('IndexedDB replica', () => {
       'pending',
       'row:Card',
       'row:DebugItem',
+      'subscriptions',
     ]);
     db.close();
   });
@@ -30,6 +31,7 @@ describe('IndexedDB replica', () => {
     await before.writeBootstrapRows(generation, [
       { model: 'DebugItem', row: debugRow(1), archived: false },
     ]);
+    await before.touchOnDemand('team-1', 5);
     await before.close();
     const raw = await openDB(name);
     await raw.put('pending', { key: 'client-1:1', op: 'debug.touch' });
@@ -45,8 +47,11 @@ describe('IndexedDB replica', () => {
       'pending',
       'row:Board',
       'row:DebugItem',
+      'subscriptions',
     ]);
     expect(await db.getAll('pending')).toEqual([{ key: 'client-1:1', op: 'debug.touch' }]);
+    // The on-demand teams survive like the queue (SPEC-011 §5.7: per replica).
+    expect(await db.get('subscriptions', 'onDemand')).toEqual(['team-1']);
     db.close();
   });
 

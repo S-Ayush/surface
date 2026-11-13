@@ -1,7 +1,8 @@
-// SPEC-012 §3.4 items 7 to 11, AC-28 (the parts that work before PLAN-011 S4c), E3, E9, E27: an
+// SPEC-012 §3.4 items 7 to 11, AC-28, E3, E9, E27: an
 // issue the replica doesn't hold is read with `issue.get`; what the page shows is decided by
 // `chooseIssueSource`.
-import type { ReadonlyPool } from '@surface/sync-client';
+import { Issue, Team } from '@surface/domain/model';
+import type { ReadonlyPool, SyncStore, TeamLoadState } from '@surface/sync-client';
 import { describe, expect, it } from 'vitest';
 import type { OperationAnswer } from '../src/features/files/operation.js';
 import {
@@ -9,6 +10,7 @@ import {
   heldRejection,
   loadMissingIssue,
   NO_TEAM_SUBSCRIPTION,
+  storeTeamSubscription,
   type IssueLoaderDeps,
 } from '../src/features/issues/issue-loader.js';
 import {
@@ -237,5 +239,42 @@ describe('chooseIssueSource', () => {
       view: deleted,
       readOnly: true,
     });
+  });
+});
+
+describe('storeTeamSubscription (PLAN-011 S4c)', () => {
+  const ENG_ID = '0192f0c1-7e5a-7b3c-9d4e-0000000000e1';
+  /** A store with team ENG; the issue row appears once the team is loaded as `loaded` says. */
+  function store(loaded: TeamLoadState, rowArrives = true) {
+    const opened: string[] = [];
+    let ready = false;
+    const fake = {
+      pool: {
+        all: (model: unknown) =>
+          model === Team ? [{ id: ENG_ID, key: 'ENG', name: 'Engineering', private: false }] : [],
+        get: (model: unknown, id: string) =>
+          model === Issue && id === ID && ready && rowArrives ? { id } : undefined,
+      },
+      openTeam: (teamId: string) => opened.push(teamId),
+      whenTeamLoaded: () => {
+        ready = loaded === 'ready';
+        return Promise.resolve(loaded);
+      },
+    };
+    // Only what the subscription reads.
+    return { store: fake as unknown as SyncStore, opened };
+  }
+
+  it('opens the issue team, waits for its load and reads the row from the replica', async () => {
+    const { store: s, opened } = store('ready');
+    expect(await storeTeamSubscription(s)('eng', ID)).toBe('local');
+    expect(opened).toEqual([ENG_ID]);
+  });
+
+  it('is unavailable offline, for a team the replica lacks, or a row the team no longer has', async () => {
+    expect(await storeTeamSubscription(store('offline').store)('ENG', ID)).toBe('unavailable');
+    expect(await storeTeamSubscription(store('ready').store)('DES', ID)).toBe('unavailable');
+    expect(await storeTeamSubscription(store('ready', false).store)('ENG', ID)).toBe('unavailable');
+    expect(await storeTeamSubscription(null)('ENG', ID)).toBe('unavailable');
   });
 });

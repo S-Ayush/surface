@@ -1,5 +1,5 @@
 import type { ModelRow } from '@surface/domain/model';
-import type { BootstrapFrame } from '@surface/sync-protocol';
+import type { BootstrapFrame, SyncGroup } from '@surface/sync-protocol';
 import { computeSchemaHash, encodeNdjsonLine } from '@surface/sync-protocol';
 import type { FetchLike } from '../../src/bootstrap.js';
 import { TEST_MODELS } from './models.js';
@@ -9,14 +9,14 @@ export const TEST_SCHEMA_HASH = computeSchemaHash(TEST_MODELS);
 /** The frames of a well-formed bootstrap for `rows`. */
 export function bootstrapFrames(
   rows: readonly { model: string; row: ModelRow; archived?: boolean }[],
-  options: { lastSyncId?: number; schemaHash?: string } = {},
+  options: { lastSyncId?: number; schemaHash?: string; groups?: readonly SyncGroup[] } = {},
 ): BootstrapFrame[] {
   return [
     {
       t: 'meta',
       schemaHash: options.schemaHash ?? TEST_SCHEMA_HASH,
       lastSyncId: options.lastSyncId ?? 100,
-      groups: ['workspace'],
+      groups: [...(options.groups ?? ['workspace'])],
       serverTime: '2026-11-06T10:00:00.000Z',
       rows: rows.length,
     },

@@ -7,7 +7,7 @@
  * and pending mutations are untouched.
  */
 import type { ModelRow } from '@surface/domain/model';
-import type { BootstrapMeta, SyncGroup } from '@surface/sync-protocol';
+import type { BootstrapMeta, BootstrapQuery, SyncGroup } from '@surface/sync-protocol';
 import {
   BOOTSTRAP_PATH,
   encodeBootstrapQuery,
@@ -86,7 +86,10 @@ export const DEFAULT_CHUNK_SIZE = 1000;
  * the deadline: a server that never answers would otherwise leave the store
  * `bootstrapping` for good, and block every later start or resync.
  */
-async function request(options: BootstrapOptions): Promise<Response> {
+export async function request(
+  options: Pick<BootstrapOptions, 'fetch' | 'baseUrl' | 'signal' | 'timers'>,
+  query: BootstrapQuery,
+): Promise<Response> {
   const timers = options.timers ?? globalTimers;
   const controller = new AbortController();
   const outer = options.signal;
@@ -99,12 +102,14 @@ async function request(options: BootstrapOptions): Promise<Response> {
     controller.abort();
   }, BOOTSTRAP_RESPONSE_TIMEOUT_MS);
   try {
-    const query = encodeBootstrapQuery({ userId: options.userId });
-    return await options.fetch(`${options.baseUrl}${BOOTSTRAP_PATH}?${query}`, {
-      credentials: 'same-origin',
-      headers: { accept: 'application/x-ndjson' },
-      signal: controller.signal,
-    });
+    return await options.fetch(
+      `${options.baseUrl}${BOOTSTRAP_PATH}?${encodeBootstrapQuery(query)}`,
+      {
+        credentials: 'same-origin',
+        headers: { accept: 'application/x-ndjson' },
+        signal: controller.signal,
+      },
+    );
   } catch (error) {
     if (!timedOut) throw error;
     throw new BootstrapFailedError(
@@ -119,7 +124,7 @@ async function request(options: BootstrapOptions): Promise<Response> {
 export async function bootstrap(options: BootstrapOptions): Promise<BootstrapResult> {
   const { pool, persistence } = options;
   const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
-  const response = await request(options);
+  const response = await request(options, { userId: options.userId });
   // A server of a later protocol, e.g. one that needs `userId` (sync-protocol §4.1).
   if (response.status === 426) {
     await response.body?.cancel();

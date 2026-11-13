@@ -20,7 +20,14 @@
  * Transport, timers, randomness and the online event are injected, so tests
  * drive all of it without real sleeps.
  */
-import type { DeltasMessage, ResyncMessage, ServerMessage } from '@surface/sync-protocol';
+import type {
+  ClientMessage,
+  DeltasMessage,
+  ResyncMessage,
+  ServerMessage,
+  SubscribedMessage,
+  UnsubscribedMessage,
+} from '@surface/sync-protocol';
 import {
   CloseCode,
   PING_INTERVAL_MS,
@@ -86,6 +93,11 @@ export interface SyncSocketOptions {
   readonly url: () => string;
   readonly factory: SocketFactory;
   readonly onMessage: (message: DeltasMessage | ResyncMessage) => Verdict;
+  /**
+   * The v0.8 subscription acks (SPEC-011 §5.7), in order with the deltas. Without a handler
+   * they are ignored, as before partial loading.
+   */
+  readonly onSubscription?: (message: SubscribedMessage | UnsubscribedMessage) => void;
   readonly onRevoked: () => void;
   /** The connection is open, so the server is reachable again. */
   readonly onOpen?: () => void;
@@ -179,6 +191,17 @@ export class SyncSocket {
     return this.#unavailable.get();
   }
 
+  /**
+   * Send `subscribe` or `unsubscribe` on the open connection. False when none is open: the
+   * next connection names its teams on the URL instead (sync-protocol §4.3).
+   */
+  send(message: ClientMessage): boolean {
+    const connection = this.#connection;
+    if (connection === undefined || this.#opening || this.state !== 'online') return false;
+    connection.send(encodeSocketMessage(message));
+    return true;
+  }
+
   /** Connect now, and keep reconnecting until `stop()` or a revoked session. */
   start(): void {
     if (this.#running) return;
@@ -253,9 +276,13 @@ export class SyncSocket {
       this.#attempt = 0;
       return;
     }
-    // v0.8 subscription acks (SPEC-011 §5.7). This client names no `teams`, so its connection
-    // follows the user's member teams and the server sends none; PLAN-011 S4c handles them.
-    if (message.t === 'subscribed' || message.t === 'unsubscribed') return;
+    // v0.8 subscription acks (SPEC-011 §5.7), handled in order with the deltas.
+    if (message.t === 'subscribed' || message.t === 'unsubscribed') {
+      const token = this.#token;
+      this.#options.onSubscription?.(message);
+      if (token === this.#token) this.#attempt = 0;
+      return;
+    }
     const token = this.#token;
     const verdict = this.#options.onMessage(message);
     // The store may have stopped or restarted the socket while handling it.

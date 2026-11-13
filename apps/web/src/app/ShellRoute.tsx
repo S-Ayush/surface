@@ -187,7 +187,15 @@ function StoreGate({ children }: { children: ReactNode }) {
   const [readyOnce, setReadyOnce] = useState(false);
   if (view.status === 'ready' && !readyOnce) setReadyOnce(true);
   const shown = gateView(view.status, readyOnce);
-  if (shown === 'page') return children;
+  const store = useObserved(
+    useCallback(() => app.store, [app]),
+    Object.is,
+  );
+  // Pages read team load states through sync-react (PLAN-011 S4c), so they need the store; while
+  // a new session's store is being set up there is none, and the sync screen shows.
+  if (shown === 'page' && store !== null) {
+    return <SyncStoreProvider store={store}>{children}</SyncStoreProvider>;
+  }
   if (shown === 'failed' || shown === 'outdated') {
     const outdated = shown === 'outdated';
     return (

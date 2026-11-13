@@ -6,6 +6,8 @@
 import type {
   BootstrapRecord,
   BootstrapStart,
+  OnDemandTeams,
+  PartialWrite,
   PendingRecord,
   ClaimedQueue,
   QueueClaim,
@@ -17,14 +19,20 @@ import type {
   StoredMeta,
   StoredRecord,
   SyncStorage,
+  TeamRemoval,
 } from './types.js';
+import { planPartialWrite, planTeamRemoval } from './partial-plan.js';
 import {
   QueueFencedError,
   StorageFencedError,
+  advanceTeamThrough,
   changedId,
+  dropTeamThrough,
   newGeneration,
   planClaim,
   recordFor,
+  startingTeamThrough,
+  touchedOnDemand,
 } from './types.js';
 
 /** Like an async function: a throw becomes a rejected promise, as with IndexedDB. */
@@ -38,6 +46,8 @@ export class MemoryStorage implements SyncStorage {
   readonly #clients = new Map<string, StoredClient>();
   /** By clientId, then seq. */
   readonly #pending = new Map<string, Map<number, PendingRecord>>();
+  /** On-demand teams, most recently opened first; kept across bootstraps. */
+  #onDemand: readonly string[] = [];
 
   constructor(models: Iterable<string>) {
     for (const model of models) this.#rows.set(model, new Map());
@@ -51,7 +61,12 @@ export class MemoryStorage implements SyncStorage {
     return settle(() => {
       for (const rows of this.#rows.values()) rows.clear();
       const generation = newGeneration();
-      this.#meta = { ...start, generation, state: 'bootstrapping' };
+      this.#meta = {
+        ...start,
+        generation,
+        state: 'bootstrapping',
+        teamThrough: startingTeamThrough(start),
+      };
       return generation;
     });
   }
@@ -90,6 +105,7 @@ export class MemoryStorage implements SyncStorage {
     generation: string,
     changes: readonly StoredChange[],
     lastSyncId: number,
+    teams?: readonly string[],
   ): Promise<void> {
     return settle(() => {
       const meta = this.#check(generation);
@@ -101,7 +117,45 @@ export class MemoryStorage implements SyncStorage {
         const record = recordFor(change, table.get(id));
         if (record) table.set(id, record);
       }
-      this.#meta = { ...meta, lastSyncId: Math.max(meta.lastSyncId, lastSyncId) };
+      const teamThrough = advanceTeamThrough(meta.teamThrough, teams, lastSyncId);
+      this.#meta = {
+        ...meta,
+        lastSyncId: Math.max(meta.lastSyncId, lastSyncId),
+        ...(teamThrough === undefined ? {} : { teamThrough }),
+      };
+    });
+  }
+
+  writePartialRows(generation: string, write: PartialWrite): Promise<void> {
+    return settle(() => {
+      const meta = this.#check(generation);
+      const puts = planPartialWrite(write, (model) => [...this.#table(model).values()]);
+      for (const { model, record } of puts) this.#table(model).set(record.id, record);
+      this.#meta = {
+        ...meta,
+        teamThrough: advanceTeamThrough(meta.teamThrough, write.teams, write.through) ?? {},
+      };
+    });
+  }
+
+  removeTeamRows(generation: string, removal: TeamRemoval): Promise<void> {
+    return settle(() => {
+      const meta = this.#check(generation);
+      const deletes = planTeamRemoval(removal, (model) => [...this.#table(model).values()]);
+      for (const { model, id } of deletes) this.#table(model).delete(id);
+      this.#meta = { ...meta, teamThrough: dropTeamThrough(meta.teamThrough, removal.teams) };
+    });
+  }
+
+  readOnDemand(): Promise<readonly string[]> {
+    return settle(() => this.#onDemand);
+  }
+
+  touchOnDemand(teamId: string, limit: number): Promise<OnDemandTeams> {
+    return settle(() => {
+      const result = touchedOnDemand(this.#onDemand, teamId, limit);
+      this.#onDemand = result.teams;
+      return result;
     });
   }
 

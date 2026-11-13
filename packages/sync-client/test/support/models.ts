@@ -1,5 +1,17 @@
 import type { ModelRow } from '@surface/domain/model';
-import { DebugItem, backRef, defineModel, int, ref, str, uuid } from '@surface/domain/model';
+import {
+  DebugItem,
+  array,
+  backRef,
+  bool,
+  defineModel,
+  int,
+  ref,
+  str,
+  timestamp,
+  uuid,
+} from '@surface/domain/model';
+import type { PartialLoading } from '../../src/partial.js';
 
 export { DebugItem };
 
@@ -32,6 +44,67 @@ export const Note = defineModel('Note', {
 });
 
 export const CONTENT_TEST_MODELS = [...TEST_MODELS, Note] as const;
+
+/*
+ * Partial issue loading (PLAN-011 S4c) on stand-ins, so the fake hub needs no production rows:
+ * `Squad` for Team, `SquadMember` for TeamMembership, `Task` for Issue, `TaskPart` an eager child
+ * (as Attachment will be) and `TaskNote` a content model of Task (as IssueContent is).
+ */
+export const Squad = defineModel('Squad', {
+  load: 'eager',
+  fields: { name: str(), private: bool() },
+});
+
+export const SquadMember = defineModel('SquadMember', {
+  load: 'eager',
+  fields: { teamId: uuid(), userId: uuid() },
+});
+
+export const Task = defineModel('Task', {
+  load: 'eager',
+  fields: {
+    teamId: uuid(),
+    title: str(),
+    creatorId: uuid(),
+    assigneeId: uuid().nullable(),
+    groups: array(str()),
+    archivedAt: timestamp().nullable(),
+    deletedAt: timestamp().nullable(),
+  },
+  indexes: ['teamId'],
+});
+
+export const TaskPart = defineModel('TaskPart', {
+  load: 'eager',
+  fields: { issueId: uuid(), teamId: uuid(), body: str() },
+});
+
+export const TaskNote = defineModel('TaskNote', {
+  load: 'content',
+  parent: { model: 'Task', field: 'issueId' },
+  fields: { issueId: uuid(), body: str() },
+  indexes: ['issueId'],
+});
+
+export const PARTIAL_TEST_MODELS = [
+  ...TEST_MODELS,
+  Squad,
+  SquadMember,
+  Task,
+  TaskPart,
+  TaskNote,
+] as const;
+
+/** The stand-ins as the store's partial-loading models. */
+export const PARTIAL_TEST_LOADING: PartialLoading = {
+  team: 'Squad',
+  membership: 'SquadMember',
+  issue: 'Task',
+  children: [{ model: 'TaskPart', field: 'issueId' }],
+};
+
+/** Another user (the fake hub signs nobody in; ids are what the client names). */
+export const OTHER_USER = '0190f4c4-0000-7000-8000-0000000000b0';
 
 export function noteRow(n: number, item: number, body = `Note ${n}`): ModelRow {
   return { id: id(n), itemId: id(item), body };

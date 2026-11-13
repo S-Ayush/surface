@@ -26,6 +26,12 @@ export interface StoredMeta {
   readonly groups: readonly SyncGroup[];
   /** `bootstrapping` until the `end` frame is stored; a warm start ignores anything else. */
   readonly state: 'bootstrapping' | 'ready';
+  /**
+   * Per public team: the sync id through which its Issue rows are complete (SPEC-011 §5.7,
+   * PLAN-011 S4c). A tab advances it for the teams it follows as it applies deltas; a team
+   * absent here must be loaded again (partial bootstrap) before its rows count as current.
+   */
+  readonly teamThrough?: Readonly<Record<string, number>>;
 }
 
 /** A row as stored. `row: null` is a tombstone. */
@@ -82,7 +88,52 @@ export interface BootstrapRecord {
 export interface BootstrapStart {
   readonly schemaHash: string;
   readonly lastSyncId: number;
+  /** Its `team:<id>` groups are complete at `lastSyncId`: they start `teamThrough`. */
   readonly groups: readonly SyncGroup[];
+}
+
+/** A model whose rows belong to an issue, and the field naming it. */
+export interface IssueChildRef {
+  readonly model: string;
+  readonly field: string;
+}
+
+/**
+ * Where an issue's rows are (PLAN-011 S4c): the Issue model (rows with `teamId` and `groups`),
+ * its eager children (sent with it by a bootstrap) and its content models (loaded per issue,
+ * SPEC-011 §5.3). Plain data, so it crosses the worker RPC.
+ */
+export interface IssueShape {
+  readonly issue: string;
+  readonly children: readonly IssueChildRef[];
+  readonly content: readonly IssueChildRef[];
+}
+
+/**
+ * A partial bootstrap answer for `teams` (SPEC-011 §5.7 `writePartialRows`): Issue rows and their
+ * eager children at version `version` (the answer's `lastSyncId`, `C`).
+ */
+export interface PartialWrite {
+  readonly shape: IssueShape;
+  readonly teams: readonly string[];
+  readonly rows: readonly BootstrapRecord[];
+  readonly version: number;
+  /** The writing tab's applied id: `teamThrough` of `teams` moves up to it. */
+  readonly through: number;
+}
+
+/** Remove teams' Issue rows that no group of the connection keeps (an unsubscribe, §5.7). */
+export interface TeamRemoval {
+  readonly shape: IssueShape;
+  readonly teams: readonly string[];
+  /** The connection's groups after the unsubscribe: a row in one of them stays. */
+  readonly keep: readonly string[];
+}
+
+/** The on-demand teams after `touchOnDemand`: most recently opened first, and those dropped. */
+export interface OnDemandTeams {
+  readonly teams: readonly string[];
+  readonly dropped: readonly string[];
 }
 
 /**
@@ -187,7 +238,34 @@ export interface SyncStorage {
     generation: string,
     changes: readonly StoredChange[],
     lastSyncId: number,
+    /** The public teams the writing tab follows and holds current: `teamThrough` moves to `lastSyncId`. */
+    teams?: readonly string[],
   ) => Promise<void>;
+
+  /**
+   * Store a partial bootstrap answer (SPEC-011 §5.7, E30, E35) in one transaction. A row is
+   * skipped when storage holds it at a version at or above `version` (a newer row, or a tombstone
+   * at or above `C`). Then the sweep: the teams' stored Issue rows absent from the answer and
+   * older than `version`, and the eager children of the answer's and the swept issues absent from
+   * the answer and older than `version`, become tombstones at `version`, with the swept issues'
+   * content. `teamThrough` of the teams
+   * moves up to `through`. No new generation; `meta.lastSyncId` does not move.
+   */
+  readonly writePartialRows: (generation: string, write: PartialWrite) => Promise<void>;
+
+  /**
+   * After an unsubscribe (SPEC-011 §5.7): delete the teams' Issue rows whose `groups` meet none
+   * of `keep`, the children and content of every Issue row of those teams (a kept row's would not
+   * stay live), and the teams' `teamThrough`. Deleted outright, without tombstones, so a
+   * later partial bootstrap at the same id loads them again. The caller holds the team's lock.
+   */
+  readonly removeTeamRows: (generation: string, removal: TeamRemoval) => Promise<void>;
+
+  /** The on-demand teams, most recently opened first (kept across bootstraps). */
+  readonly readOnDemand: () => Promise<readonly string[]>;
+
+  /** Move `teamId` to the front of the on-demand teams, keeping at most `limit`. */
+  readonly touchOnDemand: (teamId: string, limit: number) => Promise<OnDemandTeams>;
 
   /** Every queue and pending mutation, for a start or for adopting a queue. */
   readonly readQueue: () => Promise<QueueSnapshot>;
@@ -313,6 +391,61 @@ export function recordFor(
     case 'delete':
       return { id: change.id, version: change.version, archived: false, row: null };
   }
+}
+
+/** The `teamThrough` a bootstrap starts with: its team groups, complete at its snapshot. */
+export function startingTeamThrough(start: BootstrapStart): Record<string, number> {
+  const through: Record<string, number> = {};
+  for (const group of start.groups) {
+    if (group.startsWith('team:')) through[group.slice('team:'.length)] = start.lastSyncId;
+  }
+  return through;
+}
+
+/** `teamThrough` with `teams` moved up to `id`. */
+export function advanceTeamThrough(
+  current: Readonly<Record<string, number>> | undefined,
+  teams: readonly string[] | undefined,
+  id: number,
+): Readonly<Record<string, number>> | undefined {
+  if (teams === undefined || teams.length === 0) return current;
+  const next: Record<string, number> = { ...current };
+  for (const team of teams) next[team] = Math.max(next[team] ?? 0, id);
+  return next;
+}
+
+/** `teamThrough` without `teams`. */
+export function dropTeamThrough(
+  current: Readonly<Record<string, number>> | undefined,
+  teams: readonly string[],
+): Readonly<Record<string, number>> {
+  const next: Record<string, number> = { ...current };
+  for (const team of teams) Reflect.deleteProperty(next, team);
+  return next;
+}
+
+/** A row's `teamId`, when it is a string. */
+export function teamOf(row: ModelRow): string | undefined {
+  const team = row['teamId'];
+  return typeof team === 'string' ? team : undefined;
+}
+
+/** Whether one of a row's `groups` is in `keep`. */
+export function meetsGroups(row: ModelRow, keep: ReadonlySet<string>): boolean {
+  const groups = row['groups'];
+  return (
+    Array.isArray(groups) && groups.some((group) => typeof group === 'string' && keep.has(group))
+  );
+}
+
+/** The on-demand list after opening `teamId`: it goes first, at most `limit` are kept. */
+export function touchedOnDemand(
+  current: readonly string[],
+  teamId: string,
+  limit: number,
+): OnDemandTeams {
+  const next = [teamId, ...current.filter((team) => team !== teamId)];
+  return { teams: next.slice(0, limit), dropped: next.slice(limit) };
 }
 
 /** A fresh generation id. Uniqueness, not secrecy, is what matters. */

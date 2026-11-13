@@ -9,8 +9,9 @@
  *
  * Debug items never leave a replica except by delete, so this generator never sends a `V` for a
  * row the tab doesn't hold; `pool.test.ts`, `live.test.ts` and `storage.contract.test.ts` cover
- * that case. PLAN-011 S4b/S4c: add the Issue's archive-as-removal and restore's `V` (which
- * re-inserts it) to the generator.
+ * that case. The Issue's archive-as-removal and restore's `V` or `U` (which re-inserts it),
+ * with partial loading, are the team-world property in `sync-client/test/partial.prop.test.ts`
+ * (PLAN-011 S4c).
  */
 import fc from 'fast-check';
 import { it } from 'vitest';

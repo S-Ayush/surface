@@ -3,7 +3,7 @@
  */
 // PLAN-012 S3 (SPEC-012 §3.3, §3.9, §7.2, §7.4; AC-4, AC-5, AC-19, E1, E2): the team list and My
 // issues rendered from the replica, with the keys the `list` scope runs and focus following the
-// issue. The non-member team load (AC-27, E28) waits for PLAN-011 S4c.
+// issue. The non-member team load (AC-27, E28) is `issue-list-team-load.test.tsx`.
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { announcer } from '../src/features/issues/announcer.js';

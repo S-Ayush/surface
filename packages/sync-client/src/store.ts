@@ -4,6 +4,9 @@
  * §3.6), and local mutations: `dispatch`, the queue and the overlay (§3.3,
  * §3.5, PLAN-002 S8).
  *
+ * With an Issue model, it loads issues partially (SPEC-011 §5.7, PLAN-011 S4c): the socket names
+ * the public teams this tab follows, and `subscriptions.ts` loads, keeps and removes their rows.
+ *
  * Once ready, the store connects the socket and applies each `deltas`
  * message to the pool at once, then persists it as one storage write. Storage
  * writes, starts and resyncs run one at a time, in order. Each message also
@@ -24,6 +27,11 @@ import {
 } from '@surface/sync-protocol';
 import type { IObservableValue } from 'mobx';
 import { observable, reaction, runInAction } from 'mobx';
+import type { BaseChange } from './pool.js';
+import type { PartialLoading, PartialRules } from './partial.js';
+import { ON_DEMAND_LIMIT, fetchPartial, partialRules } from './partial.js';
+import type { TeamLoadState } from './subscriptions.js';
+import { TeamSubscriptions } from './subscriptions.js';
 import type { BootstrapProgress, FetchLike } from './bootstrap.js';
 import { ClientOutdatedError, bootstrap } from './bootstrap.js';
 import type { AppliedPacket } from './deltas.js';
@@ -101,6 +109,13 @@ export interface SyncStoreOptions {
   readonly onOutdated?: () => void;
   /** Epoch ms, for mutation timestamps and queue leases; defaults to `Date.now`. */
   readonly clock?: () => number;
+  /**
+   * Partial issue loading (SPEC-011 §5.7): the team, membership and Issue models. Defaults to
+   * Team, TeamMembership and Issue when the models include Issue; `null` turns it off.
+   */
+  readonly partial?: PartialLoading | null;
+  /** On-demand teams kept at most; defaults to 5 (SPEC-011 §5.7). For tests. */
+  readonly onDemandLimit?: number;
 }
 
 /** How long the "is the server up?" probe waits for an answer (sync-protocol.md §4.3). */
@@ -185,6 +200,8 @@ export class SyncStore {
   readonly #tab = randomUuid();
   /** Another tab took this tab's queue (with work in it) over: failed until a new start. */
   #lost = false;
+  readonly #rules: PartialRules | undefined;
+  readonly #teams: TeamSubscriptions | undefined;
 
   constructor(options: SyncStoreOptions) {
     this.#options = options;
@@ -195,6 +212,8 @@ export class SyncStore {
     this.#freshClientId = options.clientId ?? randomUuid();
     this.#refs = createClientRefResolver(poolRefSource(this.#pool), () => options.userId);
     this.#overlay = new OverlayEngine(this.#pool, () => options.userId);
+    this.#rules = partialRules(options.models, options.partial);
+    this.#teams = this.#rules && this.#subscriptions(this.#rules);
     const connection = options.connection ?? {};
     const online = connection.online ?? windowOnline();
     this.#socket = new SyncSocket({
@@ -207,10 +226,15 @@ export class SyncStore {
             clientId: this.clientId,
             userId: this.#options.userId,
             schemaHash: this.schemaHash,
+            // v0.8: always named with partial loading, so the server acks (SPEC-011 §5.7).
+            ...(this.#teams ? { teams: this.#teams.dialTeams() } : {}),
           }),
         ),
       factory: connection.socket ?? webSocketFactory,
       onMessage: (message) => this.#receive(message),
+      onSubscription: (message) => {
+        if (this.status === 'ready') this.#teams?.onAck(message);
+      },
       onRevoked: () => options.onSessionRevoked?.(),
       onOpen: () => {
         if (this.#resyncPending) this.#resyncFromServer();
@@ -363,6 +387,35 @@ export class SyncStore {
   }
 
   /**
+   * The user opened a team's list or one of its issues (SPEC-011 §5.7): a public team they
+   * aren't a member of is subscribed on demand, the least recently opened beyond 5 dropped.
+   */
+  openTeam(teamId: string): void {
+    this.#teams?.openTeam(teamId);
+  }
+
+  /**
+   * Whether a team's issues are in the replica (SPEC-011 §5.7, E34): `loading` until its partial
+   * bootstrap is applied, `offline` when it can't be loaded now and never was. Observable.
+   */
+  teamLoadState(teamId: string): TeamLoadState {
+    return this.#teams?.loadState(teamId) ?? (this.status === 'ready' ? 'ready' : 'loading');
+  }
+
+  /** Resolves once `teamId` is no longer `loading`. */
+  whenTeamLoaded(teamId: string): Promise<TeamLoadState> {
+    return this.#teams?.whenLoaded(teamId) ?? Promise.resolve('ready');
+  }
+
+  /**
+   * The teams whose deltas this tab receives: the user's private teams and the accepted public
+   * ones (SPEC-011 §5.3 step 5: hydration needs the team's subscription). Observable.
+   */
+  get followedTeams(): ReadonlySet<string> {
+    return this.#teams?.followedTeams ?? new Set();
+  }
+
+  /**
    * Open the replica, then warm start from it or bootstrap from the server.
    * Resolves once the pool is usable; the live connection then opens with
    * `since = lastSyncId` (SPEC-002 §3.1 step 3, §3.2 step 3).
@@ -374,6 +427,8 @@ export class SyncStore {
       if (this.#started !== undefined && this.status === 'ready') return this.#started;
       const result = await this.#start(signal);
       // Closed while finishing (e.g. as the replica lock was released): stay down.
+      signal.throwIfAborted();
+      await this.#teams?.prepare();
       signal.throwIfAborted();
       this.#started = result;
       this.#socket.start();
@@ -413,6 +468,8 @@ export class SyncStore {
         throw error;
       }
       signal.throwIfAborted();
+      await this.#teams?.prepare();
+      signal.throwIfAborted();
       this.#socket.start();
     });
   }
@@ -426,6 +483,7 @@ export class SyncStore {
     this.#socket.stop();
     this.#resyncPending = false;
     this.#mutations.get()?.setOnline(false);
+    this.#teams?.close();
     this.#abort.abort();
     this.#abort = new AbortController();
     // Queued, so the running task settles first and a later `start` runs after.
@@ -471,6 +529,7 @@ export class SyncStore {
     // Closed while the last read was in flight: never report ready after close.
     signal.throwIfAborted();
     const { lastSyncId, groups, generation } = warm.meta;
+    this.#teams?.reset({ kind: 'warm', lastSyncId, teamThrough: warm.meta.teamThrough });
     this.#ready({
       lastSyncId,
       groups,
@@ -664,7 +723,7 @@ export class SyncStore {
     if (position === undefined) return 'pause'; // `ready` always has one; this narrows.
     let plan;
     try {
-      plan = planDeltas(this.#pool, message, position.lastSyncId);
+      plan = planDeltas(this.#pool, message, position.lastSyncId, this.#rules);
     } catch (error) {
       if (!(error instanceof ProtocolError)) throw error;
       // A row that does not match its model: drop the connection and retry.
@@ -703,12 +762,15 @@ export class SyncStore {
           );
           this.#confirm(plan.lastSyncId, message.ack, touched);
         });
+        this.#teams?.afterDeltas(plan);
         const persistence = this.#persistence.get();
         const { generation } = position;
         if (persistence && generation !== undefined) {
+          // The teams this tab holds current, as of this batch: their `teamThrough` moves too.
+          const teams = this.#teams?.currentTeams();
           void this.#enqueue(() =>
             persistence.writeReplica(generation, (storage) =>
-              storage.applyChanges(generation, plan.stored, plan.lastSyncId),
+              storage.applyChanges(generation, plan.stored, plan.lastSyncId, teams),
             ),
           );
         }
@@ -815,10 +877,72 @@ export class SyncStore {
       },
     });
     signal.throwIfAborted();
+    this.#teams?.reset({ kind: 'cold', groups: result.groups });
     this.#ready({
       lastSyncId: result.lastSyncId,
       groups: result.groups,
       generation: result.generation,
+    });
+  }
+
+  /** The subscription manager's view of this store (partial loading, SPEC-011 §5.7). */
+  #subscriptions(rules: PartialRules): TeamSubscriptions {
+    return new TeamSubscriptions({
+      pool: this.#pool,
+      userId: this.#options.userId,
+      rules,
+      replica: this.#replica,
+      limit: this.#options.onDemandLimit ?? ON_DEMAND_LIMIT,
+      timers: this.#timers,
+      random: this.#options.connection?.random ?? Math.random,
+      locks: () => (this.#sharedStorage() ? this.#locks : undefined),
+      sharedStorage: () => this.#sharedStorage(),
+      send: (message) => this.#socket.send(message),
+      connection: () => this.#socket.state,
+      appliedId: () => (this.status === 'ready' ? this.#position.get()?.lastSyncId : undefined),
+      persistence: () => this.#persistence.get(),
+      generation: () => {
+        const generation = this.#position.get()?.generation;
+        const persistence = this.#persistence.get();
+        return generation !== undefined && persistence?.isCurrent(generation)
+          ? generation
+          : undefined;
+      },
+      enqueue: (task) => {
+        void this.#enqueue(task).catch(() => undefined);
+      },
+      applyBase: (changes) => this.#applyServerRows(changes),
+      fetchPartial: (teams, signal) =>
+        fetchPartial({
+          fetch: this.#options.fetch,
+          baseUrl: this.#options.baseUrl ?? '',
+          userId: this.#options.userId,
+          schemaHash: this.schemaHash,
+          teams,
+          pool: this.#pool,
+          rules,
+          signal,
+          timers: this.#timers,
+        }),
+      outdated: () => this.#outdated(),
+    });
+  }
+
+  /** IndexedDB is shared by the replica's tabs; the memory fallback is this tab's alone. */
+  #sharedStorage(): boolean {
+    return this.#persistence.get()?.storage.kind === 'indexeddb';
+  }
+
+  /** Server rows outside a delta message (a partial answer, a removal): base, then the overlay. */
+  #applyServerRows(changes: readonly BaseChange[]): void {
+    if (changes.length === 0) return;
+    runInAction(() => {
+      this.#pool.applyBase(changes);
+      const touched = changes.some((change) =>
+        this.#overlay.dependsOn(change.model, change.kind === 'delete' ? change.id : change.row.id),
+      );
+      const queue = this.#mutations.get();
+      if (touched && queue !== undefined) this.#overlay.rebuild(queue.mutations);
     });
   }
 

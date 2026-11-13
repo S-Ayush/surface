@@ -10,6 +10,7 @@ import type {
   ConnectionSnapshot,
   InspectorSnapshot,
   SyncStore,
+  TeamLoadState,
 } from '@surface/sync-client';
 import {
   bootstrapOf,
@@ -19,7 +20,7 @@ import {
   pendingCountOf,
   storageWarningOf,
 } from '@surface/sync-client';
-import { useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useSyncStore } from './context.js';
 
 /** `select` must be a stable function (module level), or the source is rebuilt each render. */
@@ -58,4 +59,24 @@ export function useStorageWarning(): string | undefined {
 /** Everything the inspector shows. */
 export function useInspector(): InspectorSnapshot {
   return useSelected(inspect);
+}
+
+/**
+ * Whether a team's issues can be shown (SPEC-011 §5.7, AC-27, E34), opening the team while the
+ * component is mounted: a public team the user isn't a member of is subscribed on demand and
+ * loaded with the partial bootstrap (`loading` until then). `ready` for a team the replica
+ * holds or has nothing to load for; `offline` when it was never loaded and can't be now
+ * ("Available when online").
+ */
+export function useTeamLoadState(teamId: string): TeamLoadState {
+  const store = useSyncStore();
+  // Opening it again (another list, a remount) makes it the most recently opened (E31).
+  useEffect(() => {
+    if (teamId !== '') store.openTeam(teamId);
+  }, [store, teamId]);
+  const source = useMemo(
+    () => observe(() => (teamId === '' ? 'loading' : store.teamLoadState(teamId))),
+    [store, teamId],
+  );
+  return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
 }
