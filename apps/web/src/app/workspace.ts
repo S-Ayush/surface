@@ -56,6 +56,10 @@ export function actorOf(
         const team = byId.get(membership.teamId);
         return team ? [{ teamId: team.id, private: team.private }] : [];
       }),
+    // Every public team the replica holds (all of them: Team rows are in `workspace`), archived
+    // ones too as on the server (`auth/store.ts`), so `p.canSee` accepts an on-demand public
+    // team's issue as the server does (SPEC-011 §5.6).
+    publicTeams: teams.filter((team) => !team.private).map((team) => team.id),
   });
 }
 

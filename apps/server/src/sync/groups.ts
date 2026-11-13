@@ -1,7 +1,7 @@
 /**
  * The two kinds of sync groups (SPEC-011 §5.6, §5.7, ADR-0020; permissions.md §2):
  *
- * - **Visible groups** (`visibleGroups`): every group an actor may see, including every public
+ * - **Visible groups** (`visibleGroups`, `@surface/domain`): every group an actor may see, including every public
  *   team's `team:<id>`. Every read path filters with them: queries, refs, `lockIssueForWrite`,
  *   `/sync/content` (PLAN-011 S5a) and `GET /files/:id` (PLAN-014). Never a socket's groups, so an
  *   unsubscribed public team stays readable.
@@ -9,9 +9,7 @@
  *   user is a member of) plus `team:<id>` of each public team its client subscribes to. Bootstrap,
  *   catch-up, live deltas and the confirm point of a no-op mutation (`visibleHead`) use these.
  */
-import { teamGroup, visibleGroups, type Actor } from '@surface/domain';
-
-export { visibleGroups };
+import { teamGroup, type Actor } from '@surface/domain';
 
 /** Who decides which teams a client may subscribe to: the database, read at each request. */
 export interface TeamQueryable {

@@ -172,10 +172,15 @@ describe('bootstrap query', () => {
       const query = { userId: ID, groups: [...groups], schemaHash: HASH };
       const text = encodeBootstrapQuery(query);
       expect(decodeBootstrapQuery(Object.fromEntries(new URLSearchParams(text)))).toEqual(query);
-      expect(decodeBootstrapQuery({ userId: ID, groups: `team:${TEAM_A}` })).toEqual({
-        userId: ID,
-        groups: [`team:${TEAM_A}`],
-      });
+      expect(
+        decodeBootstrapQuery({ userId: ID, groups: `team:${TEAM_A}`, schemaHash: HASH }),
+      ).toEqual({ userId: ID, groups: [`team:${TEAM_A}`], schemaHash: HASH });
+    });
+
+    it('refuses groups without a schema hash (400, unlike another hash: 426)', () => {
+      expect(() => decodeBootstrapQuery({ userId: ID, groups: `team:${TEAM_A}` })).toThrow(
+        /needs schemaHash/,
+      );
     });
 
     it.each([
@@ -192,7 +197,9 @@ describe('bootstrap query', () => {
         ).join(','),
       ],
     ])('refuses %s', (_name, groups) => {
-      expect(() => decodeBootstrapQuery({ userId: ID, groups })).toThrow(ProtocolError);
+      expect(() => decodeBootstrapQuery({ userId: ID, groups, schemaHash: HASH })).toThrow(
+        ProtocolError,
+      );
     });
 
     it('refuses a malformed schema hash', () => {

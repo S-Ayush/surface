@@ -25,7 +25,7 @@ import { signedIn, type ActorResolver } from '../http/ops.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { bootstrapFrames, type BootstrapPool } from './bootstrap.js';
 import { contentFrames } from './content.js';
-import { acceptedTeams, memberGroups, type TeamAccess } from './groups.js';
+import { acceptedTeams, connectionGroups, memberGroups, type TeamAccess } from './groups.js';
 import type { Executor } from '../executor/execute.js';
 import type { SyncHub } from './hub.js';
 import { sendClientOutdated, sendOtherUser } from './identity.js';
@@ -48,7 +48,7 @@ export interface SyncRoutesDeps {
   readonly executor?: Executor;
   /**
    * Which teams a user may follow (SPEC-011 §5.7), for the partial bootstrap and the socket URL's
-   * `teams`. Default: `acceptedTeams` over `pool`.
+   * `teams`; `serve()` passes the hub's. Default (tests): `acceptedTeams` over `pool`.
    */
   readonly teamAccess?: TeamAccess;
 }
@@ -101,34 +101,34 @@ export function registerSyncRoutes(
     }
     // SPEC-002 E14: another user's replica never receives this user's rows.
     if (query.userId !== actor.userId) return sendOtherUser(request, reply);
-    // A partial bootstrap needs the client's schema hash (SPEC-011 §5.7); a full one checks it
-    // when given. Either way a client with another is outdated, before the first frame.
-    const partial = query.groups !== undefined;
-    if (
-      (partial || query.schemaHash !== undefined) &&
-      query.schemaHash !== deps.registry.schemaHash
-    ) {
+    // A client with another schema hash is outdated, before the first frame (a partial
+    // bootstrap must send one: the codec refuses `groups` without it, SPEC-011 §5.7).
+    if (query.schemaHash !== undefined && query.schemaHash !== deps.registry.schemaHash) {
       return sendClientOutdated(request, reply);
     }
     // The partial bootstrap (v0.8, SPEC-011 §5.7): the Issue rows of the teams the user may
     // follow. An unknown team and a private team the user isn't in are dropped alike, so their
     // answers are the same empty stream (AC-28, E32), never an error.
-    const groups =
+    // Rows are cut to the connection's groups (home plus the accepted teams), so a public issue
+    // keeps the user's own `user:<id>` group and stays theirs after an unsubscribe.
+    const accepted =
       query.groups === undefined
-        ? memberGroups(actor)
-        : (
-            await teamAccess(
-              actor.userId,
-              query.groups.map((group) => group.slice(teamGroup('').length)),
-            )
-          ).map(teamGroup);
-
+        ? undefined
+        : await teamAccess(
+            actor.userId,
+            query.groups.map((group) => group.slice(teamGroup('').length)),
+          );
     const frames = bootstrapFrames({
       pool: deps.pool,
       registry: deps.registry,
-      groups,
-      partial,
       now: deps.now ?? (() => new Date()),
+      ...(accepted === undefined
+        ? { groups: memberGroups(actor) }
+        : {
+            groups: accepted.map(teamGroup),
+            cutTo: connectionGroups(actor, accepted),
+            partial: true,
+          }),
     });
     // Read the first frame before answering, so a database error is a 500, not a 200 with a
     // cut-off body.

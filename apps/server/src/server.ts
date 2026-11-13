@@ -30,7 +30,7 @@ import { createLogger } from './logger.js';
 import { installProcessHandlers } from './shutdown.js';
 import { StartupError } from './startup-error.js';
 import pg from 'pg';
-import { acceptedTeams } from './sync/groups.js';
+import { acceptedTeams, type TeamAccess } from './sync/groups.js';
 import { SyncHub } from './sync/hub.js';
 import { pgSyncLogSource, sessionCloser } from './sync/hub-source.js';
 import { announceSetup } from './setup/announce.js';
@@ -102,6 +102,8 @@ export async function startServer(
   const sessions = new SessionAuth(authStore, { log: logger });
   const resolveActor = options.resolveActor ?? sessions.resolveActor;
   const sync = serverSyncRegistry(options);
+  // Which teams a user may follow (SPEC-011 §5.7): one rule for the socket and the bootstrap.
+  const teamAccess: TeamAccess = (userId, teamIds) => acceptedTeams(pool, userId, teamIds);
   // The hub serves WebSockets, so it runs where HTTP traffic is served (SPEC-004 §7 roles).
   const hub =
     config.role === 'worker'
@@ -122,7 +124,7 @@ export async function startServer(
           }),
           registry: sync,
           log: logger.child({ component: 'sync-hub' }),
-          teamAccess: (userId, teamIds) => acceptedTeams(pool, userId, teamIds),
+          teamAccess,
         });
   // Here at once (if this replica has a hub), and on every replica through `NOTIFY`.
   const closeSessions = sessionCloser({ hub, pool, log: logger });
@@ -148,6 +150,7 @@ export async function startServer(
       sessionIdOf: sessions.sessionIdOf,
       sessionLive: sessions.sessionLive,
       clientOwner: (clientId) => clientOwner(pool, clientId),
+      teamAccess,
       ...(hub ? { hub } : {}),
     },
     setup: { store: setupStore, gate: setupGate },

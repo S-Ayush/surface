@@ -312,10 +312,13 @@ async function bootstrap(who: Who, query = '') {
   const frames = [...decoder.push(new Uint8Array(res.rawPayload)), ...decoder.end()].map(
     decodeBootstrapFrame,
   );
-  const issues = frames
-    .filter((f): f is Extract<BootstrapFrame, { t: 'row' }> => f.t === 'row' && f.m === 'Issue')
-    .map((f) => f.d.id);
-  return { body: res.body, issues };
+  const rows = frames.filter(
+    (f): f is Extract<BootstrapFrame, { t: 'row' }> => f.t === 'row' && f.m === 'Issue',
+  );
+  const issues = rows.map((f) => f.d.id);
+  /** Each issue's `groups` as the client receives them. */
+  const groups = new Map(rows.map((f) => [f.d.id, f.d['groups']]));
+  return { body: res.body, issues, groups };
 }
 
 const partial = (teamId: string) => `&schemaHash=${registry.schemaHash}&groups=team:${teamId}`;
@@ -478,6 +481,11 @@ describe('asking to follow SEC, as Ana, is like asking for a team that doesn’t
     const viaOps = await bootstrap('outsider', partial(ops));
     expect(viaOps.issues).toEqual(expect.arrayContaining([opsForAna, opsOther]));
     expectNoSec(viaOps.body);
+    // Cut to the connection's groups, not the team's alone: Ana's own issue keeps `user:<ana>`
+    // (or it would leave her replica on unsubscribe), and Sam's group is still cut.
+    expect(viaOps.groups.get(opsForAna)).toEqual([`team:${ops}`, `user:${ana}`]);
+    expect(viaOps.groups.get(opsOther)).toEqual([`team:${ops}`]);
+    expect(viaOps.body).not.toContain(`user:${sam}`);
     expect((await bootstrap('member', partial(sec))).issues).toEqual(
       expect.arrayContaining([secByAna, secForAna]),
     );

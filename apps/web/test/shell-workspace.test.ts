@@ -36,6 +36,8 @@ describe('shell read models', () => {
   it('builds the actor from the user row and live memberships', () => {
     const actor = actorOf({ id: 'u1', role: 'member', active: true }, teams, memberships);
     expect(actor).toMatchObject({ userId: 'u1', role: 'member', memberOf: ['t-eng', 't-sec'] });
+    // Every public team, joined or not, archived too, as the server's session says (SPEC-011 §5.6).
+    expect(actor?.publicTeams).toEqual(['t-eng', 't-des', 't-old']);
     expect(actorOf({ id: 'u1', role: 'admin', active: true }, teams, memberships)?.role).toBe(
       'admin',
     );

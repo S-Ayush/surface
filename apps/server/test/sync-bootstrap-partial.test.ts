@@ -154,13 +154,20 @@ describe('the partial bootstrap (SPEC-011 §5.7)', () => {
     expect(JSON.stringify(hidden.statements.slice(1))).not.toContain(OPS);
   });
 
-  it.each([
-    ['no schema hash', `&groups=${teamGroup(ENG)}`],
-    ['another schema hash', `&schemaHash=${'0'.repeat(64)}&groups=${teamGroup(ENG)}`],
-  ])('is 426 CLIENT_OUTDATED with %s, before the first frame', async (_case, query) => {
-    const { res, statements } = await bootstrap(query);
+  it('is 426 CLIENT_OUTDATED with another schema hash, before the first frame', async () => {
+    const { res, statements } = await bootstrap(
+      `&schemaHash=${'0'.repeat(64)}&groups=${teamGroup(ENG)}`,
+    );
     expect(res.statusCode).toBe(426);
     expect(res.json()).toMatchObject({ ok: false, error: { code: 'CLIENT_OUTDATED' } });
+    expect(statements).toEqual([]);
+  });
+
+  it('is 400 INVALID_INPUT without a schema hash, as /sync/content is', async () => {
+    const { res, statements } = await bootstrap(`&groups=${teamGroup(ENG)}`);
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    expect(res.body).toMatch(/needs schemaHash/);
     expect(statements).toEqual([]);
   });
 

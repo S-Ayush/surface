@@ -34,6 +34,13 @@ export interface BootstrapOptions {
    * bootstrap (`memberGroups`), the accepted teams' groups for a partial one. `meta.groups` too.
    */
   readonly groups: readonly string[];
+  /**
+   * The groups each row's `groups` field is cut to (SPEC-002 Q6). Default: `groups`. A partial
+   * bootstrap passes the connection's groups (`connectionGroups`), so a public issue keeps the
+   * user's own `user:<id>` group: cut to the team alone, it would replace the stored row and the
+   * client would drop the user's own issue on unsubscribe (SPEC-011 §5.7).
+   */
+  readonly cutTo?: readonly string[];
   /** Only the Issue rows and eager issue children (a partial bootstrap). */
   readonly partial?: boolean;
   readonly now: () => Date;
@@ -47,6 +54,7 @@ export async function* bootstrapFrames({
   pool,
   registry,
   groups,
+  cutTo = groups,
   partial = false,
   now,
 }: BootstrapOptions): AsyncGenerator<BootstrapFrame> {
@@ -82,7 +90,7 @@ export async function* bootstrapFrames({
       rows: total,
     };
 
-    const visible = new Set(groups);
+    const visible = new Set(cutTo);
     let sent = 0;
     for (const model of models) {
       await client.query(`DECLARE bootstrap NO SCROLL CURSOR FOR ${selectRows(model)}`, [groups]);

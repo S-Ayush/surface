@@ -219,6 +219,19 @@ describe('the repo’s issue groups', () => {
     expect(repo.changes()).toEqual([]);
   });
 
+  it('refuses to change an issue’s creator, whose user: group tells public from private', async () => {
+    const { repo, statements } = scriptedDb(
+      { teams, issues: [issueRow([teamGroup(ENG), userGroup(ADA)])] },
+      { now: NOW },
+    );
+    await expect(repo.update('Issue', ISSUE, { creatorId: BEA })).rejects.toThrow(
+      /can't change its creatorId/,
+    );
+    // Before anything is read or written.
+    expect(statements).toEqual([]);
+    expect(repo.changes()).toEqual([]);
+  });
+
   it('refuses an Issue insert without a creator', async () => {
     const { repo } = scriptedDb({ teams }, { now: NOW });
     const { creatorId: _creator, ...noCreator } = newIssue(ENG);

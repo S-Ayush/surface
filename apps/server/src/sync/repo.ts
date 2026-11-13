@@ -187,6 +187,14 @@ export function syncRepo(
         `${model} can't move to another issue: its team and groups come from its issue (SPEC-011 §5.1).`,
       );
     }
+    // SPEC-011 §4.1, §5.7: an Issue's creator never changes. `issueGroupsOnUpdate` tells a public
+    // issue from a private one by the stored `user:<creatorId>`, read from the patched row, so a
+    // new creator would turn a public issue private (and drop its `user:` groups) or worse.
+    if (model === 'Issue' && patchedFields(patch).includes('creatorId')) {
+      throw new Error(
+        `Issue ${id} can't change its creatorId: its groups depend on it (SPEC-011 §5.7).`,
+      );
+    }
     const { teamId: _childTeam, ...childPatch } = patch;
     const values = child ? childPatch : patch;
     // The groups before the change, and the row lock, in one read; for a model that keeps its

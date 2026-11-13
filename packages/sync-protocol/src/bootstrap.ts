@@ -42,15 +42,20 @@ const partialGroupsSchema = z
 /**
  * Query string of `GET /sync/bootstrap`. `userId` is the user the client's
  * replica belongs to; the session must be the same user (SPEC-002 E14).
- * `groups` (v0.8) asks for the partial bootstrap of those teams, which also
- * needs `schemaHash`: a client with another is outdated (`426`). Other
- * parameters are dropped.
+ * `groups` (v0.8) asks for the partial bootstrap of those teams, which
+ * requires `schemaHash` (missing → `400`, like `/sync/content`); a client with
+ * another hash is outdated (`426`). Other parameters are dropped.
  */
-export const bootstrapQuerySchema = z.object({
-  userId: userIdSchema,
-  schemaHash: schemaHashSchema.optional(),
-  groups: partialGroupsSchema.optional(),
-});
+export const bootstrapQuerySchema = z
+  .object({
+    userId: userIdSchema,
+    schemaHash: schemaHashSchema.optional(),
+    groups: partialGroupsSchema.optional(),
+  })
+  .refine((query) => query.groups === undefined || query.schemaHash !== undefined, {
+    message: 'A partial bootstrap needs schemaHash. Send the client’s schema hash with groups.',
+    path: ['schemaHash'],
+  });
 export type BootstrapQuery = z.infer<typeof bootstrapQuerySchema>;
 
 /** Build the query string (without `?`) for `GET /sync/bootstrap`. */
