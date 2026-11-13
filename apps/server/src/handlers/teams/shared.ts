@@ -30,6 +30,7 @@ export function teamOutput(row: ModelRow<'Team'>): TeamOutput {
     estimateExtended: row.estimateExtended,
     estimateAllowZero: row.estimateAllowZero,
     estimateCountUnestimatedAsOne: row.estimateCountUnestimatedAsOne,
+    autoCloseStatusId: row.autoCloseStatusId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

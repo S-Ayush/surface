@@ -104,6 +104,10 @@ export const issues = pgTable(
     // it must not scan the team's issues (PLAN-011 S3 review).
     index('issues_team_sort_order_idx').on(t.teamId, sql`${t.sortOrder} COLLATE "C"`),
     index('issues_label_ids_idx').using('gin', t.labelIds),
+    // SPEC-015 §4.9: the purge job and the Recently deleted tab read only deleted issues.
+    index('issues_deleted_at_idx')
+      .on(t.deletedAt)
+      .where(sql`${t.deletedAt} IS NOT NULL`),
     // `contains` filters on the title (PLAN-003 S5): case-insensitive in the ICU collation.
     index('issues_title_trgm_idx').using(
       'gin',

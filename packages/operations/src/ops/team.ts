@@ -79,6 +79,11 @@ export const TeamSchema = z.object({
   estimateExtended: z.boolean(),
   estimateAllowZero: z.boolean(),
   estimateCountUnestimatedAsOne: z.boolean(),
+  /**
+   * The Canceled status auto-close moves stale issues to, or null while auto-close is off
+   * (SPEC-015 §3.2). PLAN-015 S3's `team.updateAutomations` sets it.
+   */
+  autoCloseStatusId: z.uuid().nullable(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

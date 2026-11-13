@@ -85,14 +85,19 @@ export const Team = defineModel('Team', {
     cycleUpcomingCount: int(),
     cycleAutoAddStarted: bool(),
     cycleAutoAddCompleted: bool(),
-    autoArchiveMonths: int().nullable(),
+    /** Auto-archive period in months: 1, 3, 6, 9 or 12 (SPEC-015 §3.2), never off. */
+    autoArchiveMonths: int(),
+    /** Auto-close period in months (same choices), or null when auto-close is off. */
     autoCloseMonths: int().nullable(),
+    /** The Canceled status auto-close moves stale issues to; set whenever auto-close is on. */
+    autoCloseStatusId: uuid().nullable(),
     parentAutoComplete: bool(),
     groups: array(str()),
     ...audit,
   },
   refs: {
     defaultStatus: ref('WorkflowStatus', 'defaultStatusId'),
+    autoCloseStatus: ref('WorkflowStatus', 'autoCloseStatusId'),
     memberships: backRef('TeamMembership', 'teamId'),
     statuses: backRef('WorkflowStatus', 'teamId'),
     labels: backRef('Label', 'teamId'),

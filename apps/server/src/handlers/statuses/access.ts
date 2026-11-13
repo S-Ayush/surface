@@ -27,7 +27,15 @@ export function workflowAccess(ctx: HandlerContext): WorkflowAccess {
   return {
     async lockTeam(teamId) {
       const [row] = await tx
-        .select({ id: teams.id, key: teams.key, defaultStatusId: teams.defaultStatusId })
+        .select({
+          id: teams.id,
+          key: teams.key,
+          defaultStatusId: teams.defaultStatusId,
+          // SPEC-015 E22, SPEC-010 AC-5: read under this lock, so a concurrent change of the
+          // auto-close status (team.updateAutomations, which locks the team row) either finished
+          // before this delete or waits for it.
+          autoCloseStatusId: teams.autoCloseStatusId,
+        })
         .from(teams)
         .where(eq(teams.id, teamId))
         .for('update');

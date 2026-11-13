@@ -1,7 +1,8 @@
 /**
  * `lockIssueForWrite` (SPEC-011 §4.8, SPEC-015 §4.4): the one way an issue write, or a write to
  * one of its children, starts. It locks the issue row, reads its lifecycle state, and applies the
- * mode's rule. PLAN-015 S1 adds the lifecycle rule table behind `lifecycle`.
+ * mode's rule. Each handler takes its mode from the lifecycle rule table (`issueLockModeOf`,
+ * `packages/domain/src/issue-lifecycle.ts`), and `issue-lifecycle-table.test.ts` checks it does.
  *
  * Lock order (SPEC-011 §4.8): workspace row → team row → status and label rows → issue rows in
  * ascending id → thread root comment. The caller takes anything before the issue first. This
@@ -9,19 +10,22 @@
  * transaction back anyway.
  */
 import {
-  editRefusal,
   issueIdentifier,
   lifecycleOf,
+  lifecycleRefusal,
+  lockRefusal,
   type Actor,
   type IssueLifecycle,
+  type IssueLockMode,
 } from '@surface/domain';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { AnyPgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { issues, teams } from '../db/schema/index.js';
 import { refNotFound } from '../executor/refs/resolve.js';
 import { SurfaceError } from '../executor/errors.js';
 import { visibleTo } from '../executor/list.js';
-import type { ModelRow } from '../sync/models.js';
+import type { ModelName, ModelRow } from '../sync/models.js';
 
 /**
  * - `edit`: a direct edit by a user, API or MCP actor. Archived or deleted is `CONFLICT`
@@ -29,7 +33,7 @@ import type { ModelRow } from '../sync/models.js';
  * - `lifecycle`: delete, restore, purge. Returns the state; the handler applies SPEC-015 §4.2.
  * - `cascade`: settings cascades and system jobs. No lifecycle check.
  */
-export type IssueLockMode = 'edit' | 'lifecycle' | 'cascade';
+export type { IssueLockMode };
 
 /** The locked issue row and its lifecycle state, so the handler re-reads nothing it holds. */
 export type LockedIssue = ModelRow<'Issue'> & { readonly state: IssueLifecycle };
@@ -53,19 +57,78 @@ export async function lockIssueForWrite(
     .for('update');
   if (!issue) throw refNotFound('IssueRef', issueId, ctx.path ?? ['issue']);
   const state = lifecycleOf(issue);
-  if (mode === 'edit' && state !== 'live') {
-    const message = editRefusal(await identifierOf(tx, issue), state);
-    if (message !== undefined) throw new SurfaceError('CONFLICT', message);
+  const refused = lockRefusal(mode, state);
+  if (refused !== undefined) {
+    throw new SurfaceError('CONFLICT', lifecycleRefusal(await identifierOf(tx, issue), refused));
   }
   return { ...issue, state };
 }
 
-/** `ENG-42`, for a refusal message. A plain read (no lock): the transaction is about to fail. */
-async function identifierOf(
+/**
+ * `ENG-42`, for a refusal message. A plain read (no lock), after the issue lock: only a refusal
+ * reads it, and the refusal rolls the transaction back anyway (SPEC-011 §4.8).
+ */
+export async function identifierOf(
   tx: NodePgDatabase,
   issue: { readonly teamId: string; readonly number: number | null },
 ): Promise<string> {
   const [team] = await tx.select({ key: teams.key }).from(teams).where(eq(teams.id, issue.teamId));
   // `number` is never null on the server (issues_number_check); the fallback only types it.
   return team && issue.number !== null ? issueIdentifier(team.key, issue.number) : 'This issue';
+}
+
+// ---------------------------------------------------------------------------------------------
+// Restore re-logs the issue's eager children (SPEC-015 §5.1, AC-21)
+
+/** At most this many rows of one model per issue are logged again (SPEC-014 D20: 100 attachments). */
+export const RESTORE_RELOG_LIMIT = 100;
+
+/**
+ * An eager child model of issues that the client drops with its issue (SPEC-011 §5.7), so a
+ * restore must log its rows again: one `U` each, through `repo.updateWhere` with an empty patch
+ * and `touchUpdatedAt: false`, after the Issue's `V` or `U` and in the same transaction.
+ */
+export interface RestoreRelogStep {
+  readonly model: ModelName;
+  /** The ids of the issue's rows of `model`, ascending, at most `limit`. */
+  ids(tx: NodePgDatabase, issueId: string, limit: number): Promise<string[]>;
+}
+
+/**
+ * The registered steps. Empty until PLAN-014 S4a adds the Attachment model and appends its step
+ * here (append-only, like the purge steps of PLAN-015 S2).
+ */
+export const RESTORE_RELOG_STEPS: readonly RestoreRelogStep[] = [];
+
+/** A step for a model whose table has an `issue_id` column, for PLAN-014 S4a's Attachment. */
+export function relogByIssueId(
+  model: ModelName,
+  table: { readonly id: AnyPgColumn; readonly issueId: AnyPgColumn } & PgTable,
+): RestoreRelogStep {
+  return {
+    model,
+    async ids(tx, issueId, limit) {
+      const rows = await tx
+        .select({ id: table.id })
+        .from(table)
+        .where(eq(table.issueId, issueId))
+        .orderBy(asc(table.id))
+        .limit(limit);
+      return rows.flatMap((row) => (typeof row.id === 'string' ? [row.id] : []));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// History of lifecycle transitions (SPEC-015 §4.8)
+
+/**
+ * Writes the `deleted` or `restored` history entry of a transition. A no-op for now: the
+ * IssueHistory model is registered by PLAN-011 S5a and written by S6's history writer
+ * (`issues/history.ts`), which replaces this body with an insert through the repo (never folded,
+ * `changes` empty, the actor's kind and key). The handlers already call it in the transaction.
+ */
+export function writeLifecycleHistory(): Promise<void> {
+  // TODO(PLAN-011 S6): insert the IssueHistory row through `ctx.repo`.
+  return Promise.resolve();
 }

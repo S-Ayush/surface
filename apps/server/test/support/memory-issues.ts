@@ -7,9 +7,12 @@
 import { randomUUID } from 'node:crypto';
 import {
   DEFAULT_TEAM_WORKFLOW,
-  editRefusal,
   issueIdentifier,
   lifecycleOf,
+  lifecycleRefusal,
+  lockRefusal,
+  type Actor,
+  type IssueLockMode,
   type StatusCategory,
 } from '@surface/domain';
 import type { DomainEvent } from '../../src/executor/context.js';
@@ -24,15 +27,31 @@ import type {
   StatusFacts,
 } from '../../src/handlers/issues/core.js';
 import type { Repo, RowChange } from '../../src/sync/repo.js';
+import type { ModelName } from '../../src/sync/models.js';
+import type {
+  LifecycleContext,
+  LifecycleHistoryKind,
+} from '../../src/handlers/issues/lifecycle-core.js';
 
 export const NOW = new Date('2026-11-13T10:00:00.000Z');
+
+/** The member who acts in the lifecycle tests: Ada, of team ENG. */
+export const ADA_ID = '0192f0c1-7e5a-7b3c-9d4e-0000000000ad';
+export const ADA_ACTOR: Actor = {
+  kind: 'user',
+  userId: ADA_ID,
+  groups: ['workspace', `user:${ADA_ID}`],
+  memberOf: [],
+};
 
 export interface MemoryStatus extends StatusFacts {
   readonly name: string;
 }
 
 export interface IssueWrite {
-  readonly action: 'insert' | 'update' | 'updateWhere';
+  readonly action: 'insert' | 'update' | 'updateWhere' | 'archive' | 'unarchive';
+  /** Set only for a model other than Issue (a restore's re-logged Attachment rows). */
+  readonly model?: string;
   readonly ids: readonly string[];
   /** The fields a patch carried. */
   readonly fields: readonly string[];
@@ -49,10 +68,21 @@ export interface MemoryIssues {
   readonly issues: Map<string, IssueRow>;
   /** Reads and locks, in order: `shareTeam`, `shareStatus:<name>`, `shareLabels:<a,b>`, … */
   readonly calls: string[];
+  /** The mode of each issue lock, in order (SPEC-015 §4.3). */
+  readonly lockModes: IssueLockMode[];
   readonly writes: IssueWrite[];
   readonly events: DomainEvent[];
   readonly ctx: IssueWriteContext;
   readonly repo: Repo;
+  /** History entries the lifecycle handlers wrote, in order (SPEC-015 §4.8). */
+  readonly history: { readonly kind: LifecycleHistoryKind; readonly issueId: string }[];
+  /**
+   * Fake Attachment rows per issue id (the model arrives with PLAN-014 S4a), which a restore
+   * logs again (SPEC-015 §5.1); kept in ascending id like the real step's query.
+   */
+  readonly attachments: Map<string, string[]>;
+  /** The context `deleteIssue` and `restoreIssue` run with, as `actor` at `now`. */
+  lifecycle(options?: { readonly actor?: Actor; readonly now?: Date }): LifecycleContext;
   status(team: IssueTeam, name: string): MemoryStatus;
   addLabel(fields: Partial<LabelRow> & { name: string }): LabelRow;
   /** Sets a team's estimate settings; `eng` and `des` read them afterwards. */
@@ -66,6 +96,9 @@ export function memoryIssues(): MemoryIssues {
   const issues = new Map<string, IssueRow>();
   const counters = new Map<string, number>();
   const calls: string[] = [];
+  const lockModes: IssueLockMode[] = [];
+  const history: MemoryIssues['history'] = [];
+  const attachments = new Map<string, string[]>();
   const writes: IssueWrite[] = [];
   const events: DomainEvent[] = [];
 
@@ -98,6 +131,9 @@ export function memoryIssues(): MemoryIssues {
     teamId: s.teamId,
     category: s.category,
   });
+
+  const identifierOf = (issue: IssueRow) =>
+    issueIdentifier(teams.get(issue.teamId)?.key ?? 'ENG', issue.number ?? 0);
 
   const access: IssueAccess = {
     shareTeam(teamId) {
@@ -134,14 +170,17 @@ export function memoryIssues(): MemoryIssues {
       counters.set(teamId, number);
       return Promise.resolve({ number, sortOrder: `a${String(1000 - number)}` });
     },
-    lockIssue(issueId) {
+    lockIssue(issueId, mode) {
       calls.push('lockIssue');
+      lockModes.push(mode);
       const issue = issues.get(issueId);
       if (!issue) return Promise.reject(refNotFound('IssueRef', issueId, ['issue']));
       const state = lifecycleOf(issue);
-      const key = teams.get(issue.teamId)?.key ?? 'ENG';
-      const refusal = editRefusal(issueIdentifier(key, issue.number ?? 0), state);
-      if (refusal !== undefined) return Promise.reject(new SurfaceError('CONFLICT', refusal));
+      const refused = lockRefusal(mode, state);
+      if (refused !== undefined) {
+        const message = lifecycleRefusal(identifierOf(issue), refused);
+        return Promise.reject(new SurfaceError('CONFLICT', message));
+      }
       return Promise.resolve({ ...issue, state });
     },
   };
@@ -182,6 +221,7 @@ export function memoryIssues(): MemoryIssues {
     updateWhere(model, ids, patch, options) {
       writes.push({
         action: 'updateWhere',
+        ...(model === 'Issue' ? {} : { model }),
         ids: [...ids],
         fields: Object.keys(patch),
         touchUpdatedAt: options.touchUpdatedAt,
@@ -189,8 +229,15 @@ export function memoryIssues(): MemoryIssues {
       });
       return Promise.resolve([...ids].sort());
     },
-    archive: () => Promise.reject(new Error('issue archive is PLAN-015')),
-    unarchive: () => Promise.reject(new Error('issue restore is PLAN-015')),
+    archive: () => Promise.reject(new Error('issue archive is PLAN-015 S3')),
+    unarchive(model, id) {
+      const row = issues.get(id);
+      if (model !== 'Issue' || !row) throw new SurfaceError('NOT_FOUND', 'not found');
+      const next = { ...row, archivedAt: null, updatedAt: NOW };
+      issues.set(id, next);
+      writes.push({ action: 'unarchive', ids: [id], fields: ['archivedAt'] });
+      return Promise.resolve(next as never);
+    },
     purge: () => Promise.reject(new Error('issue purge is PLAN-015')),
     deleteWhere: () => Promise.reject(new Error('issues are not bulk-deleted here')),
     changes: (): readonly RowChange[] => [],
@@ -214,9 +261,36 @@ export function memoryIssues(): MemoryIssues {
     labels,
     issues,
     calls,
+    lockModes,
     writes,
     events,
     repo,
+    history,
+    attachments,
+    lifecycle({ actor = ADA_ACTOR, now = NOW } = {}) {
+      return {
+        access: {
+          lockIssue: (issueId, mode) => access.lockIssue(issueId, mode),
+          identifier: (issue) => Promise.resolve(identifierOf(issue)),
+          relogRows(issueId) {
+            const ids = attachments.get(issueId) ?? [];
+            // The test stands in for PLAN-014 S4a's model: no Attachment ModelName exists yet.
+            const model = 'Attachment' as ModelName;
+            return Promise.resolve(
+              ids.length === 0 ? [] : [{ model, ids: [...ids].sort().slice(0, 100) }],
+            );
+          },
+        },
+        repo,
+        actor,
+        now,
+        emit: (event) => void events.push(event),
+        history(kind, issue) {
+          history.push({ kind, issueId: issue.id });
+          return Promise.resolve();
+        },
+      };
+    },
     ctx: { access, repo, emit: (event) => void events.push(event), now: NOW },
     status(t, name) {
       const found = [...statuses.values()].find((s) => s.teamId === t.id && s.name === name);

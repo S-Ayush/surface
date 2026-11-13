@@ -46,6 +46,7 @@ import {
   issueList,
   issueUpdate,
 } from './issue.js';
+import { issueDelete, issueRestore } from './issue-lifecycle.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -59,6 +60,7 @@ export * from './session.js';
 export * from './status.js';
 export * from './label.js';
 export * from './issue.js';
+export * from './issue-lifecycle.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -129,6 +131,9 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   issueGet,
   issueCreate,
   issueUpdate,
+  // Delete, then restore, the same issue (ENG-3): the seed ends as it started (SPEC-015 §6.1).
+  issueDelete,
+  issueRestore,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

@@ -26,12 +26,13 @@ import type { Repo } from '../../sync/repo.js';
 
 export type StatusRow = ModelRow<'WorkflowStatus'>;
 
-/** What the rules read of the team. `autoCloseStatusId` arrives with SPEC-015 (PLAN-015 S1). */
+/** What the rules read of the team, under its row lock. */
 export interface WorkflowTeam {
   readonly id: string;
   readonly key: string;
   readonly defaultStatusId: string;
-  readonly autoCloseStatusId?: string | null;
+  /** SPEC-015 §3.2: the status auto-close uses, which can't be deleted (E22). */
+  readonly autoCloseStatusId: string | null;
 }
 
 /** Reads and locks, in the order of §4.4. Every method runs in the operation's transaction. */

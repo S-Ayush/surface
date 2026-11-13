@@ -16,6 +16,7 @@ import {
   issueChangeSet,
   issueEstimateProblem,
   issueLabelProblem,
+  issueLockModeOf,
   issueStatusProblem,
   mergeLabels,
   normalizeTitle,
@@ -23,6 +24,7 @@ import {
   type EstimateScale,
   type IssueChangeSet,
   type IssueLabelFacts,
+  type IssueLockMode,
   type StatusCategory,
 } from '@surface/domain';
 import type { DomainEvent } from '../../executor/context.js';
@@ -67,8 +69,11 @@ export interface IssueAccess {
   statusCategory(statusId: string): Promise<StatusCategory | undefined>;
   /** The team's next number and the new issue's sort key, under the counter lock (§4.5). */
   position(teamId: string): Promise<{ readonly number: number; readonly sortOrder: string }>;
-  /** `lockIssueForWrite(…, 'edit')`: archived and deleted issues are `CONFLICT` (§6.1). */
-  lockIssue(issueId: string): Promise<LockedIssue>;
+  /**
+   * `lockIssueForWrite` in `mode`, the mode the lifecycle rule table gives the operation
+   * (SPEC-015 §4.3): in `edit`, archived and deleted issues are `CONFLICT` (§6.1).
+   */
+  lockIssue(issueId: string, mode: IssueLockMode): Promise<LockedIssue>;
 }
 
 /** What the rules need from the operation besides reads and writes. */
@@ -299,7 +304,7 @@ export async function updateIssue(
   const facts = await lockedLabels(access, input.addLabelIds, 'addLabels');
   // The issue's own state is checked first (AC-23): an archived or deleted issue is CONFLICT
   // whatever else the edit gets wrong, so the input checks run after the issue lock.
-  const issue = await access.lockIssue(input.issueId);
+  const issue = await access.lockIssue(input.issueId, issueLockModeOf('issue.update'));
   if (issue.teamId !== team.id) {
     throw new SurfaceError('CONFLICT', 'This issue moved to another team. Reload and try again.');
   }

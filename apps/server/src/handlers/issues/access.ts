@@ -72,7 +72,7 @@ export function issueAccess(ctx: HandlerContext): IssueAccess {
       return row?.category;
     },
     position: (teamId) => newIssuePosition(tx, teamId),
-    lockIssue: (issueId) => lockIssueForWrite(tx, issueId, { actor: ctx.actor }, 'edit'),
+    lockIssue: (issueId, mode) => lockIssueForWrite(tx, issueId, { actor: ctx.actor }, mode),
   };
 }
 

@@ -16,6 +16,7 @@
  * the other (INV-05).
  */
 import {
+  AUTOMATION_MONTHS,
   COLOR_HUES,
   ESTIMATE_SCALES,
   RESERVED_TEAM_KEYS,
@@ -54,6 +55,9 @@ const audit = () => ({
 const syncGroups = () => text().array().notNull();
 
 /** `column IN ('a', 'b')` for an enum stored as text. Values are our constants, not input. */
+/** `1, 3, 6, 9, 12`: the automation periods (SPEC-015 §3.2), our constants, not input. */
+const automationMonths = sql.raw(AUTOMATION_MONTHS.join(', '));
+
 function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
   return sql`${column} IN (${sql.raw(values.map((v) => `'${v}'`).join(', '))})`;
 }
@@ -265,8 +269,18 @@ export const teams = pgTable(
     cycleUpcomingCount: integer().notNull().default(2),
     cycleAutoAddStarted: boolean().notNull().default(false),
     cycleAutoAddCompleted: boolean().notNull().default(false),
-    autoArchiveMonths: integer().default(6),
+    // SPEC-015 §3.2, §4.9: 1, 3, 6, 9 or 12 months; auto-archive is never off, auto-close is off
+    // while null.
+    autoArchiveMonths: integer().notNull().default(6),
     autoCloseMonths: integer(),
+    /**
+     * The Canceled status auto-close moves stale issues to (SPEC-015 §3.2), set whenever auto-close
+     * is on. RESTRICT, not a cascade: `teams` is synced, so the database must never change it
+     * without a `sync_log` row (rule 2); `status.delete` refuses this status first (E22).
+     */
+    autoCloseStatusId: uuid().references((): AnyPgColumn => workflowStatuses.id, {
+      onDelete: 'restrict',
+    }),
     parentAutoComplete: boolean().notNull().default(false),
     syncGroups: syncGroups(),
     ...audit(),
@@ -283,8 +297,11 @@ export const teams = pgTable(
     check('teams_cycle_cooldown_check', sql`${t.cycleCooldownWeeks} BETWEEN 0 AND 2`),
     check('teams_cycle_start_weekday_check', sql`${t.cycleStartWeekday} BETWEEN 0 AND 6`),
     check('teams_cycle_upcoming_check', sql`${t.cycleUpcomingCount} BETWEEN 1 AND 15`),
-    check('teams_auto_archive_check', sql`${t.autoArchiveMonths} >= 1`),
-    check('teams_auto_close_check', sql`${t.autoCloseMonths} >= 1`),
+    check('teams_auto_archive_check', sql`${t.autoArchiveMonths} IN (${automationMonths})`),
+    check(
+      'teams_auto_close_check',
+      sql`${t.autoCloseMonths} IS NULL OR ${t.autoCloseMonths} IN (${automationMonths})`,
+    ),
     index('teams_sync_groups_idx').using('gin', t.syncGroups),
   ],
 );

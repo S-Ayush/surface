@@ -52,7 +52,12 @@ export function memoryWorkflow(): MemoryWorkflow {
       archivedAt: null,
     });
   }
-  const team = { id: teamId, key: 'ENG', defaultStatusId: seeded.defaultStatusId };
+  const team = {
+    id: teamId,
+    key: 'ENG',
+    defaultStatusId: seeded.defaultStatusId,
+    autoCloseStatusId: null,
+  };
   const calls: string[] = [];
   const writes: Write[] = [];
   const issues = new Map<string, { live: number; archived: number; recentlyDeleted: number }>();

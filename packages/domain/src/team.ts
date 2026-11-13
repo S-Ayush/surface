@@ -4,6 +4,13 @@
  */
 import type { ColorHue, EstimateScale } from './workspace.js';
 
+/**
+ * The periods auto-archive and auto-close offer, in months (SPEC-015 §3.2). The `teams` checks
+ * allow only these (migration 0014).
+ */
+export const AUTOMATION_MONTHS = [1, 3, 6, 9, 12] as const;
+export type AutomationMonths = (typeof AUTOMATION_MONTHS)[number];
+
 /** A new team's settings: the `teams` column defaults (PLAN-001 S1; a server test keeps them so). */
 export const NEW_TEAM_SETTINGS: {
   readonly color: ColorHue;
@@ -21,8 +28,9 @@ export const NEW_TEAM_SETTINGS: {
   readonly cycleUpcomingCount: number;
   readonly cycleAutoAddStarted: boolean;
   readonly cycleAutoAddCompleted: boolean;
-  readonly autoArchiveMonths: number | null;
+  readonly autoArchiveMonths: number;
   readonly autoCloseMonths: number | null;
+  readonly autoCloseStatusId: string | null;
   readonly parentAutoComplete: boolean;
 } = Object.freeze({
   color: 'gray',
@@ -42,6 +50,7 @@ export const NEW_TEAM_SETTINGS: {
   cycleAutoAddCompleted: false,
   autoArchiveMonths: 6,
   autoCloseMonths: null,
+  autoCloseStatusId: null,
   parentAutoComplete: false,
 });
 
