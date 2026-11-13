@@ -4,7 +4,8 @@
  * some teams (permissions §3.5). A private team's labels are invisible to everyone else, so a
  * reference to one is `NOT_FOUND` before any permission check.
  *
- * `label.archive` and `label.unarchive` are PLAN-010 S6, and `label.usage` is S5. The deleted
+ * `label.archive` and `label.unarchive` are PLAN-010 S6 (archive state travels as `A`/`V`, SPEC-011
+ * §5.5), and `label.usage` is S5. The deleted
  * label's id stays in issues' `labelIds` until S5 rewrites them: no issue table exists yet.
  *
  * Optimistic updates call the same `label*Problem` functions as the server, so the client
@@ -16,9 +17,11 @@ import {
   LABEL_NAME_MAX_LENGTH,
   LabelRef,
   TeamRef,
+  labelArchivePlan,
   labelCreateProblem,
   labelDeleteProblem,
   labelMovePlan,
+  labelUnarchivePlan,
   labelUpdateProblem,
   parseLabelRef,
   type LabelFacts,
@@ -387,4 +390,55 @@ export const labelDelete = defineOperation({
     // Issues keep the dead id until the server's deltas rewrite them; renderers skip it (SPEC-010 §5).
     store.remove('Label', label.id);
   },
+});
+
+function archiveOptimistic(
+  plan: typeof labelArchivePlan,
+  archive: boolean,
+): (store: OptimisticStore, input: { label: string; team?: string | undefined }) => void {
+  return (store, input) => {
+    const label = findLabel(store, input.label, teamIdOfRef(store, input.team));
+    const scope = label && scopeOfLabel(store, label);
+    if (label === undefined || scope === undefined) return;
+    const result = plan(scope.labels, label);
+    if (!result.ok) return;
+    const at = store.now.toISOString();
+    for (const row of result.changing) {
+      if (archive) store.archive('Label', row.id);
+      else store.unarchive('Label', row.id);
+      store.patch('Label', row.id, { updatedAt: at });
+    }
+  };
+}
+
+export const labelArchive = defineOperation({
+  name: 'label.archive',
+  kind: 'mutation',
+  domain: 'label',
+  summary: 'Archive a label or label group',
+  description:
+    'Archives a label so it can no longer be added to issues; issues that have it keep it. Archiving a label group archives all its labels too. Archiving an archived label changes nothing. Name a team label by name together with team, or use its id.',
+  keywords: ['archive label', 'retire label', 'hide label', 'archive label group'],
+  input: z.object({ label: LabelRef, team: TeamRef.optional() }),
+  output: LabelSchema,
+  permission: (p, refs) => mayChange(p, refs),
+  destructive: false,
+  examples: [{ team: 'ENG', label: 'Needs design' }],
+  optimistic: archiveOptimistic(labelArchivePlan, true),
+});
+
+export const labelUnarchive = defineOperation({
+  name: 'label.unarchive',
+  kind: 'mutation',
+  domain: 'label',
+  summary: 'Unarchive a label or label group',
+  description:
+    'Makes an archived label available again. Unarchiving a label group unarchives all its labels too. A label in an archived group stays archived until the group is unarchived. Unarchiving a label that is not archived changes nothing.',
+  keywords: ['unarchive label', 'restore label', 'bring back label', 'unarchive label group'],
+  input: z.object({ label: LabelRef, team: TeamRef.optional() }),
+  output: LabelSchema,
+  permission: (p, refs) => mayChange(p, refs),
+  destructive: false,
+  examples: [{ team: 'ENG', label: 'Needs design' }],
+  optimistic: archiveOptimistic(labelUnarchivePlan, false),
 });

@@ -28,7 +28,15 @@ import { workspaceGet, workspaceUpdate } from './workspace.js';
 import { inviteCreate, inviteList, inviteRevoke } from './invite.js';
 import { userChangePassword, userMe, userUpdateProfile } from './profile.js';
 import { sessionList, sessionRevoke, sessionRevokeOthers } from './session.js';
-import { labelCreate, labelDelete, labelList, labelMoveToWorkspace, labelUpdate } from './label.js';
+import {
+  labelArchive,
+  labelCreate,
+  labelDelete,
+  labelList,
+  labelMoveToWorkspace,
+  labelUnarchive,
+  labelUpdate,
+} from './label.js';
 import { statusCreate, statusDelete, statusList, statusReorder, statusUpdate } from './status.js';
 
 export * from './debug.js';
@@ -91,11 +99,14 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   statusUpdate,
   statusReorder,
   statusDelete,
-  // Create, edit, move, then delete: the examples run in this order on one seed, and each acts
+  // Create, edit, archive, unarchive, move, then delete: the examples run in this order on one seed, and each acts
   // on the label the one before it made (SPEC-010 §6).
   labelList,
   labelCreate,
   labelUpdate,
+  // Archive then unarchive the same label, before the move and the delete take it away.
+  labelArchive,
+  labelUnarchive,
   labelMoveToWorkspace,
   labelDelete,
   // Settings of the team the seed's actor belongs to; run after the statuses above (SPEC-010 §6).

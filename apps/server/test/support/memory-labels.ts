@@ -11,7 +11,7 @@ import type { Repo, RowChange } from '../../src/sync/repo.js';
 const NOW = new Date('2026-11-13T10:00:00Z');
 
 export interface LabelWrite {
-  readonly action: 'insert' | 'update' | 'purge';
+  readonly action: 'insert' | 'update' | 'purge' | 'archive' | 'unarchive';
   readonly id: string;
   readonly model: string;
   /** The fields a patch carried. */
@@ -83,6 +83,15 @@ export function memoryLabels(): MemoryLabels {
     },
   };
 
+  function setArchived(model: string, id: string, action: 'archive' | 'unarchive') {
+    const row = rows.get(id);
+    if (model !== 'Label' || !row) throw new SurfaceError('NOT_FOUND', 'not found');
+    const next = { ...row, archivedAt: action === 'archive' ? NOW : null, updatedAt: NOW };
+    rows.set(id, next);
+    writes.push({ action, id, model });
+    return Promise.resolve(next as never);
+  }
+
   // The repo is typed per model; the rules only write Label, so anything else is a bug.
   const repo: Repo = {
     insert(model, values) {
@@ -112,8 +121,8 @@ export function memoryLabels(): MemoryLabels {
       writes.push({ action: 'update', id, model, fields: Object.keys(patch) });
       return Promise.resolve(next as never);
     },
-    archive: () => Promise.reject(new Error('label archive is PLAN-010 S6')),
-    unarchive: () => Promise.reject(new Error('label archive is PLAN-010 S6')),
+    archive: (model, id) => setArchived(model, id, 'archive'),
+    unarchive: (model, id) => setArchived(model, id, 'unarchive'),
     purge(model, id) {
       if (model !== 'Label' || !rows.delete(id)) throw new SurfaceError('NOT_FOUND', 'not found');
       writes.push({ action: 'purge', id, model });

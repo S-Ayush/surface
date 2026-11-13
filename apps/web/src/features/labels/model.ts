@@ -39,7 +39,7 @@ export function scopeInfo(scope: LabelsScope): LabelScopeInfo {
     : { teamId: null, teamKey: null };
 }
 
-/** The labels of the scope, archived ones left out (the Archived section is PLAN-010 S6). */
+/** The live labels of the scope: the table's rows. Archived ones are `archivedEntries`. */
 export function scopeLabels(all: readonly LabelItem[], scope: LabelsScope): LabelItem[] {
   const teamId = scope.kind === 'team' ? scope.teamId : null;
   return all.filter((label) => label.teamId === teamId && !label.archived);
@@ -49,6 +49,19 @@ export function scopeLabels(all: readonly LabelItem[], scope: LabelsScope): Labe
 export function allInScope(all: readonly LabelItem[], scope: LabelsScope): LabelItem[] {
   const teamId = scope.kind === 'team' ? scope.teamId : null;
   return all.filter((label) => label.teamId === teamId);
+}
+
+/**
+ * The "Archived" section's entries (§3.2, PLAN-010 S6): archived groups with their archived
+ * labels, and archived labels of a live group as plain entries (their group isn't in the section).
+ */
+export function archivedEntries(items: readonly LabelItem[], filter: string): LabelEntry[] {
+  const archived = items.filter((l) => l.archived);
+  const ids = new Set(archived.filter((l) => l.isGroup).map((l) => l.id));
+  const flat = archived.map((l) =>
+    l.parentId !== null && !ids.has(l.parentId) ? { ...l, parentId: null } : l,
+  );
+  return labelEntries(flat, filter);
 }
 
 function byName(a: LabelItem, b: LabelItem): number {

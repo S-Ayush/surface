@@ -11,9 +11,11 @@
  * gone, or moved to another scope since the executor resolved it, is `CONFLICT`.
  */
 import {
+  labelArchivePlan,
   labelCreateProblem,
   labelDeleteProblem,
   labelMovePlan,
+  labelUnarchivePlan,
   labelUpdateProblem,
   type ColorHue,
   type LabelProblem,
@@ -303,3 +305,48 @@ export async function moveLabelToWorkspace(
   }
   return moved;
 }
+
+export interface ArchiveInput {
+  readonly teamRef?: string | undefined;
+  readonly team?: { readonly id: string } | undefined;
+  readonly label: { readonly id: string; readonly teamId: string | null; readonly name?: string };
+}
+
+/**
+ * AC-11, E14, D26: archives the label, or a group and all its labels, through `repo.archive`
+ * (or `repo.unarchive`), so the repo logs an `A` (or `V`) carrying the row. Rows already in the
+ * wanted state are not written, so archiving an archived label sends nothing. Returns the label
+ * named in the input. No issue is read.
+ */
+async function setArchived(
+  access: LabelAccess,
+  repo: Repo,
+  input: ArchiveInput,
+  archive: boolean,
+): Promise<LabelRow> {
+  requireLabelTeam(input.label, input.team, input.label.name ?? 'That label');
+  await lockScope(access, input.label.teamId, input.teamRef, 'label');
+  const label = await lockedLabel(access, input.label.id, input.label.teamId);
+  // Unarchiving relies on the group's state: re-read it FOR KEY SHARE (§4.4). The scope lock
+  // already serialises every label operation of the scope, so the plan sees the same rows.
+  if (!archive && label.parentId !== null) await sharedGroup(access, label.parentId, label.teamId);
+  const scopeLabels = await access.scopeLabels(label.teamId);
+  const plan = archive
+    ? labelArchivePlan(scopeLabels, label)
+    : labelUnarchivePlan(scopeLabels, label);
+  if (!plan.ok) throw refuse(plan.problem);
+  // Ascending id, like every multi-row write (SPEC-011 §4.8).
+  const ids = plan.changing.map((l) => l.id).sort();
+  let named: LabelRow = label;
+  for (const id of ids) {
+    const row = archive ? await repo.archive('Label', id) : await repo.unarchive('Label', id);
+    if (id === label.id) named = row;
+  }
+  return named;
+}
+
+export const archiveLabel = (access: LabelAccess, repo: Repo, input: ArchiveInput) =>
+  setArchived(access, repo, input, true);
+
+export const unarchiveLabel = (access: LabelAccess, repo: Repo, input: ArchiveInput) =>
+  setArchived(access, repo, input, false);

@@ -8,10 +8,12 @@ import debugTouch from './debug/touch.js';
 import debugArchive from './debug/archive.js';
 import debugUnarchive from './debug/unarchive.js';
 import userUpdatePreferences from './users/update-preferences.js';
+import labelArchive from './labels/archive.js';
 import labelCreate from './labels/create.js';
 import labelDelete from './labels/delete.js';
 import labelList from './labels/list.js';
 import labelMoveToWorkspace from './labels/move-to-workspace.js';
+import labelUnarchive from './labels/unarchive.js';
 import labelUpdate from './labels/update.js';
 import statusCreate from './statuses/create.js';
 import statusDelete from './statuses/delete.js';
@@ -88,4 +90,6 @@ export const HANDLERS: readonly Handler[] = [
   labelDelete,
   teamSetDefaultStatus,
   teamSetEstimates,
+  labelArchive,
+  labelUnarchive,
 ];

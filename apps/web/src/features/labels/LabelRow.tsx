@@ -3,7 +3,16 @@
 // It is an option of the page's listbox in the `settings-row` scope: its keys are the registry's
 // (rowKeys.ts), not handlers here. A group row also has the group type select and an expand toggle.
 import { Menu } from '@surface/ui';
-import { ChevronRight, MoreHorizontal, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronRight,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { useState, type KeyboardEvent } from 'react';
 import { LABEL_ROW_ATTRIBUTE } from './rowKeys.js';
 import { dayText, type LabelItem } from './model.js';
@@ -24,6 +33,8 @@ export type LabelRowProps = {
   readonly onEdit: () => void;
   readonly onAddToGroup?: () => void;
   readonly onMove: () => void;
+  readonly onArchive: () => void;
+  readonly onUnarchive: () => void;
   readonly onDelete: () => void;
   readonly onDescription: (description: string) => void;
   readonly onExclusive: (exclusive: boolean) => void;
@@ -41,6 +52,8 @@ export function LabelRow({
   onEdit,
   onAddToGroup,
   onMove,
+  onArchive,
+  onUnarchive,
   onDelete,
   onDescription,
   onExclusive,
@@ -65,7 +78,8 @@ export function LabelRow({
       icon: <Pencil size={16} />,
       onSelect: onEdit,
     },
-    ...(label.isGroup && onAddToGroup !== undefined
+    // Not offered on an archived group: nobody can create a label in it (E14).
+    ...(label.isGroup && !label.archived && onAddToGroup !== undefined
       ? [
           {
             type: 'item' as const,
@@ -85,6 +99,19 @@ export function LabelRow({
           },
         ]
       : []),
+    label.archived
+      ? {
+          type: 'item' as const,
+          label: 'Unarchive',
+          icon: <ArchiveRestore size={16} />,
+          onSelect: onUnarchive,
+        }
+      : {
+          type: 'item' as const,
+          label: 'Archive…',
+          icon: <Archive size={16} />,
+          onSelect: onArchive,
+        },
     { type: 'item' as const, label: 'Delete…', icon: <Trash2 size={16} />, onSelect: onDelete },
   ];
   return (
@@ -95,6 +122,7 @@ export function LabelRow({
       data-shortcut-scope="settings-row"
       {...{ [LABEL_ROW_ATTRIBUTE]: label.id }}
       data-depth={depth}
+      data-archived={label.archived || undefined}
       className={styles.row}
       onFocus={onFocus}
     >

@@ -6,9 +6,11 @@
 // read-only with "Join the team to edit". The usage columns are "—" until PLAN-010 S5.
 import { uuidv7 } from '@surface/domain';
 import {
+  labelArchive,
   labelCreate,
   labelDelete,
   labelMoveToWorkspace,
+  labelUnarchive,
   labelUpdate,
   type InputOf,
 } from '@surface/operations';
@@ -32,6 +34,7 @@ import type { LabelFormValues } from './LabelForm.js';
 import { LabelTable, visibleIds } from './LabelTable.js';
 import {
   allInScope,
+  archivedEntries,
   inheritedCount,
   inheritedText,
   labelEntries,
@@ -88,6 +91,8 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
   const [editing, setEditing] = useState<string>();
   const [deleting, setDeleting] = useState<LabelItem>();
   const [moving, setMoving] = useState<LabelItem>();
+  const [archiving, setArchiving] = useState<LabelItem>();
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const [dialogError, setDialogError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [activeId, setActiveId] = useState<string>();
@@ -115,13 +120,19 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
   const own = data === null ? [] : scopeLabels(data.all, scope);
   const entries = labelEntries(own, filter);
   const filtering = filter.trim() !== '';
-  const ids = visibleIds(entries, expanded, filtering);
+  const archived = data === null ? [] : archivedEntries(allInScope(data.all, scope), filter);
+  const ids = visibleIds(entries, expanded, filtering, archived, archivedOpen || filtering);
   const tabStop = activeId !== undefined && ids.includes(activeId) ? activeId : ids[0];
 
   // The `settings-row` keys, through the engine (rowKeys.ts): Enter, E, Mod+Backspace.
   const handlers = labelRowHandlers(
     () => labelIdOf(document.activeElement),
-    () => canEdit && !formOpen && deleting === undefined && moving === undefined,
+    () =>
+      canEdit &&
+      !formOpen &&
+      deleting === undefined &&
+      moving === undefined &&
+      archiving === undefined,
     {
       edit: (id) => openEdit(id),
       editName: (id) => openEdit(id),
@@ -168,7 +179,12 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
   /** Runs one operation, answering the refusal to show, or undefined when it worked or queued. */
   const run = async <
     Op extends
-      typeof labelCreate | typeof labelUpdate | typeof labelDelete | typeof labelMoveToWorkspace,
+      | typeof labelCreate
+      | typeof labelUpdate
+      | typeof labelDelete
+      | typeof labelMoveToWorkspace
+      | typeof labelArchive
+      | typeof labelUnarchive,
   >(
     op: Op,
     input: InputOf<Op>,
@@ -234,7 +250,7 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
 
   const newIds = () => uuidv7();
   const row = newRow;
-  const empty = own.length === 0 && row === undefined;
+  const empty = own.length === 0 && archived.length === 0 && row === undefined;
 
   return (
     <>
@@ -326,6 +342,18 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
             setDialogError(undefined);
             setMoving(label);
           }}
+          onArchive={(label) => {
+            setDialogError(undefined);
+            setArchiving(label);
+          }}
+          onUnarchive={(label) =>
+            void run(labelUnarchive, { label: label.id, ...teamArg }).then((refusal) => {
+              if (refusal !== undefined) toastIfFailed({ kind: 'failed', message: refusal });
+            })
+          }
+          archived={archived}
+          archivedOpen={archivedOpen || filtering}
+          onToggleArchived={() => setArchivedOpen((open) => !open)}
           onDelete={askDelete}
           onDescription={describe}
           onExclusive={setExclusive}
@@ -369,6 +397,42 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
         }
       >
         {dialogError !== undefined && deleting !== undefined && (
+          <p role="alert" className={styles.formError}>
+            {dialogError}
+          </p>
+        )}
+      </Dialog>
+      <Dialog
+        open={archiving !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setArchiving(undefined);
+        }}
+        title={`Archive label "${archiving?.name ?? ''}"?`}
+        description="This label will no longer be available to apply to issues. Issues with the label already applied will remain unchanged."
+        size="sm"
+        footer={
+          <>
+            <DialogClose>
+              <Button variant="ghost" disabled={busy}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              loading={busy}
+              onClick={() => {
+                if (archiving === undefined) return;
+                void confirm(
+                  () => run(labelArchive, { label: archiving.id, ...teamArg }),
+                  () => setArchiving(undefined),
+                );
+              }}
+            >
+              Archive
+            </Button>
+          </>
+        }
+      >
+        {dialogError !== undefined && archiving !== undefined && (
           <p role="alert" className={styles.formError}>
             {dialogError}
           </p>

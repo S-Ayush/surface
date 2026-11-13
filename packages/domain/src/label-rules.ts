@@ -215,3 +215,50 @@ export function labelMovePlan(
     ? { ok: true, moving }
     : { ok: false, problem: invalid('label', limit) };
 }
+
+export type LabelArchivePlan =
+  | { readonly ok: true; readonly changing: readonly LabelFacts[] }
+  | { readonly ok: false; readonly problem: LabelProblem };
+
+const isArchived = (l: LabelFacts): boolean => l.archivedAt != null;
+
+/** The label, or a group with all its labels (D26). */
+function withMembers(scopeLabels: readonly LabelFacts[], label: LabelFacts): LabelFacts[] {
+  return label.isGroup ? [label, ...scopeLabels.filter((l) => l.parentId === label.id)] : [label];
+}
+
+/**
+ * What `label.archive` archives (AC-11, D26): the label, or a group and all its labels, keeping
+ * only the rows not archived yet, so archiving an archived label changes nothing. A label inside
+ * a group can be archived alone.
+ */
+export function labelArchivePlan(
+  scopeLabels: readonly LabelFacts[],
+  label: LabelFacts,
+): LabelArchivePlan {
+  return { ok: true, changing: withMembers(scopeLabels, label).filter((l) => !isArchived(l)) };
+}
+
+/**
+ * What `label.unarchive` restores (AC-11, E14, D26): the label, or a group and all its labels,
+ * only the archived rows. A label whose group is archived stays archived until the group is
+ * unarchived.
+ */
+export function labelUnarchivePlan(
+  scopeLabels: readonly LabelFacts[],
+  label: LabelFacts,
+): LabelArchivePlan {
+  if (!label.isGroup && label.parentId !== null && isArchived(label)) {
+    const group = scopeLabels.find((l) => l.id === label.parentId);
+    if (group !== undefined && isArchived(group)) {
+      return {
+        ok: false,
+        problem: invalid(
+          'label',
+          `The ${group.name} group is archived. Unarchive the group first.`,
+        ),
+      };
+    }
+  }
+  return { ok: true, changing: withMembers(scopeLabels, label).filter(isArchived) };
+}

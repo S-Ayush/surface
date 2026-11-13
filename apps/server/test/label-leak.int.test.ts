@@ -113,6 +113,8 @@ const CALLS: Record<string, Call> = {
   'label.update': (team) => ['label.update', { team, label: 'Critical', name: 'Leaked' }],
   'label.moveToWorkspace': (team) => ['label.moveToWorkspace', { team, label: 'Severity' }],
   'label.delete': (team) => ['label.delete', { team, label: 'Critical' }],
+  'label.archive': (team) => ['label.archive', { team, label: 'Critical' }],
+  'label.unarchive': (team) => ['label.unarchive', { team, label: 'Critical' }],
 };
 
 describe('a non-member naming private team SEC', () => {
@@ -148,6 +150,8 @@ describe('a non-member naming private team SEC', () => {
           'label.update',
           'label.delete',
           'label.moveToWorkspace',
+          'label.archive',
+          'label.unarchive',
         ] as const) {
           // Through ENG (a public team) and with no team at all (workspace labels only); a move
           // always names its team.
@@ -309,6 +313,8 @@ describe('naming a team the actor belongs to for another team’s label by id', 
       ['label.update', { team: 'SEC', label: id, name: 'Hijacked' }],
       ['label.delete', { team: 'SEC', label: id }],
       ['label.moveToWorkspace', { team: 'SEC', label: id }],
+      ['label.archive', { team: 'SEC', label: id }],
+      ['label.unarchive', { team: 'SEC', label: id }],
     ] as const) {
       const result = await executor.execute(operation, input, samActor);
       expect(result, operation).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
@@ -316,6 +322,95 @@ describe('naming a team the actor belongs to for another team’s label by id', 
     expect(await logLength()).toBe(before);
     const row = await h.pool.query<{ name: string }>('SELECT name FROM labels WHERE id = $1', [id]);
     expect(row.rows[0]?.name).toBe('Public ENG');
+  });
+});
+
+// PLAN-010 S6, AC-11 and AC-15: archive and unarchive go through the repo's archive path, so the
+// log holds an `A` and a `V` with the full row, in the private team's group only; a group takes
+// its labels with it. SEC's first labels were moved to the workspace above, so a fresh private
+// group is made here.
+describe('archiving a private team’s labels (AC-11, AC-15)', () => {
+  const groupId = uuidv7();
+  const labelId = uuidv7();
+
+  it('logs one A per archived row to the private group only, and one V per unarchived row', async () => {
+    for (const input of [
+      { id: groupId, team: 'SEC', name: 'Region', isGroup: true },
+      { id: labelId, team: 'SEC', name: 'EU', group: 'Region' },
+    ]) {
+      expect(await executor.execute('label.create', input, samActor)).toMatchObject({ ok: true });
+    }
+    const last = await h.pool.query<{ id: number }>(
+      'SELECT coalesce(max(sync_id), 0)::int AS id FROM sync_log',
+    );
+    const since = last.rows[0]?.id ?? 0;
+    const archived = await executor.execute(
+      'label.archive',
+      { team: 'SEC', label: 'Region' },
+      samActor,
+    );
+    expect(archived).toMatchObject({ ok: true, result: { id: groupId } });
+    const again = await executor.execute(
+      'label.archive',
+      { team: 'SEC', label: 'Region' },
+      samActor,
+    );
+    expect(again).toMatchObject({ ok: true });
+    const unarchived = await executor.execute(
+      'label.unarchive',
+      { team: 'SEC', label: 'Region' },
+      samActor,
+    );
+    expect(unarchived).toMatchObject({ ok: true });
+    const { rows } = await h.pool.query<{
+      model_id: string;
+      action: string;
+      groups: string[];
+      data: { archivedAt: string | null };
+    }>(
+      `SELECT model_id, action, groups, data FROM sync_log
+        WHERE model = 'Label' AND sync_id > $1 ORDER BY sync_id`,
+      [since],
+    );
+    // Archive: A for each of the two rows; the repeat writes nothing; unarchive: V for each.
+    expect(rows.map((r) => r.action).sort()).toEqual(['A', 'A', 'V', 'V']);
+    for (const row of rows) {
+      expect(row.groups).toEqual([`team:${h.teams.sec}`]);
+      expect(row.data.archivedAt === null).toBe(row.action === 'V');
+    }
+  });
+
+  it('refuses a non-member by id, name and Group/Label like a label that never existed, archived or not', async () => {
+    expect(
+      await executor.execute('label.archive', { team: 'SEC', label: 'EU' }, samActor),
+    ).toMatchObject({ ok: true });
+    const before = await logLength();
+    for (const actor of [anaActor, zoeActor]) {
+      for (const operation of ['label.archive', 'label.unarchive'] as const) {
+        for (const [real, unknown] of [
+          [labelId, randomUUID()],
+          ['EU', 'Missing'],
+          ['Region/EU', 'Nothing/EU'],
+        ] as const) {
+          for (const team of [{}, { team: 'ENG' }]) {
+            const a = await failure(operation, { ...team, label: real }, actor, [real]);
+            const b = await failure(operation, { ...team, label: unknown }, actor, [unknown]);
+            expect(a, `${operation} ${real}`).toMatchObject({ code: 'NOT_FOUND' });
+            expect(a).toEqual(b);
+          }
+        }
+      }
+    }
+    expect(await logLength()).toBe(before);
+  });
+
+  it('never delivers the archived row to the other groups: its log rows carry the private group only', async () => {
+    const { rows } = await h.pool.query<{ groups: string[] }>(
+      `SELECT groups FROM sync_log WHERE model = 'Label' AND model_id = $1`,
+      [labelId],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(row.groups).toEqual([`team:${h.teams.sec}`]);
   });
 });
 

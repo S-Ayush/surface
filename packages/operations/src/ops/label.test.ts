@@ -8,7 +8,15 @@ import { PRODUCTION_MODELS } from '@surface/domain/model';
 import { describe, expect, it } from 'vitest';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
 import { evaluatePermission } from '../permission.js';
-import { labelCreate, labelDelete, labelList, labelMoveToWorkspace, labelUpdate } from './label.js';
+import {
+  labelArchive,
+  labelCreate,
+  labelDelete,
+  labelList,
+  labelMoveToWorkspace,
+  labelUnarchive,
+  labelUpdate,
+} from './label.js';
 
 const ENG = '0192f0c1-7e5a-7b3c-9d4e-0000000000e1';
 const DES = '0192f0c1-7e5a-7b3c-9d4e-0000000000e2';
@@ -452,6 +460,61 @@ describe('label operation permissions (AC-14, E15)', () => {
   it('lets anyone read labels (label.list is p.any())', () => {
     expect(evaluatePermission(labelList, actor('member', false), {}, {}).allowed).toBe(true);
   });
+});
+
+// PLAN-010 S6, AC-11 and AC-14: archive and unarchive are checked on the label's own team.
+describe('label.archive and label.unarchive permissions (AC-14, E15)', () => {
+  const engRef = { team: { id: ENG, key: 'ENG', name: 'Engineering' } };
+  const teamLabel = { label: { id: ENG_BUG, teamId: ENG, name: 'Defect' } };
+  const desLabel = { label: { id: ENG_BUG, teamId: DES, name: 'Defect' } };
+  const workspaceLabel = { label: { id: WS_BUG, teamId: null, name: 'Bug' } };
+  const narrowed = {
+    kind: 'api' as const,
+    apiKey: { id: 'k', scope: 'read_write' as const, teamIds: [ENG], allowDestructive: true },
+  };
+  const actor = (role: 'admin' | 'member', member: boolean, via?: typeof narrowed) =>
+    userActor({
+      userId: 'u-1',
+      role,
+      memberships: member ? [{ teamId: ENG, private: false }] : [],
+      ...(via ? { via } : {}),
+    });
+
+  for (const op of [labelArchive, labelUnarchive]) {
+    it(`${op.name}: members of the team and Admins may, others may not`, () => {
+      const refs = { ...teamLabel, ...engRef };
+      const input = { label: 'x' };
+      expect(evaluatePermission(op, actor('member', true), refs, input).allowed).toBe(true);
+      expect(evaluatePermission(op, actor('admin', false), refs, input).allowed).toBe(true);
+      expect(evaluatePermission(op, actor('member', false), refs, input).allowed).toBe(false);
+    });
+
+    it(`${op.name}: naming ENG for a DES label by id is FORBIDDEN for an ENG member`, () => {
+      const ana = actor('member', true);
+      const named = { ...desLabel, ...engRef };
+      expect(evaluatePermission(op, ana, named, { team: 'ENG', label: ENG_BUG }).allowed).toBe(
+        false,
+      );
+      expect(evaluatePermission(op, ana, desLabel, { label: ENG_BUG }).allowed).toBe(false);
+      expect(evaluatePermission(op, actor('admin', false), named, { label: 'x' }).allowed).toBe(
+        true,
+      );
+    });
+
+    it(`${op.name}: any member changes a workspace label, a narrowed key does not (E15)`, () => {
+      const input = { label: 'Bug' };
+      expect(evaluatePermission(op, actor('member', false), workspaceLabel, input).allowed).toBe(
+        true,
+      );
+      expect(evaluatePermission(op, actor('admin', true, narrowed), workspaceLabel, input)).toEqual(
+        {
+          allowed: false,
+          reason:
+            'This API key is limited to some teams. Changing workspace labels needs a key for all teams.',
+        },
+      );
+    });
+  }
 });
 
 describe('label optimistic name lookup mirrors the server (pickByName)', () => {

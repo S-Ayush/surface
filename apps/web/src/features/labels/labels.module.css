@@ -96,6 +96,27 @@
   transform: rotate(90deg);
 }
 
+.archivedToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-8) var(--space-12);
+  color: var(--text-secondary);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: start;
+}
+
+.archivedToggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+}
+
+.archivedToggle svg[data-open] {
+  transform: rotate(90deg);
+}
+
 .dot {
   flex: none;
   width: var(--space-8);

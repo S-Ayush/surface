@@ -3,6 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import { LABEL_LIMITS } from './label.js';
 import {
+  labelArchivePlan,
+  labelUnarchivePlan,
   labelCreateProblem,
   labelDeleteProblem,
   labelMovePlan,
@@ -224,5 +226,47 @@ describe('labelMovePlan (AC-24)', () => {
     expect(!plan.ok && plan.problem.message).toBe(
       'The workspace can have at most 500 labels. Delete one first.',
     );
+  });
+});
+
+describe('labelArchivePlan and labelUnarchivePlan (AC-11, D26, E14)', () => {
+  const AT = '2026-11-12T10:00:00.000Z';
+  const names = (plan: ReturnType<typeof labelArchivePlan>) =>
+    plan.ok ? plan.changing.map((l) => l.name).sort() : plan.problem.message;
+
+  it('archives a group with its labels, skipping rows already archived', () => {
+    const group = label({ name: 'Size', isGroup: true });
+    const all = [
+      group,
+      label({ name: 'Small', parentId: group.id }),
+      label({ name: 'Old', parentId: group.id, archivedAt: AT }),
+      label({ name: 'Other' }),
+    ];
+    expect(names(labelArchivePlan(all, group))).toEqual(['Size', 'Small']);
+  });
+
+  it('archives a label of a group alone, and an archived label changes nothing', () => {
+    const group = label({ name: 'Size', isGroup: true });
+    const small = label({ name: 'Small', parentId: group.id });
+    expect(names(labelArchivePlan([group, small], small))).toEqual(['Small']);
+    const old = label({ name: 'Old', archivedAt: AT });
+    expect(names(labelArchivePlan([old], old))).toEqual([]);
+  });
+
+  it('unarchives a group with all its archived labels', () => {
+    const group = label({ name: 'Size', isGroup: true, archivedAt: AT });
+    const all = [group, label({ name: 'Small', parentId: group.id, archivedAt: AT })];
+    expect(names(labelUnarchivePlan(all, group))).toEqual(['Size', 'Small']);
+  });
+
+  it('refuses to unarchive a label whose group is archived (E14), and allows it when the group is live', () => {
+    const group = label({ name: 'Size', isGroup: true, archivedAt: AT });
+    const small = label({ name: 'Small', parentId: group.id, archivedAt: AT });
+    expect(names(labelUnarchivePlan([group, small], small))).toBe(
+      'The Size group is archived. Unarchive the group first.',
+    );
+    const live = label({ name: 'Area', isGroup: true });
+    const web = label({ name: 'Web', parentId: live.id, archivedAt: AT });
+    expect(names(labelUnarchivePlan([live, web], web))).toEqual(['Web']);
   });
 });

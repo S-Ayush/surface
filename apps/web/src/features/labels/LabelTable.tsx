@@ -2,6 +2,7 @@
 // of rows in the `settings-row` scope, with the inline edit form replacing the row being edited.
 // The page owns the state; this renders it.
 import type { LabelScopeInfo } from '@surface/domain';
+import { ChevronRight } from 'lucide-react';
 import { LabelForm, type LabelFormValues } from './LabelForm.js';
 import { LabelRow } from './LabelRow.js';
 import type { LabelEntry, LabelItem } from './model.js';
@@ -26,6 +27,12 @@ export type LabelTableProps = {
   readonly onSave: (label: LabelItem, values: LabelFormValues) => Promise<string | undefined>;
   readonly onAddToGroup: (group: LabelItem) => void;
   readonly onMove: (label: LabelItem) => void;
+  readonly onArchive: (label: LabelItem) => void;
+  readonly onUnarchive: (label: LabelItem) => void;
+  /** The collapsed "Archived" section at the end (§3.2). */
+  readonly archived: readonly LabelEntry[];
+  readonly archivedOpen: boolean;
+  readonly onToggleArchived: () => void;
   readonly onDelete: (label: LabelItem) => void;
   readonly onDescription: (label: LabelItem, description: string) => void;
   readonly onExclusive: (label: LabelItem, exclusive: boolean) => void;
@@ -37,11 +44,19 @@ export function visibleIds(
   entries: readonly LabelEntry[],
   expanded: ReadonlySet<string>,
   filtering: boolean,
+  archived: readonly LabelEntry[] = [],
+  archivedOpen = false,
 ): string[] {
-  return entries.flatMap(({ label, children }) => [
-    label.id,
-    ...(label.isGroup && (filtering || expanded.has(label.id)) ? children.map((c) => c.id) : []),
-  ]);
+  const idsOf = (list: readonly LabelEntry[]) =>
+    list.flatMap(({ label, children }) => [
+      label.id,
+      ...(label.isGroup && (filtering || expanded.has(label.id)) ? children.map((c) => c.id) : []),
+    ]);
+  return [...idsOf(entries), ...(archivedOpen ? idsOf(archived) : [])];
+}
+
+function archivedCount(entries: readonly LabelEntry[]): number {
+  return entries.reduce((n, e) => n + 1 + e.children.length, 0);
 }
 
 export function LabelTable(props: LabelTableProps) {
@@ -70,11 +85,22 @@ export function LabelTable(props: LabelTableProps) {
         onEdit={() => props.onEdit(label.id)}
         {...(label.isGroup ? { onAddToGroup: () => props.onAddToGroup(label) } : {})}
         onMove={() => props.onMove(label)}
+        onArchive={() => props.onArchive(label)}
+        onUnarchive={() => props.onUnarchive(label)}
         onDelete={() => props.onDelete(label)}
         onDescription={(text) => props.onDescription(label, text)}
         onExclusive={(exclusive) => props.onExclusive(label, exclusive)}
       />
     );
+  const renderEntry = ({ label, children }: LabelEntry) => {
+    const open = label.isGroup && (props.expanded.has(label.id) || filtering);
+    return (
+      <div key={label.id} role="presentation">
+        {row(label, 0, label.isGroup ? open : undefined)}
+        {open && children.map((child) => row(child, 1))}
+      </div>
+    );
+  };
   return (
     <div
       role="listbox"
@@ -90,15 +116,25 @@ export function LabelTable(props: LabelTableProps) {
         <span className={styles.column}>Last applied</span>
         <span className={styles.column}>Created</span>
       </div>
-      {entries.map(({ label, children }) => {
-        const open = label.isGroup && (props.expanded.has(label.id) || filtering);
-        return (
-          <div key={label.id} role="presentation">
-            {row(label, 0, label.isGroup ? open : undefined)}
-            {open && children.map((child) => row(child, 1))}
-          </div>
-        );
-      })}
+      {entries.map(renderEntry)}
+      {props.archived.length > 0 && (
+        <div role="presentation">
+          <button
+            type="button"
+            className={styles.archivedToggle}
+            aria-expanded={props.archivedOpen}
+            onClick={props.onToggleArchived}
+          >
+            <ChevronRight
+              size={16}
+              aria-hidden="true"
+              data-open={props.archivedOpen || undefined}
+            />
+            Archived ({archivedCount(props.archived)})
+          </button>
+          {props.archivedOpen && props.archived.map(renderEntry)}
+        </div>
+      )}
     </div>
   );
 }
