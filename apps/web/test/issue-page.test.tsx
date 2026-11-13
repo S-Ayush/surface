@@ -18,7 +18,7 @@ import { AppModel } from '../src/app/AppModel.js';
 import { AuthState, type Session } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
 import { IssuePage } from '../src/features/issues/IssuePage.js';
-import { sourceListState } from '../src/features/issues/source-list.js';
+import { LIST_SOURCE_STATE_KEY } from '../src/features/issues/focus-model.js';
 import { ShellContext } from '../src/shell/ShellContext.js';
 import { ShellStore } from '../src/shell/ShellStore.js';
 import { ShortcutProvider } from '../src/shortcuts/ShortcutProvider.js';
@@ -190,7 +190,13 @@ describe('IssuePage (AC-11)', () => {
 
 describe('IssuePage source list (AC-17)', () => {
   const app = new FakeApp({ issues: [issue(ISSUE_A, 41), issue(ISSUE_B, 42), issue(ISSUE_C, 43)] });
-  const state = sourceListState({ path: '/team/ENG', ids: [ISSUE_A, ISSUE_B, ISSUE_C] });
+  const state = {
+    [LIST_SOURCE_STATE_KEY]: {
+      href: '/team/ENG',
+      routeKey: 'team:ENG',
+      issueIds: [ISSUE_A, ISSUE_B, ISSUE_C],
+    },
+  };
 
   it('shows "2 / 3" with both step buttons in the middle of the list', async () => {
     const html = await render(app, 'ENG-42', state);

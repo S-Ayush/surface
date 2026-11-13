@@ -5,7 +5,7 @@
 // once it is mounted. The page is on a real router above the list, with the M1 keys in the
 // build. Server-rendered markup (`issue-page.test.tsx`) can't show any of it.
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { sourceListState } from '../src/features/issues/source-list.js';
+import { LIST_SOURCE_STATE_KEY } from '../src/features/issues/focus-model.js';
 import {
   FakeApp,
   ISSUE_A,
@@ -36,7 +36,9 @@ const rows = () => [
   issueRow(ISSUE_B, 42),
   issueRow(ISSUE_C, 43, { title: 'Third issue' }),
 ];
-const list = (ids: string[]) => sourceListState({ path: '/team/ENG', ids });
+const list = (issueIds: string[]) => ({
+  [LIST_SOURCE_STATE_KEY]: { href: '/team/ENG', routeKey: 'team:ENG', issueIds },
+});
 const pathname = () => mounted?.router.state.location.pathname;
 const titleField = () =>
   document.querySelector<HTMLInputElement>('input[aria-label="Issue title"]');

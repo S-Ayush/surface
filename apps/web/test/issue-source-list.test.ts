@@ -2,15 +2,7 @@
 // from, and going back to it.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import {
-  backTarget,
-  readSourceList,
-  restoreFocusOn,
-  setListFocusRestorer,
-  sourceListState,
-  stepInfo,
-  stepTarget,
-} from '../src/features/issues/source-list.js';
+import { stepInfo, stepTarget, teamListPath } from '../src/features/issues/source-list.js';
 
 const IDS = ['a', 'b', 'c', 'd'];
 
@@ -56,38 +48,8 @@ describe('stepInfo and stepTarget (AC-17)', () => {
   });
 });
 
-describe('readSourceList (router state)', () => {
-  it('reads what a list put in router state', () => {
-    const source = { path: '/team/ENG', ids: IDS };
-    expect(readSourceList(sourceListState(source))).toEqual(source);
-  });
-
-  it('reads nothing from the state a pasted link or Mod+K leaves', () => {
-    for (const state of [undefined, null, {}, { issueSourceList: 3 }, { __TSR_index: 1 }]) {
-      expect(readSourceList(state)).toBeUndefined();
-    }
-  });
-
-  it('rejects a malformed list or an address that leaves the app', () => {
-    expect(readSourceList({ issueSourceList: { path: '/x', ids: [1] } })).toBeUndefined();
-    expect(readSourceList({ issueSourceList: { path: 'https://evil', ids: [] } })).toBeUndefined();
-    expect(readSourceList({ issueSourceList: { path: '//evil', ids: [] } })).toBeUndefined();
-  });
-});
-
-describe('going back (§3.4 item 9)', () => {
-  it('goes to the source list, else to the issue’s team list', () => {
-    expect(backTarget({ path: '/my-issues', ids: [] }, 'ENG')).toBe('/my-issues');
-    expect(backTarget(undefined, 'ENG')).toBe('/team/ENG');
-  });
-
-  it('restores focus through the list’s registered restorer', () => {
-    const seen: string[] = [];
-    restoreFocusOn('a');
-    const unregister = setListFocusRestorer((id) => seen.push(id));
-    restoreFocusOn('b');
-    unregister();
-    restoreFocusOn('c');
-    expect(seen).toEqual(['b']);
+describe('teamListPath (§3.4 item 9)', () => {
+  it('is the issue’s team list, for a page opened without a list', () => {
+    expect(teamListPath('ENG')).toBe('/team/ENG');
   });
 });

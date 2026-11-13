@@ -13,7 +13,6 @@ import {
   IconButton,
   Menu,
   Skeleton,
-  toast,
   type MenuEntry,
 } from '@surface/ui';
 import { issueUpdate } from '@surface/operations';
@@ -38,11 +37,11 @@ import { PageHeader } from '../../shell/PageHeader.js';
 import { useCommand, usePageScope } from '../../shortcuts/ShortcutProvider.js';
 import { isTypingTarget } from '../../shortcuts/engine.js';
 import styles from '../../pages/Pages.module.css';
-import { copyText } from '../members/reset-link.js';
 import { submitMutation, toastIfFailed } from '../teams/submit.js';
 import { IssueNotFound } from './IssueNotFound.js';
 import { useIssueApi } from './issue-api.js';
-import { issueCopyValues } from './issue-copy.js';
+import { COPY_ITEMS, planCopy, runCopy, type CopyKind } from './copy-actions.js';
+import { readListSource } from './focus-model.js';
 import {
   chooseIssueSource,
   heldRejection,
@@ -60,14 +59,7 @@ import { issueViewFromPool, type IssueView } from './issue-view.js';
 import { usePanelMode } from './panel-layout.js';
 import { PropertiesPanel } from './PropertiesPanel.js';
 import { ISSUE_PAGE_SLOTS } from './slots.js';
-import {
-  backTarget,
-  readSourceList,
-  restoreFocusOn,
-  stepInfo,
-  stepTarget,
-  type Direction,
-} from './source-list.js';
+import { teamListPath, stepInfo, stepTarget, type Direction } from './source-list.js';
 import pageStyles from './issue-page.module.css';
 
 /** The replica's row for `issueRef`, the held create rejection, and the server's answer. */
@@ -216,19 +208,6 @@ function Unavailable({
   );
 }
 
-async function copy(value: string | null, what: string) {
-  if (value === null) {
-    toast({ message: 'This issue has no number yet. Try again in a moment.' });
-    return;
-  }
-  const copied = await copyText(value, navigator.clipboard);
-  toast(
-    copied
-      ? { message: `Copied ${what}` }
-      : { tone: 'danger', message: `Couldn't copy ${what}. Select it and copy it by hand.` },
-  );
-}
-
 function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   const app = useApp();
   const navigate = useNavigate();
@@ -259,8 +238,8 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
     }
   }, [view.id, view.number, view.title, view.teamKey]);
 
-  const source = readSourceList(routerState);
-  const position = source === undefined ? undefined : stepInfo(source.ids, view.id);
+  const source = readListSource(routerState);
+  const position = source === undefined ? undefined : stepInfo(source.issueIds, view.id);
   const userName = useObserved(
     useCallback(() => {
       const store = app.store;
@@ -274,7 +253,7 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   const step = useCallback(
     (direction: Direction) => {
       // Read again at each press (E11): the ids in router state are the list's current ones.
-      const target = stepTarget(readSourceList(routerState)?.ids, view.id, direction);
+      const target = stepTarget(readListSource(routerState)?.issueIds, view.id, direction);
       if (target === undefined) return;
       // `replace`, so the page is one history entry however far the user steps and Back (or Esc)
       // returns to the list.
@@ -291,16 +270,13 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   const goBack = useCallback(() => {
     // Esc and the browser's Back are the same step (SPEC-012 §3.3 item 8). From a list the page
     // is the entry after it, so going back pops it; without a list there is nothing to pop to.
-    const restore = router.subscribe('onResolved', () => {
-      restore();
-      restoreFocusOn(view.id);
-    });
+    // The list restores its own focus and scroll from its focus memory when it comes back.
     if (source === undefined) {
-      void navigate({ to: backTarget(source, view.teamKey), replace: true });
+      void navigate({ to: teamListPath(view.teamKey), replace: true });
     } else {
       router.history.back();
     }
-  }, [navigate, router, source, view.teamKey, view.id]);
+  }, [navigate, router, source, view.teamKey]);
 
   // SPEC-012 §3.4 item 9, §4.2: Esc leaves a text field first (the field handles it), then goes back.
   useCommand('ui:escape', goBack, {
@@ -322,24 +298,22 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   );
 
   // Read on click, not in render: the origin is the browser's.
-  const copyOf = (kind: 'id' | 'link' | 'branch') => {
-    const values = issueCopyValues(view, window.location.origin, userName);
-    void copy(values[kind], kind === 'branch' ? 'branch name' : kind === 'id' ? 'ID' : 'link');
+  const copyOf = (kind: CopyKind) => {
+    const plan = planCopy(kind, view, window.location.origin, userName);
+    void runCopy(plan, navigator.clipboard);
   };
   const menu: MenuEntry[] = [
     {
       type: 'submenu',
       label: 'Copy',
       icon: <Copy />,
-      items: [
-        { type: 'item', label: 'Copy ID', onSelect: () => copyOf('id') },
-        { type: 'item', label: 'Copy link', onSelect: () => copyOf('link') },
-        {
-          type: 'item',
-          label: 'Copy git branch name',
-          onSelect: () => copyOf('branch'),
+      items: COPY_ITEMS.map(({ kind, label }) => ({
+        type: 'item' as const,
+        label,
+        onSelect: () => {
+          copyOf(kind);
         },
-      ],
+      })),
     },
   ];
 
@@ -397,7 +371,7 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
                 />
               </span>
             )}
-            <IconButton aria-label="Copy link" icon={<LinkIcon />} onClick={() => copyOf('link')} />
+            <IconButton aria-label="Copy link" icon={<LinkIcon />} onClick={() => copyOf('url')} />
             <IconButton aria-label="Copy ID" icon={<Hash />} onClick={() => copyOf('id')} />
             <IconButton
               aria-label="Copy git branch name"
