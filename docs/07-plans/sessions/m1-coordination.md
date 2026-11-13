@@ -42,6 +42,12 @@ O = Opus, S = Sonnet. The coordinator may move a slice to another track or model
 - **Questions only the user can answer:** stop and report them. Don't guess.
 - **Node in agent sandboxes:** if `source ~/.nvm/nvm.sh` is refused, put `~/.nvm/versions/node/v24.22.2/bin` first on `PATH`. `drizzle-kit generate` needs `pnpm build` first so it can resolve `@surface/domain`.
 - **Scratch files:** the scratchpad directory is shared by all tracks. Prefix every scratch file with your track and slice (e.g. `trackD-p014s1-check.log`).
+- **Run only the tests you need** (the user, 2026-11-13: full runs took too long).
+  - While building, run the affected package's tests or single files, e.g. `pnpm --filter @surface/server exec vitest run src/x.test.ts`.
+  - Run `pnpm check` once, at the end, as the gate; Turbo caches unchanged packages. After review fixes, rerun the touched tests, then `pnpm check` once.
+  - For integration tests, run only the `*.int.test.ts` files your change touches, e.g. `pnpm --filter @surface/server exec vitest run --config vitest.int.config.js <files>`. Run the full `pnpm test:int` only when the slice adds a migration or changes the repo layer, the executor or the sync hub.
+  - Reviewers read the code and don't run the suites.
+  - After a rebase, the coordinator reruns the gate only if `main` changed files that the branch also touches, or packages it depends on.
 - **Load:** four tracks running `pnpm test:int` at once push the machine load past 20. A perf test that times out under that load is rerun alone before it counts as a failure; say so in the report.
 
 ## 4. Log (append-only)
@@ -73,3 +79,8 @@ O = Opus, S = Sonnet. The coordinator may move a slice to another track or model
 | 2026-11-12 | C | PLAN-010 S2 | main | S | merged | `3975537`. Review: 0 blockers, 2 majors (the listbox took arrow keys from the form inputs; no AC-14/E11 test), 4 minor (keyset cursor replaces the offset cursor, the add-status request expires, no-op optimistic update, command hidden for non-members); fixed. The agent's full `test:int` had 6 failures at load 15. The coordinator reran `pnpm check` and the full `pnpm test:int` after the rebase at load 23: all green (257 + 2 + 8). |
 | 2026-11-12 | A | PLAN-011 S2 | main | O | merged | `4513730`. Protocol v0.7: `A`/`V` carry the full row (strict codecs), `SYNC_PROTOCOL_VERSION` 2, `Label.archivedAt` declared (**PLAN-010 S3/S6: optimistic `store.insert('Label', …)` must pass `archivedAt: null`**), `archivedOf` is the one flag rule (base and overlay). Archive property on the fake hub and the real server; leak test for `A`/`V`. Review (O): 0 blockers, 2 majors (the pinned schema hash after combining with PLAN-013 S1, now `9c11eb17…`; archive ops missing from the private-row test), 3 minor, 2 nits; fixed. Gate run by the coordinator after the rebase: check green, `test:int` 261 + 2 + 9 green. |
 | 2026-11-12 | coord | Pause | main | — | idle | All in-progress slices merged. 9 of 40 done. Waiting for the user's go-ahead before starting new slices. |
+| 2026-11-13 | coord | Resume | main | — | resumed | The user said go, and asked for test runs limited to what each change needs (§3 rule added). |
+| 2026-11-13 | A | PLAN-011 S3 | p011-s3-schema-lock | O | started | migration |
+| 2026-11-13 | B | PLAN-013 S2 | p013-s2-editor | S | started | |
+| 2026-11-13 | C | PLAN-010 S3 | p010-s3-labels | S | started | 012·S3 still waits for 011·S4c, so C takes 010·S3 from D's queue. |
+| 2026-11-13 | D | PLAN-014 S3 | p014-s3-bytes | O | started | |
