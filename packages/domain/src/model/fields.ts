@@ -9,7 +9,7 @@
 import { z } from 'zod';
 
 export type FieldKind =
-  'uuid' | 'string' | 'int' | 'bool' | 'timestamp' | 'enum' | 'json' | 'array';
+  'uuid' | 'string' | 'int' | 'bool' | 'timestamp' | 'day' | 'enum' | 'json' | 'array';
 
 /** A field as stored in a model definition. Satisfies `SchemaHashField` (sync-protocol). */
 export interface FieldDef<T = unknown> {
@@ -101,6 +101,13 @@ export const bool = (): Field<boolean> => new Field('bool', 'bool', z.boolean(),
 /** An ISO 8601 timestamp, kept as a string on the client (timezone-safe, cheap to compare). */
 export const timestamp = (): Field<string> =>
   new Field('timestamp', 'timestamp', z.iso.datetime({ offset: true }), true, same);
+
+/**
+ * A calendar date, `YYYY-MM-DD`, with no time zone (domain-model §1: due dates). Stored as SQL
+ * `date`, which the server sends as text, never as an instant (a `Date` would shift it by the
+ * server's offset). Equal dates compare equal as strings, and in order.
+ */
+export const day = (): Field<string> => new Field('day', 'day', z.iso.date(), true, same);
 
 /** One of a fixed set of string values. The members are part of the type name, so adding one changes the schema hash. */
 export const enumOf = <const V extends readonly [string, ...string[]]>(

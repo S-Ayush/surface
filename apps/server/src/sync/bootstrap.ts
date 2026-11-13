@@ -120,9 +120,19 @@ export async function* bootstrapFrames({
 const GROUPS_ALIAS = '__groups';
 const ARCHIVED_ALIAS = '__archived';
 
-/** The declared fields under their client names, plus the row's groups and archive state. */
-function selectRows(model: SyncModel): string {
-  const fields = [...model.columns].map(([field, column]) => `${quote(column)} AS ${quote(field)}`);
+/**
+ * The declared fields under their client names, plus the row's groups and archive state.
+ * Exported for tests.
+ */
+export function selectRows(model: SyncModel): string {
+  const fields = [...model.columns].map(([field, column]) =>
+    // A calendar date goes out as `YYYY-MM-DD`: `pg` would parse a `date` into a `Date` at the
+    // server's local midnight, which `clientRow` would turn into an instant (a due date off by
+    // the offset).
+    model.def.fields[field]?.kind === 'day'
+      ? `${quote(column)}::text AS ${quote(field)}`
+      : `${quote(column)} AS ${quote(field)}`,
+  );
   // Read even when the model has no `groups` field: cheap, and `clientRow` decides.
   fields.push(`sync_groups AS ${quote(GROUPS_ALIAS)}`);
   fields.push(

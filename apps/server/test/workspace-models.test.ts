@@ -10,6 +10,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 import {
+  issueContent,
+  issueHistory,
+  issues,
+  issueSearchText,
   labels,
   sessions,
   teamIssueCounters,
@@ -17,7 +21,7 @@ import {
   userCredentials,
   workflowStatuses,
 } from '../src/db/schema/index.js';
-import { SYNCED_MODELS } from '../src/sync/models.js';
+import { groupsOfIssueChild, SYNCED_MODELS } from '../src/sync/models.js';
 import { loggedRow } from '../src/sync/repo.js';
 import { GROUPS_FIELD, syncRegistry } from '../src/sync/registry.js';
 
@@ -31,6 +35,7 @@ const COLUMN_TYPES: Readonly<Record<FieldKind, readonly string[]>> = {
   int: ['PgInteger'],
   bool: ['PgBoolean'],
   timestamp: ['PgTimestamp'],
+  day: ['PgDateString'],
   json: ['PgJsonb'],
   array: ['PgArray'],
 };
@@ -119,10 +124,91 @@ describe('SPEC-010 columns', () => {
   });
 });
 
+/** Every SQL migration, concatenated, to check hand-written lines Drizzle can't declare. */
+function migrationsSql(): string {
+  const dir = new URL('../migrations/', import.meta.url);
+  return readdirSync(dir)
+    .filter((file) => file.endsWith('.sql'))
+    .map((file) => readFileSync(new URL(file, dir), 'utf8'))
+    .join('\n');
+}
+
+// PLAN-011 S3, SPEC-011 §4.10: the issue tables. The Issue model's columns are checked by the
+// per-model block above.
+describe('SPEC-011 issue tables', () => {
+  const columns = (table: Parameters<typeof getTableConfig>[0]) =>
+    getTableConfig(table).columns.map((c) => c.name);
+
+  it('give issue order keys the C collation in a migration, since Drizzle cannot declare it', () => {
+    expect(migrationsSql()).toContain(
+      'ALTER TABLE "issues" ALTER COLUMN "sort_order" SET DATA TYPE text COLLATE "C";',
+    );
+  });
+
+  it('number issues uniquely per team, and order them by (sort_order COLLATE "C", id)', () => {
+    const indexes = getTableConfig(issues).indexes.map((i) => i.config.name);
+    expect(indexes).toEqual(
+      expect.arrayContaining([
+        'issues_team_number_idx',
+        'issues_sort_order_idx',
+        'issues_label_ids_idx',
+        'issues_title_trgm_idx',
+        'issues_sync_groups_idx',
+      ]),
+    );
+    const sql = migrationsSql();
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "issues_team_number_idx" ON "issues" USING btree ("team_id","number")',
+    );
+    expect(sql).toContain('USING btree ("sort_order" COLLATE "C","id")');
+    expect(sql).toContain('USING gin (lower("title" COLLATE "und-x-icu") gin_trgm_ops)');
+  });
+
+  it("find a team's lowest order key by index, for the read under the counter lock", () => {
+    // `firstSortKey` orders one team's issues by `sort_order COLLATE "C"` (PLAN-011 S3 review).
+    expect(migrationsSql()).toContain(
+      'CREATE INDEX "issues_team_sort_order_idx" ON "issues" USING btree ("team_id","sort_order" COLLATE "C")',
+    );
+  });
+
+  it('keep a status of the issue’s own team, and never lose one under an issue (INV-06, AC-15)', () => {
+    const [statusKey] = getTableConfig(issues).foreignKeys.filter(
+      (fk) => fk.getName() === 'issues_status_team_fk',
+    );
+    expect(statusKey?.reference().columns.map((c) => c.name)).toEqual(['statusId', 'teamId']);
+    expect(statusKey?.onDelete).toBe('restrict');
+  });
+
+  it('restrict deletes of an issue under its content and history (purge deletes them first)', () => {
+    for (const table of [issueContent, issueHistory]) {
+      const toIssue = getTableConfig(table).foreignKeys.find(
+        (fk) => getTableConfig(fk.reference().foreignTable).name === 'issues',
+      );
+      expect(toIssue?.onDelete, getTableConfig(table).name).toBe('restrict');
+    }
+  });
+
+  it('give the content tables sync groups and a team, ready for PLAN-011 S5a', () => {
+    for (const table of [issueContent, issueHistory]) {
+      expect(columns(table)).toEqual(expect.arrayContaining(['issueId', 'teamId', 'syncGroups']));
+    }
+    // No foreign key to API keys until M6 adds their table.
+    expect(
+      getTableConfig(issueHistory).foreignKeys.map((fk) => fk.reference().columns[0]?.name),
+    ).not.toContain('apiKeyId');
+  });
+
+  it('put a child row in its team’s group only, from the team id the repo set', () => {
+    const teamId = '0190f0c0-0000-7000-8000-00000000e000';
+    expect(groupsOfIssueChild({ teamId })).toEqual([`team:${teamId}`]);
+    expect(groupsOfIssueChild({})).toEqual([]);
+  });
+});
+
 describe('server-only tables', () => {
   it('hold the secrets and counters, and are not synced', () => {
     const synced = new Set(Object.values(SYNCED_MODELS).map((m) => getTableConfig(m.table).name));
-    for (const table of [userCredentials, teamIssueCounters, sessions]) {
+    for (const table of [userCredentials, teamIssueCounters, sessions, issueSearchText]) {
       expect(synced.has(getTableConfig(table).name)).toBe(false);
     }
   });

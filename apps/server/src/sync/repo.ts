@@ -15,6 +15,7 @@ import {
   chunked,
   columnOf,
   deleteWhereStatements,
+  patchedFields,
   removedKey,
   unloggedDeleteProblem,
   unloggedParent,
@@ -25,7 +26,9 @@ import {
   type UnloggedDelete,
 } from './bulk.js';
 import {
+  isIssueChild,
   isModelName,
+  issueChildTeam,
   SYNCED_MODELS,
   type ArchivableModel,
   type ModelInsert,
@@ -183,12 +186,28 @@ export function syncRepo(
     model: M,
     id: string,
     action: 'U' | 'A' | 'V',
-    values: Record<string, unknown>,
+    patch: Record<string, unknown>,
   ): Promise<ModelRow<M>> {
-    const { table, groupsOf } = SYNCED_MODELS[model];
-    // The groups before the change, and the row lock, in one read.
+    const entry = SYNCED_MODELS[model];
+    const { table, groupsOf } = entry;
+    // SPEC-011 §5.1: an issue child's `teamId` is its issue's, set on insert; a patch never moves
+    // it. A new `issueId` would put the row under another team's issue with the old team's
+    // groups, so that is a bug in the handler, refused before anything is read or written.
+    const child = isIssueChild(model);
+    if (child && patchedFields(patch).includes('issueId')) {
+      throw new Error(
+        `${model} can't move to another issue: its team and groups come from its issue (SPEC-011 §5.1).`,
+      );
+    }
+    const { teamId: _childTeam, ...childPatch } = patch;
+    const values = child ? childPatch : patch;
+    // The groups before the change, and the row lock, in one read; for a model that keeps its
+    // groups on update (Issue), its team too, so a patch naming the same team reads no team row.
     const [before] = await db
-      .select({ groups: table.syncGroups })
+      .select({
+        groups: table.syncGroups,
+        ...('groupsOnUpdate' in entry ? { teamId: entry.teamColumn } : {}),
+      })
       .from(table)
       .where(eq(table.id, id))
       .for('update');
@@ -200,7 +219,20 @@ export function syncRepo(
       .where(eq(table.id, id))
       .returning();
     if (!row) throw new Error(`update of ${model} ${id} returned no row`);
-    const groups = await groupsOf(row, db);
+    // SPEC-011 §4.8: an Issue keeps the groups of the row its handler locked, so no team row is
+    // read after the issue lock; other models recompute them.
+    const kept =
+      'groupsOnUpdate' in entry
+        ? entry.groupsOnUpdate(
+            row,
+            {
+              groups: before.groups,
+              teamId: 'teamId' in before ? before.teamId : undefined,
+            },
+            values,
+          )
+        : undefined;
+    const groups = kept ?? (await groupsOf(row, db));
     if (!sameSet(groups, row.syncGroups)) {
       // A change to a field the groups derive from (a team move): store the new groups.
       [row] = await db
@@ -222,11 +254,21 @@ export function syncRepo(
   return {
     async insert(model, values) {
       const { table, groupsOf } = SYNCED_MODELS[model];
-      const groups = await groupsOf(values, db);
+      // SPEC-011 §5.1, D4: an issue child's `teamId` comes from its issue's row, never from input.
+      const childTeam = isIssueChild(model)
+        ? { teamId: (await issueChildTeam(values, db)) ?? null }
+        : {};
+      const groups = await groupsOf({ ...values, ...childTeam }, db);
       try {
         const [row] = await db
           .insert(table)
-          .values({ ...values, syncGroups: [...groups], createdAt: now, updatedAt: now })
+          .values({
+            ...values,
+            ...childTeam,
+            syncGroups: [...groups],
+            createdAt: now,
+            updatedAt: now,
+          })
           .returning();
         if (!row) throw new Error(`insert into ${model} returned no row`);
         push({ action: 'I', model, id: row.id, row: loggedRow(model, row), groups });

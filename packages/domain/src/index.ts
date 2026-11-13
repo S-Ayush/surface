@@ -23,3 +23,6 @@ export * from './issue-order.js';
 export * from './due-date.js';
 export * from './estimate-key.js';
 export * from './doc.js';
+export * from './order-key.js';
+export * from './issue.js';
+export * from './issue-lifecycle.js';

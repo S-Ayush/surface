@@ -6,6 +6,7 @@
 import { teamGroup, userGroup, WORKSPACE_GROUP } from '@surface/domain';
 import {
   DebugItem,
+  Issue,
   Label,
   Team,
   TeamMembership,
@@ -20,6 +21,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import {
   debugItems,
+  issues,
   labels,
   teamMemberships,
   teams,
@@ -67,6 +69,57 @@ async function groupsOfTeam(teamId: string, tx: NodePgDatabase): Promise<string[
     // private could keep the old `workspace` groups. FOR SHARE waits for that update.
     .for('share');
   return team ? teamGroups(team) : [];
+}
+
+/**
+ * The groups of an issue's child row (IssueContent, IssueHistory, and SPEC-013/014's Comment,
+ * Reaction, Attachment): `team:<teamId>` only, never the issue's `user:` groups (SPEC-011 §5.1,
+ * §5.7). Reads no row: the repo sets a child's `teamId` from its issue's row before calling it
+ * (`issueChildTeam`), so it never trusts a `teamId` from input. No team id, no groups.
+ */
+export function groupsOfIssueChild(row: AnyRow): readonly string[] {
+  const teamId = stringField(row, 'teamId');
+  return teamId === undefined ? [] : [teamGroup(teamId)];
+}
+
+/**
+ * The team of the issue `issueId` names, from the issue row (SPEC-011 §5.1, D4): what the repo
+ * stores as an issue child's `teamId`, whatever the handler passed. The handler has locked the
+ * issue already (`lockIssueForWrite`), so this takes no lock and reads no team row (§4.8). A
+ * missing issue gives `undefined`: the child then gets no groups, and its foreign key fails the
+ * transaction anyway.
+ */
+export async function issueChildTeam(row: AnyRow, tx: NodePgDatabase): Promise<string | undefined> {
+  const issueId = stringField(row, 'issueId');
+  if (issueId === undefined) return undefined;
+  const [issue] = await tx
+    .select({ teamId: issues.teamId })
+    .from(issues)
+    .where(eq(issues.id, issueId));
+  return issue?.teamId;
+}
+
+/** What `change()` read from the row it locked, before the update. */
+export interface LockedGroups {
+  readonly groups: readonly string[];
+  readonly teamId: unknown;
+}
+
+/**
+ * An Issue's groups after an update, from the row the handler locked (SPEC-011 §4.8): its stored
+ * groups, unless the patch moves it to another team (M3), when `groupsOf` reads the new team.
+ * A patch naming the issue's own team is no move. So an issue edit never reads a team row after
+ * the issue lock. In S3 and S4 they are the team's groups, which only a team move changes; S4b
+ * replaces this with SPEC-011 §5.7's builder (still reading no team row: it tells a public
+ * team's issue by the stored `user:<creatorId>` group).
+ */
+function issueGroupsOnUpdate(
+  _row: AnyRow,
+  before: LockedGroups,
+  patch: AnyRow,
+): readonly string[] | undefined {
+  const teamId = patch['teamId'];
+  return teamId === undefined || teamId === before.teamId ? before.groups : undefined;
 }
 
 export const SYNCED_MODELS = {
@@ -166,6 +219,21 @@ export const SYNCED_MODELS = {
     groupFields: ['teamId'],
     teamColumn: labels.teamId,
   },
+  // PLAN-011 S3 (SPEC-011 §4.1, §5.1). Public team issues are in `workspace` until S4b.
+  Issue: {
+    table: issues,
+    def: Issue,
+    fixture: false,
+    /** On insert: the team's groups, read `FOR SHARE` (§4.8 `issue.create` lock order). */
+    groupsOf: groupsOfTeamRow,
+    /**
+     * On update (`repo.update`, `archive`, `unarchive`): the groups from the locked row, or
+     * `undefined` to recompute with `groupsOf`. Only Issue declares it.
+     */
+    groupsOnUpdate: issueGroupsOnUpdate,
+    groupFields: ['teamId'],
+    teamColumn: issues.teamId,
+  },
 } as const satisfies Record<
   string,
   {
@@ -204,4 +272,16 @@ export type ArchivableModel = {
 
 export function isModelName(value: string): value is ModelName {
   return Object.hasOwn(SYNCED_MODELS, value);
+}
+
+/**
+ * Whether `model` is an issue child (SPEC-011 §5.1): its entry declares `issueChild: true` with
+ * `groupsOf: groupsOfIssueChild` and `groupFields: ['issueId', 'teamId']` (`issueChildProblem`
+ * in `registry.ts` checks all three at startup). The repo then stores the issue's team as the
+ * row's `teamId` on insert, never writes one from a patch, and refuses a patch of `issueId`.
+ * PLAN-011 S5a registers the first ones.
+ */
+export function isIssueChild(model: ModelName): boolean {
+  const entry: Readonly<Record<string, unknown>> = SYNCED_MODELS[model];
+  return entry['issueChild'] === true;
 }

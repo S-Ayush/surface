@@ -45,6 +45,7 @@ const REF_TYPE_OF: ReadonlyMap<string, RefType> = new Map<string, RefType>([
   [REF_MODELS.UserRef, 'UserRef'],
   [REF_MODELS.StatusRef, 'StatusRef'],
   [REF_MODELS.LabelRef, 'LabelRef'],
+  [REF_MODELS.IssueRef, 'IssueRef'],
 ]);
 
 const rowKey = (model: string, id: string) => `${model}\u0000${id}`;

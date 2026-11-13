@@ -13,7 +13,15 @@ import {
 import { computeSchemaHash, decodeBootstrapFrame } from '@surface/sync-protocol';
 import { describe, expect, it } from 'vitest';
 import { debugItems } from '../src/db/schema/index.js';
-import { clientRow, serverSyncRegistry, syncModel, syncRegistry } from '../src/sync/registry.js';
+import { selectRows } from '../src/sync/bootstrap.js';
+import { groupsOfIssueChild, SYNCED_MODELS } from '../src/sync/models.js';
+import {
+  clientRow,
+  issueChildProblem,
+  serverSyncRegistry,
+  syncModel,
+  syncRegistry,
+} from '../src/sync/registry.js';
 
 describe('the sync registry', () => {
   it('with fixtures, syncs DebugItem too, with the hash the sync-engine tests compute', () => {
@@ -80,6 +88,44 @@ describe('the sync registry', () => {
   });
 });
 
+// PLAN-011 S3 review: the repo takes a child's team from its issue only for `issueChild: true`,
+// and `groupsOfIssueChild` trusts that it did, so one without the other is a leak (SPEC-011 §5.1).
+describe('issue child entries', () => {
+  const child = {
+    issueChild: true,
+    groupsOf: groupsOfIssueChild,
+    groupFields: ['issueId', 'teamId'],
+  };
+
+  it('accept an entry that declares both issueChild and groupsOfIssueChild', () => {
+    expect(issueChildProblem('IssueHistory', child)).toBeUndefined();
+  });
+
+  it('refuse issueChild with other groups, and groupsOfIssueChild without issueChild', () => {
+    expect(issueChildProblem('IssueHistory', { ...child, groupsOf: () => [] })).toBe(
+      'Synced model IssueHistory has issueChild: true, so its groupsOf must be groupsOfIssueChild.',
+    );
+    expect(issueChildProblem('IssueHistory', { ...child, issueChild: undefined })).toBe(
+      'Synced model IssueHistory uses groupsOfIssueChild, so it must declare issueChild: true, or its teamId would come from input.',
+    );
+  });
+
+  it('refuse a child whose groupFields would let updateWhere move it', () => {
+    for (const groupFields of [['teamId'], ['issueId'], []]) {
+      expect(issueChildProblem('IssueHistory', { ...child, groupFields })).toBe(
+        "Issue child IssueHistory must list issueId and teamId in groupFields, so updateWhere can't move it to another team.",
+      );
+    }
+  });
+
+  it('hold for every registered model, so the registry builds', () => {
+    for (const [name, entry] of Object.entries(SYNCED_MODELS)) {
+      expect(issueChildProblem(name, entry)).toBeUndefined();
+    }
+    expect(() => syncRegistry({ includeFixtures: true })).not.toThrow();
+  });
+});
+
 describe('a client row', () => {
   const [model] = syncRegistry({ includeFixtures: true }).models;
   if (!model) throw new Error('DebugItem is not in the registry');
@@ -124,5 +170,26 @@ describe('a client row', () => {
     expect(clientRow(timed, row, row.syncGroups, new Set())['createdAt']).toBe(
       '2026-11-07T10:00:00.123Z',
     );
+  });
+});
+
+// PLAN-011 S3: a calendar date (`day()`, the Issue's `dueDate`) leaves bootstrap as `YYYY-MM-DD`.
+// `pg` parses a `date` into a `Date` at the server's local midnight, which `clientRow` would send
+// as an instant; the select casts it to text instead.
+describe('bootstrap of calendar dates', () => {
+  const issue = syncRegistry({ includeFixtures: false }).models.find((m) => m.name === 'Issue');
+
+  it('selects a day field as text, and every other field as stored', () => {
+    if (!issue) throw new Error('Issue is not in the production registry');
+    const select = selectRows(issue);
+    expect(select).toContain('"due_date"::text AS "dueDate"');
+    expect(select).toContain('"created_at" AS "createdAt"');
+    expect(select).toContain('"sort_order" AS "sortOrder"');
+  });
+
+  it('sends the text date unchanged', () => {
+    if (!issue) throw new Error('Issue is not in the production registry');
+    const row = { id: '0190f0c0-0000-7000-8000-000000000001', dueDate: '2026-12-03' };
+    expect(clientRow(issue, row, [], new Set())['dueDate']).toBe('2026-12-03');
   });
 });

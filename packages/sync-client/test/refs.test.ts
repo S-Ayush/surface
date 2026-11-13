@@ -3,6 +3,7 @@
  * models until PLAN-001 lands. Each case mirrors a rule of the server
  * resolvers, so a reference means the same row on both sides.
  */
+import { Issue } from '@surface/domain/model';
 import { describe, expect, it } from 'vitest';
 import { ObjectPool } from '../src/pool.js';
 import { createClientRefResolver, poolRefSource } from '../src/refs.js';
@@ -156,6 +157,8 @@ describe('client reference resolvers', () => {
 
   it('finds nothing for reference types whose models do not exist yet', () => {
     const { resolver } = fixture();
+    expect(resolver.resolve('CycleRef', 'ENG-1').status).toBe('notFound');
+    // The fixture syncs no Issue model, so no issue resolves.
     expect(resolver.resolve('IssueRef', 'ENG-1').status).toBe('notFound');
     const bare = createClientRefResolver(poolRefSource(new ObjectPool([])), () => undefined);
     expect(bare.resolve('TeamRef', 'ENG').status).toBe('notFound');
@@ -181,5 +184,61 @@ describe('client reference resolvers', () => {
     const { pool, name } = fixture();
     pool.applyBase([{ kind: 'delete', model: 'Team', id: DES }]);
     expect(name('TeamRef', 'DES')).toBe('notFound');
+  });
+});
+
+// PLAN-011 S3, SPEC-011 §4.1 and E13: an issue by identifier (through its team's key) or id. The
+// replica holds only issues the user may see, so a hidden one is not found, as on the server.
+describe('client IssueRef resolution', () => {
+  const ENG_42 = id(42);
+  const DES_42 = id(43);
+  const PENDING = id(44);
+
+  function issues() {
+    const pool = new ObjectPool([...REF_FIXTURE_MODELS, Issue]);
+    pool.loadBase('Team', [
+      { row: { id: ENG, key: 'ENG', name: 'Engineering', private: false }, archived: false },
+      { row: { id: DES, key: 'DES', name: 'Design', private: false }, archived: false },
+    ]);
+    pool.loadBase('Issue', [
+      { row: { id: ENG_42, teamId: ENG, number: 42, title: 'Fix login' }, archived: false },
+      { row: { id: DES_42, teamId: DES, number: 42, title: 'New icons' }, archived: false },
+      // Created offline: no number until its delta arrives (E2).
+      { row: { id: PENDING, teamId: ENG, number: null, title: 'Draft' }, archived: false },
+    ]);
+    const resolver = createClientRefResolver(poolRefSource(pool), () => undefined);
+    const idOf = (value: string) => {
+      const result = resolver.resolve('IssueRef', value);
+      return result.status === 'found' ? result.entity.id : result.status;
+    };
+    return { pool, idOf };
+  }
+
+  it('resolves an identifier in any case through the team key', () => {
+    const { idOf } = issues();
+    expect(idOf('ENG-42')).toBe(ENG_42);
+    expect(idOf('eng-42')).toBe(ENG_42);
+    expect(idOf('DES-42')).toBe(DES_42);
+  });
+
+  it('resolves an id, including a pending issue that has no number yet', () => {
+    const { idOf } = issues();
+    expect(idOf(ENG_42.toUpperCase())).toBe(ENG_42);
+    expect(idOf(PENDING)).toBe(PENDING);
+  });
+
+  it('finds nothing for an unknown team, number or format', () => {
+    const { idOf } = issues();
+    expect(idOf('OPS-42')).toBe('notFound');
+    expect(idOf('ENG-43')).toBe('notFound');
+    expect(idOf('ENG-0')).toBe('notFound');
+    expect(idOf('ENG 42')).toBe('notFound');
+    expect(idOf(id(99))).toBe('notFound');
+  });
+
+  it('finds nothing once the issue leaves the replica', () => {
+    const { pool, idOf } = issues();
+    pool.applyBase([{ kind: 'delete', model: 'Issue', id: ENG_42 }]);
+    expect(idOf('ENG-42')).toBe('notFound');
   });
 });

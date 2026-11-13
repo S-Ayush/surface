@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
   IssueRef,
   LabelRef,
+  ProjectRef,
   StatusRef,
   TeamRef,
   UserRef,
@@ -45,6 +46,9 @@ const ids = {
   secClassified: randomUUID(),
   engSecret: randomUUID(),
   engHush: randomUUID(),
+  eng1: randomUUID(),
+  ops1: randomUUID(),
+  sec1: randomUUID(),
 };
 const SEC_GROUP = `team:${ids.sec}`;
 
@@ -76,6 +80,9 @@ beforeAll(async () => {
     CREATE TABLE labels (
       id uuid PRIMARY KEY, team_id uuid REFERENCES teams, parent_id uuid REFERENCES labels,
       name text NOT NULL, is_group boolean NOT NULL, sync_groups text[] NOT NULL);
+    CREATE TABLE issues (
+      id uuid PRIMARY KEY, team_id uuid NOT NULL REFERENCES teams, number integer NOT NULL,
+      sync_groups text[] NOT NULL, UNIQUE (team_id, number));
   `);
   const q = (sql: string, params: unknown[]) => db.pool.query(sql, params);
   const team = 'INSERT INTO ref_fixture.teams VALUES ($1, $2, $3, $4, $5)';
@@ -134,6 +141,11 @@ beforeAll(async () => {
   await q(label, [ids.engPerfArea, ids.eng, ids.engArea, 'Perf', false, ['workspace']]);
   await q(label, [ids.secClassified, ids.sec, null, 'Classified', false, [SEC_GROUP]]);
   await q(label, [ids.engHush, ids.eng, null, 'Hush', false, [SEC_GROUP]]);
+
+  const issue = 'INSERT INTO ref_fixture.issues VALUES ($1, $2, $3, $4)';
+  await q(issue, [ids.eng1, ids.eng, 1, ['workspace']]);
+  await q(issue, [ids.ops1, ids.ops, 1, ['workspace']]);
+  await q(issue, [ids.sec1, ids.sec, 1, [SEC_GROUP]]);
 });
 
 afterAll(async () => {
@@ -430,10 +442,97 @@ describe('LabelRef', () => {
   });
 });
 
-describe('references not available in M0', () => {
+// PLAN-011 S3, SPEC-011 §5.6 and E13: issues by identifier or id. A missing issue, one in a private
+// team the actor isn't in and one outside an API key's teams are the same NOT_FOUND (leak tests,
+// permissions.md §5; not held). S4's `issue-leak.int.test.ts` covers the operations.
+describe('IssueRef', () => {
+  const keyFor = (teamIds: string[]): ResolveActor => ({
+    ...member,
+    kind: 'api',
+    apiKey: { id: randomUUID(), scope: 'read_write', teamIds, allowDestructive: false },
+  });
+  /**
+   * The error with the quoted reference blanked, so two errors compare by wording alone (the
+   * hint's own `ENG-123` must stay, so only `"<value>"` is replaced).
+   */
+  const blank = (e: SurfaceError, value: string) =>
+    JSON.stringify({ code: e.code, message: e.message, details: e.details }).replaceAll(
+      JSON.stringify(`"${value}"`).slice(1, -1),
+      '…',
+    );
+
+  it.each(['ENG-1', 'eng-1', ' Eng-1 '])(
+    'resolves the identifier %j through the team key',
+    async (value) => {
+      const refs = await resolve(issueOp, { issue: value });
+      expect(refs.issue).toEqual({
+        id: ids.eng1,
+        teamId: ids.eng,
+        teamKey: 'ENG',
+        number: 1,
+        syncGroups: ['workspace'],
+      });
+    },
+  );
+
+  it('resolves an issue id', async () => {
+    expect(idOf(await resolve(issueOp, { issue: ids.ops1.toUpperCase() }), 'issue')).toBe(ids.ops1);
+  });
+
+  it('reports a missing issue as NOT_FOUND with the path and a hint', async () => {
+    const error = await failure(issueOp, { issue: 'ENG-99' });
+    expect(error.code).toBe('NOT_FOUND');
+    expect(error.message).toBe(
+      'Issue "ENG-99" not found. Use an issue identifier like ENG-123, or an issue id.',
+    );
+    expect(error.details.issues?.[0]?.path).toEqual(['issue']);
+  });
+
+  // E13: a number past Postgres `integer` (or past 2^53) can't be an issue, so it is NOT_FOUND,
+  // not the INTERNAL a query with it would fail with.
+  it.each(['ENG-2147483648', 'ENG-99999999999999999999999'])(
+    'reports %s, a number no issue can have, like a missing issue',
+    async (value) => {
+      const error = await failure(issueOp, { issue: value });
+      const missing = await failure(issueOp, { issue: 'ENG-99' });
+      expect(error.code).toBe('NOT_FOUND');
+      expect(blank(error, value)).toBe(blank(missing, 'ENG-99'));
+    },
+  );
+
+  it("reports a private team's issue to a non-member exactly like a missing one", async () => {
+    for (const [hiddenValue, missingValue] of [
+      ['SEC-1', 'SEC-2'],
+      [ids.sec1, randomUUID()],
+    ] as const) {
+      const hidden = await failure(issueOp, { issue: hiddenValue });
+      const missing = await failure(issueOp, { issue: missingValue });
+      expect(blank(hidden, hiddenValue)).toBe(blank(missing, missingValue));
+    }
+    expect(idOf(await resolve(issueOp, { issue: 'SEC-1' }, secMember), 'issue')).toBe(ids.sec1);
+    expect(idOf(await resolve(issueOp, { issue: 'SEC-1' }, system), 'issue')).toBe(ids.sec1);
+  });
+
+  it("reports an issue outside an API key's teams exactly like a missing one, public ones too", async () => {
+    const opsOnly = keyFor([ids.ops]);
+    const hidden = await failure(issueOp, { issue: 'ENG-1' }, opsOnly);
+    const missing = await failure(issueOp, { issue: 'ENG-99' }, opsOnly);
+    expect(hidden.code).toBe('NOT_FOUND');
+    expect(blank(hidden, 'ENG-1')).toBe(blank(missing, 'ENG-99'));
+    expect((await failure(issueOp, { issue: ids.eng1 }, opsOnly)).code).toBe('NOT_FOUND');
+    expect(idOf(await resolve(issueOp, { issue: 'OPS-1' }, opsOnly), 'issue')).toBe(ids.ops1);
+  });
+
+  it('refuses a value that is neither an identifier nor an id at the schema', () => {
+    expect(issueOp.input.safeParse({ issue: 'ENG 1' }).success).toBe(false);
+  });
+});
+
+describe('references not available yet', () => {
   it('fail as a bug, not as a user error', async () => {
-    await expect(resolve(issueOp, { issue: 'ENG-1' })).rejects.toThrow(
-      'IssueRef is not available until M1',
+    const projectOp = op(z.object({ project: ProjectRef }));
+    await expect(resolve(projectOp, { project: 'Launch' })).rejects.toThrow(
+      'ProjectRef is not available until M3',
     );
   });
 });

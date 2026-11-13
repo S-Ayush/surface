@@ -188,7 +188,7 @@ The helper lives in `apps/server/src/issues/lifecycle.ts`. Every handler named i
 Purging an issue runs in **one transaction**, through the repo layer:
 
 1. `lockIssueForWrite(…, 'lifecycle')`. The issue must be deleted (else `CONFLICT`, §4.2).
-2. Delete its children, in this order, through the **purge-step registry** (`apps/server/src/issues/purge-steps.ts`): each spec that adds a child table of `issues` registers a step for it in the same change, and a unit test fails when a table with a foreign key to `issues` has no step (every such key is `ON DELETE RESTRICT`, so a missing step would also make purge fail loudly). Eager children go through `repo.deleteWhere(model, 'issueId', [issueId])`, which logs a `D` per row; content children use `log: false` (Q2, below):
+2. Delete its children, in this order, through the **purge-step registry** (`apps/server/src/issues/purge-steps.ts`): each spec that adds a child table of `issues` registers a step for it in the same change, and a unit test fails when a table with a foreign key to `issues` has no step (every such key is `ON DELETE RESTRICT`, so a missing step would also make purge fail loudly). The one exception is the server-only `issue_search_text`, whose key is `ON DELETE CASCADE` (SPEC-011 §4.3, D19): it needs no step, and the test leaves it out. Eager children go through `repo.deleteWhere(model, 'issueId', [issueId])`, which logs a `D` per row; content children use `log: false` (Q2, below):
    1. Reactions, then comments (SPEC-013).
    2. Attachments (SPEC-014).
    3. IssueHistory and IssueContent (SPEC-011).
@@ -480,6 +480,7 @@ None. Q3 was accepted as proposed at the M1 gate on 2026-11-12 and moved to the 
 | Q2 | Accepted: purge deletes content rows without logging a `D` per row (§4.5). The ADR is written at the M1 acceptance gate; the per-row fallback stays in the code, off by default. User decision. | 2026-11-12 |
 | D17 | Copy Linear, through partial issue loading (SPEC-011 §5.7, ADR-0020): archived and deleted issues are never stored on the client. An `A` or a delete's `U` removes the issue; restore's `V` or `U` inserts it again, and `issue.restore` re-logs the issue's attachments. The archive page, the Recently deleted tab and their issue pages read from the server, online only, read-only, refreshed on focus, on the user's own confirmations and (debounced, subscribed teams only) on packets; the restore toast ends on the mutation's confirmation. Delete's optimistic removes the row; restore's and purge's predict nothing. Replaces D1. | 2026-11-12 |
 | D18 (was Q3) | Comments and reactions don't count as activity for auto-close: staleness follows the issue's `updatedAt` (SPEC-011), which comments and reactions don't change. Linear's behaviour is not observable. Accepted as proposed at the M1 gate. | 2026-11-12 |
+| D19 | `issue_search_text` keeps SPEC-011 §4.3's `ON DELETE CASCADE` and is the one foreign key to `issues` that isn't `RESTRICT` (§4.5). It is server-only, so rule 2 (no unlogged write to a synced table) doesn't apply, and the purge needs no step for it. Found in the PLAN-011 S3 review: §4.5 said every such key is `RESTRICT`. | 2026-11-13 |
 
 ## 12. Changes to accepted docs on acceptance
 

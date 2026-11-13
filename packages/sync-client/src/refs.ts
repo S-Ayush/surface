@@ -23,16 +23,23 @@ import type {
   RefLookupOptions,
   RefType,
 } from '@surface/domain';
-import { parseLabelRef, parseNamedRef, parseTeamRef, parseUserRef } from '@surface/domain';
+import {
+  parseIssueRef,
+  parseLabelRef,
+  parseNamedRef,
+  parseTeamRef,
+  parseUserRef,
+} from '@surface/domain';
 import { rowOf } from './instance.js';
 import type { ReadonlyPool } from './pool.js';
 
-/** The synced model behind each reference type that exists in M0 (PLAN-001). */
+/** The synced model behind each reference type the client resolves (PLAN-001, PLAN-011 S3). */
 export const REF_MODELS = {
   TeamRef: 'Team',
   UserRef: 'User',
   StatusRef: 'WorkflowStatus',
   LabelRef: 'Label',
+  IssueRef: 'Issue',
 } as const satisfies Partial<Record<RefType, string>>;
 
 const NOT_FOUND: RefLookup = { status: 'notFound' };
@@ -79,6 +86,8 @@ export function createClientRefResolver(
           return status(value, options);
         case 'LabelRef':
           return label(value, options);
+        case 'IssueRef':
+          return found(issue(value));
         // Invites are never in the replica: the server resolves them (PLAN-001 S5).
         case 'InviteRef':
           return NOT_FOUND;
@@ -88,7 +97,6 @@ export function createClientRefResolver(
         // Their models arrive with later milestones; until then nothing matches. Files are
         // server-only in M0 (avatars, the logo: PLAN-001 S6) and may sync with attachments (M1).
         case 'FileRef':
-        case 'IssueRef':
         case 'ProjectRef':
         case 'CycleRef':
         case 'InitiativeRef':
@@ -104,6 +112,22 @@ export function createClientRefResolver(
     if (ref?.by === 'id') return byId(REF_MODELS.TeamRef, ref.id);
     if (ref?.by === 'key') return rows(REF_MODELS.TeamRef).find((row) => row.key === ref.key);
     return undefined;
+  }
+
+  /**
+   * By id, or by identifier (`ENG-42`, any case) through the team's key. A pending issue has no
+   * number yet, so only its id finds it (SPEC-011 §4.1). The replica holds only issues the user
+   * may see, so an invisible one is simply not found, as on the server (E13).
+   */
+  function issue(value: string): RefEntity | undefined {
+    const ref = parseIssueRef(value);
+    if (ref?.by === 'id') return byId(REF_MODELS.IssueRef, ref.id);
+    if (ref?.by !== 'identifier') return undefined;
+    const owner = rows(REF_MODELS.TeamRef).find((row) => row.key === ref.key);
+    if (owner === undefined) return undefined;
+    return rows(REF_MODELS.IssueRef).find(
+      (row) => row.teamId === owner.id && row.number === ref.number,
+    );
   }
 
   function user(value: string, options: RefLookupOptions): RefLookup {

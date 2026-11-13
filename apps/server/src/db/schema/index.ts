@@ -7,3 +7,4 @@ export * from './sync.js';
 export * from './workspace.js';
 export * from './auth.js';
 export * from './files.js';
+export * from './issues.js';

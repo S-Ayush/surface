@@ -9,6 +9,7 @@
  */
 import {
   parseIdRef,
+  parseIssueRef,
   parseLabelRef,
   parseNamedRef,
   parseTeamRef,
@@ -58,6 +59,7 @@ export async function lookup(
     case 'FileRef':
       return lookupFile(stringValue(value), ctx);
     case 'IssueRef':
+      return lookupIssue(stringValue(value), ctx);
     case 'CycleRef':
     case 'ProjectRef':
     case 'InitiativeRef':
@@ -115,6 +117,7 @@ export function refNotFound(
       case 'FileRef':
         return `File "${value}" not found. Upload the image with POST /files/upload and use the id it returns.`;
       case 'IssueRef':
+        return `Issue "${value}" not found. Use an issue identifier like ENG-123, or an issue id.`;
       case 'CycleRef':
       case 'ProjectRef':
       case 'InitiativeRef':
@@ -361,6 +364,59 @@ async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRo
     );
   }
   return picked;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Issues (PLAN-011 S3)
+
+interface IssueRow extends RefEntity {
+  teamId: string;
+  teamKey: string;
+  number: number;
+  syncGroups: string[];
+}
+
+/**
+ * An issue by identifier (`ENG-42`, any case) or id, in every lifecycle state (SPEC-015 §4.3:
+ * reads see archived and deleted issues). Visibility is the issue row's own groups, and a key
+ * limited to some teams sees no issue of another team, public ones included (SPEC-011 §5.6). A
+ * missing issue, one in a private team the actor isn't in and one outside the key's teams are the
+ * same `NOT_FOUND` (E13).
+ */
+/** `issues.number` is a Postgres `integer`. */
+const MAX_ISSUE_NUMBER = 2_147_483_647;
+
+function isIssueNumberInRange(n: number): boolean {
+  return Number.isSafeInteger(n) && n <= MAX_ISSUE_NUMBER;
+}
+
+async function lookupIssue(value: string, ctx: LookupContext): Promise<IssueRow> {
+  const ref = parseIssueRef(value);
+  const groups = visibleGroups(ctx.actor);
+  const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
+  const select = `SELECT i.id, i.team_id AS "teamId", t.key AS "teamKey", i.number,
+                         i.sync_groups AS "syncGroups"
+                    FROM issues i JOIN teams t ON t.id = i.team_id`;
+  const visible = `($2::text[] IS NULL OR i.sync_groups && $2::text[])
+                   AND ($3::uuid[] IS NULL OR i.team_id = ANY($3::uuid[]))`;
+  let rows: IssueRow[] = [];
+  if (ref?.by === 'id') {
+    ({ rows } = await ctx.db.query<IssueRow>(`${select} WHERE i.id = $1 AND ${visible}`, [
+      ref.id,
+      groups,
+      keyTeams,
+    ]));
+  } else if (ref?.by === 'identifier' && isIssueNumberInRange(ref.number)) {
+    // Team keys are unique and the number is unique per team, so at most one row. A number past
+    // the `integer` column can't match, and Postgres would fail on it, so it isn't queried (E13).
+    ({ rows } = await ctx.db.query<IssueRow>(
+      `${select} WHERE t.key = $1 AND i.number = $4 AND ${visible}`,
+      [ref.key, groups, keyTeams, ref.number],
+    ));
+  }
+  const [issue] = rows;
+  if (!issue) throw refNotFound('IssueRef', value, ctx.path);
+  return issue;
 }
 
 // ---------------------------------------------------------------------------------------------

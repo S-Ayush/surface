@@ -33,6 +33,7 @@ export const SYNCED_TABLES = [
   { identifier: 'teamMemberships', name: 'team_memberships' },
   { identifier: 'workflowStatuses', name: 'workflow_statuses' },
   { identifier: 'labels', name: 'labels' },
+  { identifier: 'issues', name: 'issues' },
   { identifier: 'syncLog', name: 'sync_log' },
   { identifier: 'syncState', name: 'sync_state' },
 ];

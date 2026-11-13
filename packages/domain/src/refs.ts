@@ -35,12 +35,16 @@ export function isRefType(value: unknown): value is RefType {
   return typeof value === 'string' && (REF_TYPES as readonly string[]).includes(value);
 }
 
-/** Reference types whose entities exist in M0. The others are declared for docs and lint. */
+/**
+ * Reference types whose entities exist (M0's, and `IssueRef` from PLAN-011 S3). The others are
+ * declared for docs and lint.
+ */
 export const AVAILABLE_REF_TYPES: ReadonlySet<RefType> = new Set([
   'TeamRef',
   'UserRef',
   'StatusRef',
   'LabelRef',
+  'IssueRef',
   'InviteRef',
   'SessionRef',
   'FileRef',

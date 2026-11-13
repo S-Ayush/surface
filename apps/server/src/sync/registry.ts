@@ -8,7 +8,7 @@ import type { ModelDef } from '@surface/domain/model';
 import { computeSchemaHash } from '@surface/sync-protocol';
 import { getTableColumns, getTableName } from 'drizzle-orm';
 import { toSnakeCase } from 'drizzle-orm/casing';
-import { isModelName, SYNCED_MODELS, type ModelName } from './models.js';
+import { groupsOfIssueChild, isModelName, SYNCED_MODELS, type ModelName } from './models.js';
 
 /**
  * The client field a row's sync groups travel in. They go out cut to the groups of the
@@ -46,6 +46,8 @@ export function syncRegistry({ includeFixtures }: RegistryOptions): SyncRegistry
   for (const name of Object.keys(SYNCED_MODELS)) {
     if (!isModelName(name)) continue;
     const entry = SYNCED_MODELS[name];
+    const problem = issueChildProblem(name, entry);
+    if (problem !== undefined) throw new Error(problem);
     if (entry.fixture && !includeFixtures) continue;
     models.push(syncModel(name, entry.def, entry.table));
   }
@@ -54,6 +56,33 @@ export function syncRegistry({ includeFixtures }: RegistryOptions): SyncRegistry
     eager: models.filter((m) => m.def.load === 'eager'),
     schemaHash: computeSchemaHash(models.map((m) => m.def)),
   };
+}
+
+/**
+ * Why a `SYNCED_MODELS` entry is a malformed issue child, or `undefined` (SPEC-011 §5.1). The
+ * repo trusts `issueChild: true` to take a child's team from its issue, and `groupsOfIssueChild`
+ * trusts the repo to have done so, so an entry declares both or neither. A child also lists
+ * `issueId` and `teamId` in `groupFields`, so `updateWhere` can't move it to another team.
+ * Exported for tests.
+ */
+export function issueChildProblem(
+  name: string,
+  entry: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const marked = entry['issueChild'] === true;
+  if (marked !== (entry['groupsOf'] === groupsOfIssueChild)) {
+    return marked
+      ? `Synced model ${name} has issueChild: true, so its groupsOf must be groupsOfIssueChild.`
+      : `Synced model ${name} uses groupsOfIssueChild, so it must declare issueChild: true, or its teamId would come from input.`;
+  }
+  const fields = entry['groupFields'];
+  if (
+    marked &&
+    !(Array.isArray(fields) && fields.includes('issueId') && fields.includes('teamId'))
+  ) {
+    return `Issue child ${name} must list issueId and teamId in groupFields, so updateWhere can't move it to another team.`;
+  }
+  return undefined;
 }
 
 /**

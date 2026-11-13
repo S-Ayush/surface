@@ -3,3 +3,4 @@ export * from './fields.js';
 export * from './define-model.js';
 export * from './debug-item.js';
 export * from './workspace-models.js';
+export * from './issue-models.js';
