@@ -49,6 +49,8 @@ export type Dispatched = { readonly op: string; readonly input: unknown };
 export class EstimateApp extends AppModel {
   readonly #store: SyncStore;
   readonly dispatched: Dispatched[] = [];
+  /** When `message` is set, `dispatch` throws it, like a store that did not take the change. */
+  readonly failure: { message: string | undefined } = { message: undefined };
 
   constructor(
     private readonly memberOf: readonly string[],
@@ -85,6 +87,7 @@ export class EstimateApp extends AppModel {
       [WorkflowStatus, STATUSES],
     ]);
     const dispatched = this.dispatched;
+    const failure = this.failure;
     this.#store = {
       status: 'ready',
       connection: 'online',
@@ -94,6 +97,7 @@ export class EstimateApp extends AppModel {
           (byModel.get(model) ?? []).find((row) => (row as { id?: string }).id === id),
       },
       dispatch: (op: AnyOperation, input: unknown) => {
+        if (failure.message !== undefined) throw new Error(failure.message);
         dispatched.push({ op: op.name, input });
         return Promise.resolve({ status: 'confirmed' as const });
       },

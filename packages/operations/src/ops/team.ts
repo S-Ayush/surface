@@ -372,6 +372,7 @@ function mayChangeDefault(p: PermissionPredicates, refs: ResolvedRefs): boolean 
   if (status === undefined || !('id' in status)) return p.admin() || p.teamMember(named);
   const teamId = status['teamId'];
   if (typeof teamId !== 'string') return false;
+  // The resolver scopes a status to the named team, so the fallback can't happen today: defence in depth.
   const own = named !== undefined && 'id' in named && named.id === teamId ? named : { id: teamId };
   return p.admin() || p.teamMember(own);
 }

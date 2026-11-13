@@ -5,10 +5,9 @@
 // page read-only.
 import { teamSetEstimates, type InputOf } from '@surface/operations';
 import { Switch } from '@surface/ui';
-import { useState } from 'react';
 import { useApp } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
-import { submitMutation, useShowsRejection } from '../teams/submit.js';
+import { submitMutation, toastIfFailed } from '../teams/submit.js';
 import { TeamSettingsLayout } from '../teams/TeamSettingsLayout.js';
 import type { TeamDetails } from '../teams/useTeams.js';
 import styles from './estimates.module.css';
@@ -27,23 +26,16 @@ type Change = Omit<InputOf<typeof teamSetEstimates>, 'team'>;
 
 function Estimates({ details }: { readonly details: TeamDetails }) {
   const app = useApp();
-  const showsRejection = useShowsRejection();
   const { team, access } = details;
-  const [error, setError] = useState<string>();
   const settings = useEstimates(team.id);
   const readOnly = !access.edit;
 
   const save = async (change: Change) => {
     const store = app.store;
     if (store === null) return;
-    setError(undefined);
-    const result = await submitMutation(
-      store,
-      teamSetEstimates,
-      { team: team.key, ...change },
-      { showsRejection },
-    );
-    if (result.kind === 'rejected' || result.kind === 'failed') setError(result.message);
+    // SPEC-010 §7.4: a rejected change rolls back and is a toast. The shell toasts a server
+    // refusal itself (no `showsRejection`); `toastIfFailed` covers a change the store didn't take.
+    toastIfFailed(await submitMutation(store, teamSetEstimates, { team: team.key, ...change }));
   };
 
   if (settings === null) return null;
@@ -99,11 +91,6 @@ function Estimates({ details }: { readonly details: TeamDetails }) {
       {!on && (
         <p className={styles.note}>
           Estimates are hidden for {team.key}. Values already set on issues are kept.
-        </p>
-      )}
-      {error !== undefined && (
-        <p role="alert" className={styles.formError}>
-          {error}
         </p>
       )}
     </div>

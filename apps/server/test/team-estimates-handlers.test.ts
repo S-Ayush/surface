@@ -1,8 +1,8 @@
 // PLAN-010 S4, SPEC-010 AC-7 (default status accepts only Backlog or Unstarted of the same team;
 // the estimate settings need no issue), AC-14 (a status of another team is never this team's
 // default), AC-16 (the client's optimistic row equals the server's, in
-// packages/operations/src/ops/team.test.ts), E5 (no issue read or written) and E17 (both orders
-// against `status.delete`). The rules run on the in-memory workflow
+// packages/operations/src/ops/team.test.ts), E5 (no issue read or written) and E17 (the two sequential orders against
+// `status.delete`; a concurrent two-connection test waits for the testing hold to lift). The rules run on the in-memory workflow
 // (`support/memory-workflow.ts`); the SQL is covered by the registry contract test.
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
@@ -92,7 +92,7 @@ describe('team.setDefaultStatus (AC-7)', () => {
   });
 
   // E17: the team row lock serialises the two operations.
-  it('is CONFLICT when status.delete removed the status first (E17)', async () => {
+  it('is CONFLICT when status.delete ran before it (E17, delete then set)', async () => {
     const w = memoryWorkflow();
     const todo = w.byName('Todo');
     // Todo is the only Unstarted status, so add another or the delete is refused (INV-04).
@@ -110,7 +110,7 @@ describe('team.setDefaultStatus (AC-7)', () => {
     expect(w.team.defaultStatusId).not.toBe(todo.id);
   });
 
-  it('makes status.delete refuse the status when setDefaultStatus went first (E17)', async () => {
+  it('makes status.delete refuse the status when setDefaultStatus ran before it (E17, set then delete)', async () => {
     const w = memoryWorkflow();
     const todo = w.byName('Todo');
     await setDefaultStatus(w.access, w.repo, { ...scope(w), statusId: todo.id });

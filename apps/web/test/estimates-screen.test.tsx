@@ -135,6 +135,15 @@ describe('Settings → Team → Estimates', () => {
     ]);
   });
 
+  it('reports a change the store did not take as a toast, with no inline alert (§7.4)', async () => {
+    const app = new EstimateApp([ENG]);
+    app.failure.message = 'That change could not be saved. Try again.';
+    await mount(app, page);
+    await choose('linear');
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(app.dispatched).toEqual([]);
+  });
+
   it('disables the controls for a non-member and says who may change them', async () => {
     await mount(new EstimateApp([], { estimateScale: 'linear' }), page);
     expect(select()?.disabled).toBe(true);

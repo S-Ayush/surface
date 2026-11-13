@@ -35,16 +35,6 @@ export const SCALE_OPTIONS: readonly ScaleOption[] = ORDER.map(({ scale, title }
   return { scale, title, values, label: values === '' ? title : `${title} (${values})` };
 });
 
-export function scaleOption(scale: EstimateScale): ScaleOption {
-  const fallback: ScaleOption = {
-    scale: 'off',
-    title: 'Not in use',
-    values: '',
-    label: 'Not in use',
-  };
-  return SCALE_OPTIONS.find((option) => option.scale === scale) ?? fallback;
-}
-
 /** Where a team's estimate settings are. Its key comes from the replica, not the label. */
 export function estimatesPath(teamKey: string): string {
   return `/settings/teams/${encodeURIComponent(teamKey)}/estimates`;

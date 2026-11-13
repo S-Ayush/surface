@@ -98,10 +98,9 @@ export function memoryWorkflow(): MemoryWorkflow {
     },
     update(model, id, patch) {
       if (model === 'Team' && id === team.id) {
-        // `team.setDefaultStatus` writes the pointer (PLAN-010 S4); the other team fields are
-        // not modelled here, so the returned row carries what the rules read.
-        const changed = 'defaultStatusId' in patch ? patch.defaultStatusId : undefined;
-        if (typeof changed === 'string') team.defaultStatusId = changed;
+        // The whole patch is applied, so a rule that writes an extra field shows in `writes` and
+        // in the snapshot. Only the fields the rules read are modelled on the returned row.
+        Object.assign(team, patch);
         writes.push({ action: 'update', id, fields: Object.keys(patch) });
         return Promise.resolve({ ...team, updatedAt: NOW } as never);
       }
