@@ -99,8 +99,8 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   statusUpdate,
   statusReorder,
   statusDelete,
-  // Create, edit, archive, unarchive, move, then delete: the examples run in this order on one seed, and each acts
-  // on the label the one before it made (SPEC-010 §6).
+  // Create, edit, archive, unarchive, move, then delete: the examples run in this order on one
+  // seed, and each acts on the label the one before it made (SPEC-010 §6).
   labelList,
   labelCreate,
   labelUpdate,
