@@ -67,7 +67,13 @@ async function deleteStatus(name: string, autoCloseStatusId: string | null) {
       return Promise.resolve();
     },
   } as unknown as Repo;
-  const actor: Actor = { kind: 'user', userId: ADA, groups: ['workspace'], memberOf: [TEAM] };
+  const actor: Actor = {
+    kind: 'user',
+    userId: ADA,
+    groups: ['workspace'],
+    publicTeams: [TEAM],
+    memberOf: [TEAM],
+  };
   // Only what this handler touches; the rest of the context is never called.
   const ctx = {
     actor,

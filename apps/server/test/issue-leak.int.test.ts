@@ -1,8 +1,9 @@
 // PLAN-011 S4 leak test (SPEC-011 AC-10, E13; permissions.md §5; CLAUDE.md rule 4; not held,
 // plans README §6). For private team SEC and a user outside it (a Member and an Admin):
 // - bootstrap, catch-up and live deltas carry no SEC issue, and not SEC's id;
-// - `issue.get` and `issue.update`, and every `IssueRef`, answer for a SEC issue exactly like for
-//   an issue that doesn't exist, by identifier and by id, and write nothing;
+// - `issue.get`, `issue.update`, `issue.delete` and `issue.restore` (PLAN-015 S1), and every
+//   `IssueRef`, answer for a SEC issue exactly like for an issue that doesn't exist, by
+//   identifier and by id, and write nothing;
 // - a SEC status or label named by id in an ENG issue's edit is as unknown as one that never
 //   existed;
 // - `issue.list`, `issue.count` and `issue.groupBy` never count SEC's issues or name its labels,
@@ -55,6 +56,8 @@ let zoeActor: Actor;
 let samActor: Actor;
 /** Zoe through an API key limited to ENG. */
 let engKeyActor: Actor;
+/** The same key with "allow destructive", so `issue.delete` gets past step 3 to its refs. */
+let engDestructiveKeyActor: Actor;
 
 const secIssue = uuidv7();
 const engIssue = uuidv7();
@@ -150,6 +153,18 @@ beforeAll(async () => {
     {
       kind: 'api',
       apiKey: { id: 'key-1', scope: 'read_write', teamIds: [h.teams.eng], allowDestructive: false },
+    },
+  );
+  engDestructiveKeyActor = actorFor(
+    {
+      id: zoe,
+      role: 'admin',
+      memberships: [{ teamId: h.teams.eng, private: false }],
+      publicTeams,
+    },
+    {
+      kind: 'api',
+      apiKey: { id: 'key-2', scope: 'read_write', teamIds: [h.teams.eng], allowDestructive: true },
     },
   );
   const { rows } = await h.pool.query<{ id: string }>(
@@ -377,6 +392,8 @@ for (const [who, actor] of [
           ['issue.get', (issue: string) => ({ issue })],
           ['issue.update', (issue: string) => ({ issue, title: 'Leaked' })],
           ['issue.update', (issue: string) => ({ issue, status: 'Done', addLabels: ['Bug'] })],
+          ['issue.delete', (issue: string) => ({ issue })],
+          ['issue.restore', (issue: string) => ({ issue })],
         ] as const) {
           const real = await failure(operation, input(secRef), actor(), [secRef]);
           const none = await failure(operation, input(unknown), actor(), [unknown]);
@@ -490,12 +507,14 @@ describe('an API key limited to ENG (E13)', () => {
       ['OPS-1', 'OPS-99'],
       [opsIssue, uuidv7()],
     ] as const) {
-      for (const [operation, input] of [
-        ['issue.get', (issue: string) => ({ issue })],
-        ['issue.update', (issue: string) => ({ issue, priority: 2 })],
+      for (const [operation, input, key] of [
+        ['issue.get', (issue: string) => ({ issue }), engKeyActor],
+        ['issue.update', (issue: string) => ({ issue, priority: 2 }), engKeyActor],
+        ['issue.delete', (issue: string) => ({ issue }), engDestructiveKeyActor],
+        ['issue.restore', (issue: string) => ({ issue }), engKeyActor],
       ] as const) {
-        const real = await failure(operation, input(opsRef), engKeyActor, [opsRef]);
-        const none = await failure(operation, input(unknown), engKeyActor, [unknown]);
+        const real = await failure(operation, input(opsRef), key, [opsRef]);
+        const none = await failure(operation, input(unknown), key, [unknown]);
         expect(real, `${operation} ${opsRef}`).toMatchObject({ code: 'NOT_FOUND' });
         expect(real).toEqual(none);
       }

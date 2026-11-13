@@ -11,12 +11,43 @@ import {
   lifecycleRefusal,
   lifecycleStep,
   lockRefusal,
-  outcomeOf,
   purgeAfter,
   RETENTION_HOURS,
   type IssueLifecycle,
+  type LifecycleAction,
+  type LifecycleOutcome,
   type LifecycleStamps,
+  type LifecycleStep,
 } from './issue-lifecycle.js';
+
+/**
+ * The table's outcome for a step, so a test can compare `lifecycleStep` with a row. A restore of
+ * a deleted issue reads as `toLiveBeforePurgeAfter` whichever side of the boundary it falls on.
+ */
+function outcomeOf(
+  action: LifecycleAction,
+  state: IssueLifecycle,
+  step: LifecycleStep<unknown>,
+): LifecycleOutcome {
+  switch (step.kind) {
+    case 'applies':
+      return action === 'cascade' && state !== 'live' ? 'keepsState' : 'applies';
+    case 'noop':
+      return 'noop';
+    case 'skipped':
+      return 'skipped';
+    case 'purged':
+      return 'toPurged';
+    case 'conflict':
+      return action === 'restore' && step.conflict === 'expired'
+        ? 'toLiveBeforePurgeAfter'
+        : 'conflict';
+    case 'moves':
+      if (action === 'autoArchive') return 'applies';
+      if (action === 'restore' && state === 'deleted') return 'toLiveBeforePurgeAfter';
+      return step.to === 'archived' ? 'toArchived' : step.to === 'deleted' ? 'toDeleted' : 'toLive';
+  }
+}
 
 const HOUR = 60 * 60 * 1000;
 const DELETED_AT = new Date('2026-03-20T12:00:00.000Z');

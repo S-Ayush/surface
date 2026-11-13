@@ -2,8 +2,8 @@
 // Issue, the result the server's `U` brings once the client drops deleted issues (PLAN-011 S4c);
 // `issue.restore` predicts nothing, since the replica holds no archived or deleted issue), the
 // operation shapes, and `ui.available` (§7: Delete hidden on a deleted issue, Restore only on an
-// archived or deleted one). The registry lint runs registry-wide in `test/lint.test.ts`.
-import { describe, expect, it } from 'vitest';
+// archived one or a deleted one before its purgeAfter). The registry lint runs registry-wide in `test/lint.test.ts`.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lintOperations } from '../lint.js';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
 import { issueDelete, issueRestore } from './issue-lifecycle.js';
@@ -109,6 +109,16 @@ describe('ui.available (§7)', () => {
   const target = { kind: 'issue' as const, ids: [ISSUE] };
   const deleteAvailable = (store: unknown) => issueDelete.ui?.available?.(target, store);
   const restoreAvailable = (store: unknown) => issueRestore.ui?.available?.(target, store);
+  /** `hours` before NOW, the predicates' clock. */
+  const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000).toISOString();
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('offers Delete on a live or archived issue, and not on a deleted one', () => {
     expect(deleteAvailable(syncStore([issueRow()]))).toBe(true);
@@ -120,7 +130,7 @@ describe('ui.available (§7)', () => {
     );
   });
 
-  it('offers Restore only on an archived or deleted issue, never on a live one it holds', () => {
+  it('offers Restore on an archived issue and a deleted one before purgeAfter, never on a live one', () => {
     expect(restoreAvailable(syncStore([issueRow()]))).toBe(false);
     expect(restoreAvailable(syncStore([issueRow({ archivedAt: '2026-10-01T00:00:00Z' })]))).toBe(
       true,
@@ -128,6 +138,21 @@ describe('ui.available (§7)', () => {
     expect(restoreAvailable(syncStore([issueRow({ deletedAt: '2026-11-12T10:00:00Z' })]))).toBe(
       true,
     );
+  });
+
+  it('hides Restore on a deleted issue once purgeAfter has passed (D6, E4)', () => {
+    // Restorable until 1 ms before `deletedAt + 720 h`, not at it (AC-3).
+    const deletedAt = (ms: number) =>
+      issueRow({ deletedAt: new Date(NOW.getTime() - ms).toISOString() });
+    expect(restoreAvailable(syncStore([deletedAt(720 * 3_600_000 - 1)]))).toBe(true);
+    expect(restoreAvailable(syncStore([deletedAt(720 * 3_600_000)]))).toBe(false);
+    expect(restoreAvailable(syncStore([issueRow({ deletedAt: hoursAgo(1000) })]))).toBe(false);
+    // An archived and deleted one follows the deleted rule (§4.2).
+    expect(
+      restoreAvailable(
+        syncStore([issueRow({ archivedAt: hoursAgo(2000), deletedAt: hoursAgo(1000) })]),
+      ),
+    ).toBe(false);
   });
 
   it('leaves an issue the replica doesn’t hold to the server (it is shown from the server)', () => {

@@ -2,26 +2,31 @@
 // operation's handler locks the issue in the row's mode, before any write, and gets the listed
 // result for a live, an archived and a deleted issue), AC-2 (direct edits of archived and deleted
 // issues are CONFLICT with the §4.2 wording and no repo write; cascades write archived and deleted
-// issues and leave their lifecycle and `updatedAt` alone: E11), E15's refusal wording. A row whose
+// issues and leave their lifecycle and `updatedAt` alone: E11), E15's refusal wording. Each built
+// row's registered handler also runs on SQL, which shows its first `issues` statement is the
+// `FOR UPDATE` lock and that no write comes before it. A row whose
 // handler doesn't exist yet is listed as pending, by the slice that adds it; a built row with no
 // case here fails, and so does an issue mutation with no row.
 import { randomUUID } from 'node:crypto';
 import {
+  NEW_TEAM_SETTINGS,
   ISSUE_LIFECYCLE_RULES,
   ISSUE_LIFECYCLES,
   purgeAfter,
+  type Actor,
   type IssueLifecycle,
   type LifecycleOutcome,
 } from '@surface/domain';
 import { ALL_OPERATIONS } from '@surface/operations';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import type { HandlerContext } from '../src/executor/context.js';
 import { SurfaceError } from '../src/executor/errors.js';
 import { HANDLERS } from '../src/handlers/index.js';
 import { createIssue, updateIssue, type IssueRow } from '../src/handlers/issues/core.js';
 import { deleteIssue, restoreIssue } from '../src/handlers/issues/lifecycle-core.js';
 import { ADA_ID, memoryIssues, NOW, type MemoryIssues } from './support/memory-issues.js';
-import { scriptedDb } from './support/scripted-db.js';
+import { recordingDb, scriptedDb, type Statement } from './support/scripted-db.js';
 
 const EARLIER = new Date('2026-10-01T00:00:00.000Z');
 const DELETED_AT = new Date(NOW.getTime() - 60 * 60 * 1000);
@@ -195,6 +200,108 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
       expect(error instanceof SurfaceError && error.message).toBe(message);
     },
   );
+});
+
+/** The input each built operation's registered handler runs with on ENG-1. */
+const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
+  'issue.update': { issue: 'ENG-1', title: 'Fix the login' },
+  'issue.delete': { issue: 'ENG-1' },
+  'issue.restore': { issue: 'ENG-1' },
+};
+
+const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+const snakeRow = (row: Record<string, unknown>) =>
+  Object.fromEntries(Object.entries(row).map(([key, value]) => [snake(key), value]));
+
+/**
+ * Answers a plain `select "a", "b" from "table" …` with the fixture row of `table`, in the
+ * selected columns' order; anything else gets no rows.
+ */
+function answerFrom(tables: Readonly<Record<string, Record<string, unknown>>>) {
+  return (text: string): unknown[][] => {
+    const match = /^select (.+?) from "(\w+)"/.exec(text);
+    const row = match?.[2] === undefined ? undefined : tables[match[2]];
+    if (match?.[1] === undefined || row === undefined) return [];
+    const columns = match[1].split(', ').map((column) => column.replace(/^.*"(\w+)"$/, '$1'));
+    return [columns.map((column) => row[column] ?? null)];
+  };
+}
+
+/**
+ * Runs `name`'s registered handler on ENG-1 in `state`, over a connection that records its SQL
+ * and a repo that records each write in the same list (as `repo.<method>`).
+ */
+async function runHandler(name: string, state: IssueLifecycle): Promise<Statement[]> {
+  const { m, issue } = await issueIn(state);
+  const found = HANDLERS.find((h) => h.op.name === name);
+  if (found === undefined) throw new Error(`no handler for ${name}`);
+  const team = { ...NEW_TEAM_SETTINGS, ...m.eng, defaultStatusId: issue.statusId };
+  const { db, statements } = recordingDb(
+    answerFrom({
+      issues: snakeRow(issue),
+      teams: snakeRow(team),
+      workflow_statuses: { id: issue.statusId, name: 'Backlog', category: 'backlog' },
+      users: { id: ADA_ID, name: 'Ada' },
+    }),
+  );
+  let current: IssueRow = issue;
+  const write = (method: string, patch: Partial<IssueRow> = {}) => {
+    statements.push({ text: `repo.${method}`, params: [] });
+    current = { ...current, ...patch };
+    return Promise.resolve(current);
+  };
+  const repo = {
+    update: (_model: string, _id: string, patch: Partial<IssueRow>) => write('update', patch),
+    archive: () => write('archive', { archivedAt: NOW }),
+    unarchive: () => write('unarchive', { archivedAt: null }),
+    updateWhere: () => write('updateWhere').then(() => []),
+    insert: () => write('insert'),
+    purge: () => write('purge'),
+  };
+  const actor: Actor = {
+    kind: 'user',
+    userId: ADA_ID,
+    groups: ['workspace', `user:${ADA_ID}`],
+    publicTeams: [issue.teamId],
+    memberOf: [issue.teamId],
+  };
+  // Only what these handlers touch; the executor resolved the `IssueRef` (step 7).
+  const ctx = {
+    actor,
+    tx: db,
+    repo,
+    refs: { issue: { id: issue.id, teamId: issue.teamId, key: 'ENG-1' } },
+    now: () => NOW,
+    emit: () => undefined,
+    publicUrl: 'https://surface.test',
+  } as unknown as HandlerContext;
+  const input = found.op.input.parse(HANDLER_INPUTS[name]);
+  // A refusal or a no-op is part of the row; only the order of statements is checked here.
+  await found.run(ctx, input).catch(() => undefined);
+  return statements;
+}
+
+describe('each built row’s registered handler locks the issue first (AC-1, SPEC-011 §4.8)', () => {
+  it('has a handler input for every built operation row', () => {
+    for (const [name, rule] of built) {
+      if (rule.kind === 'operation') expect(HANDLER_INPUTS[name], name).toBeDefined();
+    }
+  });
+
+  describe.each(built.filter(([, rule]) => rule.kind === 'operation'))('%s', (name) => {
+    it.each(ISSUE_LIFECYCLES)(
+      'takes the issue row lock before reading the issue otherwise or writing (%s issue)',
+      async (state) => {
+        const statements = await runHandler(name, state);
+        const texts = statements.map((statement) => statement.text);
+        const lock = texts.findIndex((text) => text.includes('from "issues"'));
+        expect(lock, texts.join('\n')).toBeGreaterThanOrEqual(0);
+        expect(texts[lock]).toMatch(/^select .* from "issues" where .* for update$/);
+        const firstWrite = texts.findIndex((text) => text.startsWith('repo.'));
+        if (firstWrite >= 0) expect(lock).toBeLessThan(firstWrite);
+      },
+    );
+  });
 });
 
 describe('cascades write archived and deleted issues and keep their state (AC-2, E11)', () => {

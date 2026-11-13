@@ -28,10 +28,8 @@ import type {
 } from '../../src/handlers/issues/core.js';
 import type { Repo, RowChange } from '../../src/sync/repo.js';
 import type { ModelName } from '../../src/sync/models.js';
-import type {
-  LifecycleContext,
-  LifecycleHistoryKind,
-} from '../../src/handlers/issues/lifecycle-core.js';
+import type { LifecycleContext } from '../../src/handlers/issues/lifecycle-core.js';
+import type { LifecycleHistoryKind } from '../../src/issues/lifecycle.js';
 
 export const NOW = new Date('2026-11-13T10:00:00.000Z');
 
@@ -41,6 +39,7 @@ export const ADA_ACTOR: Actor = {
   kind: 'user',
   userId: ADA_ID,
   groups: ['workspace', `user:${ADA_ID}`],
+  publicTeams: [],
   memberOf: [],
 };
 
@@ -276,9 +275,7 @@ export function memoryIssues(): MemoryIssues {
             const ids = attachments.get(issueId) ?? [];
             // The test stands in for PLAN-014 S4a's model: no Attachment ModelName exists yet.
             const model = 'Attachment' as ModelName;
-            return Promise.resolve(
-              ids.length === 0 ? [] : [{ model, ids: [...ids].sort().slice(0, 100) }],
-            );
+            return Promise.resolve(ids.length === 0 ? [] : [{ model, ids: [...ids].sort() }]);
           },
         },
         repo,

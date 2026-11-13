@@ -30,14 +30,14 @@ export function lifecycleOf(issue: LifecycleFields): IssueLifecycle {
  * nothing (SPEC-011 E12).
  */
 export function editRefusal(identifier: string, state: IssueLifecycle): string | undefined {
-  switch (state) {
-    case 'live':
-      return undefined;
-    case 'archived':
-      return `${identifier} is archived. Restore it to edit it.`;
-    case 'deleted':
-      return `${identifier} was deleted. Restore it to edit it.`;
-  }
+  return state === 'live' ? undefined : lockedMessage(identifier, state);
+}
+
+/** The §4.2 message for an edit of an archived or deleted issue. */
+function lockedMessage(identifier: string, state: 'archived' | 'deleted'): string {
+  return state === 'archived'
+    ? `${identifier} is archived. Restore it to edit it.`
+    : `${identifier} was deleted. Restore it to edit it.`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -166,7 +166,7 @@ export function lifecycleRefusal(identifier: string, conflict: LifecycleConflict
   switch (conflict) {
     case 'archived':
     case 'deleted':
-      return editRefusal(identifier, conflict) ?? '';
+      return lockedMessage(identifier, conflict);
     case 'expired':
       return `${identifier} was deleted more than 30 days ago and can't be restored.`;
     case 'notDeleted':
@@ -334,33 +334,4 @@ export function lifecycleRule(operation: string): LifecycleRule {
 /** The lock mode the table gives `operation`'s handler. */
 export function issueLockModeOf(operation: string): IssueLockMode {
   return lifecycleRule(operation).mode;
-}
-
-/**
- * The table's outcome for a step, so a test can compare `lifecycleStep` with a row. A restore of
- * a deleted issue reads as `toLiveBeforePurgeAfter` whichever side of the boundary it falls on.
- */
-export function outcomeOf(
-  action: LifecycleAction,
-  state: IssueLifecycle,
-  step: LifecycleStep<unknown>,
-): LifecycleOutcome {
-  switch (step.kind) {
-    case 'applies':
-      return action === 'cascade' && state !== 'live' ? 'keepsState' : 'applies';
-    case 'noop':
-      return 'noop';
-    case 'skipped':
-      return 'skipped';
-    case 'purged':
-      return 'toPurged';
-    case 'conflict':
-      return action === 'restore' && step.conflict === 'expired'
-        ? 'toLiveBeforePurgeAfter'
-        : 'conflict';
-    case 'moves':
-      if (action === 'autoArchive') return 'applies';
-      if (action === 'restore' && state === 'deleted') return 'toLiveBeforePurgeAfter';
-      return step.to === 'archived' ? 'toArchived' : step.to === 'deleted' ? 'toDeleted' : 'toLive';
-  }
 }

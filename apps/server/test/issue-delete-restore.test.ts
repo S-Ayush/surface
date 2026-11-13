@@ -20,7 +20,6 @@ import {
   type LifecycleContext,
 } from '../src/handlers/issues/lifecycle-core.js';
 import { relogByIssueId, RESTORE_RELOG_STEPS } from '../src/issues/lifecycle.js';
-import type { ModelName } from '../src/sync/models.js';
 import { ADA_ID, memoryIssues, NOW, type MemoryIssues } from './support/memory-issues.js';
 import { recordingDb } from './support/scripted-db.js';
 
@@ -117,6 +116,7 @@ describe('issue.delete (§4.2)', () => {
       kind: 'api',
       userId: ADA_ID,
       groups: ['workspace'],
+      publicTeams: [],
       memberOf: [],
       apiKey: { id: 'key-1', scope: 'read_write', teamIds: [], allowDestructive: true },
     };
@@ -124,7 +124,7 @@ describe('issue.delete (§4.2)', () => {
     expect(
       (await deleteIssue(byKey.m.lifecycle({ actor: key }), byKey.issue.id)).row,
     ).toMatchObject({ deletedById: ADA_ID });
-    const system: Actor = { kind: 'system', groups: [], memberOf: [] };
+    const system: Actor = { kind: 'system', groups: [], publicTeams: [], memberOf: [] };
     const bySystem = await issueIn('live');
     const { row } = await deleteIssue(bySystem.m.lifecycle({ actor: system }), bySystem.issue.id);
     expect(row).toMatchObject({ deletedAt: NOW, deletedById: null });
@@ -257,7 +257,7 @@ describe('restore logs the Attachment rows again (AC-21, §5.1)', () => {
     const ISSUE = '0190f0c0-0000-7000-8000-000000000001';
     const { db, statements } = recordingDb(() => [['b'], ['c']]);
     // `issue_content` stands in for PLAN-014 S4a's `attachments`: both have `id` and `issue_id`.
-    const step = relogByIssueId('IssueContent' as ModelName, issueContent);
+    const step = relogByIssueId('IssueContent', issueContent);
     expect(Object.keys(getTableColumns(issueContent))).toContain('issueId');
     await expect(step.ids(db, ISSUE, 100)).resolves.toEqual(['b', 'c']);
     expect(statements[0]?.text).toBe(

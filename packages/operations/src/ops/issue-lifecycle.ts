@@ -9,7 +9,7 @@
  * because the replica holds no archived or deleted issue (PLAN-011 S4c), so the row comes back
  * with the server's `V` or `U`.
  */
-import { IssueRef, lifecycleOf } from '@surface/domain';
+import { canRestore, IssueRef, lifecycleOf, type LifecycleFields } from '@surface/domain';
 import { z } from 'zod';
 import { defineOperation } from '../define.js';
 import type { StoreRow } from '../optimistic.js';
@@ -31,19 +31,18 @@ function poolOf(store: unknown): ((model: string, id: string) => unknown) | unde
 }
 
 /**
- * The lifecycle state of each target issue the client holds, or undefined for one it doesn't.
+ * The lifecycle fields of each target issue the client holds, or undefined for one it doesn't.
  * The replica holds live issues only (SPEC-011 §5.7): an archived or deleted issue is shown from
  * the server (PLAN-015 S4 and PLAN-012 S4b feed its state), so "not held" decides nothing here.
  */
-function heldStates(target: UiTarget, store: unknown) {
+function heldIssues(target: UiTarget, store: unknown): (LifecycleFields | undefined)[] {
   const get = poolOf(store);
   return target.ids.map((id) => {
     const row: unknown = get?.('Issue', id);
     if (typeof row !== 'object' || row === null) return undefined;
-    return lifecycleOf({
-      archivedAt: Reflect.get(row, 'archivedAt'),
-      deletedAt: Reflect.get(row, 'deletedAt'),
-    });
+    const archivedAt: unknown = Reflect.get(row, 'archivedAt');
+    const deletedAt: unknown = Reflect.get(row, 'deletedAt');
+    return { archivedAt, deletedAt };
   });
 }
 
@@ -74,7 +73,8 @@ export const issueDelete = defineOperation({
     shortcut: null,
     // Hidden on a deleted issue (§7). An issue the replica doesn't hold is archived, deleted or
     // of an unsubscribed team: the server decides, and deleting a deleted one changes nothing.
-    available: (target, store) => heldStates(target, store).every((state) => state !== 'deleted'),
+    available: (target, store) =>
+      heldIssues(target, store).every((issue) => !issue || lifecycleOf(issue) !== 'deleted'),
   },
   optimistic: (store, input) => {
     const issue: StoreRow | undefined = store.get('Issue', input.issue);
@@ -107,9 +107,11 @@ export const issueRestore = defineOperation({
     contexts: ['issue'],
     // `#` (SPEC-015 §6.1), like Delete's key: bound to `issue:restore`, hint from M1.
     shortcut: null,
-    // Only on an archived or deleted issue (§7). The replica holds live issues only, so an issue
-    // it holds as live has nothing to restore; one it doesn't hold is left to the server.
-    available: (target, store) => heldStates(target, store).every((state) => state !== 'live'),
+    // Only on an archived issue, or a deleted one before its purgeAfter (§7, D6). The replica
+    // holds live issues only, so an issue it holds as live has nothing to restore; one it doesn't
+    // hold is left to the server.
+    available: (target, store) =>
+      heldIssues(target, store).every((issue) => !issue || canRestore(issue, new Date())),
   },
   // Nothing to predict (§6.2, D17): the replica holds no archived or deleted issue, so there is
   // no row to patch; the row returns with the server's `V` or `U` when the team is subscribed.

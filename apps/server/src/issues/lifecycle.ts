@@ -22,6 +22,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { AnyPgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { issues, teams } from '../db/schema/index.js';
+import type { HandlerContext } from '../executor/context.js';
 import { refNotFound } from '../executor/refs/resolve.js';
 import { SurfaceError } from '../executor/errors.js';
 import { visibleTo } from '../executor/list.js';
@@ -122,13 +123,20 @@ export function relogByIssueId(
 // ---------------------------------------------------------------------------------------------
 // History of lifecycle transitions (SPEC-015 §4.8)
 
+/** The history kinds of a lifecycle transition (SPEC-015 §4.8); never folded, `changes` empty. */
+export type LifecycleHistoryKind = 'deleted' | 'restored';
+
 /**
- * Writes the `deleted` or `restored` history entry of a transition. A no-op for now: the
- * IssueHistory model is registered by PLAN-011 S5a and written by S6's history writer
- * (`issues/history.ts`), which replaces this body with an insert through the repo (never folded,
- * `changes` empty, the actor's kind and key). The handlers already call it in the transaction.
+ * Writes the `deleted` or `restored` history entry of `issue`'s transition, in `ctx`'s
+ * transaction, as `ctx.actor` (its kind and key). Nothing writes IssueHistory content until
+ * PLAN-011 S6: its history writer (`issues/history.ts`) replaces this body with one insert through
+ * `ctx.repo`, never folded, with empty `changes`. The handlers already call it with every argument.
  */
-export function writeLifecycleHistory(): Promise<void> {
+export function writeLifecycleHistory(
+  _ctx: HandlerContext,
+  _kind: LifecycleHistoryKind,
+  _issue: ModelRow<'Issue'>,
+): Promise<void> {
   // TODO(PLAN-011 S6): insert the IssueHistory row through `ctx.repo`.
   return Promise.resolve();
 }

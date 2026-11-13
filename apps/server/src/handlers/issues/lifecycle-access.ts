@@ -27,6 +27,6 @@ export function lifecycleContext(ctx: HandlerContext): LifecycleContext {
     actor: ctx.actor,
     now: ctx.now(),
     emit: (event) => ctx.emit(event),
-    history: () => writeLifecycleHistory(),
+    history: (kind, issue) => writeLifecycleHistory(ctx, kind, issue),
   };
 }

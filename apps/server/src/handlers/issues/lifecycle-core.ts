@@ -20,13 +20,14 @@ import {
 } from '@surface/domain';
 import type { DomainEvent } from '../../executor/context.js';
 import { SurfaceError } from '../../executor/errors.js';
-import type { LockedIssue } from '../../issues/lifecycle.js';
+import {
+  RESTORE_RELOG_LIMIT,
+  type LifecycleHistoryKind,
+  type LockedIssue,
+} from '../../issues/lifecycle.js';
 import type { ModelName } from '../../sync/models.js';
 import type { Repo } from '../../sync/repo.js';
 import type { IssueRow } from './core.js';
-
-/** The history kinds this file writes (SPEC-015 §4.8); never folded, `changes` empty. */
-export type LifecycleHistoryKind = 'deleted' | 'restored';
 
 /** Reads and locks. Every method runs in the operation's transaction. */
 export interface LifecycleAccess {
@@ -35,8 +36,8 @@ export interface LifecycleAccess {
   /** `ENG-42`, for a refusal (a plain read; the transaction then rolls back). */
   identifier(issue: LockedIssue): Promise<string>;
   /**
-   * The issue's rows of each eager child model a restore logs again (SPEC-015 §5.1), at most
-   * `RESTORE_RELOG_LIMIT` per model. Empty until PLAN-014 S4a registers Attachment.
+   * The issue's rows of each eager child model a restore logs again (SPEC-015 §5.1), ascending
+   * by id. Empty until PLAN-014 S4a registers Attachment.
    */
   relogRows(issueId: string): Promise<readonly RelogRows[]>;
 }
@@ -126,8 +127,10 @@ export async function restoreIssue(
     row = await repo.update('Issue', issue.id, { deletedAt: null, deletedById: null });
   }
   for (const { model, ids } of await access.relogRows(issue.id)) {
-    // An empty patch writes nothing and logs each row again, as stored (SPEC-011 §5.1).
-    if (ids.length > 0) await repo.updateWhere(model, ids, {}, { touchUpdatedAt: false });
+    // An empty patch writes nothing and logs each row again, as stored (SPEC-011 §5.1); at most
+    // `RESTORE_RELOG_LIMIT` per model (SPEC-014 D20 caps an issue at 100 attachments).
+    const capped = ids.slice(0, RESTORE_RELOG_LIMIT);
+    if (capped.length > 0) await repo.updateWhere(model, capped, {}, { touchUpdatedAt: false });
   }
   await ctx.history('restored', row);
   ctx.emit(event('issue.restored', row));

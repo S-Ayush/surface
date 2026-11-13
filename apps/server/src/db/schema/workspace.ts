@@ -54,10 +54,10 @@ const audit = () => ({
 });
 const syncGroups = () => text().array().notNull();
 
-/** `column IN ('a', 'b')` for an enum stored as text. Values are our constants, not input. */
 /** `1, 3, 6, 9, 12`: the automation periods (SPEC-015 §3.2), our constants, not input. */
 const automationMonths = sql.raw(AUTOMATION_MONTHS.join(', '));
 
+/** `column IN ('a', 'b')` for an enum stored as text. Values are our constants, not input. */
 function oneOf(column: AnyPgColumn, values: readonly string[]): SQL {
   return sql`${column} IN (${sql.raw(values.map((v) => `'${v}'`).join(', '))})`;
 }
