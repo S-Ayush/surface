@@ -81,7 +81,12 @@ describe('connecting', () => {
     await until(() => store.connection === 'online');
     expect(await store.dispatch(debugTouch, { id: id(1) })).toEqual({ status: 'confirmed' });
     await eventually(() => hub.users.mutate.length > 0);
-    expect(hub.users).toEqual({ bootstrap: [USER_ID], mutate: [USER_ID], socket: [USER_ID] });
+    expect(hub.users).toEqual({
+      bootstrap: [USER_ID],
+      mutate: [USER_ID],
+      socket: [USER_ID],
+      content: [],
+    });
     await store.close();
   });
 

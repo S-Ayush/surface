@@ -15,6 +15,7 @@ import {
   NDJSON_CONTENT_TYPE,
   ProtocolError,
   type BootstrapQuery,
+  type ContentFrame,
   type ContentQuery,
 } from '@surface/sync-protocol';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -161,8 +162,14 @@ export function registerSyncRoutes(
       actor,
       parents: query.parents,
     });
-    return sendNdjson(request, reply, Readable.from(frames.map((f) => encodeNdjsonLine(f))));
+    // Encoded one line at a time as the stream pulls, so the rows and their JSON aren't held
+    // twice. The answer itself is unbounded until S6 sets a budget (PLAN-011 S5a As built).
+    return sendNdjson(request, reply, Readable.from(encodeLines(frames)));
   });
+}
+
+function* encodeLines(frames: readonly ContentFrame[]): Generator<string> {
+  for (const frame of frames) yield encodeNdjsonLine(frame);
 }
 
 /** Sends NDJSON lines, gzip-encoded when the client accepts it (sync-protocol §4.1, §4.2). */

@@ -87,7 +87,7 @@ The contract since v0.7 (SPEC-011 §5.2, §5.3). Authenticated by the session co
 - Rows are IssueContent, IssueHistory, Comment and Reaction. The client store checks each `d` against its model, as for bootstrap.
 - Everything is read in one `REPEATABLE READ` snapshot that includes `max(sync_id)`: that is `lastSyncId`, called `C` below.
 - `meta.rows` and `end.rows` count the row frames, so a truncated stream is detected.
-- Errors before the first frame use the SPEC-003 body: `400` (no parents, more than 50, a malformed or duplicate parent, or a `userId` that isn't a UUID), `401` (not signed in, or signed in as someone other than `userId`), `403` (an API key: API callers use `issue.get`), `426 CLIENT_OUTDATED` (no `userId`, or a different `schemaHash`; the client reloads), `503` (starting).
+- Errors before the first frame use the SPEC-003 body: `400` (no parents, more than 50, a malformed or duplicate parent, a `userId` that isn't a UUID, or no `schemaHash`), `401` (not signed in, or signed in as someone other than `userId`), `403` (an API key: API callers use `issue.get`), `426 CLIENT_OUTDATED` (no `userId`, or a different `schemaHash`; the client reloads), `503` (starting).
 
 **Hydration.** A parent is **hydrated** when the client holds all of its content and keeps it live.
 1. When a tab sends a content request, it marks each requested parent **hydrating**, in memory in that tab, and **buffers** the content packets for it instead of dropping them.

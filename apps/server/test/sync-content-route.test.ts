@@ -44,6 +44,9 @@ const engHistory = [randomUUID(), randomUUID()];
 const secHistory = randomUUID();
 /** A visible issue without content rows (an issue from before S6 has none). */
 const bareIssue = randomUUID();
+/** Visible issues in the archive and in the trash: content is still served for them. */
+const archivedIssue = randomUUID();
+const trashedIssue = randomUUID();
 
 type Row = Record<string, unknown>;
 
@@ -84,8 +87,15 @@ function tables(): Record<string, Row[]> {
       { id: engIssue, __groups: ['workspace'] },
       { id: secIssue, __groups: [teamGroup(SEC)] },
       { id: bareIssue, __groups: ['workspace'] },
+      { id: archivedIssue, __groups: ['workspace'], __archived: true },
+      { id: trashedIssue, __groups: ['workspace'], __deleted: true },
     ],
-    issue_content: [content(engIssue, ENG), content(secIssue, SEC)],
+    issue_content: [
+      content(engIssue, ENG),
+      content(secIssue, SEC),
+      content(archivedIssue, ENG),
+      content(trashedIssue, ENG),
+    ],
     issue_history: [
       history(engHistory[0] ?? '', engIssue, ENG),
       history(engHistory[1] ?? '', engIssue, ENG),
@@ -101,8 +111,8 @@ interface Statement {
 
 /**
  * A pool over `tables()`. It answers the snapshot, the head, the public teams, the parent query
- * (`id = ANY($1)`, `sync_groups && $2`) and each content model's query (`sync_groups && $1`,
- * parent `= ANY($2)`), as Postgres would. `failOn` makes a statement starting with it throw.
+ * (`id = ANY($1)`, `sync_groups && $2`, and an `archived_at`/`deleted_at` filter if one is sent)
+ * and each content model's query (`sync_groups && $1`, parent `= ANY($2)`), as Postgres would. `failOn` makes a statement starting with it throw.
  */
 function fakePool({ failOn }: { failOn?: string } = {}) {
   const data = tables();
@@ -131,6 +141,8 @@ function fakePool({ failOn }: { failOn?: string } = {}) {
         return answer(
           (data['issues'] ?? [])
             .filter((r) => Array.isArray(ids) && ids.includes(r['id']) && overlaps(r, groups))
+            .filter((r) => !(r['__archived'] === true && /archived_at IS NULL/i.test(text)))
+            .filter((r) => !(r['__deleted'] === true && /deleted_at IS NULL/i.test(text)))
             .map((r) => ({ id: r['id'] })),
         );
       }
@@ -235,6 +247,13 @@ describe('GET /sync/content refuses, before any database work', () => {
       () => url(parents, 'ana', { schemaHash: 'b'.repeat(64) }),
       426,
       'CLIENT_OUTDATED',
+    ],
+    [
+      'no schemaHash',
+      { 'x-test-actor': 'ana' },
+      () => url(parents, 'ana', { schemaHash: undefined }),
+      400,
+      'INVALID_INPUT',
     ],
     [
       'no parents',
@@ -407,6 +426,23 @@ describe('GET /sync/content answers', () => {
     const none = fakePool();
     await get([issueParent(secIssue)], 'ana', none);
     expect(none.statements.some((s) => /FROM "issue_(content|history)"/.test(s.text))).toBe(false);
+  });
+
+  it('for archived and trashed parents too, unlike bootstrap (SPEC-011 §5.7)', async () => {
+    const pool = fakePool();
+    const parents = [issueParent(archivedIssue), issueParent(trashedIssue)];
+    const { frames } = await get(parents, 'ana', pool);
+    const meta = frames[0];
+    expect(meta?.t === 'meta' ? new Set(meta.parents) : undefined).toEqual(new Set(parents));
+    expect(meta).toMatchObject({ rows: 2 });
+    expect(rowsOf(frames)).toEqual(
+      expect.arrayContaining([
+        ['IssueContent', archivedIssue],
+        ['IssueContent', trashedIssue],
+      ]),
+    );
+    const parentQuery = pool.statements.find((s) => /FROM "issues"/.test(s.text));
+    expect(parentQuery?.text).not.toMatch(/archived_at|deleted_at/);
   });
 
   it('gzip-encoded when accepted, with the same frames', async () => {

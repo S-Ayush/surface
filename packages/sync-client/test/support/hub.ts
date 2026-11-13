@@ -14,6 +14,7 @@ import type {
   BootstrapFrame,
   ContentFrame,
   ContentParent,
+  ContentQuery,
   ClientMessage,
   DeltaPacket,
   MutateRequest,
@@ -28,6 +29,8 @@ import {
   CloseCode,
   MAX_MUTATION_BATCH_BYTES,
   MUTATE_PATH,
+  MissingUserIdError,
+  ProtocolError,
   SESSION_PATH,
   decodeBootstrapQuery,
   decodeClientMessage,
@@ -64,6 +67,14 @@ function errorResponse(status: number, code: string): Response {
     { status, headers: { 'content-type': 'application/json' } },
   );
 }
+
+/** The SPEC-003 code the server sends with each status `contentStatus` can be set to. */
+const CONTENT_ERROR_CODES: Partial<Record<number, string>> = {
+  401: 'UNAUTHENTICATED',
+  403: 'FORBIDDEN',
+  426: 'CLIENT_OUTDATED',
+  503: 'UNAVAILABLE',
+};
 
 export class FakeHub {
   readonly rows = new Map<string, ServerRow>();
@@ -123,10 +134,11 @@ export class FakeHub {
    */
   refuseArchivedEdits = false;
   /** The `userId` each request named, in order (SPEC-002 E14). */
-  readonly users: { bootstrap: string[]; mutate: string[]; socket: string[] } = {
+  readonly users: { bootstrap: string[]; mutate: string[]; socket: string[]; content: string[] } = {
     bootstrap: [],
     mutate: [],
     socket: [],
+    content: [],
   };
   /** The headers of every mutate request, in order. */
   readonly mutateHeaders: Headers[] = [];
@@ -137,7 +149,7 @@ export class FakeHub {
   readonly notes = new Map<string, ModelRow>();
   /** Items the user can't see: left out of a content answer exactly like unknown ones. */
   readonly hiddenParents = new Set<string>();
-  /** The parents of every content request, in order. */
+  /** The parents of every content request answered with frames, in order. */
   readonly contentRequests: ContentParent[][] = [];
   /** Fail the next N content requests before they reach the server (a network error). */
   failContent = 0;
@@ -186,10 +198,13 @@ export class FakeHub {
 
   /** The content answer for `parents` at the current head: visible items and their notes. */
   contentSnapshot(parents: readonly ContentParent[]): ContentFrame[] {
-    const found = parents.filter((parent) => {
-      const itemId = parentIssueId(parent);
-      return this.rows.has(itemId) && !this.hiddenParents.has(itemId);
-    });
+    // In id order, as the server's `ORDER BY id`, whatever order they were asked in.
+    const found = parents
+      .filter((parent) => {
+        const itemId = parentIssueId(parent);
+        return this.rows.has(itemId) && !this.hiddenParents.has(itemId);
+      })
+      .sort((a, b) => (a < b ? -1 : 1));
     const ids = new Set(found.map(parentIssueId));
     const rows = [...this.notes.values()]
       .filter((row) => ids.has(String(row['itemId'])))
@@ -202,23 +217,35 @@ export class FakeHub {
     ];
   }
 
-  #content(url: string): Promise<Response> {
+  /** `GET /sync/content`, with the server's answers before the first frame (SPEC-011 §5.2). */
+  async #content(url: string): Promise<Response> {
     if (this.failContent > 0) {
       this.failContent -= 1;
-      return Promise.reject(new TypeError('Failed to fetch'));
+      throw new TypeError('Failed to fetch');
     }
-    if (this.signedOut) return Promise.resolve(errorResponse(401, 'UNAUTHENTICATED'));
+    if (this.signedOut) return errorResponse(401, 'UNAUTHENTICATED');
     if (this.contentStatus !== 200) {
-      return Promise.resolve(errorResponse(this.contentStatus, 'UNAVAILABLE'));
+      return errorResponse(
+        this.contentStatus,
+        CONTENT_ERROR_CODES[this.contentStatus] ?? 'INTERNAL',
+      );
     }
-    const query = decodeContentQuery(Object.fromEntries(new URL(url).searchParams));
+    let query: ContentQuery;
+    try {
+      query = decodeContentQuery(Object.fromEntries(new URL(url).searchParams));
+    } catch (error) {
+      if (error instanceof MissingUserIdError) return errorResponse(426, 'CLIENT_OUTDATED');
+      if (error instanceof ProtocolError) return errorResponse(400, 'INVALID_INPUT');
+      throw error;
+    }
+    this.users.content.push(query.userId);
+    // SPEC-002 E14: another user's replica gets nothing.
+    if (query.userId !== USER_ID) return errorResponse(401, 'UNAUTHENTICATED');
+    if (query.schemaHash !== this.schemaHash) return errorResponse(426, 'CLIENT_OUTDATED');
     this.contentRequests.push([...query.parents]);
-    if (query.schemaHash !== this.schemaHash) {
-      return Promise.resolve(errorResponse(426, 'CLIENT_OUTDATED'));
-    }
     const frames = this.contentSnapshot(query.parents);
     const sent = this.truncateContent ? frames.slice(0, -1) : frames;
-    if (!this.holdContent) return Promise.resolve(ndjsonResponse(sent));
+    if (!this.holdContent) return ndjsonResponse(sent);
     return new Promise((resolve) => this.#heldContent.push(() => resolve(ndjsonResponse(sent))));
   }
 

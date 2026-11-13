@@ -27,9 +27,26 @@ function hub(): FakeHub {
   return fake;
 }
 
-function request(fake: FakeHub, parents: ContentParent[], schemaHash = SCHEMA_HASH) {
-  const query = encodeContentQuery({ parents, userId: USER_ID, schemaHash });
+function request(
+  fake: FakeHub,
+  parents: ContentParent[],
+  schemaHash = SCHEMA_HASH,
+  userId = USER_ID,
+) {
+  return raw(fake, encodeContentQuery({ parents, userId, schemaHash }));
+}
+
+function raw(fake: FakeHub, query: string) {
   return fake.fetch(`http://surface.test${CONTENT_PATH}?${query}`, {});
+}
+
+async function errorCode(response: Response): Promise<[number, unknown]> {
+  const body: unknown = await response.json();
+  const error: unknown =
+    typeof body === 'object' && body !== null ? Reflect.get(body, 'error') : undefined;
+  const code: unknown =
+    typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined;
+  return [response.status, code];
 }
 
 async function frames(response: Response, parents: ContentParent[]): Promise<ContentFrame[]> {
@@ -51,6 +68,53 @@ describe('the fake hub’s /sync/content', () => {
     expect(answer[0]).toEqual({ t: 'meta', lastSyncId: fake.head, parents: [item(1)], rows: 2 });
     expect(answer.flatMap((f) => (f.t === 'row' ? [f.d.id] : []))).toEqual([id(11), id(12)]);
     expect(fake.contentRequests).toEqual([parents]);
+  });
+
+  it('lists the found parents in id order, whatever order they were asked in', async () => {
+    const fake = hub();
+    const parents = [item(2), item(1)];
+    const answer = await frames(await request(fake, parents), parents);
+    expect(answer[0]).toMatchObject({ parents: [item(1), item(2)], rows: 3 });
+    expect(answer.flatMap((f) => (f.t === 'row' ? [f.d.id] : []))).toEqual([
+      id(11),
+      id(12),
+      id(21),
+    ]);
+  });
+
+  it('refuses a bad query, a missing userId and another user before the first frame', async () => {
+    const fake = hub();
+    const userless = new URLSearchParams(
+      encodeContentQuery({
+        parents: [item(1)],
+        userId: USER_ID,
+        schemaHash: SCHEMA_HASH,
+      }),
+    );
+    userless.delete('userId');
+    expect(await errorCode(await raw(fake, userless.toString()))).toEqual([426, 'CLIENT_OUTDATED']);
+    expect(await errorCode(await request(fake, []))).toEqual([400, 'INVALID_INPUT']);
+    expect(await errorCode(await request(fake, [item(1)], SCHEMA_HASH, id(99)))).toEqual([
+      401,
+      'UNAUTHENTICATED',
+    ]);
+    expect(fake.users.content).toEqual([id(99)]);
+    expect(fake.contentRequests).toEqual([]);
+  });
+
+  it('sends the server’s code with each injected error status', async () => {
+    const fake = hub();
+    const codes: [number, unknown][] = [];
+    for (const status of [401, 403, 426, 503]) {
+      fake.contentStatus = status;
+      codes.push(await errorCode(await request(fake, [item(1)])));
+    }
+    expect(codes).toEqual([
+      [401, 'UNAUTHENTICATED'],
+      [403, 'FORBIDDEN'],
+      [426, 'CLIENT_OUTDATED'],
+      [503, 'UNAVAILABLE'],
+    ]);
   });
 
   it('leaves out a hidden parent like an unknown one', async () => {
