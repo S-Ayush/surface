@@ -4,7 +4,9 @@
 // path's parsing (command-menu §3.1).
 import { describe, expect, it } from 'vitest';
 import {
+  addressReplacement,
   canonicalIssuePath,
+  replaceAddress,
   resolveIssueAddress,
   typedIdentifier,
   type IssueAddressLookup,
@@ -93,5 +95,38 @@ describe('typedIdentifier (command-menu §3.1)', () => {
     for (const query of ['', 'eng', 'e-1', 'abcdef-1', 'eng-', 'eng-87a', 'eng 87', 'eng-0']) {
       expect(typedIdentifier(query), query).toBeUndefined();
     }
+  });
+});
+
+describe('addressReplacement and replaceAddress (AC-13, SPEC-012 §3.4 items 1 and 6)', () => {
+  it('moves a pending issue to the identifier address when its number arrives', () => {
+    const pendingPath = `/issue/${PENDING.id}`;
+    expect(addressReplacement(pendingPath, PENDING, 'ENG')).toBeUndefined();
+    expect(addressReplacement(pendingPath, { ...PENDING, number: 7 }, 'ENG')).toBe(
+      '/issue/ENG-7/draft',
+    );
+  });
+
+  it('replaces a missing, wrong or old slug with the current one (E26)', () => {
+    for (const path of ['/issue/ENG-42', '/issue/ENG-42/anything', '/issue/ENG-42/old-title']) {
+      expect(addressReplacement(path, ISSUE, 'ENG'), path).toBe(SLUGGED);
+    }
+    expect(addressReplacement(SLUGGED, ISSUE, 'ENG')).toBeUndefined();
+  });
+
+  it('replaces the address again on a title change', () => {
+    expect(addressReplacement(SLUGGED, { ...ISSUE, title: 'Fix the flicker' }, 'ENG')).toBe(
+      '/issue/ENG-42/fix-the-flicker',
+    );
+  });
+
+  it('replaces the history entry in place, keeping its state', () => {
+    const calls: unknown[][] = [];
+    const history = {
+      state: { __TSR_index: 3 },
+      replaceState: (...args: unknown[]) => calls.push(args),
+    };
+    replaceAddress(history, SLUGGED);
+    expect(calls).toEqual([[{ __TSR_index: 3 }, '', SLUGGED]]);
   });
 });

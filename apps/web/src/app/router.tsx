@@ -16,7 +16,7 @@ import {
 } from '@tanstack/react-router';
 import { reaction } from 'mobx';
 import { useCallback, useEffect } from 'react';
-import { IssuePlaceholderPage } from '../features/issues/IssuePlaceholderPage.js';
+import { IssuePage } from '../features/issues/IssuePage.js';
 import { IssueListPage } from '../features/issues/IssueListPage.js';
 import { MyIssuesPage } from '../features/issues/MyIssuesPage.js';
 import { NotFoundPage, StandaloneNotFoundPage } from '../pages/NotFoundPage.js';
@@ -219,7 +219,7 @@ const teamRoute = createRoute({
 // An issue (SPEC-011 §4.1, SPEC-005 §3): `/issue/ENG-42/<slug>`, `/issue/ENG-42`, or `/issue/<id>`
 // for a pending issue (Q14). The slug is cosmetic: the page replaces it (E27).
 function IssueAddress() {
-  return <IssuePlaceholderPage issueRef={useRouteParams().ref ?? ''} />;
+  return <IssuePage issueRef={useRouteParams().ref ?? ''} />;
 }
 
 const issueRoute = createRoute({

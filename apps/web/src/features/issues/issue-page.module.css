@@ -1,0 +1,115 @@
+/* The issue page (SPEC-012 §3.4, design-system §3): a centred text column and a properties panel.
+   Tokens only. */
+
+.layout {
+  position: relative;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  gap: var(--space-24);
+  padding: var(--space-24);
+}
+
+.column {
+  display: flex;
+  min-width: 0;
+  max-width: var(--content-max-width);
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.description {
+  color: var(--text-primary);
+}
+
+.placeholder {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
+.aside {
+  width: var(--properties-width);
+  flex: none;
+}
+
+/* Below 1280 px the panel opens from the header and floats over the page. */
+.drawer {
+  position: absolute;
+  top: var(--space-8);
+  right: var(--space-16);
+  z-index: var(--z-overlay);
+  width: var(--properties-width);
+  padding: var(--space-12);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.properties {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin: 0;
+}
+
+.property {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.property dt {
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.property dd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin: 0;
+}
+
+.hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm-size);
+}
+
+.meta {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.position {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  max-width: var(--content-max-width);
+  margin: var(--space-48) auto;
+}

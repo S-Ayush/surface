@@ -2,7 +2,8 @@
 // cosmetic, so any slug or none resolves, and the page replaces the address with the canonical one
 // without a new history entry. A pending issue (no number yet) is `/issue/<id>` until the number
 // arrives. Resolution reads the replica only: an issue it doesn't hold is not found, like one the
-// user can't see (E13). PLAN-012 S4 reuses `canonicalIssuePath` for the replace on a title change.
+// user can't see (E13). PLAN-012 S4 reuses `canonicalIssuePath` for the replace on a title change
+// and when a pending issue's number arrives (`addressReplacement`, `replaceAddress`).
 import { issueIdentifier, issuePath, parseIssueRef } from '@surface/domain';
 import { Issue, Team } from '@surface/domain/model';
 import type { ReadonlyPool } from '@surface/sync-client';
@@ -89,4 +90,33 @@ export function poolIssueLookup(pool: ReadonlyPool): IssueAddressLookup {
     issueByNumber: (teamId, number) =>
       pool.findBy(Issue, 'number', number).find((issue) => issue.teamId === teamId),
   };
+}
+
+/**
+ * The address the page should replace the current one with, or undefined when it is already right
+ * (SPEC-012 §3.4 items 1 and 6, AC-13): a pending issue's `/issue/<id>` becomes
+ * `/issue/ENG-42/<slug>` when its number arrives, and a title change gives a new slug.
+ */
+export function addressReplacement(
+  currentPath: string,
+  issue: IssueAddressRow,
+  teamKey: string,
+): string | undefined {
+  const canonical = canonicalIssuePath(issue, teamKey);
+  return canonical === currentPath ? undefined : canonical;
+}
+
+/** The part of `window.history` the replace needs. */
+export interface HistoryLike {
+  readonly state: unknown;
+  replaceState(state: unknown, unused: string, url: string): void;
+}
+
+/**
+ * Replaces the address without a history entry and without a navigation, so the page keeps its
+ * focus and scroll (AC-13). The router's own location stays the one the page was opened at, which
+ * keeps the route, and so the page, mounted.
+ */
+export function replaceAddress(history: HistoryLike, path: string): void {
+  history.replaceState(history.state, '', path);
 }
