@@ -97,6 +97,14 @@ export function memoryWorkflow(): MemoryWorkflow {
       return Promise.resolve(row as never);
     },
     update(model, id, patch) {
+      if (model === 'Team' && id === team.id) {
+        // `team.setDefaultStatus` writes the pointer (PLAN-010 S4); the other team fields are
+        // not modelled here, so the returned row carries what the rules read.
+        const changed = 'defaultStatusId' in patch ? patch.defaultStatusId : undefined;
+        if (typeof changed === 'string') team.defaultStatusId = changed;
+        writes.push({ action: 'update', id, fields: Object.keys(patch) });
+        return Promise.resolve({ ...team, updatedAt: NOW } as never);
+      }
       const row = rows.get(id);
       if (model !== 'WorkflowStatus' || !row) throw new SurfaceError('NOT_FOUND', 'not found');
       const next = { ...row, ...patch, updatedAt: NOW } as StatusRow;

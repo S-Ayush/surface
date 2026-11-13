@@ -15,6 +15,10 @@ import {
   NEW_TEAM_SETTINGS,
   canEndMembership,
   RESERVED_TEAM_KEYS,
+  type PermissionPredicates,
+  type ResolvedRefs,
+  DEFAULT_STATUS_CATEGORIES,
+  StatusRef,
   TeamRef,
   UserRef,
   WORKSPACE_GROUP,
@@ -351,5 +355,114 @@ export const teamRemoveMember = defineOperation({
   optimistic: (store, input) => {
     const team = visibleTeam(store, input.team, idOf(store.get('User', 'me')));
     removeMembership(store, team, idOf(store.get('User', input.user)));
+  },
+});
+
+// ---------------------------------------------------------------------------------------------
+// Default status and estimate settings (SPEC-010 §6; PLAN-010 S4)
+
+/**
+ * Whether the actor may change the workflow of the status's own team (§5). A status ref resolves
+ * inside the named team only, but the check does not trust the named team: it uses the resolved
+ * status's `teamId`, as `label.update` does, so naming ENG can't unlock a DES status.
+ */
+function mayChangeDefault(p: PermissionPredicates, refs: ResolvedRefs): boolean {
+  const status = refs['status'];
+  const named = refs['team'];
+  if (status === undefined || !('id' in status)) return p.admin() || p.teamMember(named);
+  const teamId = status['teamId'];
+  if (typeof teamId !== 'string') return false;
+  const own = named !== undefined && 'id' in named && named.id === teamId ? named : { id: teamId };
+  return p.admin() || p.teamMember(own);
+}
+
+export const teamSetDefaultStatus = defineOperation({
+  name: 'team.setDefaultStatus',
+  kind: 'mutation',
+  domain: 'team',
+  summary: 'Set a team’s default status',
+  description:
+    'Makes a status the one new issues start in. Only a Backlog or Unstarted status of the team can be the default. Accepts a team key like ENG or a team id, and a status name in that team or a status id.',
+  keywords: ['default status', 'set default status', 'initial status for new issues'],
+  input: z.object({ team: TeamRef, status: StatusRef }),
+  output: TeamSchema,
+  ui: { title: 'Set default status…', icon: 'circle-dot', contexts: ['team'], shortcut: null },
+  permission: (p, refs) => mayChangeDefault(p, refs),
+  destructive: false,
+  examples: [{ team: 'ENG', status: 'Todo' }],
+  optimistic: (store, input) => {
+    const team = store.get('Team', input.team);
+    const teamId = idOf(team);
+    if (team === undefined || teamId === undefined) return;
+    const lower = input.status.trim().toLowerCase();
+    const statuses = store.find('WorkflowStatus', { teamId });
+    const status =
+      statuses.find((s) => s['id'] === input.status) ??
+      statuses.find((s) => String(s['name']).toLowerCase() === lower);
+    const id = idOf(status);
+    const category = status?.['category'];
+    // The server refuses other categories (INV-05), so nothing is predicted for them. The id is
+    // the resolved one, never the ref text.
+    if (id === undefined || !DEFAULT_STATUS_CATEGORIES.some((c) => c === category)) return;
+    if (team['defaultStatusId'] === id) return;
+    store.patch('Team', teamId, { defaultStatusId: id, updatedAt: store.now.toISOString() });
+  },
+});
+
+export const teamSetEstimates = defineOperation({
+  name: 'team.setEstimates',
+  kind: 'mutation',
+  domain: 'team',
+  summary: 'Change a team’s estimate settings',
+  description:
+    'Changes the estimate scale (off, linear, exponential, fibonacci, tshirt) and the Extended, Allow zero and Count unestimated as 1 options; give at least one. Existing issue estimates are never changed: values the new settings do not allow stay and show as numbers. Accepts a team key like ENG or a team id.',
+  keywords: [
+    'estimate scale',
+    'enable estimates',
+    'story points',
+    't-shirt sizes',
+    'turn off estimates',
+  ],
+  input: z
+    .object({
+      team: TeamRef,
+      scale: z.enum(ESTIMATE_SCALES).optional(),
+      extended: z.boolean().optional(),
+      allowZero: z.boolean().optional(),
+      countUnestimatedAsOne: z.boolean().optional(),
+    })
+    .refine(
+      (v) =>
+        v.scale !== undefined ||
+        v.extended !== undefined ||
+        v.allowZero !== undefined ||
+        v.countUnestimatedAsOne !== undefined,
+      {
+        message:
+          'Give at least one of scale, extended, allowZero and countUnestimatedAsOne to change',
+        path: ['scale'],
+      },
+    ),
+  output: TeamSchema,
+  ui: { title: 'Change estimate scale…', icon: 'gauge', contexts: ['team'], shortcut: null },
+  permission: (p, { team }) => p.admin() || p.teamMember(team),
+  destructive: false,
+  examples: [{ team: 'ENG', scale: 'fibonacci', extended: true }],
+  optimistic: (store, input) => {
+    const teamId = idOf(store.get('Team', input.team));
+    if (teamId === undefined) return;
+    const wanted: Record<string, unknown> = {
+      estimateScale: input.scale,
+      estimateExtended: input.extended,
+      estimateAllowZero: input.allowZero,
+      estimateCountUnestimatedAsOne: input.countUnestimatedAsOne,
+    };
+    const saved = store.get('Team', teamId) ?? {};
+    // Only what differs, as the server writes it.
+    const changes = Object.fromEntries(
+      Object.entries(wanted).filter(([k, v]) => v !== undefined && saved[k] !== v),
+    );
+    if (Object.keys(changes).length === 0) return;
+    store.patch('Team', teamId, { ...changes, updatedAt: store.now.toISOString() });
   },
 });

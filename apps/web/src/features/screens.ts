@@ -10,6 +10,7 @@ import {
   MagicLinkScreen,
   ResetScreen,
 } from './account/AccountScreens.js';
+import { EstimatesScreen } from './estimates/EstimatesScreen.js';
 import { InviteScreen } from './invites/InviteScreen.js';
 import { TeamLabelsScreen, WorkspaceLabelsScreen } from './labels/LabelsScreen.js';
 import { MembersScreen } from './members/MembersScreen.js';
@@ -38,4 +39,5 @@ export const SCREENS: ScreenRegistry = {
   'settings/teams/workflow': WorkflowScreen,
   'settings/teams/labels': TeamLabelsScreen,
   'settings/labels': WorkspaceLabelsScreen,
+  'settings/teams/estimates': EstimatesScreen,
 };

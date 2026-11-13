@@ -2,7 +2,13 @@
 // add and edit, reorder (drag, or the `settings-row` keys), and delete behind a confirm dialog.
 // Everything shows at once (optimistic); a refusal rolls back and says why. Readers of a public
 // team see the page read-only with "Join the team to edit".
-import { statusCreate, statusDelete, statusReorder, statusUpdate } from '@surface/operations';
+import {
+  statusCreate,
+  statusDelete,
+  statusReorder,
+  statusUpdate,
+  teamSetDefaultStatus,
+} from '@surface/operations';
 import { Button, Dialog, DialogClose, IconButton, StatusIcon } from '@surface/ui';
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
@@ -196,6 +202,15 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
     return undefined;
   };
 
+  // "Make default" (§3.1): the Default badge moves at once (optimistic); a refusal is a toast.
+  const makeDefault = async (statusId: string) => {
+    const store = app.store;
+    if (store === null) return;
+    toastIfFailed(
+      await submitMutation(store, teamSetDefaultStatus, { team: teamKey, status: statusId }),
+    );
+  };
+
   const confirmDelete = async (status: StatusItem) => {
     const store = app.store;
     if (store === null || deleteBusy) return;
@@ -267,6 +282,7 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
                     setAdding(undefined);
                     setEditing(status.id);
                   }}
+                  onMakeDefault={() => void makeDefault(status.id)}
                   onDelete={() => {
                     setDeleteError(undefined);
                     setDeleting(status);

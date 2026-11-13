@@ -109,6 +109,9 @@ const CALLS: Record<string, Call> = {
     { team, status: 'In Review', before: 'In Progress' },
   ],
   'status.delete': (team) => ['status.delete', { team, status: 'In Review' }],
+  // PLAN-010 S4: the team settings operations are as invisible as the statuses.
+  'team.setDefaultStatus': (team) => ['team.setDefaultStatus', { team, status: 'Todo' }],
+  'team.setEstimates': (team) => ['team.setEstimates', { team, scale: 'linear' }],
 };
 
 describe('a non-member naming private team SEC', () => {
@@ -147,6 +150,19 @@ describe('a non-member naming private team SEC', () => {
       }
     });
 
+    it(`answers ${who} naming a SEC status as the default of ENG like a status that never existed`, async () => {
+      const unknownId = randomUUID();
+      const input = (status: string) => ({ team: 'ENG', status });
+      const real = await failure('team.setDefaultStatus', input(secStatusId), actor(), [
+        secStatusId,
+      ]);
+      const unknown = await failure('team.setDefaultStatus', input(unknownId), actor(), [
+        unknownId,
+      ]);
+      expect(real).toMatchObject({ code: 'NOT_FOUND' });
+      expect(real).toEqual(unknown);
+    });
+
     it(`never lists SEC's statuses to ${who}, even when a filter asks for them`, async () => {
       const result = await executor.execute(
         'status.list',
@@ -180,6 +196,31 @@ describe('a member of private team SEC', () => {
     ] as const) {
       expect(await executor.execute(operation, input, samActor)).toMatchObject({ ok: true });
     }
+  });
+
+  it('sets SEC’s default status and estimate settings, and refuses a started status', async () => {
+    const { rows } = await h.pool.query<{ id: string }>(
+      `SELECT id FROM workflow_statuses WHERE team_id = $1 AND name = 'Todo'`,
+      [h.teams.sec],
+    );
+    const todoId = rows[0]?.id ?? '';
+    expect(
+      await executor.execute('team.setDefaultStatus', { team: 'SEC', status: 'Todo' }, samActor),
+    ).toMatchObject({ ok: true, result: { defaultStatusId: todoId } });
+    expect(
+      await executor.execute(
+        'team.setDefaultStatus',
+        { team: 'SEC', status: 'In Progress' },
+        samActor,
+      ),
+    ).toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+    expect(
+      await executor.execute(
+        'team.setEstimates',
+        { team: h.teams.sec, scale: 'tshirt', allowZero: true },
+        samActor,
+      ),
+    ).toMatchObject({ ok: true, result: { estimateScale: 'tshirt', estimateAllowZero: true } });
   });
 
   it('writes sync_log rows in the private group only', async () => {

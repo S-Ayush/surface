@@ -3,10 +3,10 @@
 // is wired, PLAN-010 S5), and a "…" menu. It is an option of the page's listbox in the
 // `settings-row` scope: its keys are the registry's (rowKeys.ts), not handlers here.
 import { Badge, Menu, StatusIcon } from '@surface/ui';
-import { GripVertical, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { CircleCheck, GripVertical, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import styles from './statuses.module.css';
 import { STATUS_ROW_ATTRIBUTE } from './rowKeys.js';
-import { descriptionText, isSystemStatus, type StatusItem } from './model.js';
+import { canMakeDefault, descriptionText, isSystemStatus, type StatusItem } from './model.js';
 
 export type StatusRowProps = {
   readonly status: StatusItem;
@@ -17,6 +17,8 @@ export type StatusRowProps = {
   readonly dragging: boolean;
   readonly onFocus: () => void;
   readonly onEdit: () => void;
+  /** `team.setDefaultStatus` for this status ("Make default", Backlog and Unstarted only). */
+  readonly onMakeDefault: () => void;
   readonly onDelete: () => void;
   readonly onDragStart: (pointerId: number) => void;
 };
@@ -29,6 +31,7 @@ export function StatusRow({
   dragging,
   onFocus,
   onEdit,
+  onMakeDefault,
   onDelete,
   onDragStart,
 }: StatusRowProps) {
@@ -82,6 +85,16 @@ export function StatusRow({
           }
           items={[
             { type: 'item', label: 'Edit', icon: <Pencil size={16} />, onSelect: onEdit },
+            ...(canMakeDefault(status, isDefault)
+              ? [
+                  {
+                    type: 'item' as const,
+                    label: 'Make default',
+                    icon: <CircleCheck size={16} />,
+                    onSelect: onMakeDefault,
+                  },
+                ]
+              : []),
             { type: 'item', label: 'Delete…', icon: <Trash2 size={16} />, onSelect: onDelete },
           ]}
         />

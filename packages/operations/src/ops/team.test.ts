@@ -1,16 +1,19 @@
 // PLAN-001 S8: team operation inputs and their optimistic updates (SPEC-003 §8). The client
 // drops an optimistic row its model rejects, so every row here is checked against the shared
 // client models. Key rules (AC-11) are the handler's: server/test/team-handlers.test.ts.
-import { NEW_TEAM_SETTINGS, isUuid } from '@surface/domain';
+import { NEW_TEAM_SETTINGS, isUuid, userActor } from '@surface/domain';
 import { PRODUCTION_MODELS } from '@surface/domain/model';
 import { describe, expect, it } from 'vitest';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
+import { evaluatePermission } from '../permission.js';
 import {
   teamAddMember,
   teamCreate,
   teamJoin,
   teamLeave,
   teamRemoveMember,
+  teamSetDefaultStatus,
+  teamSetEstimates,
   teamUpdate,
 } from './team.js';
 
@@ -293,5 +296,144 @@ describe('membership optimistic updates', () => {
     teamLeave.optimistic?.(store, { team: 'SEC' });
     teamRemoveMember.optimistic?.(store, { team: 'SEC', user: 'me' });
     expect(memberships(store)).toEqual([`${ENG}/${ME}`]);
+  });
+});
+
+// SPEC-010 AC-7, AC-16: the default status and the estimate settings.
+const DES = '0192f0c1-7e5a-7b3c-9d4e-0000000000e2';
+const TODO = '0192f0c1-7e5a-7b3c-9d4e-0000000000b2';
+const STARTED = '0192f0c1-7e5a-7b3c-9d4e-0000000000b3';
+const DONE = '0192f0c1-7e5a-7b3c-9d4e-0000000000b4';
+
+function withStatuses() {
+  const store = seeded();
+  const status = (id: string, name: string, category: string) =>
+    store.insert('WorkflowStatus', {
+      ...basics,
+      id,
+      teamId: ENG,
+      name,
+      category,
+      color: 'gray',
+      description: null,
+      position: 'a0',
+    });
+  status(BACKLOG, 'Backlog', 'backlog');
+  status(TODO, 'Todo', 'unstarted');
+  status(STARTED, 'In Progress', 'started');
+  status(DONE, 'Done', 'completed');
+  return store;
+}
+
+describe('team.setDefaultStatus optimistic (AC-7, AC-16)', () => {
+  it('patches defaultStatusId with the resolved id, never the ref text', () => {
+    const store = withStatuses();
+    teamSetDefaultStatus.optimistic?.(store, { team: 'ENG', status: 'todo' });
+    expect(store.rows.get('Team')?.get(ENG)).toMatchObject({
+      defaultStatusId: TODO,
+      updatedAt: AT,
+    });
+  });
+
+  it('accepts a status id too', () => {
+    const store = withStatuses();
+    teamSetDefaultStatus.optimistic?.(store, { team: 'ENG', status: TODO });
+    expect(store.rows.get('Team')?.get(ENG)?.['defaultStatusId']).toBe(TODO);
+  });
+
+  it('predicts nothing for a started or completed status, as the server refuses (INV-05)', () => {
+    const store = withStatuses();
+    teamSetDefaultStatus.optimistic?.(store, { team: 'ENG', status: 'In Progress' });
+    teamSetDefaultStatus.optimistic?.(store, { team: 'ENG', status: DONE });
+    expect(store.rows.get('Team')?.get(ENG)?.['defaultStatusId']).toBe(BACKLOG);
+  });
+
+  it('writes nothing when the status already is the default, or is unknown', () => {
+    const store = withStatuses();
+    teamSetDefaultStatus.optimistic?.(store, { team: 'ENG', status: 'Backlog' });
+    teamSetDefaultStatus.optimistic?.(store, { team: 'ENG', status: 'Nope' });
+    teamSetDefaultStatus.optimistic?.(store, { team: 'OPS', status: 'Todo' });
+    expect(store.rows.get('Team')?.get(ENG)?.['defaultStatusId']).toBe(BACKLOG);
+    expect(store.rows.get('Team')?.get(ENG)?.['updatedAt']).toBe(AT);
+  });
+});
+
+describe('team.setEstimates (AC-7, AC-16)', () => {
+  it('needs at least one setting', () => {
+    expect(teamSetEstimates.input.safeParse({ team: 'ENG' }).success).toBe(false);
+    for (const change of [
+      { scale: 'tshirt' },
+      { extended: true },
+      { allowZero: false },
+      { countUnestimatedAsOne: false },
+    ]) {
+      expect(teamSetEstimates.input.safeParse({ team: 'ENG', ...change }).success).toBe(true);
+    }
+    expect(teamSetEstimates.input.safeParse({ team: 'ENG', scale: 'huge' }).success).toBe(false);
+  });
+
+  it('patches only the given settings that differ', () => {
+    const store = seeded();
+    teamSetEstimates.optimistic?.(
+      store,
+      teamSetEstimates.input.parse({ team: 'ENG', scale: 'fibonacci', extended: true }),
+    );
+    expect(store.rows.get('Team')?.get(ENG)).toMatchObject({
+      estimateScale: 'fibonacci',
+      estimateExtended: true,
+      estimateAllowZero: NEW_TEAM_SETTINGS.estimateAllowZero,
+      updatedAt: AT,
+    });
+  });
+
+  it('writes nothing when no setting differs', () => {
+    const store = seeded();
+    const before = store.rows.get('Team')?.get(ENG);
+    teamSetEstimates.optimistic?.(store, {
+      team: 'ENG',
+      allowZero: NEW_TEAM_SETTINGS.estimateAllowZero,
+    });
+    expect(store.rows.get('Team')?.get(ENG)).toEqual(before);
+  });
+});
+
+// AC-14 and the S3 lesson: the check is on the status's own team, never the team named in input.
+describe('team.setDefaultStatus and team.setEstimates permissions (AC-14)', () => {
+  const eng = { team: { id: ENG, key: 'ENG', name: 'Engineering' } };
+  const actor = (role: 'admin' | 'member', member: boolean) =>
+    userActor({
+      userId: 'u-1',
+      role,
+      memberships: member ? [{ teamId: ENG, private: false }] : [],
+    });
+
+  it('lets only a member of the team, or an Admin, change either', () => {
+    const calls = [
+      [teamSetDefaultStatus, { ...eng, status: { id: TODO, teamId: ENG, name: 'Todo' } }],
+      [teamSetEstimates, eng],
+    ] as const;
+    for (const [op, refs] of calls) {
+      const input = { team: 'ENG', status: 'Todo', scale: 'linear' };
+      expect(evaluatePermission(op, actor('member', false), refs, input).allowed, op.name).toBe(
+        false,
+      );
+      expect(evaluatePermission(op, actor('member', true), refs, input).allowed, op.name).toBe(
+        true,
+      );
+      expect(evaluatePermission(op, actor('admin', false), refs, input).allowed, op.name).toBe(
+        true,
+      );
+    }
+  });
+
+  it('is FORBIDDEN for a member of ENG only when the input names ENG but the status is DES’s', () => {
+    const refs = { ...eng, status: { id: TODO, teamId: DES, name: 'Todo' } };
+    const input = { team: 'ENG', status: TODO };
+    expect(
+      evaluatePermission(teamSetDefaultStatus, actor('member', true), refs, input).allowed,
+    ).toBe(false);
+    expect(
+      evaluatePermission(teamSetDefaultStatus, actor('admin', false), refs, input).allowed,
+    ).toBe(true);
   });
 });

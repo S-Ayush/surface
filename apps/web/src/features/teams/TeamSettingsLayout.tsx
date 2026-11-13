@@ -38,6 +38,9 @@ export function TeamSettingsLayout({
           <Link to="/settings/teams/$key/labels" params={{ key: team.key }}>
             Labels
           </Link>
+          <Link to="/settings/teams/$key/estimates" params={{ key: team.key }}>
+            Estimates
+          </Link>
         </nav>
       </div>
       {children(details)}

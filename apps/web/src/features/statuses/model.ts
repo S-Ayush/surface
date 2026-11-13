@@ -31,6 +31,14 @@ export type StatusItem = {
 
 export type EditableCategory = (typeof EDITABLE_STATUS_CATEGORIES)[number];
 
+/** Whether "Make default" is offered: Backlog or Unstarted only (INV-05), and not already it. */
+export function canMakeDefault(
+  status: { readonly category: StatusCategory; readonly id: string },
+  isDefault: boolean,
+): boolean {
+  return !isDefault && (status.category === 'backlog' || status.category === 'unstarted');
+}
+
 export function isEditableCategory(category: StatusCategory): category is EditableCategory {
   return (EDITABLE_STATUS_CATEGORIES as readonly StatusCategory[]).includes(category);
 }

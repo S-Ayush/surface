@@ -1,0 +1,50 @@
+/* The estimates page (SPEC-010 §3.3). Tokens only. */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-width: var(--content-max-width);
+}
+
+.fieldLabel {
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}
+
+.select {
+  padding: var(--space-4) var(--space-8);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm-size);
+  background: var(--bg-panel);
+  border: var(--border-width) solid var(--border-control);
+  border-radius: var(--radius-sm);
+}
+
+.select:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+}
+
+.toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.formError {
+  margin: 0;
+  color: var(--danger);
+}

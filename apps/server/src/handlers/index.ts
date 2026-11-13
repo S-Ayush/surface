@@ -25,6 +25,8 @@ import teamLeave from './teams/leave.js';
 import teamRemoveMember from './teams/remove-member.js';
 import teamSuggestKey from './teams/suggest-key.js';
 import teamUpdate from './teams/update.js';
+import teamSetDefaultStatus from './teams/set-default-status.js';
+import teamSetEstimates from './teams/set-estimates.js';
 import userCreateResetLink from './account/create-reset-link.js';
 import userGet from './members/get.js';
 import userList from './members/list.js';
@@ -84,4 +86,6 @@ export const HANDLERS: readonly Handler[] = [
   labelUpdate,
   labelMoveToWorkspace,
   labelDelete,
+  teamSetDefaultStatus,
+  teamSetEstimates,
 ];

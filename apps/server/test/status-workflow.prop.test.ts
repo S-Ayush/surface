@@ -1,8 +1,9 @@
 // PLAN-010 S2, SPEC-010 AC-4 (property): for any sequence of status operations, refused ones
 // included, and default changes, the committed workflow satisfies INV-04 and INV-05
 // (`workflowProblems` is empty), a refused operation changes nothing, and every category's keys
-// stay a strict total order in byte order with no duplicates (AC-3). The operations run through
-// the same rules the handlers use, on an in-memory workflow.
+// stay a strict total order in byte order with no duplicates (AC-3). The operations, including
+// `team.setDefaultStatus` (S4), run through the same rules the handlers use, on an in-memory
+// workflow.
 import { randomUUID } from 'node:crypto';
 import { EDITABLE_STATUS_CATEGORIES, workflowProblems, type StatusCategory } from '@surface/domain';
 import fc from 'fast-check';
@@ -12,6 +13,7 @@ import {
   createStatus,
   deleteStatus,
   reorderStatus,
+  setDefaultStatus,
   updateStatus,
 } from '../src/handlers/statuses/core.js';
 import { memoryWorkflow, type MemoryWorkflow } from './support/memory-workflow.js';
@@ -96,15 +98,11 @@ async function run(w: MemoryWorkflow, s: Step): Promise<boolean> {
       case 'delete':
         await deleteStatus(w.access, w.repo, { ...scope, statusId: pick(w, s.target) });
         return true;
-      case 'default': {
-        // `team.setDefaultStatus` is PLAN-010 S4's: here it only moves the pointer, to a status
-        // it would accept, so the property covers deletes of the default (E17, first half).
-        const next = w.rows.get(pick(w, s.target));
-        if (next && (next.category === 'backlog' || next.category === 'unstarted')) {
-          w.team.defaultStatusId = next.id;
-        }
+      case 'default':
+        // The real rule (PLAN-010 S4), refusals included: any status can be the target, and
+        // the property covers deletes of the default (E17).
+        await setDefaultStatus(w.access, w.repo, { ...scope, statusId: pick(w, s.target) });
         return true;
-      }
     }
   } catch (error) {
     if (error instanceof SurfaceError) return false;

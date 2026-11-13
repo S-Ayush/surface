@@ -19,6 +19,8 @@ import {
   teamRemoveMember,
   teamSuggestKey,
   teamUpdate,
+  teamSetDefaultStatus,
+  teamSetEstimates,
 } from './team.js';
 import { userCreateResetLink } from './account.js';
 import { userGet, userList, userSetRole } from './member.js';
@@ -96,6 +98,9 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   labelUpdate,
   labelMoveToWorkspace,
   labelDelete,
+  // Settings of the team the seed's actor belongs to; run after the statuses above (SPEC-010 §6).
+  teamSetDefaultStatus,
+  teamSetEstimates,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

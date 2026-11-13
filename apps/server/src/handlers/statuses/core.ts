@@ -9,6 +9,7 @@
  * changed so a rule breaks, is `CONFLICT`.
  */
 import {
+  DEFAULT_STATUS_CATEGORIES,
   STATUS_CATEGORY_COLORS,
   placeStatus,
   statusDeleteProblem,
@@ -256,4 +257,39 @@ export async function deleteStatus(
   if (problem) throw new SurfaceError('CONFLICT', problem.message);
   await repo.purge('WorkflowStatus', status.id);
   return status;
+}
+
+export interface SetDefaultInput {
+  readonly teamRef: string;
+  readonly team: TeamTarget;
+  readonly statusId: string;
+}
+
+/**
+ * `team.setDefaultStatus` (SPEC-010 §6, INV-05, E17). Team row first, then the status re-read
+ * `FOR KEY SHARE`, so a `status.delete` of it either finished before (`CONFLICT` here) or waits
+ * for this commit and is then refused as the default. `changed` is undefined when the status
+ * already was the default: nothing is written.
+ */
+export async function setDefaultStatus(
+  access: WorkflowAccess,
+  repo: Repo,
+  input: SetDefaultInput,
+): Promise<{ readonly changed?: { team: ModelRow<'Team'>; from: string } }> {
+  const team = await lockedTeam(access, input.team, input.teamRef);
+  const status = await access.shareStatus(input.statusId);
+  if (!status) throw new SurfaceError('CONFLICT', GONE);
+  // The permission check ran against the status's own team; this keeps a status of another team
+  // from ever becoming this team's default, whatever the resolver returned.
+  if (status.teamId !== team.id) throw refNotFound('StatusRef', input.statusId, ['status']);
+  if (!DEFAULT_STATUS_CATEGORIES.includes(status.category)) {
+    throw invalid(
+      'status',
+      `The default status must be in the Backlog or Unstarted category, and "${status.name}" is not. Choose a Backlog or Unstarted status.`,
+    );
+  }
+  if (team.defaultStatusId === status.id) return {};
+  const from = team.defaultStatusId;
+  const updated = await repo.update('Team', team.id, { defaultStatusId: status.id });
+  return { changed: { team: updated, from } };
 }

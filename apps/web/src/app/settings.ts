@@ -43,6 +43,7 @@ export const SETTINGS = {
   teamMembers: { screen: 'settings/teams/members', title: 'Team members', admin: false },
   teamWorkflow: { screen: 'settings/teams/workflow', title: 'Workflow', admin: false },
   teamLabels: { screen: 'settings/teams/labels', title: 'Labels', admin: false },
+  teamEstimates: { screen: 'settings/teams/estimates', title: 'Estimates', admin: false },
   // Every member, so outside the Admin-only Workspace page (SPEC-010 §7.1, D9).
   labels: { screen: 'settings/labels', title: 'Labels', admin: false, nav: '/settings/labels' },
 } as const satisfies Record<string, SettingsSection>;
