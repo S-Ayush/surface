@@ -106,14 +106,9 @@ export type LabelsAccess = {
 export function labelsAccess(actor: Actor | null, scope: LabelsScope): LabelsAccess {
   if (actor === null) return { edit: false, move: false };
   const { p } = bindPredicates(actor);
-  const allows = (permission: (refs: ResolvedRefs) => boolean, refs: ResolvedRefs) => {
-    try {
-      return permission(refs);
-    } catch {
-      // A predicate that needs the input is the server's to decide.
-      return true;
-    }
-  };
+  // No catch: a check that fails must not read as allowed. These predicates need no input.
+  const allows = (permission: (refs: ResolvedRefs) => boolean, refs: ResolvedRefs) =>
+    permission(refs);
   const team = scope.kind === 'team' ? { id: scope.teamId } : undefined;
   const label = { id: 'label', teamId: team?.id ?? null };
   const refs: ResolvedRefs = team === undefined ? { label } : { team, label };

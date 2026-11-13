@@ -95,13 +95,17 @@ export function labelCreateProblem(
   }
   const clash = labelNameClash(labels, scope, input.name, input.group?.id ?? null);
   if (clash !== undefined) return clash;
-  const limit = labelLimitProblem(scope.teamId === null ? 'workspace' : 'team', {
-    inScope: labels.length,
-    ...(input.group === undefined
-      ? {}
-      : { inGroup: labels.filter((l) => l.parentId === input.group?.id).length }),
+  const kind = scope.teamId === null ? 'workspace' : 'team';
+  // The per-scope limit is about the new label, so it is reported on `name`; the per-group one on
+  // `group`.
+  const scopeLimit = labelLimitProblem(kind, { inScope: labels.length });
+  if (scopeLimit !== undefined) return invalid('name', scopeLimit);
+  if (input.group === undefined) return undefined;
+  const groupLimit = labelLimitProblem(kind, {
+    inScope: 0,
+    inGroup: labels.filter((l) => l.parentId === input.group?.id).length,
   });
-  return limit === undefined ? undefined : invalid('group', limit);
+  return groupLimit === undefined ? undefined : invalid('group', groupLimit);
 }
 
 export interface LabelUpdateInput {

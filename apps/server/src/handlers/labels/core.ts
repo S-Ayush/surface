@@ -58,6 +58,8 @@ async function lockScope(
   access: LabelAccess,
   teamId: string | null,
   teamRef: string | undefined,
+  /** What a vanished team means: an unknown team (the default), or a label that is gone. */
+  gone: 'team' | 'label' = 'team',
 ): Promise<LabelTeam | null> {
   if (teamId === null) {
     await access.lockWorkspace();
@@ -66,7 +68,11 @@ async function lockScope(
   const team = await access.lockTeam(teamId);
   // Resolved and visible at step 7; gone only if deleted since. Same words as the resolver's, so
   // a vanished team reads like any unknown one (permissions.md §5).
-  if (!team) throw refNotFound('TeamRef', teamRef ?? teamId, ['team']);
+  if (!team) {
+    // An existing label whose team was deleted meanwhile is a gone label, not a bad team input.
+    if (gone === 'label') throw new SurfaceError('CONFLICT', LABEL_GONE);
+    throw refNotFound('TeamRef', teamRef ?? teamId, ['team']);
+  }
   return team;
 }
 
@@ -80,10 +86,32 @@ async function lockedLabel(
   return row;
 }
 
-async function sharedGroup(access: LabelAccess, groupId: string): Promise<LabelRow> {
+/**
+ * Re-reads a group `FOR KEY SHARE`. Gone, or moved to another scope than the one the executor
+ * resolved it in (`teamId`, when known), is `CONFLICT`: a concurrent change, not bad input
+ * (SPEC-010 §4.4).
+ */
+async function sharedGroup(
+  access: LabelAccess,
+  groupId: string,
+  teamId?: string | null,
+): Promise<LabelRow> {
   const row = await access.shareLabel(groupId);
-  if (!row) throw new SurfaceError('CONFLICT', GROUP_GONE);
+  if (!row || (teamId !== undefined && row.teamId !== teamId)) {
+    throw new SurfaceError('CONFLICT', GROUP_GONE);
+  }
   return row;
+}
+
+/** A team label of another team than the one named is refused, as `label.moveToWorkspace` does. */
+function requireLabelTeam(
+  label: { readonly teamId: string | null },
+  team: { readonly id: string } | undefined,
+  name: string,
+): void {
+  if (team === undefined || label.teamId === null || label.teamId === team.id) return;
+  const message = `${name} is not a label of the team you named. Use the team the label belongs to.`;
+  throw new SurfaceError('INVALID_INPUT', message, { issues: [{ path: ['label'], message }] });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -98,6 +126,8 @@ export interface CreateInput {
   readonly isGroup?: boolean | undefined;
   readonly exclusive?: boolean | undefined;
   readonly groupId?: string | undefined;
+  /** The scope the executor resolved the group in; a different one now is a concurrent move. */
+  readonly groupTeamId?: string | null | undefined;
 }
 
 /** AC-9, AC-13, E14, E18, E19. */
@@ -108,7 +138,10 @@ export async function createLabel(
 ): Promise<LabelRow> {
   const teamId = input.team?.id ?? null;
   const team = await lockScope(access, teamId, input.teamRef);
-  const group = input.groupId === undefined ? undefined : await sharedGroup(access, input.groupId);
+  const group =
+    input.groupId === undefined
+      ? undefined
+      : await sharedGroup(access, input.groupId, input.groupTeamId);
   const isGroup = input.isGroup ?? false;
   const problem = labelCreateProblem(
     await access.scopeLabels(teamId),
@@ -130,14 +163,17 @@ export async function createLabel(
 
 export interface UpdateInput {
   readonly teamRef?: string | undefined;
+  /** The team named in the input, resolved; a team label of another team is refused. */
+  readonly team?: { readonly id: string } | undefined;
   /** The label the executor resolved: its id and the scope it was resolved in. */
-  readonly label: { readonly id: string; readonly teamId: string | null };
+  readonly label: { readonly id: string; readonly teamId: string | null; readonly name?: string };
   readonly name?: string | undefined;
   readonly color?: ColorHue | undefined;
   readonly description?: string | undefined;
   readonly exclusive?: boolean | undefined;
   /** `undefined` leaves the group alone, `null` takes the label out of it. */
   readonly groupId?: string | null | undefined;
+  readonly groupTeamId?: string | null | undefined;
 }
 
 /** AC-9, AC-10 (no issue is read), E14, E18, E19. Writes only the fields that differ. */
@@ -146,12 +182,13 @@ export async function updateLabel(
   repo: Repo,
   input: UpdateInput,
 ): Promise<LabelRow> {
-  const team = await lockScope(access, input.label.teamId, input.teamRef);
+  requireLabelTeam(input.label, input.team, input.label.name ?? 'That label');
+  const team = await lockScope(access, input.label.teamId, input.teamRef, 'label');
   const label = await lockedLabel(access, input.label.id, input.label.teamId);
   const group =
     input.groupId === undefined || input.groupId === null
       ? input.groupId
-      : await sharedGroup(access, input.groupId);
+      : await sharedGroup(access, input.groupId, input.groupTeamId);
   const problem = labelUpdateProblem(
     await access.scopeLabels(label.teamId),
     { teamId: label.teamId, teamKey: team?.key ?? null },
@@ -187,7 +224,8 @@ export async function updateLabel(
 
 export interface DeleteInput {
   readonly teamRef?: string | undefined;
-  readonly label: { readonly id: string; readonly teamId: string | null };
+  readonly team?: { readonly id: string } | undefined;
+  readonly label: { readonly id: string; readonly teamId: string | null; readonly name?: string };
 }
 
 /**
@@ -199,7 +237,8 @@ export async function deleteLabel(
   repo: Repo,
   input: DeleteInput,
 ): Promise<{ label: LabelRow; removedFromIssues: number }> {
-  await lockScope(access, input.label.teamId, input.teamRef);
+  requireLabelTeam(input.label, input.team, input.label.name ?? 'That label');
+  await lockScope(access, input.label.teamId, input.teamRef, 'label');
   const label = await lockedLabel(access, input.label.id, input.label.teamId);
   const problem = labelDeleteProblem(await access.scopeLabels(label.teamId), label);
   if (problem) throw refuse(problem);
@@ -226,29 +265,38 @@ export async function moveLabelToWorkspace(
   // The workspace row, then the team row (SPEC-011 §4.8's order).
   await access.lockWorkspace();
   await lockScope(access, input.team.id, input.teamRef);
-  const label = await lockedLabel(access, input.label.id, input.label.teamId);
-  if (label.teamId !== input.team.id) {
+  if (input.label.teamId !== input.team.id) {
+    // Names the label for the message; a plain read, as the row is not being changed.
+    const named = (await access.scopeLabels(input.label.teamId)).find(
+      (l) => l.id === input.label.id,
+    );
+    const name = named?.name ?? 'That label';
     const message =
-      label.teamId === null
-        ? `${label.name} is already a workspace label.`
-        : `${label.name} is not a label of ${input.team.key}. Use the team the label belongs to.`;
+      input.label.teamId === null
+        ? `${name} is already a workspace label.`
+        : `${name} is not a label of ${input.team.key}. Use the team the label belongs to.`;
     throw new SurfaceError('INVALID_INPUT', message, { issues: [{ path: ['label'], message }] });
   }
-  const plan = labelMovePlan(
-    await access.scopeLabels(input.team.id),
-    await access.scopeLabels(null),
-    label,
-  );
+  const teamLabels = await access.scopeLabels(input.team.id);
+  const label = teamLabels.find((l) => l.id === input.label.id);
+  if (!label) throw new SurfaceError('CONFLICT', LABEL_GONE);
+  const plan = labelMovePlan(teamLabels, await access.scopeLabels(null), label);
   if (!plan.ok) throw refuse(plan.problem);
 
-  // Rows in ascending id, like every multi-row lock (SPEC-011 §4.8).
+  // Every row that moves, the named one included, in ascending id (SPEC-011 §4.8). The named row
+  // is checked again once locked: it may have changed since the plan read it.
   const ids = plan.moving.map((l) => l.id).sort();
-  let moved = label;
   for (const id of ids) {
-    if (id !== label.id && !(await access.lockLabel(id))) {
+    const locked = await access.lockLabel(id);
+    if (!locked || locked.teamId !== input.team.id) throw new SurfaceError('CONFLICT', LABEL_GONE);
+    if (
+      id === label.id &&
+      (locked.parentId !== label.parentId || locked.isGroup !== label.isGroup)
+    ) {
       throw new SurfaceError('CONFLICT', LABEL_GONE);
     }
   }
+  let moved: LabelRow = label;
   for (const id of ids) {
     const row = await repo.update('Label', id, { teamId: null });
     if (id === label.id) moved = row;

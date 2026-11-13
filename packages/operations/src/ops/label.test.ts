@@ -367,6 +367,42 @@ describe('label operation permissions (AC-14, E15)', () => {
     });
   });
 
+  // SPEC-010 §5: a label id resolves to any visible label whatever `team` says, so the check is
+  // on the label's own team. Ana is in ENG only and names ENG for a public DES label.
+  it('checks the label’s own team, not the team named in the input (FORBIDDEN)', () => {
+    const desLabel = { label: { id: ENG_BUG, teamId: DES, name: 'Defect' } };
+    const namesEng = { ...desLabel, ...engRef };
+    const ana = actor('member', true);
+    for (const [op, input] of [
+      [labelUpdate, { team: 'ENG', label: ENG_BUG, name: 'X' }],
+      [labelDelete, { team: 'ENG', label: ENG_BUG }],
+    ] as const) {
+      const result = evaluatePermission(op, ana, namesEng, input);
+      expect(result.allowed, op.name).toBe(false);
+    }
+    expect(evaluatePermission(labelUpdate, ana, namesEng, { label: ENG_BUG }).allowed).toBe(false);
+    // The same call with the label in the named team passes, and an Admin passes either way.
+    expect(
+      evaluatePermission(labelUpdate, ana, { ...teamLabel, ...engRef }, { label: 'x' }),
+    ).toEqual({ allowed: true });
+    expect(
+      evaluatePermission(labelUpdate, actor('admin', false), namesEng, { label: 'x' }).allowed,
+    ).toBe(true);
+  });
+
+  it('names the label’s team in the reason when the input names it', () => {
+    const result = evaluatePermission(
+      labelUpdate,
+      actor('member', false),
+      { ...teamLabel, ...engRef },
+      { label: 'x' },
+    );
+    expect(result).toEqual({
+      allowed: false,
+      reason: 'Only Admins or members of Engineering can edit a label or label group.',
+    });
+  });
+
   it('lets any member create, edit and delete workspace labels (D9)', () => {
     const outsider = actor('member', false);
     expect(evaluatePermission(labelCreate, outsider, {}, { name: 'Chore' }).allowed).toBe(true);
@@ -404,12 +440,91 @@ describe('label operation permissions (AC-14, E15)', () => {
       { ...teamLabel, ...engRef },
       { label: 'Defect', team: 'ENG' },
     );
-    expect(result).toMatchObject({ allowed: false });
+    expect(result).toEqual({
+      allowed: false,
+      reason:
+        'This API key is limited to some teams. Changing workspace labels needs a key for all teams.',
+    });
     // It can still change its own team's labels.
     expect(evaluatePermission(labelUpdate, key, teamLabel, { label: 'Defect' }).allowed).toBe(true);
   });
 
   it('lets anyone read labels (label.list is p.any())', () => {
     expect(evaluatePermission(labelList, actor('member', false), {}, {}).allowed).toBe(true);
+  });
+});
+
+describe('label optimistic name lookup mirrors the server (pickByName)', () => {
+  const AMBIGUOUS = '0192f0c1-7e5a-7b3c-9d4e-0000000000b1';
+  function withTwoSmalls(): Store {
+    const store = seeded();
+    store.insert('Label', {
+      id: AMBIGUOUS,
+      teamId: ENG,
+      name: 'small',
+      color: 'gray',
+      description: null,
+      parentId: SCOPE,
+      isGroup: false,
+      exclusive: true,
+      groups: ['workspace'],
+      archivedAt: null,
+      createdAt: EARLIER,
+      updatedAt: EARLIER,
+    });
+    return store;
+  }
+
+  it('applies nothing when several labels match and none is the one exact-case match', () => {
+    const store = withTwoSmalls();
+    labelUpdate.optimistic?.(store, { label: 'SMALL', team: 'ENG', color: 'red' });
+    expect(row(store, SMALL)?.['color']).toBe('gray');
+    expect(row(store, AMBIGUOUS)?.['color']).toBe('gray');
+  });
+
+  it('resolves the single exact-case match among several', () => {
+    const store = withTwoSmalls();
+    labelUpdate.optimistic?.(store, { label: 'Small', team: 'ENG', color: 'red' });
+    expect(row(store, SMALL)?.['color']).toBe('red');
+    expect(row(store, AMBIGUOUS)?.['color']).toBe('gray');
+  });
+
+  it('does not fall through to a workspace label when the team has several matches', () => {
+    const store = withTwoSmalls();
+    store.insert('Label', {
+      id: '0192f0c1-7e5a-7b3c-9d4e-0000000000b2',
+      teamId: null,
+      name: 'SMALL',
+      color: 'gray',
+      description: null,
+      parentId: null,
+      isGroup: false,
+      exclusive: true,
+      groups: ['workspace'],
+      archivedAt: null,
+      createdAt: EARLIER,
+      updatedAt: EARLIER,
+    });
+    labelUpdate.optimistic?.(store, { label: 'SMALL', team: 'ENG', color: 'red' });
+    expect(row(store, '0192f0c1-7e5a-7b3c-9d4e-0000000000b2')?.['color']).toBe('gray');
+  });
+});
+
+describe('label.update optimistic group scope', () => {
+  it('looks the group up in the team the input names, like the server', () => {
+    const store = seeded();
+    // A workspace label moved into "Size" (an ENG group): without team the group is not in scope,
+    // with team ENG it is found but a workspace label cannot join a team group, so nothing moves.
+    labelUpdate.optimistic?.(store, { label: WS_BUG, group: 'Size' });
+    expect(row(store, WS_BUG)?.['parentId']).toBeNull();
+    // A team label with the team named finds the group by name.
+    labelUpdate.optimistic?.(store, { label: ENG_BUG, team: 'ENG', group: 'Size' });
+    expect(row(store, ENG_BUG)?.['parentId']).toBe(SIZE);
+  });
+
+  it('does not find a team group by name when no team is named', () => {
+    const store = seeded();
+    labelUpdate.optimistic?.(store, { label: ENG_BUG, group: 'Size' });
+    expect(row(store, ENG_BUG)?.['parentId']).toBeNull();
   });
 });

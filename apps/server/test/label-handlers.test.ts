@@ -158,6 +158,8 @@ describe('label.create (AC-9)', () => {
     const error = await failure(create(m, 'One more'));
     expect(error).toMatchObject({ code: 'INVALID_INPUT' });
     expect(error.message).toBe('A team can have at most 500 labels. Delete one first.');
+    // The scope limit is about the new label's name, not its group.
+    expect(error.details.issues?.[0]?.path).toEqual(['name']);
     // Another team's scope is separate.
     await create(m, 'One more', { team: 'des' });
   });
@@ -349,7 +351,11 @@ describe('label.moveToWorkspace (AC-24)', () => {
     const m = memoryLabels();
     const row = m.add({ name: 'Needs design' });
     await move(m, row);
-    expect(m.calls.slice(0, 3)).toEqual(['lockWorkspace', 'lockTeam', 'lockLabel:Needs design']);
+    expect(m.calls.filter((c) => c !== 'scopeLabels')).toEqual([
+      'lockWorkspace',
+      'lockTeam',
+      'lockLabel:Needs design',
+    ]);
   });
 
   it('refuses a label inside a group (E21), writing nothing', async () => {

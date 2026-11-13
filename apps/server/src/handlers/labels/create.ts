@@ -1,9 +1,10 @@
 import { labelCreate } from '@surface/operations';
 import { uuidv7 } from '../../db/uuidv7.js';
 import { handler } from '../../executor/context.js';
-import { resolved, teamRef } from '../teams/shared.js';
+import { teamRef } from '../teams/shared.js';
 import { labelAccess, labelOutput } from './access.js';
 import { createLabel } from './core.js';
+import { resolvedGroup } from './resolved-label.js';
 
 export default handler(labelCreate, async (ctx, input) => {
   const row = await createLabel(labelAccess(ctx), ctx.repo, {
@@ -15,7 +16,8 @@ export default handler(labelCreate, async (ctx, input) => {
     description: input.description,
     isGroup: input.isGroup,
     exclusive: input.exclusive,
-    groupId: input.group === undefined ? undefined : resolved(ctx.refs['group'], 'group').id,
+    groupId: input.group === undefined ? undefined : resolvedGroup(ctx).id,
+    groupTeamId: input.group === undefined ? undefined : resolvedGroup(ctx).teamId,
   });
   return labelOutput(row);
 });

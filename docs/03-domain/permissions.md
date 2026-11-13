@@ -75,7 +75,7 @@ A user can never act on something they cannot see.
 
 *Private teams: non-members can do nothing (they cannot see the team at all).*
 
-**Workspace labels** (SPEC-010 D9): every team uses them, so team membership doesn't apply. Every Member and Admin can read, create, edit, move between groups, archive, unarchive and delete them. A team label can move to the workspace; a workspace label never moves to a team (SPEC-010 D11).
+**Workspace labels** (SPEC-010 D9): every team uses them, so team membership doesn't apply. Every Member and Admin can read, create, edit, move between groups, archive, unarchive and delete them. A team label can move to the workspace; a workspace label never moves to a team (SPEC-010 D11). A label named by uuid is checked against **its own team**, whatever `team` the call names: a member of ENG who names ENG for a DES label gets `FORBIDDEN` (SPEC-010 D28).
 
 ### 3.3 Issues & children (on teams the user can see)
 | Operation | Member | Admin |

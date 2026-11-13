@@ -1,8 +1,8 @@
 // PLAN-010 S3 leak test (SPEC-010 AC-15, AC-24, permissions.md §5, CLAUDE.md rule 4; not held,
 // plans README §6): every label operation naming private team SEC, from a non-member Member or
 // Admin, answers exactly like a team that doesn't exist, by key and by id, and writes nothing; a
-// SEC label named by id, name or Group/Label through ENG or without a team is as unknown as a
-// label that never existed; `label.list` never returns SEC's labels, even when a filter asks for
+// SEC label named by id, name or Group/Label through ENG or without a team (update, delete and
+// moveToWorkspace) is as unknown as a label that never existed; `label.list` never returns SEC's labels, even when a filter asks for
 // them; SEC's label rows are logged to the private group only; and moving a SEC label to the
 // workspace logs a `D` for the private group then a `U` for the workspace, so a non-member
 // receives only the `U` (a row they never had) and a SEC member sees the row stay.
@@ -144,9 +144,15 @@ describe('a non-member naming private team SEC', () => {
         ['Critical', 'Missing'],
       ] as const;
       for (const [secSpelling, unknown] of spellings) {
-        for (const operation of ['label.update', 'label.delete'] as const) {
-          // Through ENG (a public team) and with no team at all (workspace labels only).
-          for (const team of ['ENG', undefined]) {
+        for (const operation of [
+          'label.update',
+          'label.delete',
+          'label.moveToWorkspace',
+        ] as const) {
+          // Through ENG (a public team) and with no team at all (workspace labels only); a move
+          // always names its team.
+          const teams = operation === 'label.moveToWorkspace' ? ['ENG'] : ['ENG', undefined];
+          for (const team of teams) {
             const input = (label: string) => ({
               label,
               ...(team === undefined ? {} : { team }),
@@ -190,6 +196,17 @@ describe('a non-member naming private team SEC', () => {
         actor(),
       );
       expect(byGroup).toMatchObject({ ok: false, error: { code: 'NOT_FOUND' } });
+      // By name, as unknown as a group that never existed (with and without a team).
+      for (const team of [{ team: 'ENG' }, {}]) {
+        const real = await failure('label.list', { ...team, group: 'Severity' }, actor(), [
+          'Severity',
+        ]);
+        const none = await failure('label.list', { ...team, group: 'Missing' }, actor(), [
+          'Missing',
+        ]);
+        expect(real).toMatchObject({ code: 'NOT_FOUND' });
+        expect(real).toEqual(none);
+      }
       for (const input of [{ limit: 100 }, { scope: 'team', limit: 100 }, { team: 'ENG' }]) {
         const all = await executor.execute('label.list', input, actor());
         expect(all).toMatchObject({ ok: true });
@@ -273,6 +290,32 @@ describe('a member of private team SEC', () => {
       );
       expect(ref).toMatchObject({ ok: true });
     }
+  });
+});
+
+// SPEC-010 §5: a label id resolves to any visible label whatever `team` says, so permission is
+// checked on the label's own team. Sam belongs to SEC only; ENG is a public team he can read.
+describe('naming a team the actor belongs to for another team’s label by id', () => {
+  it('is FORBIDDEN for update and delete, and changes nothing', async () => {
+    const id = uuidv7();
+    const made = await executor.execute(
+      'label.create',
+      { id, team: 'ENG', name: 'Public ENG' },
+      anaActor,
+    );
+    expect(made).toMatchObject({ ok: true });
+    const before = await logLength();
+    for (const [operation, input] of [
+      ['label.update', { team: 'SEC', label: id, name: 'Hijacked' }],
+      ['label.delete', { team: 'SEC', label: id }],
+      ['label.moveToWorkspace', { team: 'SEC', label: id }],
+    ] as const) {
+      const result = await executor.execute(operation, input, samActor);
+      expect(result, operation).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } });
+    }
+    expect(await logLength()).toBe(before);
+    const row = await h.pool.query<{ name: string }>('SELECT name FROM labels WHERE id = $1', [id]);
+    expect(row.rows[0]?.name).toBe('Public ENG');
   });
 });
 

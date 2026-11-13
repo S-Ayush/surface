@@ -81,7 +81,12 @@ function mayChange(p: PermissionPredicates, refs: ResolvedRefs): boolean {
   if (label === undefined || !('id' in label)) return false;
   const teamId = label['teamId'];
   if (typeof teamId !== 'string') return p.any() && p.allTeamsKey();
-  return p.admin() || p.teamMember(refs['team'] ?? { id: teamId });
+  // The label's own team, never the team named in the input: a label id resolves to any visible
+  // label whatever `team` says, so naming ENG must not unlock a DES label (SPEC-010 §5). The
+  // named team's row is used only when it is that team, for the reason's team name.
+  const named = refs['team'];
+  const own = named !== undefined && 'id' in named && named.id === teamId ? named : { id: teamId };
+  return p.admin() || p.teamMember(own);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -169,13 +174,17 @@ function findLabel(
     const parent = all.find((p) => p.id === l.parentId);
     return parent?.name.toLowerCase() === parsed.group.toLowerCase();
   };
-  const pick = (all: LabelFacts[]): LabelFacts | undefined => {
-    const matches = all.filter((l) => l.name.toLowerCase() === wanted && inGroup(l, all));
-    if (matches.length === 1) return matches[0];
-    return matches.length > 1 ? matches.find((l) => l.name === parsed.name) : undefined;
+  const matching = (all: LabelFacts[]) =>
+    all.filter((l) => l.name.toLowerCase() === wanted && inGroup(l, all));
+  // Like the server's `pickByName`: only a single exact-case match settles several, and a name
+  // that matches in the team never falls through to the workspace.
+  const settle = (matches: LabelFacts[]): LabelFacts | undefined => {
+    if (matches.length <= 1) return matches[0];
+    const exact = matches.filter((l) => l.name === parsed.name);
+    return exact.length === 1 ? exact[0] : undefined;
   };
-  const inTeam = teamId === null ? undefined : pick(labelsOf(store, teamId));
-  return inTeam ?? pick(labelsOf(store, null));
+  const inTeam = teamId === null ? [] : matching(labelsOf(store, teamId));
+  return settle(inTeam.length > 0 ? inTeam : matching(labelsOf(store, null)));
 }
 
 /** The team a label operation names, as the scope of its `label` ref. */
@@ -304,7 +313,7 @@ export const labelUpdate = defineOperation({
     const group =
       input.group === undefined || input.group === null
         ? input.group
-        : findLabel(store, input.group, scope.info.teamId);
+        : findLabel(store, input.group, teamId);
     if (input.group != null && group === undefined) return;
     const problem = labelUpdateProblem(scope.labels, scope.info, label, {
       name: input.name,

@@ -42,7 +42,7 @@ Search sources and recent items in the command menu (M2) · Peek panel (M2) · l
 | `/team/:key/active`, `/team/:key/backlog` | Reserved for M2 |
 | `/team/:key/archive`, `/team/:key/archive/recently-deleted` | Team archive and Recently deleted (live in M1, SPEC-015) |
 | `/issue/:identifier/:slug?` | The issue page (live in M1, SPEC-011, SPEC-012). The slug is optional and cosmetic: the app replaces it with the current one (SPEC-011 §4.1, D6). Old identifiers redirect. |
-| `/settings/...` | Settings (account, members, workspace, teams), with the sub-routes of SPEC-001 §7. `/settings` and `/settings/account` open `/settings/account/profile`. M1 adds `/settings/teams/:key/workflow`, `/settings/teams/:key/labels`, `/settings/teams/:key/estimates` and `/settings/labels` (SPEC-010), and `/settings/teams/:key/automations` (SPEC-015). |
+| `/settings/...` | Settings (account, members, workspace, teams), with the sub-routes of SPEC-001 §7. `/settings` and `/settings/account` open `/settings/account/profile`. M1 adds `/settings/teams/:key/workflow`, `/settings/teams/:key/labels`, `/settings/teams/:key/estimates` and `/settings/labels` (SPEC-010), and `/settings/teams/:key/automations` (SPEC-015). `/settings/labels` is a **Labels** entry in the settings nav for every member, before Teams (it is not admin-only); the team pages are reached from the team's settings tabs, not the nav. |
 | `*` | Not found page with a "Go home" action |
 
 **Guards:** setup incomplete → `/setup`. Unauthenticated → `/login?next=…`. Store not ready → shell with a bootstrap progress bar (SPEC-002 §7). Admin-only routes for Members → not-found (don't reveal they exist).

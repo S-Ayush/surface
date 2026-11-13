@@ -5,8 +5,9 @@
 // status…": an operation command is exactly one of `run`, `page` or `opens` (SPEC-010 D27), and
 // the page's choice is what the labels page needs (`add-intent.ts`).
 import { Team } from '@surface/domain/model';
+import { labelCreate } from '@surface/operations';
 import type { CommandContext, CommandPage } from '../../command-menu/model.js';
-import type { OperationCommand } from '../../command-menu/sources/operations.js';
+import { permits, type OperationCommand } from '../../command-menu/sources/operations.js';
 import { WORKSPACE_SCOPE, requestCreateLabel } from './add-intent.js';
 
 /** The team a command acts on: the focused team (a team page's context chip). */
@@ -14,13 +15,11 @@ const targetTeamId = ({ target }: CommandContext): string | undefined =>
   target.kind === 'team' ? target.ids[0] : undefined;
 
 /**
- * The focused team as the permission pre-check needs it. Without a team (the global context) the
- * label is a workspace label, which any member may create.
+ * The pre-check runs without a team: the entry is for creating a workspace label at least, which
+ * any member may do (D9), so a non-member of the focused team still sees it. The page then offers
+ * the team only to someone who may create labels there.
  */
-function targetTeamRefs(ctx: CommandContext) {
-  const id = targetTeamId(ctx);
-  return id === undefined ? {} : { team: { id } };
-}
+const workspaceRefs = (): Record<string, never> => ({});
 
 /** Where a team's label settings, or the workspace's, are. */
 export function labelsPath(teamKey?: string): string {
@@ -31,7 +30,11 @@ export function labelsPath(teamKey?: string): string {
 
 function scopePage(ctx: CommandContext): CommandPage {
   const id = targetTeamId(ctx);
-  const team = id === undefined ? undefined : ctx.store?.pool.get(Team, id);
+  const found = id === undefined ? undefined : ctx.store?.pool.get(Team, id);
+  const team =
+    found !== undefined && permits(labelCreate, ctx, { team: { id: found.id } })
+      ? found
+      : undefined;
   const choose = (scope: string, path: string) => () => {
     requestCreateLabel({ scope });
     ctx.navigate?.(path);
@@ -61,5 +64,5 @@ function scopePage(ctx: CommandContext): CommandPage {
 }
 
 export const LABEL_COMMANDS: Readonly<Record<string, OperationCommand>> = {
-  'label.create': { refs: targetTeamRefs, page: (ctx) => scopePage(ctx) },
+  'label.create': { refs: workspaceRefs, page: (ctx) => scopePage(ctx) },
 };
