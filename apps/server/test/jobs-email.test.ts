@@ -75,13 +75,19 @@ describe('registerJobs', () => {
     const r = recordingQueue();
     await registerJobs(r.queue, base);
     for (const queue of [QUEUES.filesCleanup, QUEUES.filesSweep]) {
-      expect(r.queue.createQueue).toHaveBeenCalledWith(queue.name, { policy: 'exclusive' });
+      expect(r.queue.createQueue).toHaveBeenCalledWith(queue.name, {
+        policy: 'exclusive',
+        expireInSeconds: queue.expireInSeconds,
+      });
       expect(r.queue.schedule).toHaveBeenCalledWith(queue.name, queue.cron, null, {
         singletonKey: queue.name,
       });
     }
     expect(QUEUES.filesCleanup.cron).toBe('23 * * * *'); // hourly
     expect(QUEUES.filesSweep.cron).toBe('53 4 * * *'); // daily
+    // A stuck run expires, so the exclusive queue takes the next one.
+    expect(QUEUES.filesCleanup.expireInSeconds).toBe(30 * 60);
+    expect(QUEUES.filesSweep.expireInSeconds).toBe(2 * 60 * 60);
   });
 
   it('has no email queue or worker without SMTP', async () => {

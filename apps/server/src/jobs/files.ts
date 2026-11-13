@@ -15,9 +15,11 @@ import {
   deleteLocked,
   drainBlobRelease,
   lockForDelete,
+  loggableFileError,
   sweep,
   type CleanupReason,
   type FileDb,
+  type FileLog,
   type Swept,
 } from '../files/bytes.js';
 import { FILE_CLEANUP_AFTER_MS } from '../files/limits.js';
@@ -39,11 +41,14 @@ export interface CleanupCounts {
   /** `blob_release` keys whose bytes were unlinked, and those a row still names. */
   readonly unlinked: number;
   readonly kept: number;
+  /** `blob_release` keys whose bytes couldn't be removed: tried again next run. */
+  readonly failed: number;
 }
 
 export interface FileJobDeps {
   readonly db: FileDb;
   readonly blobs: BlobStore;
+  readonly log: FileLog & { info(object: object, message: string): void };
   readonly now?: () => Date;
   /** Rows per transaction. */
   readonly batch?: number;
@@ -57,6 +62,7 @@ export interface FileJobDeps {
 export async function cleanupFiles({
   db,
   blobs,
+  log,
   now = () => new Date(),
   batch = 100,
 }: FileJobDeps): Promise<CleanupCounts> {
@@ -97,26 +103,40 @@ export async function cleanupFiles({
     if (round.size < batch || round.last === undefined) break;
     after = round.last;
   }
-  const drained = await drainBlobRelease(db, blobs);
+  const drained = await drainBlobRelease(db, blobs, log);
   return { ...deleted, previews, skipped, ...drained };
 }
 
 /** SPEC-014 §4.5 step 5. */
-export function sweepFiles({ db, blobs, now = () => new Date() }: FileJobDeps): Promise<Swept> {
-  return sweep(db, blobs, now());
+export function sweepFiles({
+  db,
+  blobs,
+  log,
+  now = () => new Date(),
+}: FileJobDeps): Promise<Swept> {
+  return sweep(db, blobs, now(), log);
 }
 
-/** The two jobs' handlers, logging their counts (SPEC-014 §10: `files cleanup`). */
-export function fileJobs(deps: FileJobDeps, log: { info(object: object, message: string): void }) {
+/**
+ * The two jobs' handlers, logging their counts (SPEC-014 §10: `files cleanup`, `files sweep`).
+ * A run that throws is logged here (a file system error by its code only: its message holds a
+ * path) and rethrown, so pg-boss records the job as failed and runs it again on schedule.
+ */
+export function fileJobs(deps: FileJobDeps) {
+  const { log } = deps;
+  const logged =
+    <T extends object>(message: string, run: () => Promise<T>) =>
+    async (queue: string) => {
+      try {
+        log.info({ queue, ...(await run()) }, message);
+      } catch (error) {
+        log.error({ queue, err: loggableFileError(error) }, `${message} failed`);
+        throw error;
+      }
+    };
   // Properties, not methods: `registerJobs` hands them to pg-boss on their own.
   return {
-    cleanup: async (queue: string) => {
-      const counts = await cleanupFiles(deps);
-      log.info({ queue, ...counts }, 'files cleanup');
-    },
-    sweep: async (queue: string) => {
-      const counts = await sweepFiles(deps);
-      log.info({ queue, ...counts }, 'files sweep');
-    },
+    cleanup: logged('files cleanup', () => cleanupFiles(deps)),
+    sweep: logged('files sweep', () => sweepFiles(deps)),
   };
 }

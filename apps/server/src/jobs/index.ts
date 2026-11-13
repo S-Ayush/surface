@@ -26,9 +26,11 @@ export const QUEUES = {
   /** Deletes `sync_log` rows past retention (30 days); later clients resync (SPEC-002 §4.3). */
   syncLogPrune: { name: 'synclog-prune', cron: '41 3 * * *' },
   /** Deletes unneeded files and drains `blob_release` (SPEC-014 §4.6). */
-  filesCleanup: { name: 'files-cleanup', cron: '23 * * * *' },
+  filesCleanup: { name: 'files-cleanup', cron: '23 * * * *', expireInSeconds: 30 * 60 },
   /** Removes bytes with no `files` row and stale temporary files (SPEC-014 §4.5 step 5). */
-  filesSweep: { name: 'files-sweep', cron: '53 4 * * *' },
+  // It reads every key on the volume: on a large one that takes a while. A run still going after
+  // two hours is stuck; pg-boss expires it so the exclusive queue takes the next one.
+  filesSweep: { name: 'files-sweep', cron: '53 4 * * *', expireInSeconds: 2 * 60 * 60 },
 } as const;
 
 export interface Jobs {
@@ -146,12 +148,15 @@ export async function registerJobs(
 
   // One run at a time across replicas (ADR-0024): an `exclusive` queue holds one job queued or
   // active, and the schedule's `singletonKey` names it. Two runs at once would still be safe.
-  const files = fileJobs({ db: pgFileDb(pool), blobs }, jobLog);
+  const files = fileJobs({ db: pgFileDb(pool), blobs, log: jobLog });
   for (const [queue, run] of [
     [QUEUES.filesCleanup, files.cleanup],
     [QUEUES.filesSweep, files.sweep],
   ] as const) {
-    await boss.createQueue(queue.name, { policy: 'exclusive' });
+    await boss.createQueue(queue.name, {
+      policy: 'exclusive',
+      expireInSeconds: queue.expireInSeconds,
+    });
     await boss.schedule(queue.name, queue.cron, null, { singletonKey: queue.name });
     await boss.work(queue.name, { pollingIntervalSeconds }, () => run(queue.name));
   }

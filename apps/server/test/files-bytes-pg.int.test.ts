@@ -16,7 +16,7 @@ import { localBlobStore, type BlobStore } from '../src/files/blob-store.js';
 import {
   deleteFiles,
   drainBlobRelease,
-  insertCopy,
+  insertCopies,
   insertPreview,
   insertUpload,
   pgFileDb,
@@ -35,7 +35,7 @@ let root: string;
 let blobs: BlobStore;
 let files: FileDb;
 const ada = randomUUID();
-const silent = { error: () => undefined };
+const silent = { info: () => undefined, warn: () => undefined, error: () => undefined };
 
 beforeAll(async () => {
   db = await createTestDatabase();
@@ -151,27 +151,71 @@ const released = async (key: string) =>
 const stored = async (key: string) => (await blobs.stat(key)) !== undefined;
 
 describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
-  it('makes a copy wait for the key lock of a delete of the key’s last row, then find the bytes (E18)', async () => {
+  it('makes a copy wait for the key lock of a delete of another row on its key, then find the bytes (E18)', async () => {
+    // Two rows on one key: the deleter deletes the first; the copy's source is the second, which
+    // the deleter never locks. Only the key lock orders them.
+    const deleted = await upload('e18');
     const source = await upload('e18');
+    expect(source.key).toBe(deleted.key);
     const deleter = await openTx();
-    await deleteFiles(deleter.tx, [source.id]);
+    await deleteFiles(deleter.tx, [deleted.id]);
+    const file = fileOf({ key: source.key, size: 3 }, 'inline', { issueId: randomUUID() });
     const copy = files.transaction((tx) =>
-      insertCopy(
-        tx,
-        blobs,
-        { ...fileOf({ key: source.key, size: 3 }, 'inline'), storageKey: source.key },
-        silent,
-      ),
+      insertCopies(tx, blobs, { claims: [], copies: [{ sourceId: source.id, file }] }, silent),
     );
     await untilWaiting('advisory');
     await deleter.commit();
-    await copy;
-    // The deleted row's key reached blob_release; the drain keeps the bytes for the copy.
+    expect(await copy).toEqual({ unusable: [] });
+    // The deleted row's key reached blob_release; the drain keeps the bytes for the two rows.
     expect(await released(source.key)).toBe(true);
-    await drainBlobRelease(files, blobs);
+    await drainBlobRelease(files, blobs, silent);
     expect(await stored(source.key)).toBe(true);
-    expect(await rowsOn(source.key)).toBe(1);
+    expect(await rowsOn(source.key)).toBe(2);
     expect(await released(source.key)).toBe(false);
+  });
+
+  it('saves a document’s claim and copies in one transaction, and refuses one naming a file it can’t use (§4.3, E24)', async () => {
+    const issueId = randomUUID();
+    const pasted = await upload('save pasted', 'inline');
+    const first = await upload('save first', 'attachment', { issueId: randomUUID() });
+    const second = await upload('save second', 'inline', { issueId: randomUUID() });
+    const copies = [first, second].map((source) => ({
+      sourceId: source.id,
+      file: fileOf({ key: source.key, size: 3 }, 'inline', { issueId }),
+    }));
+    // Someone else's upload can't be claimed: nothing is written.
+    const refused = await files.transaction((tx) =>
+      insertCopies(
+        tx,
+        blobs,
+        { claims: [{ id: pasted.id, issueId, uploaderId: randomUUID() }], copies },
+        silent,
+      ),
+    );
+    expect(refused).toEqual({ unusable: [pasted.id] });
+    const issueRows = () =>
+      db.pool.query<{ id: string; storage_key: string }>(
+        'SELECT id, storage_key FROM files WHERE issue_id = $1 ORDER BY storage_key',
+        [issueId],
+      );
+    expect((await issueRows()).rows).toEqual([]);
+
+    const saved = await files.transaction((tx) =>
+      insertCopies(
+        tx,
+        blobs,
+        { claims: [{ id: pasted.id, issueId, uploaderId: ada }], copies },
+        silent,
+      ),
+    );
+    expect(saved).toEqual({ unusable: [] });
+    const rows = (await issueRows()).rows;
+    expect(rows.map((row) => row.id).sort()).toEqual(
+      [pasted.id, ...copies.map((copy) => copy.file.id)].sort(),
+    );
+    expect(rows.map((row) => row.storage_key).sort()).toEqual(
+      [pasted.key, first.key, second.key].sort(),
+    );
   });
 
   it('makes a drain wait for an upload holding the key, and then keep its bytes', async () => {
@@ -182,7 +226,7 @@ describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
     const temp = await blobs.putStream(body('drain race'));
     const uploader = await openTx();
     await insertUpload(uploader.tx, blobs, temp, fileOf(temp, 'inline'));
-    const drain = drainBlobRelease(files, blobs);
+    const drain = drainBlobRelease(files, blobs, silent);
     await untilWaiting('advisory');
     await uploader.commit();
     // Its statement after the lock saw the upload's commit (READ COMMITTED).
@@ -196,7 +240,7 @@ describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
     await insertUpload(uploader.tx, blobs, temp, fileOf(temp, 'inline'));
     // The bytes are on disk under their key; their row isn't committed: the sweep's first pass
     // sees no row, its locked re-check waits.
-    const swept = sweep(files, blobs, new Date());
+    const swept = sweep(files, blobs, new Date(), silent);
     await untilWaiting('advisory');
     await uploader.commit();
     expect((await swept).orphans).toBe(0);
@@ -213,7 +257,7 @@ describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
     ).rejects.toThrow('after the rename');
     expect(await stored(temp.key)).toBe(true);
     expect(await rowsOn(temp.key)).toBe(0);
-    expect(await sweep(files, blobs, new Date())).toMatchObject({ orphans: 1 });
+    expect(await sweep(files, blobs, new Date(), silent)).toMatchObject({ orphans: 1 });
     expect(await stored(temp.key)).toBe(false);
   });
 
@@ -242,7 +286,7 @@ describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
     expect(await rowsOn(previewTemp.key)).toBe(0);
     expect(await released(source.key)).toBe(true);
     expect(await released(previewTemp.key)).toBe(true);
-    await drainBlobRelease(files, blobs);
+    await drainBlobRelease(files, blobs, silent);
     expect(await stored(source.key)).toBe(false);
     expect(await stored(previewTemp.key)).toBe(false);
   });
@@ -287,8 +331,8 @@ describe('files-cleanup on Postgres (SPEC-014 §4.6)', () => {
     await claimer.tx.lockFiles([held.id], 'update');
     const now = () => new Date();
     const [first, second] = await Promise.all([
-      cleanupFiles({ db: files, blobs, now, batch: 2 }),
-      cleanupFiles({ db: files, blobs, now, batch: 2 }),
+      cleanupFiles({ db: files, blobs, log: silent, now, batch: 2 }),
+      cleanupFiles({ db: files, blobs, log: silent, now, batch: 2 }),
     ]);
     await claimer.commit();
     const sum = (k: 'unclaimed' | 'detached' | 'unused') => first[k] + second[k];
@@ -326,10 +370,10 @@ describe('concurrent protocol runs on Postgres (AC-14)', () => {
             break;
           }
           case 3:
-            work.push(drainBlobRelease(files, blobs));
+            work.push(drainBlobRelease(files, blobs, silent));
             break;
           case 4:
-            work.push(sweep(files, blobs, new Date()));
+            work.push(sweep(files, blobs, new Date(), silent));
             break;
         }
       }
@@ -345,8 +389,8 @@ describe('concurrent protocol runs on Postgres (AC-14)', () => {
         });
       }
     }
-    await drainBlobRelease(files, blobs);
-    await sweep(files, blobs, new Date(Date.now() + 2 * 60 * 60 * 1000));
+    await drainBlobRelease(files, blobs, silent);
+    await sweep(files, blobs, new Date(Date.now() + 2 * 60 * 60 * 1000), silent);
     const named = new Set(
       (await db.pool.query<{ k: string }>('SELECT DISTINCT storage_key AS k FROM files')).rows.map(
         (r) => r.k,

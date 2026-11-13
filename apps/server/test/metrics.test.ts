@@ -39,12 +39,23 @@ describe('file metrics (SPEC-014 §10, PLAN-014 S3)', () => {
     t = await testApp({ metricsEnabled: false });
     const registry = new Registry();
     let stats = { storedBytes: 3_000_000_000, releaseBacklog: 2 };
-    registerFileMetrics(registry, () => Promise.resolve(stats), quiet);
+    let reads = 0;
+    registerFileMetrics(
+      registry,
+      () => {
+        reads++;
+        return Promise.resolve(stats);
+      },
+      quiet,
+    );
     let text = await registry.metrics();
+    // Both gauges from one read of the database.
+    expect(reads).toBe(1);
     expect(text).toContain('surface_files_stored_bytes 3000000000');
     expect(text).toContain('surface_files_blob_release_backlog 2');
     stats = { storedBytes: 10, releaseBacklog: 0 };
     text = await registry.metrics();
+    expect(reads).toBe(2);
     expect(text).toContain('surface_files_stored_bytes 10');
     expect(text).toContain('surface_files_blob_release_backlog 0');
   });
@@ -66,7 +77,9 @@ describe('file metrics (SPEC-014 §10, PLAN-014 S3)', () => {
     fail = true;
     const text = await registry.metrics();
     expect(text).toContain('surface_files_stored_bytes 5');
-    expect(warnings).toEqual(['file metrics unavailable', 'file metrics unavailable']);
+    expect(text).toContain('surface_files_blob_release_backlog 1');
+    // One warning for the scrape, not one per gauge.
+    expect(warnings).toEqual(['file metrics unavailable']);
   });
 
   it('is served on /metrics when the app is given the file stats', async () => {

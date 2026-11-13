@@ -8,6 +8,15 @@
 // `step` is called at every statement and blob operation, so a fast-check scheduler can
 // interleave concurrent transactions there. A model transaction never detects a deadlock: one
 // shows up as a transaction that never ends, which the property test reports.
+//
+// **Row lock modes are merged.** Postgres has four (`FOR KEY SHARE`, `FOR SHARE`,
+// `FOR NO KEY UPDATE`, `FOR UPDATE`); the model has two: `shared` (`FOR SHARE`, and the key share
+// a foreign key check takes) and `exclusive` (`FOR UPDATE`, `DELETE`, and an `UPDATE` that leaves
+// keys alone, which Postgres takes as `FOR NO KEY UPDATE`). So the model makes a claim or a detach
+// (`FOR NO KEY UPDATE`) wait for a foreign key check (`FOR KEY SHARE`), and the reverse, where
+// Postgres lets them run together. That only adds waits, which can hide nothing a real run would
+// show except a deadlock the model invents. If S4a or S4b adds such a pair where a wait matters
+// (a claim against a preview insert's key share, say), give the model the four modes first.
 import { memoryBlobStore, type BlobStore, type TempBlob } from '../src/files/blob-store.js';
 import type {
   CleanupCandidate,
@@ -201,6 +210,8 @@ export class ModelTx implements FileTx {
   }
 
   async lockKeys(keys: readonly string[]): Promise<void> {
+    // In key order, where Postgres goes in `hashtext` order: any one total order of the keys
+    // avoids the same waits in a cycle, so the model needn't hash.
     for (const key of [...new Set(keys)].sort()) {
       await this.db.step(`lock ${key}`);
       await this.db.locks.acquire(`key:${key}`, this.id, 'exclusive');
@@ -350,6 +361,19 @@ export class ModelTx implements FileTx {
     const row = this.view().rows.get(id);
     if (row === undefined || row.issueId !== null || row.purpose === 'preview') return false;
     if (row.purpose !== 'attachment' && row.purpose !== 'inline') return false;
+    this.ops.push({ kind: 'update', id, patch: { issueId } });
+    return true;
+  }
+
+  async claimInline(id: string, issueId: string, uploaderId: string): Promise<boolean> {
+    await this.db.step('claimInline');
+    if (!this.view().rows.has(id)) return false;
+    // An `UPDATE`'s row lock (exclusive here, see the note on modes), then the condition again.
+    await this.db.locks.acquire(this.row(id), this.id, 'exclusive');
+    const row = this.view().rows.get(id);
+    if (row?.purpose !== 'inline' || row.issueId !== null || row.uploaderId !== uploaderId) {
+      return false;
+    }
     this.ops.push({ kind: 'update', id, patch: { issueId } });
     return true;
   }

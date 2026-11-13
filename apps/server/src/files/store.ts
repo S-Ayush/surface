@@ -11,6 +11,7 @@
 import type { Actor } from '@surface/domain';
 import { sql, type SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import type { PoolClient } from 'pg';
 import { LOCK_CLASSES } from '../db/locks.js';
 import type { Queryable } from '../db/pool.js';
 import type { FilePurpose } from '../db/schema/index.js';
@@ -176,9 +177,12 @@ export async function reserveUpload(
 }
 
 export interface FileStore {
-  /** `insertUpload` (`bytes.ts`): the key lock, the rename, then the row (SPEC-014 §4.5). */
+  /**
+   * `insertUpload` (`bytes.ts`): the key lock, the rename, then the row (SPEC-014 §4.5). On a
+   * client inside a transaction: a transaction lock taken on the pool protects nothing.
+   */
   insertUpload(
-    client: Queryable,
+    client: PoolClient,
     blobs: Pick<BlobStore, 'commit'>,
     temp: { readonly tempPath: string; readonly key: string },
     file: Omit<NewFile, 'storageKey'>,

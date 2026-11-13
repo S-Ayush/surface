@@ -236,7 +236,11 @@ Removing an attachment, or replacing an avatar or logo, frees nothing at once. T
 `files-cleanup` job deletes unclaimed uploads, removed attachments and unused avatars and logos
 24 hours later, then unlinks their bytes when no other file uses the same bytes. The daily
 `files-sweep` job removes bytes no file names and temporary upload files older than an hour
-(SPEC-014 §4.5, §4.6). Look for `files cleanup` and `files sweep` in the logs. With
+(SPEC-014 §4.5, §4.6). Look for `files cleanup` and `files sweep` in the logs. A `failed`
+count above 0, with `file bytes could not be removed` warnings, means the server can't delete
+some files on the uploads volume: check its permissions and that the disk is healthy (the warning
+gives the error code, such as `EACCES` or `EIO`). Those files are tried again on the next run.
+`files cleanup failed` or `files sweep failed` means a whole run failed; the next one retries. With
 `METRICS_ENABLED=true`, `surface_files_stored_bytes` and `surface_files_blob_release_backlog`
 show stored bytes and the bytes waiting to be unlinked.
 

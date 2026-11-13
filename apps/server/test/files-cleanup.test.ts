@@ -19,6 +19,29 @@ import { body, MODEL_HOUR, ModelDb, modelBlobStore } from './files-bytes-model.j
 
 const ADA = '01930000-0000-7000-8000-00000000ada1';
 
+interface Line {
+  readonly level: 'info' | 'warn' | 'error';
+  readonly object: object;
+  readonly message: string;
+}
+
+/** A log that keeps its lines, to check what reaches pino. */
+function recordingLog() {
+  const lines: Line[] = [];
+  const at = (level: Line['level']) => (object: object, message: string) =>
+    void lines.push({ level, object, message });
+  return { lines, info: at('info'), warn: at('warn'), error: at('error') };
+}
+
+/** A file system error as Node reports one: its message holds the path, so the key. */
+function fsError(code: string, file: string): Error {
+  return Object.assign(new Error(`${code}: permission denied, unlink '/data/uploads/${file}'`), {
+    code,
+    syscall: 'unlink',
+    path: `/data/uploads/${file}`,
+  });
+}
+
 function world() {
   const db = new ModelDb();
   const blobs = modelBlobStore(db);
@@ -65,8 +88,9 @@ function world() {
   const hours = (h: number) => {
     db.clock += h * MODEL_HOUR;
   };
-  const cleanup = () => cleanupFiles({ db, blobs, now: () => new Date(db.clock) });
-  return { db, blobs, upload, preview, detach, name, hours, cleanup };
+  const log = recordingLog();
+  const cleanup = () => cleanupFiles({ db, blobs, log, now: () => new Date(db.clock) });
+  return { db, blobs, log, upload, preview, detach, name, hours, cleanup };
 }
 
 describe('files-cleanup (SPEC-014 §4.6, AC-15)', () => {
@@ -186,7 +210,13 @@ describe('files-cleanup (SPEC-014 §4.6, AC-15)', () => {
     // Each statement yields, so the two runs interleave; small batches page through the rows.
     w.db.step = () => new Promise((resolve) => setImmediate(resolve));
     const run = () =>
-      cleanupFiles({ db: w.db, blobs: w.blobs, now: () => new Date(w.db.clock), batch: 2 });
+      cleanupFiles({
+        db: w.db,
+        blobs: w.blobs,
+        log: w.log,
+        now: () => new Date(w.db.clock),
+        batch: 2,
+      });
     const [first, second] = await Promise.all([run(), run()]);
     expect((first?.unclaimed ?? 0) + (second?.unclaimed ?? 0)).toBe(7);
     expect((first?.unlinked ?? 0) + (second?.unlinked ?? 0)).toBe(7);
@@ -199,14 +229,16 @@ describe('files-cleanup (SPEC-014 §4.6, AC-15)', () => {
     const w = world();
     await w.upload('secret name', 'attachment');
     w.hours(25);
-    const lines: { object: object; message: string }[] = [];
-    const jobs = fileJobs(
-      { db: w.db, blobs: w.blobs, now: () => new Date(w.db.clock) },
-      { info: (object: object, message: string) => void lines.push({ object, message }) },
-    );
+    const jobs = fileJobs({
+      db: w.db,
+      blobs: w.blobs,
+      log: w.log,
+      now: () => new Date(w.db.clock),
+    });
     await jobs.cleanup('files-cleanup');
-    expect(lines).toEqual([
+    expect(w.log.lines).toEqual([
       {
+        level: 'info',
         message: 'files cleanup',
         object: {
           queue: 'files-cleanup',
@@ -217,9 +249,47 @@ describe('files-cleanup (SPEC-014 §4.6, AC-15)', () => {
           skipped: 0,
           unlinked: 1,
           kept: 0,
+          failed: 0,
         },
       },
     ]);
+  });
+
+  it('logs a run that throws as `files cleanup failed` or `files sweep failed`, and rethrows it for pg-boss', async () => {
+    const w = world();
+    await w.upload('a', 'attachment');
+    w.db.step = (label) =>
+      label === 'cleanupCandidates'
+        ? Promise.reject(new Error('connection lost'))
+        : Promise.resolve();
+    // A shard folder the sweep can't read: the error's message and path name it.
+    const blobs = {
+      ...w.blobs,
+      // eslint-disable-next-line require-yield -- fails before its first key
+      list: async function* (): AsyncGenerator<string> {
+        await Promise.resolve();
+        throw fsError('EACCES', 'sha256/ab');
+      },
+    };
+    const jobs = fileJobs({ db: w.db, blobs, log: w.log, now: () => new Date(w.db.clock) });
+    await expect(jobs.cleanup('files-cleanup')).rejects.toThrow('connection lost');
+    await expect(jobs.sweep('files-sweep')).rejects.toThrow('EACCES');
+    expect(w.log.lines).toMatchObject([
+      {
+        level: 'error',
+        message: 'files cleanup failed',
+        object: { queue: 'files-cleanup', err: { type: 'Error', message: 'connection lost' } },
+      },
+      {
+        level: 'error',
+        message: 'files sweep failed',
+        object: {
+          queue: 'files-sweep',
+          err: { type: 'Error', code: 'EACCES', syscall: 'unlink' },
+        },
+      },
+    ]);
+    expect(JSON.stringify(w.log.lines)).not.toContain('/data/uploads');
   });
 });
 
@@ -233,9 +303,58 @@ describe('the blob_release drain (SPEC-014 §4.5 step 4)', () => {
     for (const key of w.blobs.keys()) w.db.released.add(key);
     // A delete never unlinks: both keys still have bytes.
     expect(w.blobs.keys()).toHaveLength(2);
-    expect(await drainBlobRelease(w.db, w.blobs, 1)).toEqual({ unlinked: 1, kept: 1 });
+    expect(await drainBlobRelease(w.db, w.blobs, w.log, 1)).toEqual({
+      unlinked: 1,
+      kept: 1,
+      failed: 0,
+    });
     expect(w.blobs.keys()).toHaveLength(1);
     expect(w.db.released.size).toBe(0);
+  });
+
+  it('goes on past bytes it can’t remove, keeps their key for the next run, and logs neither key nor path', async () => {
+    const w = world();
+    for (const content of ['a', 'b', 'c']) {
+      await w.db.transaction(async (tx) =>
+        deleteFiles(tx, [await w.upload(content, 'attachment')]),
+      );
+    }
+    const keys = w.blobs.keys().sort();
+    const stuck = keys[1] ?? '';
+    const blobs = {
+      ...w.blobs,
+      delete: (key: string) =>
+        key === stuck ? Promise.reject(fsError('EACCES', key)) : w.blobs.delete(key),
+    };
+    expect(await drainBlobRelease(w.db, blobs, w.log, 1)).toEqual({
+      unlinked: 2,
+      kept: 0,
+      failed: 1,
+    });
+    expect(w.blobs.keys()).toEqual([stuck]);
+    // Its transaction rolled back: the key waits in `blob_release` for the next run.
+    expect([...w.db.released]).toEqual([stuck]);
+    expect(w.log.lines).toEqual([
+      {
+        level: 'warn',
+        message: 'file bytes could not be removed',
+        object: { err: { type: 'Error', code: 'EACCES', syscall: 'unlink' } },
+      },
+    ]);
+    expect(JSON.stringify(w.log.lines)).not.toContain(stuck);
+    // The next run, the bytes removable again: drained.
+    expect(await drainBlobRelease(w.db, w.blobs, w.log)).toMatchObject({ unlinked: 1, failed: 0 });
+    expect(w.db.released.size).toBe(0);
+  });
+
+  it('fails the run on a database error, rather than counting it as bytes it couldn’t remove', async () => {
+    const w = world();
+    await w.db.transaction(async (tx) => deleteFiles(tx, [await w.upload('a', 'attachment')]));
+    w.db.step = (label) =>
+      label === 'keyInUse' ? Promise.reject(new Error('connection lost')) : Promise.resolve();
+    await expect(drainBlobRelease(w.db, w.blobs, w.log)).rejects.toThrow('connection lost');
+    expect(w.log.lines).toEqual([]);
+    expect(w.db.released.size).toBe(1);
   });
 });
 
@@ -249,11 +368,61 @@ describe('files-sweep (SPEC-014 §4.5 step 5)', () => {
     const stale = await w.blobs.putStream(body('crashed upload'));
     w.hours(1.5);
     const live = await w.blobs.putStream(body('upload in progress'));
-    expect(await sweep(w.db, w.blobs, new Date(w.db.clock), 1)).toEqual({ orphans: 1, temps: 1 });
+    expect(await sweep(w.db, w.blobs, new Date(w.db.clock), w.log, 1)).toEqual({
+      orphans: 1,
+      temps: 1,
+      failed: 0,
+    });
     expect(w.blobs.keys()).toHaveLength(1);
     expect(w.blobs.keys()).not.toContain(orphan.key);
     expect(w.blobs.temps()).toEqual([live.tempPath]);
     expect(w.blobs.temps()).not.toContain(stale.tempPath);
+  });
+
+  it('goes on past bytes and temporary files it can’t remove, and logs neither key nor path', async () => {
+    const w = world();
+    const orphans = [];
+    for (const content of ['a', 'b', 'c']) {
+      const temp = await w.blobs.putStream(body(content));
+      await w.blobs.commit(temp.tempPath, temp.key);
+      orphans.push(temp.key);
+    }
+    const stuckKey = orphans.sort()[1] ?? '';
+    const stuckTemp = await w.blobs.putStream(body('stuck upload'));
+    await w.blobs.putStream(body('crashed upload'));
+    w.hours(1.5);
+    const blobs = {
+      ...w.blobs,
+      delete: (key: string) =>
+        key === stuckKey ? Promise.reject(fsError('EBUSY', key)) : w.blobs.delete(key),
+      discard: (tempPath: string) =>
+        tempPath === stuckTemp.tempPath
+          ? Promise.reject(fsError('EIO', tempPath))
+          : w.blobs.discard(tempPath),
+    };
+    expect(await sweep(w.db, blobs, new Date(w.db.clock), w.log, 1)).toEqual({
+      orphans: 2,
+      temps: 1,
+      failed: 2,
+    });
+    expect(w.blobs.keys()).toEqual([stuckKey]);
+    expect(w.blobs.temps()).toEqual([stuckTemp.tempPath]);
+    expect(w.log.lines.map((line) => [line.level, line.message, line.object])).toEqual([
+      [
+        'warn',
+        'file bytes could not be removed',
+        { err: { type: 'Error', code: 'EBUSY', syscall: 'unlink' } },
+      ],
+      [
+        'warn',
+        'file bytes could not be removed',
+        { err: { type: 'Error', code: 'EIO', syscall: 'unlink' } },
+      ],
+    ]);
+    const logged = JSON.stringify(w.log.lines);
+    expect(logged).not.toContain(stuckKey);
+    expect(logged).not.toContain(stuckTemp.tempPath);
+    expect(logged).not.toContain('/data/uploads');
   });
 });
 

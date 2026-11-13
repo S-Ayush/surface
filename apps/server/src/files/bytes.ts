@@ -4,8 +4,10 @@
  *
  * Several rows can share one storage key (content addressing), so every writer follows one rule:
  * - every insert or delete of a row takes the key's lock, `pg_advisory_xact_lock(fileBytes,
- *   hashtext(key))`, in its transaction; several keys in ascending order, after any issue or
- *   file row lock (row locks first, then key locks, everywhere);
+ *   hashtext(key))`, in its transaction; all of a transaction's keys in one statement, in
+ *   `hashtext` order, after every issue and file row lock it takes (row locks first, then key
+ *   locks, everywhere: a transaction that went row, key, row, key could deadlock with one that
+ *   holds the second row and waits for the first key);
  * - an upload renames its temporary file over the key under that lock, then inserts the row;
  *   any other insert checks the bytes are there under the lock;
  * - a delete never unlinks: it records the key in `blob_release`, and the drain unlinks it later,
@@ -24,8 +26,10 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { LOCK_CLASSES } from '../db/locks.js';
+import type { PoolClient } from 'pg';
 import type { Pool, Queryable } from '../db/pool.js';
 import { files, type FilePurpose } from '../db/schema/index.js';
+import { loggableError } from '../executor/log-error.js';
 import { transactionRunner } from '../executor/transaction.js';
 import type { BlobStore } from './blob-store.js';
 import { TEMP_FILE_MAX_AGE_MS } from './limits.js';
@@ -66,12 +70,27 @@ export interface CleanupCandidate {
   readonly reason: CleanupReason;
 }
 
+/** Log lines the protocol writes: ids and counts, never a key, a path or a name. */
+export interface FileLog {
+  warn(object: object, message: string): void;
+  error(object: object, message: string): void;
+}
+
 /** What the protocol needs of one `READ COMMITTED` transaction. */
 export interface FileTx {
-  /** Each key's transaction lock, in ascending key order (SPEC-014 §4.5 step 1). */
+  /**
+   * Each key's transaction lock, all at once, in one fixed order (SPEC-014 §4.5 step 1). Call it
+   * once per transaction, after every row lock.
+   */
   lockKeys(keys: readonly string[]): Promise<void>;
   /** The rows that exist among `ids`, locked in id order (`FOR UPDATE` or `FOR SHARE`). */
   lockFiles(ids: readonly string[], mode: 'update' | 'share'): Promise<FileKeyRow[]>;
+  /**
+   * §4.3's claim: `id` becomes `issueId`'s if it is an unclaimed `inline` upload of
+   * `uploaderId`. One conditional `UPDATE`; false when it matched no row (gone, claimed meanwhile,
+   * someone else's, another purpose).
+   */
+  claimInline(id: string, issueId: string, uploaderId: string): Promise<boolean>;
   /** The previews of `sourceIds`, locked `FOR UPDATE` in id order. */
   lockPreviews(sourceIds: readonly string[]): Promise<PreviewKeyRow[]>;
   insertFile(file: NewFile): Promise<void>;
@@ -131,23 +150,67 @@ export async function insertUpload(
   await tx.insertFile({ ...file, storageKey: temp.key });
 }
 
+/** A document's unclaimed `inline` upload, to be claimed by the document's issue (§4.3). */
+export interface InlineClaim {
+  readonly id: string;
+  readonly issueId: string;
+  /** The saving actor: only their own upload is claimed. */
+  readonly uploaderId: string;
+}
+
+/** A new row for a visible file's bytes (§4.3's copy): the key comes from the locked source. */
+export interface InlineCopy {
+  readonly sourceId: string;
+  readonly file: Omit<NewFile, 'storageKey'>;
+}
+
 /**
- * Step 3: a new row for bytes already stored (the §4.3 copy). The caller locks the source row
- * `FOR SHARE` first, so it can't be deleted meanwhile. Missing bytes mean a broken invariant:
- * logged as `file bytes missing` and thrown, so the operation answers `INTERNAL`.
+ * Step 3 for a saved document (§4.3): every claim and every copy in one go, in the lock order of
+ * step 1. First the row locks, in id order: each claim's conditional `UPDATE` and each copy
+ * source `FOR SHARE` (so no source can be deleted meanwhile). Then one `lockKeys` over every
+ * copy's key. Then, per copy, the bytes checked and the row inserted. A claim or copy taken one
+ * file at a time would go row, key, row, key, and deadlock with a clean-up holding an unclaimed
+ * row that shares a key.
+ *
+ * Returns the ids that can't be used: a claim that matched no row (E24) or a source that is gone.
+ * Then nothing was inserted, and the caller refuses the document and rolls back (the claims made
+ * so far included). Missing bytes mean a broken invariant: logged as `file bytes missing` and
+ * thrown, so the operation answers `INTERNAL`.
  */
-export async function insertCopy(
+export async function insertCopies(
   tx: FileTx,
   blobs: Pick<BlobStore, 'stat'>,
-  file: NewFile,
-  log: { error(object: object, message: string): void },
-): Promise<void> {
-  await tx.lockKeys([file.storageKey]);
-  if ((await blobs.stat(file.storageKey)) === undefined) {
-    log.error({ fileId: file.id }, 'file bytes missing');
-    throw new FileBytesMissing(file.id);
+  saved: { readonly claims: readonly InlineClaim[]; readonly copies: readonly InlineCopy[] },
+  log: Pick<FileLog, 'error'>,
+): Promise<{ readonly unusable: readonly string[] }> {
+  const claims = new Map(saved.claims.map((claim) => [claim.id, claim]));
+  const sources = new Set(saved.copies.map((copy) => copy.sourceId));
+  for (const id of claims.keys()) {
+    if (sources.has(id)) throw new Error('A file is either claimed or copied, not both.');
   }
-  await tx.insertFile(file);
+  const keyOf = new Map<string, string>();
+  const unusable: string[] = [];
+  for (const id of [...claims.keys(), ...sources].sort()) {
+    const claim = claims.get(id);
+    if (claim !== undefined) {
+      if (!(await tx.claimInline(claim.id, claim.issueId, claim.uploaderId))) unusable.push(id);
+      continue;
+    }
+    const [source] = await tx.lockFiles([id], 'share');
+    if (source === undefined) unusable.push(id);
+    else keyOf.set(id, source.storageKey);
+  }
+  if (unusable.length > 0) return { unusable };
+  await tx.lockKeys([...keyOf.values()]);
+  for (const copy of saved.copies) {
+    const storageKey = keyOf.get(copy.sourceId);
+    if (storageKey === undefined || (await blobs.stat(storageKey)) === undefined) {
+      log.error({ fileId: copy.file.id }, 'file bytes missing');
+      throw new FileBytesMissing(copy.file.id);
+    }
+    await tx.insertFile({ ...copy.file, storageKey });
+  }
+  return { unusable: [] };
 }
 
 /**
@@ -228,6 +291,40 @@ export interface Drained {
   readonly unlinked: number;
   /** Keys a row still names: their bytes stay. */
   readonly kept: number;
+  /** Keys whose bytes couldn't be removed: left in `blob_release` for the next run. */
+  readonly failed: number;
+}
+
+/**
+ * A blob store removal that failed (EACCES, EIO, EBUSY): the one error the drain and the sweep
+ * count and go past. Anything else (the database gone, say) fails the run.
+ */
+class RemoveFailed extends Error {
+  constructor(readonly error: unknown) {
+    super('File bytes could not be removed.');
+    this.name = 'RemoveFailed';
+  }
+}
+
+async function removing(remove: () => Promise<void>): Promise<void> {
+  try {
+    await remove();
+  } catch (error) {
+    throw new RemoveFailed(error);
+  }
+}
+
+/**
+ * An error as the file code logs it. A file system error (one with a `syscall`) keeps its code and
+ * call only: its message and `path` hold the key or the temporary path. Anything else goes
+ * through `loggableError`.
+ */
+export function loggableFileError(error: unknown): unknown {
+  if (typeof error !== 'object' || error === null) return loggableError(error);
+  const syscall: unknown = Reflect.get(error, 'syscall');
+  if (typeof syscall !== 'string') return loggableError(error);
+  const code: unknown = Reflect.get(error, 'code');
+  return { type: error.constructor.name, ...(typeof code === 'string' ? { code } : {}), syscall };
 }
 
 /**
@@ -238,27 +335,37 @@ export interface Drained {
 export async function drainBlobRelease(
   db: FileDb,
   blobs: Pick<BlobStore, 'delete'>,
+  log: Pick<FileLog, 'warn'>,
   batch = 100,
 ): Promise<Drained> {
   let unlinked = 0;
   let kept = 0;
+  let failed = 0;
   let after: string | undefined;
   for (;;) {
     const keys = await db.releasedKeys(batch, after);
     for (const key of keys) {
-      const outcome = await db.transaction(async (tx) => {
-        await tx.lockKeys([key]);
-        // A drain running at the same time got here first.
-        if (!(await tx.forgetKey(key))) return 'gone';
-        if (await tx.keyInUse(key)) return 'kept';
-        await blobs.delete(key);
-        return 'unlinked';
-      });
-      if (outcome === 'unlinked') unlinked++;
-      else if (outcome === 'kept') kept++;
+      try {
+        const outcome = await db.transaction(async (tx) => {
+          await tx.lockKeys([key]);
+          // A drain running at the same time got here first.
+          if (!(await tx.forgetKey(key))) return 'gone';
+          if (await tx.keyInUse(key)) return 'kept';
+          await removing(() => blobs.delete(key));
+          return 'unlinked';
+        });
+        if (outcome === 'unlinked') unlinked++;
+        else if (outcome === 'kept') kept++;
+      } catch (error) {
+        // One key that can't be removed must not stop the others every run. Its transaction
+        // rolled back: the key stays in `blob_release` for the next run.
+        if (!(error instanceof RemoveFailed)) throw error;
+        failed++;
+        log.warn({ err: loggableFileError(error.error) }, 'file bytes could not be removed');
+      }
     }
     after = keys.at(-1);
-    if (keys.length < batch) return { unlinked, kept };
+    if (keys.length < batch) return { unlinked, kept, failed };
   }
 }
 
@@ -267,6 +374,8 @@ export interface Swept {
   readonly orphans: number;
   /** Temporary files older than `TEMP_FILE_MAX_AGE_MS`. */
   readonly temps: number;
+  /** Keys or temporary files that couldn't be removed: tried again next run. */
+  readonly failed: number;
 }
 
 /**
@@ -278,22 +387,34 @@ export async function sweep(
   db: FileDb,
   blobs: Pick<BlobStore, 'list' | 'listTemps' | 'delete' | 'discard'>,
   now: Date,
+  log: Pick<FileLog, 'warn'>,
   batch = 500,
 ): Promise<Swept> {
   let orphans = 0;
+  let failed = 0;
+  // As in the drain: one file that can't be removed doesn't stop the others.
+  const failure = (error: unknown) => {
+    if (!(error instanceof RemoveFailed)) throw error;
+    failed++;
+    log.warn({ err: loggableFileError(error.error) }, 'file bytes could not be removed');
+  };
   let pending: string[] = [];
   const settle = async () => {
     const used = await db.keysInUse(pending);
     for (const key of pending) {
       if (used.has(key)) continue;
       // An upload may have renamed and inserted since: only the check under the lock counts.
-      const removed = await db.transaction(async (tx) => {
-        await tx.lockKeys([key]);
-        if (await tx.keyInUse(key)) return false;
-        await blobs.delete(key);
-        return true;
-      });
-      if (removed) orphans++;
+      try {
+        const removed = await db.transaction(async (tx) => {
+          await tx.lockKeys([key]);
+          if (await tx.keyInUse(key)) return false;
+          await removing(() => blobs.delete(key));
+          return true;
+        });
+        if (removed) orphans++;
+      } catch (error) {
+        failure(error);
+      }
     }
     pending = [];
   };
@@ -307,10 +428,14 @@ export async function sweep(
   const staleBefore = now.getTime() - TEMP_FILE_MAX_AGE_MS;
   for await (const temp of blobs.listTemps()) {
     if (temp.modifiedAt.getTime() >= staleBefore) continue;
-    await blobs.discard(temp.tempPath);
-    temps++;
+    try {
+      await removing(() => blobs.discard(temp.tempPath));
+      temps++;
+    } catch (error) {
+      failure(error);
+    }
   }
-  return { orphans, temps };
+  return { orphans, temps, failed };
 }
 
 const dialect = new PgDialect();
@@ -326,7 +451,7 @@ async function run<T extends object>(
 
 /** The SQL of `cleanupCandidates` (SPEC-014 §4.6 step 1), exported for its statement test. */
 export function cleanupCandidatesQuery(cutoff: Date, after: string | undefined, limit: number) {
-  return sql`SELECT f.id, f.purpose, f.issue_id AS "issueId", f.detached_at AS "detachedAt"
+  return sql`SELECT f.id, f.purpose, f.issue_id AS "issueId"
                FROM files f
               WHERE (${after ?? null}::uuid IS NULL OR f.id > ${after ?? null}::uuid)
                 AND ((f.purpose IN ('attachment', 'inline')
@@ -346,24 +471,29 @@ export function cleanupCandidatesQuery(cutoff: Date, after: string | undefined, 
 export function cleanupReason(row: {
   purpose: FilePurpose;
   issueId: string | null;
-  detachedAt: Date | string | null;
 }): CleanupReason {
   if (row.purpose === 'avatar' || row.purpose === 'logo') return 'unused';
   return row.issueId === null ? 'unclaimed' : 'detached';
 }
 
-/** `FileTx` on a connection inside a `READ COMMITTED` transaction. */
-export function pgFileTx(client: Queryable): FileTx {
+/**
+ * Every key's lock in one statement, in `hashtext` order: the sorted subquery feeds the locks one
+ * row at a time. Ordering by the hash, not the key, means two keys whose hashes collide are one
+ * lock taken once, never two locks taken in opposite orders.
+ */
+export const LOCK_KEYS_SQL = `SELECT pg_advisory_xact_lock($1::int, h)
+  FROM (SELECT DISTINCT hashtext(k) AS h FROM unnest($2::text[]) AS k ORDER BY h) AS keys`;
+
+/**
+ * `FileTx` on a connection inside a `READ COMMITTED` transaction: a checked-out client, never the
+ * pool, since `pg_advisory_xact_lock` outside `BEGIN` is released at once and protects nothing.
+ */
+export function pgFileTx(client: PoolClient): FileTx {
   let savepoints = 0;
   return {
     async lockKeys(keys) {
-      // Sorted and distinct: two transactions never wait on each other's keys in a cycle.
-      for (const key of [...new Set(keys)].sort()) {
-        await client.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2))', [
-          LOCK_CLASSES.fileBytes,
-          key,
-        ]);
-      }
+      if (keys.length === 0) return;
+      await client.query(LOCK_KEYS_SQL, [LOCK_CLASSES.fileBytes, [...new Set(keys)]]);
     },
     async lockFiles(ids, mode) {
       if (ids.length === 0) return [];
@@ -373,6 +503,17 @@ export function pgFileTx(client: Queryable): FileTx {
         sql`SELECT id, storage_key AS "storageKey" FROM files
              WHERE id = ANY(${sql.param([...ids])}::uuid[]) ORDER BY id ${lock}`,
       );
+    },
+    async claimInline(id, issueId, uploaderId) {
+      // SPEC-014 §4.3: the check and the claim are one statement.
+      const rows = await run<{ id: string }>(
+        client,
+        sql`UPDATE files SET issue_id = ${issueId}
+             WHERE id = ${id} AND issue_id IS NULL AND uploader_id = ${uploaderId}
+               AND purpose = 'inline'
+            RETURNING id`,
+      );
+      return rows.length > 0;
     },
     async lockPreviews(sourceIds) {
       if (sourceIds.length === 0) return [];
@@ -412,12 +553,10 @@ export function pgFileTx(client: Queryable): FileTx {
       return rows.length > 0;
     },
     async cleanupCandidates(cutoff, after, limit) {
-      const rows = await run<{
-        id: string;
-        purpose: FilePurpose;
-        issueId: string | null;
-        detachedAt: Date | null;
-      }>(client, cleanupCandidatesQuery(cutoff, after, limit));
+      const rows = await run<{ id: string; purpose: FilePurpose; issueId: string | null }>(
+        client,
+        cleanupCandidatesQuery(cutoff, after, limit),
+      );
       return rows.map((row) => ({ id: row.id, reason: cleanupReason(row) }));
     },
     async savepoint(fn) {

@@ -44,7 +44,9 @@ it('schedules the file jobs on exclusive queues (PLAN-014 S3, ADR-0024)', async 
   for (const queue of [QUEUES.filesCleanup, QUEUES.filesSweep]) {
     const schedules = await jobs.boss.getSchedules(queue.name);
     expect(schedules.map((s) => s.cron)).toEqual([queue.cron]);
-    expect((await jobs.boss.getQueue(queue.name))?.policy).toBe('exclusive');
+    const created = await jobs.boss.getQueue(queue.name);
+    expect(created?.policy).toBe('exclusive');
+    expect(created?.expireInSeconds).toBe(queue.expireInSeconds);
     // And the worker runs it to completion on an empty store.
     const id = await jobs.boss.send(queue.name, null, { singletonKey: queue.name });
     expect(id).not.toBeNull();

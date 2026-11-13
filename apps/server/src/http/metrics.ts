@@ -46,12 +46,23 @@ export function registerFileMetrics(
   stats: () => Promise<FileStorageStats>,
   log: { warn(object: object, message: string): void },
 ): void {
+  // One query (and at most one warning) per scrape: the registry collects both gauges at once, so
+  // the second shares the first one's read while it is in flight.
+  let inFlight: Promise<FileStorageStats | undefined> | undefined;
+  const shared = () => {
+    inFlight ??= stats()
+      .catch((error: unknown) => {
+        log.warn({ err: loggableError(error) }, 'file metrics unavailable');
+        return undefined;
+      })
+      .finally(() => {
+        inFlight = undefined;
+      });
+    return inFlight;
+  };
   const read = async (pick: (stats: FileStorageStats) => number, gauge: Gauge) => {
-    try {
-      gauge.set(pick(await stats()));
-    } catch (error) {
-      log.warn({ err: loggableError(error) }, 'file metrics unavailable');
-    }
+    const values = await shared();
+    if (values !== undefined) gauge.set(pick(values));
   };
   new Gauge({
     name: 'surface_files_stored_bytes',
