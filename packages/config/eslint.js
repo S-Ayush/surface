@@ -38,6 +38,26 @@ export const SYNCED_TABLES = [
 ];
 
 /**
+ * `emojibase` and `emoji-mart` can fetch emoji data and sprites from a CDN (rule 5: no outbound
+ * calls). The editor and picker use the bundled `emojibase-data` JSON only (SPEC-013 D22, AC-16).
+ * `emojibase-data` is a different package name and stays allowed.
+ */
+export const EMOJI_LIBRARY_BAN = {
+  paths: ['emojibase', 'emoji-mart'].map((name) => ({
+    name,
+    message:
+      'This package can load emoji from a CDN. Use the bundled `emojibase-data` JSON (SPEC-013 D22).',
+  })),
+  patterns: [
+    {
+      group: ['emojibase/*', 'emoji-mart/*', '@emoji-mart/*'],
+      message:
+        'This package can load emoji from a CDN. Use the bundled `emojibase-data` JSON (SPEC-013 D22).',
+    },
+  ],
+};
+
+/**
  * Surface ESLint flat config.
  * @param {{ rootDir: string }} options  rootDir = repository root (for typed linting).
  */
@@ -61,6 +81,7 @@ export function surfaceEslint({ rootDir }) {
         '@typescript-eslint/switch-exhaustiveness-check': 'error',
         eqeqeq: ['error', 'smart'],
         'no-console': 'error',
+        'no-restricted-imports': ['error', EMOJI_LIBRARY_BAN],
       },
     },
     {

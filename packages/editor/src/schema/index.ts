@@ -12,3 +12,4 @@ export { docToText } from './text.js';
 export { docToMarkdown, markdownToDoc } from './markdown.js';
 export { docFileIds } from './files.js';
 export { fileIdOfSrc, fileSrc, isAllowedHref } from './links.js';
+export { isSingleEmoji } from './emoji.js';

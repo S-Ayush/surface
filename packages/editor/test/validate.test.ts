@@ -4,6 +4,7 @@ import { EMPTY_DOC } from '@surface/domain';
 import { describe, expect, it } from 'vitest';
 import type { DocProblem } from '../src/schema/index.js';
 import { DOC_MESSAGES, isAllowedHref, validateDoc } from '../src/schema/index.js';
+import { BAD_HREFS, GOOD_HREFS } from './support/fixtures.js';
 
 const FILE = '/files/0190f3b2-7c1a-7d4e-9a1b-2c3d4e5f6a7b';
 
@@ -94,13 +95,7 @@ describe('validateDoc accepts', () => {
     });
   });
 
-  it.each([
-    'https://example.com',
-    'HTTP://EXAMPLE.COM/a',
-    'HtTpS://x.io/?q=1#f',
-    'mailto:ada@example.com',
-    'MAILTO:ada@example.com',
-  ])('the link %j', (href) => {
+  it.each(GOOD_HREFS)('the link %j', (href) => {
     expect(validateDoc(linked(href)).ok).toBe(true);
   });
 });
@@ -128,25 +123,7 @@ describe('validateDoc refuses, with the path of the problem', () => {
     ]);
   });
 
-  it.each([
-    ['javascript:alert(1)'],
-    ['JaVaScRiPt:alert(1)'],
-    ['java\tscript:alert(1)'],
-    ['https://exa\u0000mple.com'],
-    ['https://example.com/\u0085'],
-    [' https://example.com'],
-    ['https://example.com/a b'],
-    ['/relative/path'],
-    ['relative'],
-    ['//evil.example.com'],
-    ['https:evil.example.com'],
-    ['https:\\\\evil.example.com'],
-    ['ftp://example.com'],
-    ['data:text/html,<script>alert(1)</script>'],
-    ['vbscript:msgbox'],
-    [''],
-    [42],
-  ])(
+  it.each(BAD_HREFS.map((href) => [href]))(
     'the link %j (mixed case, control characters, relative and protocol-relative included)',
     (href) => {
       expect(problems(linked(href))).toEqual([

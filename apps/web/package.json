@@ -17,8 +17,8 @@
     "@surface/editor": "workspace:*",
     "@surface/operations": "workspace:*",
     "@surface/sync-client": "workspace:*",
-    "@surface/sync-react": "workspace:*",
     "@surface/sync-protocol": "workspace:*",
+    "@surface/sync-react": "workspace:*",
     "@surface/ui": "workspace:*",
     "@tanstack/react-router": "^1.170.46",
     "lucide-react": "^1.70.0",
@@ -33,6 +33,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
     "fast-check": "^4.10.2",
+    "jsdom": "^31.0.0",
     "vite": "^8.3.6"
   }
 }
