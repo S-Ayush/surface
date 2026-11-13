@@ -9,7 +9,7 @@ import { PageHeader } from '../../shell/PageHeader.js';
 import { IssueList } from './IssueList.js';
 import styles from './IssueList.module.css';
 import { myIssuesKey } from './focus-model.js';
-import { CreateIssueButton, ListSkeleton } from './IssueListPage.js';
+import { CreateIssueButton, ListSkeleton } from './ListParts.js';
 import type { ListScope } from './list-model.js';
 import { myIssuesPath, rememberMyIssuesTab, type MyIssuesTab } from './my-issues-tab.js';
 import { useIssueRows } from './useIssueRows.js';

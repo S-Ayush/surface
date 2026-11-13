@@ -1,7 +1,7 @@
 // The team issue list, `/team/:key/issues` (SPEC-012 §3.3). Member teams render from the replica
 // at once, offline too; a public team the user hasn't joined shows the states of §7.2 from the
 // load seam (`team-load.ts`).
-import { Button, EmptyState, Skeleton, VisuallyHidden, toast } from '@surface/ui';
+import { EmptyState, toast } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
 import { CircleDot, CloudOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,61 +11,13 @@ import { useCommandContext } from '../../command-menu/context.js';
 import { GLOBAL_TARGET } from '../../command-menu/model.js';
 import { NotFoundPage } from '../../pages/NotFoundPage.js';
 import { PageHeader } from '../../shell/PageHeader.js';
-import { useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
 import { IssueList } from './IssueList.js';
 import styles from './IssueList.module.css';
+import { CreateIssueButton, ListSkeleton } from './ListParts.js';
 import { teamListKey } from './focus-model.js';
 import type { ListScope } from './list-model.js';
 import { useTeamLoadState } from './team-load.js';
 import { useIssueRows } from './useIssueRows.js';
-
-/** Shows a skeleton only if the wait outlasts `ms` (design-system §4: nothing flashes). */
-export function useAfter(ms: number): boolean {
-  const [elapsed, setElapsed] = useState(false);
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setElapsed(true);
-    }, ms);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [ms]);
-  return elapsed;
-}
-
-export function ListSkeleton() {
-  const show = useAfter(150);
-  return (
-    <div className={styles.skeleton}>
-      <VisuallyHidden>
-        <p role="status">Loading…</p>
-      </VisuallyHidden>
-      {show &&
-        [0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} shape="text" width="100%" aria-hidden="true" />
-        ))}
-    </div>
-  );
-}
-
-/** "Create issue" runs PLAN-012 S5's `issue:create`; hidden until the composer registers it. */
-export function CreateIssueButton() {
-  const commands = useCommandRegistry();
-  const available = useObserved(
-    useCallback(() => commands.isAvailable('issue:create'), [commands]),
-  );
-  if (!available) return undefined;
-  return (
-    <Button
-      variant="primary"
-      onClick={() => {
-        commands.run('issue:create');
-      }}
-    >
-      Create issue
-    </Button>
-  );
-}
 
 export function IssueListPage({ teamKey }: { teamKey: string }) {
   const app = useApp();

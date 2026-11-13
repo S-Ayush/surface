@@ -2,8 +2,25 @@
 // issue is lost or listed twice.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { buildGroups, orderedIssueIds, type ListIssue } from '../src/features/issues/list-model.js';
-import { ENG, ENG_DOING, ENG_DONE, ENG_TODO, LOOKUPS, uuid } from './issue-list-fixtures.js';
+import {
+  buildGroups,
+  orderedIssueIds,
+  selectIssues,
+  type ListIssue,
+} from '../src/features/issues/list-model.js';
+import {
+  DES,
+  DES_DONE,
+  DES_TODO,
+  ENG,
+  ENG_DOING,
+  ENG_DONE,
+  ENG_TODO,
+  LOOKUPS,
+  ME,
+  OTHER,
+  uuid,
+} from './issue-list-fixtures.js';
 
 const issueArb = fc.record({
   n: fc.integer({ min: 0, max: 40 }),
@@ -68,6 +85,95 @@ describe('the team list order is total (AC-4)', () => {
           buildGroups({ kind: 'team', teamId: ENG }, 'active', issues, LOOKUPS),
         );
         expect([...ids].sort()).toEqual(issues.map((i) => i.id).sort());
+      }),
+    );
+  });
+});
+
+const mixedArb = fc.array(
+  fc.record({
+    team: fc.constantFrom(ENG, DES),
+    statusId: fc.constantFrom(ENG_TODO, ENG_DOING, ENG_DONE, DES_TODO, DES_DONE),
+    assignee: fc.constantFrom(ME, OTHER, null),
+    creator: fc.constantFrom(ME, OTHER),
+    archived: fc.boolean(),
+    deleted: fc.boolean(),
+  }),
+  { maxLength: 30 },
+);
+
+type Mixed = typeof mixedArb extends fc.Arbitrary<(infer T)[]> ? T : never;
+
+function toMixed(rows: readonly Mixed[]): ListIssue[] {
+  return rows.map((row, i) => ({
+    ...toIssues([{ n: i, statusId: ENG_TODO, priority: 0, minute: 0, number: i + 1 }])[0]!,
+    id: uuid(7000 + i),
+    teamId: row.team,
+    statusId: row.statusId,
+    assigneeId: row.assignee,
+    creatorId: row.creator,
+    archivedAt: row.archived ? '2026-11-01T00:00:00.000Z' : null,
+    deletedAt: row.deleted ? '2026-11-02T00:00:00.000Z' : null,
+  }));
+}
+
+describe('My issues selection (AC-4)', () => {
+  const closed = new Set([ENG_DONE, DES_DONE]);
+
+  it('Assigned is exactly the assigned, open, live issues', () => {
+    fc.assert(
+      fc.property(mixedArb, (rows) => {
+        const issues = toMixed(rows);
+        const got = selectIssues(
+          { kind: 'assigned', userId: ME },
+          'active',
+          issues,
+          LOOKUPS.statuses,
+        );
+        const want = issues.filter(
+          (i) =>
+            i.assigneeId === ME &&
+            !closed.has(i.statusId) &&
+            i.archivedAt === null &&
+            i.deletedAt === null,
+        );
+        expect(got.map((i) => i.id)).toEqual(want.map((i) => i.id));
+      }),
+    );
+  });
+
+  it('Created is exactly the issues the user created, live ones, closed included', () => {
+    fc.assert(
+      fc.property(mixedArb, (rows) => {
+        const issues = toMixed(rows);
+        const got = selectIssues(
+          { kind: 'created', userId: ME },
+          'active',
+          issues,
+          LOOKUPS.statuses,
+        );
+        const want = issues.filter(
+          (i) => i.creatorId === ME && i.archivedAt === null && i.deletedAt === null,
+        );
+        expect(got.map((i) => i.id)).toEqual(want.map((i) => i.id));
+      }),
+    );
+  });
+
+  it('named groups are the same whatever order the issues arrive in', () => {
+    fc.assert(
+      fc.property(mixedArb, fc.integer(), (rows, seed) => {
+        const issues = toMixed(rows);
+        const reversed = issues.toReversed();
+        const shift = reversed.length === 0 ? 0 : Math.abs(seed) % reversed.length;
+        const permuted = [...reversed.slice(shift), ...reversed.slice(0, shift)];
+        const scope = { kind: 'created', userId: ME } as const;
+        const shape = (list: readonly ListIssue[]) =>
+          buildGroups(scope, 'active', list, LOOKUPS).map((g) => [
+            g.key,
+            g.rows.map((r) => r.issueId),
+          ]);
+        expect(shape(permuted)).toEqual(shape(issues));
       }),
     );
   });

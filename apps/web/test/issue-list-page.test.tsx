@@ -142,14 +142,8 @@ describe('list keys', () => {
 
   const focused = () => document.activeElement?.closest('[role="row"]');
 
-  async function focusFirstRow(m: Mounted) {
-    const first = m.host.querySelector<HTMLElement>('[role="row"]');
-    await inAct(() => first?.focus());
-  }
-
   it('moves focus with list:next and list:previous through headers and rows', async () => {
     mounted = await mountLists(new IssueApp([a, b, c]), '/team/ENG/issues');
-    await focusFirstRow(mounted);
     expect(focused()?.getAttribute('aria-label')).toContain('Todo');
     await inAct(() => mounted?.commands().run('list:next'));
     expect(focused()?.textContent).toContain('Alpha');
@@ -161,7 +155,6 @@ describe('list keys', () => {
 
   it('stops at the ends of the list', async () => {
     mounted = await mountLists(new IssueApp([a]), '/team/ENG/issues');
-    await focusFirstRow(mounted);
     await inAct(() => mounted?.commands().run('list:previous'));
     expect(focused()?.getAttribute('aria-label')).toContain('Todo');
     await inAct(() => mounted?.commands().run('list:next'));
@@ -171,7 +164,6 @@ describe('list keys', () => {
 
   it('T collapses and expands the focused group header, and remembers it per device', async () => {
     mounted = await mountLists(new IssueApp([a, b]), '/team/ENG/issues');
-    await focusFirstRow(mounted);
     await inAct(() => mounted?.commands().run('list:toggle-group'));
     expect(mounted.host.textContent).not.toContain('Alpha');
     expect(focused()?.getAttribute('aria-label')).toBe('Todo, 2 issues, collapsed');
@@ -182,7 +174,6 @@ describe('list keys', () => {
 
   it('does nothing for T on a row (the key belongs to group headers)', async () => {
     mounted = await mountLists(new IssueApp([a]), '/team/ENG/issues');
-    await focusFirstRow(mounted);
     await inAct(() => mounted?.commands().run('list:next'));
     await inAct(() => mounted?.commands().run('list:toggle-group'));
     expect(mounted.host.textContent).toContain('Alpha');
@@ -193,7 +184,6 @@ describe('list keys', () => {
       new IssueApp([a, issue({ statusId: ENG_DOING, title: 'Delta' })]),
       '/team/ENG/issues',
     );
-    await focusFirstRow(mounted);
     await inAct(() => mounted?.commands().run('list:toggle-all-groups'));
     expect(mounted.host.textContent).not.toContain('Alpha');
     expect(mounted.host.textContent).not.toContain('Delta');
@@ -204,7 +194,6 @@ describe('list keys', () => {
 
   it('Enter opens the focused issue and passes the ordered ids of the list in router state', async () => {
     mounted = await mountLists(new IssueApp([a, b, c]), '/team/ENG/issues');
-    await focusFirstRow(mounted);
     await inAct(() => mounted?.commands().run('list:next'));
     await inAct(() => mounted?.commands().run('list:next'));
     await inAct(() => mounted?.commands().run('list:open'));
@@ -225,9 +214,50 @@ describe('list keys', () => {
 
   it('Enter on a group header does nothing', async () => {
     mounted = await mountLists(new IssueApp([a]), '/team/ENG/issues');
-    await focusFirstRow(mounted);
     await inAct(() => mounted?.commands().run('list:open'));
     expect(document.querySelector('[data-testid="issue-route"]')).toBeNull();
+  });
+});
+
+describe('arrival focus (§3.3 item 8)', () => {
+  const a = issue({ title: 'Alpha', number: 1, statusId: ENG_TODO, priority: 1 });
+  const b = issue({ title: 'Bravo', number: 2, statusId: ENG_TODO, priority: 2 });
+
+  it('focuses the first row on arrival, without a manual focus', async () => {
+    mounted = await mountLists(new IssueApp([a, b]), '/team/ENG/issues');
+    const active = document.activeElement?.closest('[role="row"]');
+    expect(active?.getAttribute('aria-label')).toBe('Todo, 2 issues, expanded');
+    expect(active?.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('focuses the remembered row on a revisit, as document.activeElement', async () => {
+    const app = new IssueApp([a, b]);
+    mounted = await mountLists(app, '/team/ENG/issues');
+    await inAct(() => mounted?.commands().run('list:next'));
+    await inAct(() => mounted?.commands().run('list:next'));
+    expect(document.activeElement?.textContent).toContain('Bravo');
+    await mounted.unmount();
+    mounted = await mountLists(app, '/team/ENG/issues');
+    expect(document.activeElement?.closest('[role="row"]')?.textContent).toContain('Bravo');
+  });
+
+  it('comes back to the list from an issue and focuses the row by itself', async () => {
+    mounted = await mountLists(new IssueApp([a, b]), '/team/ENG/issues');
+    await inAct(() => mounted?.commands().run('list:next'));
+    await inAct(() => mounted?.commands().run('list:next'));
+    await inAct(() => mounted?.commands().run('list:open'));
+    expect(document.querySelector('[data-testid="issue-route"]')).not.toBeNull();
+    await mounted.navigate('/team/ENG/issues');
+    expect(document.activeElement?.closest('[role="row"]')?.textContent).toContain('Bravo');
+  });
+
+  it('does not take focus from a text field the user is typing in', async () => {
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+    mounted = await mountLists(new IssueApp([a]), '/team/ENG/issues');
+    expect(document.activeElement).toBe(input);
+    input.remove();
   });
 });
 

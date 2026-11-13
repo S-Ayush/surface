@@ -146,6 +146,23 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
     [listKey],
   );
 
+  // What the list showed on its first render: the effect below runs once, on mount.
+  const arrival = useRef({ ids, focusedId });
+  // On arrival (a link, `G E`, a return from the issue page) the list takes focus, on the
+  // remembered row or the first one, so the `list` scope is active and `J`/`K` work at once
+  // (§3.3 item 8). Not while the user is typing in a field.
+  useEffect(() => {
+    const active = document.activeElement;
+    const typing =
+      active instanceof HTMLElement &&
+      (active.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName));
+    if (typing) return;
+    hasFocus.current = true;
+    const { ids: order, focusedId: remembered } = arrival.current;
+    const first = order[0];
+    if (remembered === null && first !== undefined) setFocus({ id: first, order });
+  }, []);
+
   // Keep DOM focus on the focused row while the user is in the list: the virtual list reuses
   // elements by index, so after a re-sort the focused element would show another issue.
   const grid = useRef<HTMLDivElement>(null);
@@ -212,7 +229,7 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
   });
   useCommand('list:toggle-all-groups', () => {
     const anyOpen = groups.some((group) => !isCollapsed(collapse, group));
-    persist(Object.fromEntries(groups.map((group) => [group.key, anyOpen])));
+    persist({ ...collapse, ...Object.fromEntries(groups.map((group) => [group.key, anyOpen])) });
     // Rows may vanish under focus: the header of the focused row's group takes it (collapsed).
     if (anyOpen && focusedItem?.kind === 'row') {
       const group = groups.find((g) => g.rows.some((r) => r.issueId === focusedItem.id));

@@ -8,7 +8,7 @@
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ShortcutEngine } from '../src/shortcuts/engine.js';
-import { SHORTCUTS } from '../src/shortcuts/registry.js';
+import { SHORTCUTS, inBuild } from '../src/shortcuts/registry.js';
 import { ENG_DOING, ENG_TODO } from './issue-list-fixtures.js';
 import { IssueApp, issue, mountLists, type Mounted } from './issue-list-harness.js';
 
@@ -26,17 +26,17 @@ let mounted: Mounted | undefined;
 let engine: ShortcutEngine | undefined;
 let listener: ((event: KeyboardEvent) => void) | undefined;
 afterEach(async () => {
-  if (listener !== undefined) document.removeEventListener('keydown', listener);
+  if (listener !== undefined) window.removeEventListener('keydown', listener, { capture: true });
   engine?.dispose();
   await mounted?.unmount();
   mounted = undefined;
   localStorage.clear();
 });
 
-function startEngine(m: Mounted): void {
+function startEngine(m: Mounted, bindings: typeof SHORTCUTS = SHORTCUTS): void {
   engine = new ShortcutEngine({
     platform: 'mac',
-    bindings: SHORTCUTS,
+    bindings,
     commands: m.commands(),
     overlay: { topLayer: () => undefined, isOverlayEscape: () => false },
     pageScopes: () => [],
@@ -46,7 +46,9 @@ function startEngine(m: Mounted): void {
   listener = (event) => {
     current.handleKeydown(event);
   };
-  document.addEventListener('keydown', listener);
+  // Capture on window: this engine sees each key before the provider's own (M0) engine, which
+  // would start its `G S` sequence on `G`.
+  window.addEventListener('keydown', listener, { capture: true });
 }
 
 async function inAct(change: () => unknown): Promise<void> {
@@ -76,8 +78,6 @@ describe('list keys through the engine', () => {
   it('J and K move focus, and T collapses the focused group header', async () => {
     mounted = await mountLists(new IssueApp([a, b, d]), '/team/ENG/issues');
     startEngine(mounted);
-    const header = mounted.host.querySelector<HTMLElement>('[role="row"]');
-    await inAct(() => header?.focus());
     await press(document.activeElement ?? document.body, { key: 'j', code: 'KeyJ' });
     expect(document.activeElement?.textContent).toContain('Alpha');
     await press(document.activeElement ?? document.body, { key: 'ArrowDown', code: 'ArrowDown' });
@@ -92,7 +92,6 @@ describe('list keys through the engine', () => {
   it('Alt+T collapses every group', async () => {
     mounted = await mountLists(new IssueApp([a, d]), '/team/ENG/issues');
     startEngine(mounted);
-    await inAct(() => mounted?.host.querySelector<HTMLElement>('[role="row"]')?.focus());
     await press(document.activeElement ?? document.body, { key: 't', code: 'KeyT', altKey: true });
     expect(mounted.host.textContent).not.toContain('Alpha');
     expect(mounted.host.textContent).not.toContain('Delta');
@@ -105,7 +104,6 @@ describe('list keys through the engine', () => {
     const grid = mounted.host.querySelector('[data-shortcut-scope="list"]');
     const input = document.createElement('input');
     grid?.append(input);
-    await inAct(() => mounted?.host.querySelector<HTMLElement>('[role="row"]')?.focus());
     await inAct(() => input.focus());
     await press(input, { key: 'j', code: 'KeyJ' });
     await press(input, { key: 't', code: 'KeyT' });
@@ -153,5 +151,42 @@ describe('navigation keys (G E, G M, Ctrl+Shift+n)', () => {
       mounted.host.querySelector('nav[aria-label="My issues views"] [aria-current="page"]')
         ?.textContent,
     ).toBe('Assigned');
+  });
+});
+
+describe('the M1 build (BUILD_MILESTONE is raised by PLAN-012 S7)', () => {
+  const m1 = inBuild(SHORTCUTS, 'M1');
+
+  it('maps the list and navigation keys to commands this slice registers', async () => {
+    mounted = await mountLists(new IssueApp([a, d]), '/team/ENG/issues');
+    const registry = mounted.commands();
+    const wanted: [string, string][] = [
+      ['list.nextJ', 'list:next'],
+      ['list.nextArrow', 'list:next'],
+      ['list.previousK', 'list:previous'],
+      ['list.open', 'list:open'],
+      ['list.toggleGroup', 'list:toggle-group'],
+      ['list.toggleAllGroups', 'list:toggle-all-groups'],
+      ['nav.teamIssues', 'nav:team-issues'],
+      ['nav.myIssues', 'nav:my-issues'],
+      ['nav.team1', 'nav:team-1'],
+    ];
+    for (const [id, command] of wanted) {
+      expect(m1.find((binding) => binding.id === id)?.command).toBe(command);
+      expect(registry.isAvailable(command as never)).toBe(true);
+    }
+  });
+
+  it('G then E opens the team issues through the engine', async () => {
+    mounted = await mountLists(new IssueApp([a]), '/my-issues');
+    startEngine(mounted, m1);
+    const target = document.activeElement ?? document.body;
+    await press(target, { key: 'g', code: 'KeyG' });
+    await press(target, { key: 'e', code: 'KeyE' });
+    // The navigation settles on the router's next tasks.
+    await vi.waitFor(() => {
+      expect(mounted?.host.textContent).toContain('No issues in DES yet');
+    });
+    expect(mounted.host.textContent).toContain('No issues in DES yet');
   });
 });

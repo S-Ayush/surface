@@ -164,9 +164,14 @@ export function formatCreated(iso: string, today: string): string {
     : `${label}, ${String(date.getFullYear())}`;
 }
 
-function toRow(issue: ListIssue, variant: ListVariant, lookups: ListLookups): ListRow | undefined {
+function toRow(
+  issue: ListIssue,
+  variant: ListVariant,
+  lookups: ListLookups,
+  statusById: ReadonlyMap<string, ListStatus>,
+): ListRow | undefined {
   const team = lookups.teams.get(issue.teamId);
-  const status = lookups.statuses.find((s) => s.id === issue.statusId);
+  const status = statusById.get(issue.statusId);
   if (team === undefined || status === undefined) return undefined;
   const assignee = issue.assigneeId === null ? undefined : lookups.users.get(issue.assigneeId);
   const estimateOn = team.estimate.scale !== 'off';
@@ -222,15 +227,16 @@ export function buildGroups(
   issues: readonly ListIssue[],
   lookups: ListLookups,
 ): ListGroup[] {
+  const statusById = new Map(lookups.statuses.map((status) => [status.id, status]));
   const selected = selectIssues(scope, variant, issues, lookups.statuses);
   const grouped: IssueGroup<ListIssue>[] =
     scope.kind === 'team'
       ? statusGroups(lookups.statuses, selected)
       : namedStatusGroups(lookups.statuses, selected);
   return grouped.flatMap((group): ListGroup[] => {
-    const rows = group.issues.flatMap((issue) => toRow(issue, variant, lookups) ?? []);
+    const rows = group.issues.flatMap((issue) => toRow(issue, variant, lookups, statusById) ?? []);
     if (rows.length === 0) return [];
-    const color = lookups.statuses.find((s) => s.id === group.status.id)?.color ?? 'gray';
+    const color = statusById.get(group.status.id)?.color ?? 'gray';
     return [
       {
         key: group.key,

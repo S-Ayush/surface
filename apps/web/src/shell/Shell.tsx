@@ -69,7 +69,11 @@ export function Shell({ children, docked }: { children: ReactNode; docked?: Reac
     if (shownPath.current === pathname) return;
     shownPath.current = pathname;
     shell.closeDrawer();
-    mainRef.current?.focus({ preventScroll: true });
+    // A page that already took focus (the issue list focuses its row on arrival) keeps it.
+    const main = mainRef.current;
+    const active = document.activeElement;
+    if (main !== null && active !== main && main.contains(active)) return;
+    main?.focus({ preventScroll: true });
   }, [pathname, shell]);
 
   // The sidebar appeared or went without a navigation (the header button, `[`, Esc, the
