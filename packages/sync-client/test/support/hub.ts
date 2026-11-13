@@ -108,6 +108,11 @@ export class FakeHub {
   signedOut = false;
   /** Refuse every mutate request with `403 FORBIDDEN` (not a CSRF refusal). */
   forbidMutate = false;
+  /**
+   * Refuse a rename or touch of an archived row with `CONFLICT`, as the server refuses an edit
+   * of an archived issue (SPEC-011 §6.1, E26). Off by default: debug items stay editable.
+   */
+  refuseArchivedEdits = false;
   /** The `userId` each request named, in order (SPEC-002 E14). */
   readonly users: { bootstrap: string[]; mutate: string[]; socket: string[] } = {
     bootstrap: [],
@@ -256,6 +261,11 @@ export class FakeHub {
       status: 'error',
       error: { code: 'NOT_FOUND', message: 'Debug item not found. It may have been deleted.' },
     });
+    const archivedRefusal = (): MutationResult => ({
+      seq,
+      status: 'error',
+      error: { code: 'CONFLICT', message: 'This item is archived. Restore it to edit it.' },
+    });
     this.#acking = { clientId, seq };
     try {
       switch (op) {
@@ -285,10 +295,12 @@ export class FakeHub {
         case 'debug.rename':
         case 'debug.broken':
           if (!existing) return notFound();
+          if (this.refuseArchivedEdits && existing.archived) return archivedRefusal();
           this.#upsertRow({ ...existing.row, title: String(get('title')) });
           break;
         case 'debug.touch':
           if (!existing) return notFound();
+          if (this.refuseArchivedEdits && existing.archived) return archivedRefusal();
           this.#upsertRow({ ...existing.row, counter: Number(existing.row.counter) + 1 });
           break;
         case 'debug.delete':

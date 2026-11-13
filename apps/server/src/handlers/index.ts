@@ -44,6 +44,14 @@ import userChangePassword from './users/change-password.js';
 import sessionList from './sessions/list.js';
 import sessionRevoke from './sessions/revoke.js';
 import sessionRevokeOthers from './sessions/revoke-others.js';
+import issueCreate from './issues/create.js';
+import issueGet from './issues/get.js';
+import issueUpdate from './issues/update.js';
+import {
+  countHandler as issueCount,
+  groupByHandler as issueGroupBy,
+  listHandler as issueList,
+} from './issues/list.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -92,4 +100,10 @@ export const HANDLERS: readonly Handler[] = [
   teamSetEstimates,
   labelArchive,
   labelUnarchive,
+  issueList,
+  issueCount,
+  issueGroupBy,
+  issueGet,
+  issueCreate,
+  issueUpdate,
 ];

@@ -175,6 +175,29 @@ describe('AC-15: route guards in the router', () => {
     expect(router.state.matches.map((match) => match.status)).not.toContain('error');
   });
 
+  it('routes an issue address with any slug, none, or a pending id to the issue page (E27, Q14)', async () => {
+    const signedIn = client({ signedInAs: SESSION });
+    const pending = '0192f0c1-7e5a-7b3c-9d4e-0000000000b2';
+    for (const [path, ref] of [
+      ['/issue/ENG-42/old-title', 'ENG-42'],
+      ['/issue/ENG-42', 'ENG-42'],
+      ['/issue/eng-42/login-page-flickers', 'eng-42'],
+      [`/issue/${pending}`, pending],
+    ] as const) {
+      const { router, href } = await open(path, signedIn);
+      // The page replaces the address once the replica resolves it (issue-url.test.ts); without
+      // one it stays, and the route is the issue's, not the not-found page.
+      expect(href()).toBe(path);
+      const leaf = router.state.matches.at(-1);
+      expect(leaf?.routeId, path).toMatch(/^\/shell\/issue\/\$ref/);
+      expect(leaf?.params, path).toMatchObject({ ref });
+    }
+    // Signed out, the whole address survives the trip through login.
+    expect((await open('/issue/ENG-42/old-title', client({}))).href()).toBe(
+      '/login?next=%2Fissue%2FENG-42%2Fold-title',
+    );
+  });
+
   it('renders a public page without the shell', async () => {
     const { app, router } = await open('/invite/abc', client({}));
     const html = renderToString(

@@ -12,9 +12,39 @@ import {
   debugRename,
   debugTouch,
   debugUnarchive,
+  issueCreate,
+  issueUpdate,
 } from '@surface/operations';
+import { Issue } from '@surface/domain/model';
 import type { Faults } from './network.js';
-import type { World } from './world.js';
+import type { Random } from './random.js';
+import { isIssueServer, type IssueFixtures } from './server.js';
+import type { Tab, World } from './world.js';
+
+/**
+ * A label as an issue step names it (PLAN-011 S4): by name, as `Group/Label`, or by id (`#id`).
+ * `Size` is a group and `Nope` doesn't exist, so the server refuses both.
+ */
+export const LABEL_PICKS = [
+  'Flaky',
+  'Frontend',
+  'Size/Small',
+  'Size/Large',
+  'Size/Large#id',
+  'Size',
+  'Nope',
+] as const;
+export type LabelPick = (typeof LABEL_PICKS)[number];
+
+/**
+ * A status as an issue step names it: the team's default, a name, Triage (refused in M1), or a
+ * status of another team (unknown in this team), or `keep` (an update that leaves it).
+ */
+export const STATUS_PICKS = ['default', 'Todo', 'In Progress', 'Done', 'Triage', 'other'] as const;
+export type StatusPick = (typeof STATUS_PICKS)[number];
+
+/** The team the issue steps create in: the one first-run setup made (`@surface/server/testing`). */
+export const ISSUE_TEAM = 'SIM';
 
 export type Step =
   | { readonly t: 'create'; readonly tab: number; readonly item: number; readonly title: string }
@@ -26,6 +56,23 @@ export type Step =
   /** `debug.archive` and `debug.unarchive` (PLAN-011 S2, SPEC-011 §5.5). */
   | { readonly t: 'archive'; readonly tab: number; readonly item: number }
   | { readonly t: 'unarchive'; readonly tab: number; readonly item: number }
+  /** `issue.create` in SIM; refused for Triage, another team's status, a group or `Nope`. */
+  | {
+      readonly t: 'issueCreate';
+      readonly tab: number;
+      readonly title: string;
+      readonly status: StatusPick;
+      readonly labels: readonly LabelPick[];
+    }
+  /** `issue.update` of an issue an earlier step created (wrapped around them). */
+  | {
+      readonly t: 'issueUpdate';
+      readonly tab: number;
+      readonly issue: number;
+      readonly status: StatusPick | 'keep';
+      readonly addLabels: readonly LabelPick[];
+      readonly removeLabels: readonly LabelPick[];
+    }
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -151,6 +198,74 @@ export function exactlyOnceCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
   return caseOf(step);
 }
 
+/**
+ * Mostly the exclusive group's labels, so adds that replace a label (E5–E7) are common; refused
+ * picks (a group, an unknown label) are rare, so most creates commit.
+ */
+const labelPick: fc.Arbitrary<LabelPick> = fc.oneof(
+  { weight: 4, arbitrary: fc.constantFrom('Size/Small', 'Size/Large', 'Size/Large#id') },
+  { weight: 2, arbitrary: fc.constantFrom('Flaky', 'Frontend') },
+  { weight: 1, arbitrary: fc.constantFrom('Size', 'Nope') },
+);
+const labelPicks = fc.array(labelPick, { maxLength: 2 });
+
+/**
+ * Issue numbering and labels (SPEC-011 AC-2, AC-4, E1, E3, E5–E7): creates (some refused) and
+ * label edits from every tab, with every fault. Without compaction: the numbering check reads the
+ * commit order from `sync_log`. Only the real server syncs issues.
+ */
+export function issueCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
+  const issueStep = (arbitrary: fc.Arbitrary<Step>) => ({ weight: 12, arbitrary });
+  const step = fc.oneof(
+    issueStep(
+      fc.record({
+        t: fc.constant('issueCreate'),
+        tab,
+        title,
+        status: fc.constantFrom('default', 'default', ...STATUS_PICKS),
+        labels: labelPicks,
+      }),
+    ),
+    issueStep(
+      fc.record({
+        t: fc.constant('issueUpdate'),
+        tab,
+        issue: index,
+        status: fc.constantFrom('keep', 'keep', 'keep', ...STATUS_PICKS),
+        addLabels: labelPicks,
+        removeLabels: labelPicks,
+      }),
+    ),
+    { weight: 1, arbitrary: fc.record({ t: fc.constant('rename'), tab, item, title }) },
+    ...faultSteps.map((arbitrary) => ({
+      weight: 1,
+      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
+    })),
+    ...(options.bursts ? [{ weight: 1, arbitrary: burst }] : []),
+  );
+  return caseOf(step);
+}
+
+/** A UUIDv7 from the case's randomness, as `issue.create` takes, so a case replays exactly. */
+function uuidV7From(random: Random): string {
+  const hex = Array.from({ length: 32 }, () => Math.floor(random() * 16).toString(16));
+  hex[12] = '7';
+  hex[16] = (8 + Math.floor(random() * 4)).toString(16);
+  const s = hex.join('');
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
+}
+
+function labelRef(pick: LabelPick, fixtures: IssueFixtures): string {
+  if (pick.endsWith('#id')) return fixtures.labels[pick.slice(0, -3)] ?? pick;
+  return pick;
+}
+
+function statusRef(pick: StatusPick, fixtures: IssueFixtures): string | undefined {
+  if (pick === 'default') return undefined;
+  if (pick === 'other') return fixtures.otherTeamStatusId;
+  return pick;
+}
+
 function caseOf(step: fc.Arbitrary<Step>): fc.Arbitrary<Case> {
   return fc.record({
     // Not shrunk: a new seed reshuffles every fault, so a shrunk case would
@@ -168,6 +283,11 @@ function caseOf(step: fc.Arbitrary<Step>): fc.Arbitrary<Case> {
 /** The index wraps around the tabs alive now; undefined when none is. */
 function pick<T>(list: readonly T[], index: number): T | undefined {
   return list.length === 0 ? undefined : list[index % list.length];
+}
+
+/** The live tabs whose store has loaded, so a dispatch is queued rather than refused. */
+function readyTabs(live: readonly Tab[]): Tab[] {
+  return live.filter(({ store }) => store.status === 'ready');
 }
 
 export interface RunOptions {
@@ -208,6 +328,44 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       for (let i = 0; i < step.count; i += 1) {
         world.dispatch(target, debugTouch, { id: itemId(n) });
       }
+      return;
+    }
+    case 'issueCreate': {
+      // Only a loaded tab: a store still loading refuses the dispatch ("Changes cannot be saved
+      // yet"), and a step that never reaches the server tests nothing.
+      const target = pick(readyTabs(live), step.tab);
+      const fixtures = isIssueServer(world.server) ? world.server.issueFixtures : undefined;
+      if (target === undefined || fixtures === undefined) return;
+      const id = uuidV7From(world.random);
+      const status = statusRef(step.status, fixtures);
+      const labels = step.labels.map((l) => labelRef(l, fixtures));
+      const input = {
+        id,
+        team: ISSUE_TEAM,
+        title: step.title,
+        ...(status === undefined ? {} : { status }),
+        ...(labels.length === 0 ? {} : { labels }),
+      };
+      if (world.dispatch(target, issueCreate, input)) world.issueIds.push(id);
+      return;
+    }
+    case 'issueUpdate': {
+      const target = pick(readyTabs(live), step.tab);
+      // Mostly an issue the tab shows, as a user edits what is on screen; a refused create's id
+      // only when the tab shows none (that update is refused with NOT_FOUND).
+      const shown = world.issueIds.filter((id) => target?.store.pool.get(Issue, id) !== undefined);
+      const issue = pick(shown.length > 0 ? shown : world.issueIds, step.issue);
+      const fixtures = isIssueServer(world.server) ? world.server.issueFixtures : undefined;
+      if (target === undefined || issue === undefined || fixtures === undefined) return;
+      const status = step.status === 'keep' ? undefined : statusRef(step.status, fixtures);
+      const add = step.addLabels.map((l) => labelRef(l, fixtures));
+      const remove = step.removeLabels.map((l) => labelRef(l, fixtures));
+      world.dispatch(target, issueUpdate, {
+        issue,
+        ...(status === undefined ? {} : { status }),
+        ...(add.length === 0 ? {} : { addLabels: add }),
+        ...(remove.length === 0 ? {} : { removeLabels: remove }),
+      });
       return;
     }
     case 'wait':

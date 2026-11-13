@@ -13,6 +13,7 @@ import {
   type Filter,
   type FilterContext,
   type FilterFields,
+  type RefEntity,
   type RefType,
 } from '@surface/domain';
 import { LIST_LIMIT_DEFAULT, type OrderBy } from '@surface/operations';
@@ -38,8 +39,12 @@ import { lookup } from './refs/sources.js';
 /** Sort key types. Text sorts in the database collation; only the server orders by it. */
 export type OrderType = 'text' | 'number' | 'instant' | 'day';
 
-/** Reference types a filter value may name (`"team": "ENG"`). Scoped ones need M1's context. */
-export type FilterRefType = Extract<RefType, 'TeamRef' | 'UserRef'>;
+/**
+ * Reference types a filter value may name (`"team": "ENG"`). Statuses and labels resolve within
+ * the list's `scopeTeam` (PLAN-011 S4): a status name needs one, and a label name without one
+ * matches workspace labels only, like inputs (SPEC-003 §4).
+ */
+export type FilterRefType = Extract<RefType, 'TeamRef' | 'UserRef' | 'StatusRef' | 'LabelRef'>;
 
 type ColumnKey<T extends PgTable> = Extract<keyof T['_']['columns'], string>;
 type Row<T extends PgTable> = T['$inferSelect'];
@@ -57,13 +62,20 @@ export interface ListModel<T extends PgTable, F extends FilterFields = FilterFie
   readonly teamColumn: ColumnKey<T> | null;
   /** Rows with a value here are archived and listed only with `includeArchived`. */
   readonly archivedColumn?: ColumnKey<T>;
+  /** Rows with a value here are never listed, counted or grouped (deleted issues, SPEC-011 §6.1). */
+  readonly deletedColumn?: ColumnKey<T>;
   /**
    * Groupings for `*.groupBy`, by name. `key` is a text expression (null for "none") and
    * `label` its display name. A label read from another synced table must apply the actor's
-   * groups, as filter dot-paths do.
+   * groups, as filter dot-paths do. `lateral` joins a set per row (`LEFT JOIN LATERAL … ON
+   * TRUE`), so a row counts once in each of its values, like an issue in each of its labels.
    */
   readonly groupings?: (groups: readonly string[]) => {
-    readonly [name: string]: { readonly key: SQL; readonly label: SQL };
+    readonly [name: string]: {
+      readonly key: SQL;
+      readonly label: SQL;
+      readonly lateral?: SQL;
+    };
   };
   /** Summed per group as `estimateSum`. */
   readonly estimateColumn?: ColumnKey<T>;
@@ -85,6 +97,8 @@ export function defineListModel<T extends PgTable, F extends FilterFields>(
 
 export interface ListArgs {
   readonly filter?: Filter | undefined;
+  /** The team status and label names in the filter resolve within. */
+  readonly scopeTeam?: RefEntity | undefined;
   readonly orderBy?: OrderBy | undefined;
   readonly limit?: number | undefined;
   readonly cursor?: string | undefined;
@@ -96,10 +110,14 @@ export interface ListArgs {
 export interface CountArgs {
   readonly filter?: Filter | undefined;
   readonly includeArchived?: boolean | undefined;
+  /** The team status and label names in the filter resolve within (`team` of the input). */
+  readonly scopeTeam?: RefEntity | undefined;
 }
 
 export interface GroupByArgs extends CountArgs {
   readonly groupBy: string;
+  /** At most this many groups, the largest first. */
+  readonly limit?: number;
 }
 
 export interface Page<R> {
@@ -191,7 +209,26 @@ export async function groupByQuery<T extends PgTable, F extends FilterFields>(
   const columns = getTableColumns(model.table);
   const estimate =
     model.estimateColumn === undefined ? undefined : columnOf(columns, model.estimateColumn);
-  const rows = await ctx.tx
+  const limit = args.limit === undefined ? undefined : sql`LIMIT ${args.limit}`;
+  if (grouping.lateral !== undefined) {
+    // A row counts in each of its values: one join row per value (`lateral`), so plain SQL.
+    const result = await ctx.tx.execute<{
+      key: string | null;
+      label: string | null;
+      count: number;
+    }>(
+      sql`SELECT ${grouping.key} AS key, ${grouping.label} AS label, count(*)::int AS count
+            FROM ${table} LEFT JOIN LATERAL ${grouping.lateral} ON TRUE
+           WHERE ${where ?? sql`TRUE`}
+           GROUP BY 1, 2 ORDER BY 3 DESC, 1 ASC NULLS LAST ${limit ?? sql``}`,
+    );
+    return result.rows.map((row) => ({
+      key: row.key,
+      label: row.label ?? 'None',
+      count: row.count,
+    }));
+  }
+  const query = ctx.tx
     .select({
       key: sql<string | null>`${grouping.key}`,
       label: sql<string | null>`${grouping.label}`,
@@ -201,7 +238,9 @@ export async function groupByQuery<T extends PgTable, F extends FilterFields>(
     .from(table)
     .where(where)
     .groupBy(sql`1`, sql`2`)
-    .orderBy(sql`3 DESC`, sql`1 ASC NULLS LAST`);
+    .orderBy(sql`3 DESC`, sql`1 ASC NULLS LAST`)
+    .$dynamic();
+  const rows = await (args.limit === undefined ? query : query.limit(args.limit));
   return rows.map((row) => ({
     key: row.key,
     label: row.label ?? 'None',
@@ -241,11 +280,13 @@ async function baseWhere<T extends PgTable, F extends FilterFields>(
     model.archivedColumn === undefined || args.includeArchived
       ? undefined
       : isNull(columnOf(columns, model.archivedColumn));
+  const present =
+    model.deletedColumn === undefined ? undefined : isNull(columnOf(columns, model.deletedColumn));
   const filtered =
     args.filter === undefined
       ? undefined
-      : compile(await resolveFilterRefs(ctx, model, args.filter), model, ctx);
-  return and(visible, live, filtered);
+      : compile(await resolveFilterRefs(ctx, model, args.filter, args.scopeTeam), model, ctx);
+  return and(visible, present, live, filtered);
 }
 
 function compile<F extends FilterFields>(
@@ -271,6 +312,7 @@ async function resolveFilterRefs<F extends FilterFields>(
   ctx: ListContext,
   model: ListModel<PgTable, F>,
   filter: Filter,
+  scopeTeam: RefEntity | undefined,
 ): Promise<Filter> {
   const refs: Readonly<Record<string, FilterRefType | undefined>> = model.filterRefs ?? {};
   if (Object.keys(refs).length === 0) return filter;
@@ -281,6 +323,8 @@ async function resolveFilterRefs<F extends FilterFields>(
       db: ctx.client,
       actor: ctx.actor,
       path,
+      // Statuses and labels by name resolve within the list's team, like inputs (SPEC-003 §4).
+      ...(scopeTeam === undefined ? {} : { scopeTeam }),
       // Filtering by a deactivated user ("assigned to Sam, who left") is legitimate.
       allowInactive: true,
     });

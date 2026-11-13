@@ -15,6 +15,8 @@
  * PLAN-001 S5 (session E): a pending invite with a fixed id, which the `invite.revoke` example
  * revokes. `invite.create`'s example invites new.person@example.com, who has no account.
  *
+ * PLAN-011 S4: issues ENG-1 to ENG-3; the issue examples read them and `issue.update` edits ENG-1.
+ *
  * PLAN-001 S6 (session E, agreed with A): the actor's password and a second session of theirs.
  * `session.revoke`'s example ends that session, and `user.changePassword`'s example changes the
  * password from `SEED_PASSWORD`.
@@ -23,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedTeamWorkflow, teamWorkflow } from '../src/handlers/teams/seed.js';
+import { newIssuePosition } from '../src/issues/numbering.js';
 import { syncRepo } from '../src/sync/repo.js';
 import type { TestDatabase } from './db.js';
 import { actorFor } from './helpers.js';
@@ -66,7 +69,8 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    const repo = syncRepo(drizzle({ client, casing: 'snake_case' }), new Date());
+    const tx = drizzle({ client, casing: 'snake_case' });
+    const repo = syncRepo(tx, new Date());
     await repo.insert('Workspace', { id: randomUUID(), name: 'Surface', syncGroups: [] });
     await repo.insert('User', {
       id: users.me,
@@ -91,13 +95,37 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
       defaultStatusId: workflow.defaultStatusId,
       syncGroups: [],
     });
-    await seedTeamWorkflow(repo, workflow);
+    const statuses = await seedTeamWorkflow(repo, workflow);
     await repo.insert('TeamMembership', {
       id: randomUUID(),
       teamId: teams.eng,
       userId: users.me,
       syncGroups: [],
     });
+    // PLAN-011 S4: ENG-1 to ENG-3, numbered and ordered like `issue.create` does.
+    const statusNamed = (name: string) => {
+      const status = statuses.find((s) => s.name === name);
+      if (!status) throw new Error(`The seed workflow has no ${name} status`);
+      return status.id;
+    };
+    for (const [title, status, assigneeId] of [
+      ['Fix the login redirect loop', 'Todo', null],
+      ['Add keyboard shortcuts to the issue list', 'In Progress', users.me],
+      ['Write the onboarding guide', 'Backlog', users.iris],
+    ] as const) {
+      const { number, sortOrder } = await newIssuePosition(tx, teams.eng);
+      await repo.insert('Issue', {
+        id: randomUUID(),
+        teamId: teams.eng,
+        number,
+        title,
+        statusId: statusNamed(status),
+        assigneeId,
+        sortOrder,
+        creatorId: users.me,
+        startedAt: status === 'In Progress' ? new Date() : null,
+      });
+    }
     await repo.flush({});
     // Server-only, so plain SQL. The id is the one `invite.revoke`'s example names.
     await client.query(

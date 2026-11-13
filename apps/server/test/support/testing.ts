@@ -78,6 +78,21 @@ export interface DebugItemRow {
   readonly syncGroups: readonly string[];
 }
 
+/** An `issues` row as stored, the fields the issue properties compare (PLAN-011 S4). */
+export interface IssueRow {
+  readonly id: string;
+  readonly teamId: string;
+  readonly number: number;
+  readonly title: string;
+  readonly statusId: string;
+  readonly priority: number;
+  readonly labelIds: readonly string[];
+  readonly sortOrder: string;
+  readonly syncGroups: readonly string[];
+  /** The `sync_id` of the issue's `I` row: commit order (null once retention pruned it). */
+  readonly insertedAt: number | null;
+}
+
 /** The SPEC-003 response body of `POST /api/ops/:name`. */
 export type OpResponse =
   | { readonly ok: true; readonly result: unknown }
@@ -98,6 +113,8 @@ export interface TestServer {
   head(): Promise<number>;
   /** Every `debug_items` row, by id. */
   items(): Promise<DebugItemRow[]>;
+  /** Every `issues` row, by id (PLAN-011 S4). */
+  issues(): Promise<IssueRow[]>;
   /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
@@ -116,6 +133,19 @@ const OpResponseSchema = z.union([
     error: z.object({ code: z.string(), message: z.string() }),
   }),
 ]);
+
+const IssueDbRow = z.object({
+  id: z.string(),
+  team_id: z.string(),
+  number: z.number(),
+  title: z.string(),
+  status_id: z.string(),
+  priority: z.number(),
+  label_ids: z.array(z.string()),
+  sort_order: z.string(),
+  sync_groups: z.array(z.string()),
+  inserted_at: z.string().nullable(),
+});
 
 const ItemRow = z.object({
   id: z.string(),
@@ -198,6 +228,30 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             archived: item.archived,
             archivedAt: item.archived_at?.toISOString() ?? null,
             syncGroups: item.sync_groups,
+          };
+        });
+      },
+      issues: async () => {
+        const { rows } = await db.query(
+          `SELECT i.id, i.team_id, i.number, i.title, i.status_id, i.priority, i.label_ids,
+                  i.sort_order, i.sync_groups,
+                  (SELECT min(l.sync_id)::text FROM sync_log l
+                    WHERE l.model = 'Issue' AND l.model_id = i.id AND l.action = 'I') AS inserted_at
+             FROM issues i ORDER BY i.id`,
+        );
+        return rows.map((row) => {
+          const issue = IssueDbRow.parse(row);
+          return {
+            id: issue.id,
+            teamId: issue.team_id,
+            number: issue.number,
+            title: issue.title,
+            statusId: issue.status_id,
+            priority: issue.priority,
+            labelIds: issue.label_ids,
+            sortOrder: issue.sort_order,
+            syncGroups: issue.sync_groups,
+            insertedAt: issue.inserted_at === null ? null : Number(issue.inserted_at),
           };
         });
       },

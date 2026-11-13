@@ -1,5 +1,6 @@
 // SPEC-003 §4: the resolver finds every reference in an input and orders scopes first.
 import {
+  IssueRef,
   LabelRef,
   scopedTo,
   StatusRef,
@@ -10,7 +11,7 @@ import {
 import { defineOperation } from '@surface/operations';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { refPlan, RefPlanError } from '../src/executor/refs/resolve.js';
+import { refPlan, RefPlanError, scopeTeamOf } from '../src/executor/refs/resolve.js';
 
 function op(input: z.ZodObject) {
   return defineOperation({
@@ -66,6 +67,7 @@ describe('refPlan', () => {
         many: true,
         allowInactive: false,
         scope: 'team',
+        scopeType: 'TeamRef',
       },
     ]);
   });
@@ -92,7 +94,7 @@ describe('refPlan', () => {
 
   it('rejects a scope field that is not a single TeamRef', () => {
     expect(() => refPlan(op(z.object({ team: z.array(TeamRef), status: StatusRef })))).toThrow(
-      /must be a single TeamRef/,
+      /must be a single TeamRef or IssueRef/,
     );
   });
 
@@ -103,6 +105,32 @@ describe('refPlan', () => {
     expect(() => refPlan(op(z.object({ who: z.union([UserRef, z.number()]) })))).toThrow(
       RefPlanError,
     );
+  });
+
+  it("scopes a status and labels to an issue: the issue's team, not a team named elsewhere (PLAN-011 S4)", () => {
+    const plan = refPlan(
+      op(
+        z.object({
+          team: TeamRef.optional(),
+          issue: IssueRef,
+          status: scopedTo(StatusRef, 'issue'),
+          addLabels: z.array(scopedTo(LabelRef, 'issue')),
+        }),
+      ),
+    );
+    const status = plan.find((l) => l.key === 'status');
+    expect([status?.scope, status?.scopeType]).toEqual(['issue', 'IssueRef']);
+    const at = (key: string) => plan.findIndex((l) => l.key === key);
+    expect(at('issue')).toBeLessThan(at('status'));
+    const resolved = {
+      team: { id: 'team-a', key: 'ENG' },
+      issue: { id: 'issue-1', teamId: 'team-b', teamKey: 'DES', number: 4 },
+    };
+    for (const key of ['status', 'addLabels']) {
+      const location = plan.find((l) => l.key === key);
+      if (!location) throw new Error(key);
+      expect(scopeTeamOf(location, resolved)).toEqual({ id: 'team-b', key: 'DES' });
+    }
   });
 
   it('caches the plan per operation', () => {

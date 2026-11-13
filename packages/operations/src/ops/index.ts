@@ -38,6 +38,14 @@ import {
   labelUpdate,
 } from './label.js';
 import { statusCreate, statusDelete, statusList, statusReorder, statusUpdate } from './status.js';
+import {
+  issueCount,
+  issueCreate,
+  issueGet,
+  issueGroupBy,
+  issueList,
+  issueUpdate,
+} from './issue.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -50,6 +58,7 @@ export * from './profile.js';
 export * from './session.js';
 export * from './status.js';
 export * from './label.js';
+export * from './issue.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -112,6 +121,14 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   // Settings of the team the seed's actor belongs to; run after the statuses above (SPEC-010 §6).
   teamSetDefaultStatus,
   teamSetEstimates,
+  // Reads first, then create and update: the examples run in this order on one seed, which holds
+  // ENG-1 to ENG-3 (SPEC-011 §6.1); `issue.update` edits ENG-1.
+  issueList,
+  issueCount,
+  issueGroupBy,
+  issueGet,
+  issueCreate,
+  issueUpdate,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

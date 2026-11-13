@@ -16,6 +16,7 @@ import {
 } from '@tanstack/react-router';
 import { reaction } from 'mobx';
 import { useCallback, useEffect } from 'react';
+import { IssuePlaceholderPage } from '../features/issues/IssuePlaceholderPage.js';
 import { MyIssuesPage } from '../pages/MyIssuesPage.js';
 import { NotFoundPage, StandaloneNotFoundPage } from '../pages/NotFoundPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
@@ -195,6 +196,24 @@ const teamRoute = createRoute({
   },
 });
 
+// An issue (SPEC-011 §4.1, SPEC-005 §3): `/issue/ENG-42/<slug>`, `/issue/ENG-42`, or `/issue/<id>`
+// for a pending issue (Q14). The slug is cosmetic: the page replaces it (E27).
+function IssueAddress() {
+  return <IssuePlaceholderPage issueRef={useRouteParams().ref ?? ''} />;
+}
+
+const issueRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: 'issue/$ref',
+  component: IssueAddress,
+});
+
+const issueSlugRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: 'issue/$ref/$slug',
+  component: IssueAddress,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: 'settings',
@@ -216,6 +235,8 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     myIssuesRoute,
     teamRoute,
+    issueRoute,
+    issueSlugRoute,
     settingsRoute.addChildren([
       createRoute({
         getParentRoute: () => settingsRoute,

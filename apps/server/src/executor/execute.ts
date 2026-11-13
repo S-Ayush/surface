@@ -67,7 +67,7 @@ import {
   type SyncMetrics,
 } from './metrics.js';
 import { unlimited, type RateLimiter } from './rate-limit.js';
-import { refNotFound, refPlan, resolveRefs, single, valueAt } from './refs/resolve.js';
+import { refNotFound, refPlan, resolveRefs, scopeTeamOf, valueAt } from './refs/resolve.js';
 import {
   claimSeq,
   FOREIGN_CLIENT_MESSAGE,
@@ -320,7 +320,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       const value = valueAt(input, location.path);
       const list: readonly unknown[] | undefined = Array.isArray(value) ? value : undefined;
       const item = index !== undefined && list ? list[index] : value;
-      const scope = location.scope === undefined ? undefined : single(refs[location.scope]);
+      const scope = scopeTeamOf(location, refs);
       throw refNotFound(
         location.type,
         typeof item === 'string' ? item : String(item),

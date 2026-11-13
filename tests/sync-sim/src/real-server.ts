@@ -39,7 +39,7 @@ import { createDatabaseFrom, errorLogger, startTestServer } from '@surface/serve
 import type { SocketConnection, SocketHandlers } from '@surface/sync-client';
 import { CSRF_HEADER, computeSchemaHash } from '@surface/sync-protocol';
 import { addRealEvents, trackRealWork } from './clock.js';
-import type { ItemState, SimServer } from './server.js';
+import type { IssueFixtures, IssueRecord, IssueServer, IssueState, ItemState } from './server.js';
 
 export interface RealServerOptions {
   /** Superuser URL of the cluster (`startTestPostgres`). */
@@ -60,6 +60,43 @@ const QUIET_TURNS = 4;
 const REAL_MODELS: readonly ModelDef[] = [DebugItem, ...PRODUCTION_MODELS];
 
 const MUTATE_PATH = '/sync/mutate';
+
+/** The second team's id (a UUIDv7, as `team.create` takes). */
+const OTHER_TEAM_ID = '01930000-0000-7000-8000-00000000f001';
+
+/**
+ * Labels the issue steps name, by reference: a workspace label, a team label, and an exclusive
+ * group with two labels (SPEC-010 §4.2). Ids are UUIDv7, as `label.create` takes.
+ */
+const FIXTURE_LABELS = [
+  { ref: 'Flaky', input: { id: '01930000-0000-7000-8000-00000000a001', name: 'Flaky' } },
+  {
+    ref: 'Frontend',
+    input: { id: '01930000-0000-7000-8000-00000000a002', team: 'SIM', name: 'Frontend' },
+  },
+  {
+    ref: 'Size',
+    input: { id: '01930000-0000-7000-8000-00000000a003', team: 'SIM', name: 'Size', isGroup: true },
+  },
+  {
+    ref: 'Size/Small',
+    input: {
+      id: '01930000-0000-7000-8000-00000000a004',
+      team: 'SIM',
+      name: 'Small',
+      group: 'Size',
+    },
+  },
+  {
+    ref: 'Size/Large',
+    input: {
+      id: '01930000-0000-7000-8000-00000000a005',
+      team: 'SIM',
+      name: 'Large',
+      group: 'Size',
+    },
+  },
+] as const;
 
 /** Statuses that carry no body (the `Response` constructor refuses one). */
 const NULL_BODY = new Set([101, 204, 205, 304]);
@@ -104,7 +141,7 @@ interface RealSocket {
   resynced: boolean;
 }
 
-export class RealServer implements SimServer {
+export class RealServer implements IssueServer {
   readonly users: readonly string[];
   readonly models = REAL_MODELS;
   /** What went wrong on the server side; each is a failure of the case. */
@@ -117,6 +154,7 @@ export class RealServer implements SimServer {
    * (SPEC-002 Q12).
    */
   refusedMidBatch = 0;
+  issueFixtures: IssueFixtures | undefined;
   readonly #entry: TestServer;
   readonly #database: TestDatabaseHandle;
   readonly #byId: ReadonlyMap<string, TestUser>;
@@ -280,6 +318,68 @@ export class RealServer implements SimServer {
     });
   }
 
+  /**
+   * PLAN-011 S4: the labels the issue steps name, in the setup's team (SIM) and the workspace,
+   * with an exclusive group, and a second team whose status an SIM issue may not take. Through
+   * the executor as the Admin, like `seed`.
+   */
+  seedIssueFixtures(): Promise<IssueFixtures> {
+    const admin = this.#entry.users[0];
+    if (admin === undefined) return Promise.reject(new Error('The real server has no users.'));
+    return this.#serially('seed the issue fixtures', async () => {
+      const run = async (name: string, input: object): Promise<unknown> => {
+        const result = await this.#entry.run(admin, name, input);
+        if (!result.ok) throw new Error(`Seeding ${name} failed: ${result.error.message}`);
+        return result.result;
+      };
+      for (const label of FIXTURE_LABELS) await run('label.create', label.input);
+      const team = await run('team.create', { id: OTHER_TEAM_ID, name: 'Operations', key: 'OPS' });
+      const statusId: unknown =
+        typeof team === 'object' && team !== null ? Reflect.get(team, 'defaultStatusId') : null;
+      if (typeof statusId !== 'string') throw new Error('team.create returned no default status.');
+      const fixtures: IssueFixtures = {
+        labels: Object.fromEntries(FIXTURE_LABELS.map((l) => [l.ref, l.input.id])),
+        otherTeamStatusId: statusId,
+      };
+      this.issueFixtures = fixtures;
+      return fixtures;
+    });
+  }
+
+  issueRows(): Promise<readonly IssueRecord[]> {
+    return this.#serially('read the issues', async () =>
+      (await this.#entry.issues()).map((row) => ({
+        id: row.id,
+        teamId: row.teamId,
+        number: row.number,
+        labelIds: row.labelIds,
+        sortOrder: row.sortOrder,
+        insertedAt: row.insertedAt,
+      })),
+    );
+  }
+
+  issues(): Promise<Record<string, IssueState>> {
+    return this.#serially('read the issues', async () => {
+      const rows = await this.#entry.issues();
+      return Object.fromEntries(
+        rows.map((row): [string, IssueState] => [
+          row.id,
+          {
+            teamId: row.teamId,
+            number: row.number,
+            title: row.title,
+            statusId: row.statusId,
+            priority: row.priority,
+            labelIds: [...row.labelIds],
+            sortOrder: row.sortOrder,
+            groups: [...row.syncGroups],
+          },
+        ]),
+      );
+    });
+  }
+
   compactLog(): void {
     void this.#serially('compact the log', () => this.#entry.compactLog()).catch(() => undefined);
   }
@@ -331,7 +431,8 @@ export class RealServer implements SimServer {
   /**
    * Every open socket has received everything committed, or will receive
    * nothing more. Assumes each socket may see every row the simulation
-   * writes: its steps only write `debug.*` items in the `workspace` group. A
+   * writes: its steps only write `debug.*` items in the `workspace` group, and
+   * issues and labels of public teams (PLAN-011 S4). A
    * row outside a socket's groups is never sent to it (`DeltaWriter`), so a
    * step that writes one would wait out the deadline here.
    */

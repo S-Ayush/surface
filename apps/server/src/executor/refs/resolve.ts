@@ -28,7 +28,7 @@ export async function resolveRefs(
     const value = valueAt(input, location.path);
     if (value === undefined || value === null) continue;
 
-    const scopeTeam = location.scope === undefined ? undefined : single(resolved[location.scope]);
+    const scopeTeam = scopeTeamOf(location, resolved);
     const context = { db: tx, actor, scopeTeam, allowInactive: location.allowInactive };
 
     if (location.many) {
@@ -49,6 +49,24 @@ export async function resolveRefs(
     }
   }
   return resolved;
+}
+
+/**
+ * The team a scoped reference resolves within: the resolved `TeamRef`, or for an `IssueRef`
+ * scope the issue's own team (`{ id, key }`), never a team named elsewhere in the input
+ * (SPEC-003 §4, PLAN-011 S4).
+ */
+export function scopeTeamOf(location: RefLocation, resolved: ResolvedRefs): RefEntity | undefined {
+  if (location.scope === undefined) return undefined;
+  const scope = single(resolved[location.scope]);
+  if (scope === undefined) return undefined;
+  if (location.scopeType !== 'IssueRef') return scope;
+  const teamId = scope['teamId'];
+  const key = scope['teamKey'];
+  if (typeof teamId !== 'string' || typeof key !== 'string') {
+    throw new Error(`An IssueRef scope must carry teamId and teamKey`);
+  }
+  return { id: teamId, key };
 }
 
 /** The value at a field path of the parsed input. */

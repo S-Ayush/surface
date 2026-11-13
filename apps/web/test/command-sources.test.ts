@@ -4,11 +4,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { Command, CommandTarget } from '../src/command-menu/model.js';
 import { appSource } from '../src/command-menu/sources/app.js';
-import { navigationSource, teamsPage } from '../src/command-menu/sources/navigation.js';
+import {
+  issueFastPath,
+  navigationSource,
+  teamsPage,
+  withIssueFastPath,
+} from '../src/command-menu/sources/navigation.js';
+import { collect, rankCommands } from '../src/command-menu/ranking.js';
 import { operationSource } from '../src/command-menu/sources/operations.js';
 import { propertySource, type PropertyCommand } from '../src/command-menu/sources/properties.js';
 import { CommandRegistry } from '../src/commands/registry.js';
-import { context, ENG, fixtureRegistry } from './command-fixtures.js';
+import { context, ENG, fixtureRegistry, noBoost } from './command-fixtures.js';
 
 const available = (commands: readonly Command[], ctx = context()) =>
   commands.filter((command) => command.when?.(ctx) ?? true).map((command) => command.id);
@@ -44,6 +50,41 @@ describe('navigation commands', () => {
     void items[1]?.run();
     expect(navigate).toHaveBeenCalledWith('/team/DES');
     expect(teamsPage(context({ teams: () => [] })).empty).toBe('No teams yet');
+  });
+});
+
+describe('identifier fast path (command-menu §3.1, SPEC-011 §7)', () => {
+  const ranked = (query: string, ctx = context({ navigate: vi.fn() })) =>
+    withIssueFastPath(
+      rankCommands(collect([navigationSource], ctx), query, ctx, noBoost),
+      query,
+      ctx,
+    );
+
+  it('puts "Open ENG-87" first for eng-87, and opens the issue address', () => {
+    const navigate = vi.fn();
+    const ctx = context({ navigate });
+    const sections = ranked('eng-87', ctx);
+    expect(sections[0]?.section).toBe('suggested');
+    const first = sections[0]?.items[0]?.command;
+    expect(first?.title).toBe('Open ENG-87');
+    void first?.run?.(ctx);
+    expect(navigate).toHaveBeenCalledWith('/issue/ENG-87');
+  });
+
+  it('stays first even when another command matches the query', () => {
+    // "Go to Engineering" has ENG as a keyword.
+    const sections = ranked('ENG-1');
+    expect(sections.flatMap((s) => s.items).map((i) => i.command.title)[0]).toBe('Open ENG-1');
+  });
+
+  it('offers nothing for other queries, or before the shell provides navigation', () => {
+    expect(issueFastPath('eng')).toBeUndefined();
+    expect(issueFastPath('settings')).toBeUndefined();
+    const titles = (sections: ReturnType<typeof ranked>) =>
+      sections.flatMap((s) => s.items).map((i) => i.command.title);
+    expect(titles(ranked('eng'))).not.toContain('Open ENG');
+    expect(titles(ranked('eng-87', context()))).not.toContain('Open ENG-87');
   });
 });
 

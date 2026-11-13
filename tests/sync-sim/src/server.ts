@@ -54,6 +54,55 @@ export interface SimServer {
   dispose(): Promise<void>;
 }
 
+/**
+ * What a client should end up showing for one issue (PLAN-011 S4): every field an issue
+ * operation writes, and the server-computed number and sort key.
+ */
+export interface IssueState {
+  readonly teamId: unknown;
+  readonly number: unknown;
+  readonly title: unknown;
+  readonly statusId: unknown;
+  readonly priority: unknown;
+  readonly labelIds: unknown;
+  readonly sortOrder: unknown;
+  readonly groups: unknown;
+}
+
+/** The rows the issue steps name (`steps.ts`), made by `IssueServer.seedIssueFixtures`. */
+export interface IssueFixtures {
+  /** Label ids by the reference the steps use (`Bug`, `Size/Small`, …). */
+  readonly labels: Readonly<Record<string, string>>;
+  /** A status of another team (OPS), which an issue of the steps' team may not take. */
+  readonly otherTeamStatusId: string;
+}
+
+/** A server the issue steps run against: only the real one syncs issues. */
+export interface IssueServer extends SimServer {
+  /** Set once `seedIssueFixtures` has run. */
+  readonly issueFixtures: IssueFixtures | undefined;
+  /** Labels and a second team, written through the executor. */
+  seedIssueFixtures(): Promise<IssueFixtures>;
+  /** The database's issues, by id. */
+  issues(): Promise<Record<string, IssueState>>;
+  /** The database's issues with their commit order, for the numbering checks. */
+  issueRows(): Promise<readonly IssueRecord[]>;
+}
+
+/** One stored issue, with the `sync_id` of its insert (its commit order). */
+export interface IssueRecord {
+  readonly id: string;
+  readonly teamId: string;
+  readonly number: number;
+  readonly labelIds: readonly string[];
+  readonly sortOrder: string;
+  readonly insertedAt: number | null;
+}
+
+export function isIssueServer(server: SimServer): server is IssueServer {
+  return 'issueRows' in server && 'seedIssueFixtures' in server;
+}
+
 /** The hub's ping interval (sync-protocol §4.2; PLAN-002 S4: every 25 s). */
 export const PING_INTERVAL_MS = 25_000;
 

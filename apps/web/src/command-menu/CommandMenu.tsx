@@ -21,6 +21,7 @@ import {
   type CommandTarget,
 } from './model.js';
 import { collect, rankCommands, rankPageItems } from './ranking.js';
+import { withIssueFastPath } from './sources/navigation.js';
 import { useReactive } from './reactive.js';
 import {
   activeIndex,
@@ -191,7 +192,11 @@ function MenuBody({
     const rows = toRows(
       page
         ? rankPageItems(page, state.query)
-        : rankCommands(collect(sources, ctx), state.query, ctx, frecency),
+        : withIssueFastPath(
+            rankCommands(collect(sources, ctx), state.query, ctx, frecency),
+            state.query,
+            ctx,
+          ),
     );
     // Read inside the reaction, so a role change closes a page it no longer allows (E4).
     const revoked = revokedDepth(state.pages, ctx);

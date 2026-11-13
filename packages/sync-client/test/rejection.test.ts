@@ -56,6 +56,43 @@ describe('a rejected mutation (AC-7)', () => {
   });
 });
 
+// SPEC-011 E26 (PLAN-011 S4): a row archived on the server while an edit of it waits in the
+// queue. The server refuses the edit with CONFLICT; the client rolls it back and reports it, and
+// nothing in the client unarchives the row.
+describe('an edit queued while its row was archived on the server (SPEC-011 E26)', () => {
+  it('is refused with CONFLICT, rolls back, is reported once, and leaves the row archived', async () => {
+    const hub = seededHub();
+    hub.refuseArchivedEdits = true;
+    const onRejected = vi.fn();
+    const { store } = liveStore(hub, { onRejected });
+    await store.start();
+    await until(() => store.connection === 'online');
+    // Archived on the server (auto-archive); this client has not heard yet.
+    hub.last.paused = true;
+    hub.archive(1);
+
+    const outcome = store.dispatch(debugRename, { id: id(1), title: 'Too late' });
+    expect(store.pool.get(DebugItem, id(1))?.title).toBe('Too late');
+    expect(await outcome).toEqual({
+      status: 'rejected',
+      error: { code: 'CONFLICT', message: 'This item is archived. Restore it to edit it.' },
+    });
+    expect(store.pool.get(DebugItem, id(1))?.title).toBe('Item 1');
+    expect(onRejected).toHaveBeenCalledOnce();
+    expect(onRejected).toHaveBeenCalledWith(expect.objectContaining({ code: 'CONFLICT' }));
+
+    hub.last.paused = false;
+    hub.last.deliver();
+    await until(() => store.pool.get(DebugItem, id(1))?.$archived === true);
+    const row = store.pool.get(DebugItem, id(1));
+    expect(row?.title).toBe('Item 1');
+    expect(row?.archivedAt).not.toBeNull();
+    expect(store.pending).toEqual([]);
+    expect(hub.rows.get(id(1))?.archived).toBe(true);
+    await store.close();
+  });
+});
+
 describe("a rejection's issues", () => {
   it('reach the outcome and the handler, so a form can show each on its field', async () => {
     const hub = seededHub();

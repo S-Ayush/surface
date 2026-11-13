@@ -8,7 +8,7 @@
  */
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { DebugItem } from '@surface/domain/model';
+import { DebugItem, Issue } from '@surface/domain/model';
 import type { AnyOperation, InputOf } from '@surface/operations';
 import type { MutationOutcome, StorageConnector } from '@surface/sync-client';
 import { SyncStore } from '@surface/sync-client';
@@ -20,7 +20,7 @@ import type { Link } from './network.js';
 import { Network } from './network.js';
 import type { Random } from './random.js';
 import { seededRandom, uuidFrom } from './random.js';
-import type { ItemState, SimServer } from './server.js';
+import type { IssueState, ItemState, SimServer } from './server.js';
 import { TabTimers } from './timers.js';
 
 export interface WorldOptions {
@@ -89,6 +89,8 @@ export class World {
    * crash after must not.
    */
   readonly saved = new Map<string, Saved>();
+  /** Ids of the issues `issueCreate` steps dispatched, accepted or not (PLAN-011 S4). */
+  readonly issueIds: string[] = [];
   readonly #problems: string[] = [];
   readonly #webLocks: boolean;
   readonly #states = new Map<Tab, TabState>();
@@ -359,6 +361,24 @@ export class World {
         groups: item.groups,
         archivedAt: item.archivedAt,
         archived: item.$archived,
+      },
+    ]);
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /** The issues a live tab shows, by id: base plus overlay (PLAN-011 S4). */
+  issueView(tab: Tab): Record<string, IssueState> {
+    const entries = tab.store.pool.all(Issue).map((issue): [string, IssueState] => [
+      issue.id,
+      {
+        teamId: issue.teamId,
+        number: issue.number,
+        title: issue.title,
+        statusId: issue.statusId,
+        priority: issue.priority,
+        labelIds: [...issue.labelIds],
+        sortOrder: issue.sortOrder,
+        groups: issue.groups,
       },
     ]);
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));

@@ -16,6 +16,8 @@ import { toJsonSchema, type AnyOperation, type JsonSchema } from '@surface/opera
 const TEAM_SCOPED: ReadonlySet<RefType> = new Set(['StatusRef', 'CycleRef']);
 /** Reference types that use a team scope when the input has one (LabelRef: team, then workspace). */
 const OPTIONALLY_SCOPED: ReadonlySet<RefType> = new Set(['LabelRef']);
+/** What a scope field may be: a team, or an issue whose team is the scope (PLAN-011 S4). */
+const SCOPE_TYPES: ReadonlySet<RefType> = new Set(['TeamRef', 'IssueRef']);
 
 export interface RefLocation {
   /** Field path in the parsed input, like `['owner', 'team']`. */
@@ -25,8 +27,10 @@ export interface RefLocation {
   readonly type: RefType;
   /** An array of references (`labels: LabelRef[]`). */
   readonly many: boolean;
-  /** Key of the `TeamRef` location this reference resolves within. */
+  /** Key of the `TeamRef` (or `IssueRef`: its team) location this reference resolves within. */
   readonly scope?: string;
+  /** The scope's reference type: `TeamRef`, or `IssueRef` for the issue's team. */
+  readonly scopeType?: RefType;
   /** `UserRef` only: deactivated users resolve too. */
   readonly allowInactive: boolean;
 }
@@ -75,12 +79,13 @@ export function buildPlan(opName: string, root: JsonSchema): readonly RefLocatio
         `${opName}: ${key} is a ${f.type}, which needs a TeamRef field "${f.scopeField}" in the input. Add it, or point the scope elsewhere with scopedTo().`,
       );
     }
-    if (scope.type !== 'TeamRef' || scope.many) {
+    // An IssueRef scope means the issue's team (SPEC-003 §4: "the issue's or target team").
+    if (!SCOPE_TYPES.has(scope.type) || scope.many) {
       throw new RefPlanError(
-        `${opName}: ${key} is scoped to "${f.scopeField}", which must be a single TeamRef.`,
+        `${opName}: ${key} is scoped to "${f.scopeField}", which must be a single TeamRef or IssueRef.`,
       );
     }
-    return { ...base, scope: f.scopeField };
+    return { ...base, scope: f.scopeField, scopeType: scope.type };
   });
 
   // Scopes are unscoped TeamRefs, so one pass ordering unscoped first is a valid topological order.
