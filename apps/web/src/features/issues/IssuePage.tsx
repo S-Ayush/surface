@@ -34,16 +34,18 @@ import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
 import { structurallyEqual } from '../../app/equal.js';
 import { PageHeader } from '../../shell/PageHeader.js';
-import { useCommand, usePageScope } from '../../shortcuts/ShortcutProvider.js';
+import { useCommand, useCommandRegistry, usePageScope } from '../../shortcuts/ShortcutProvider.js';
 import { isTypingTarget } from '../../shortcuts/engine.js';
 import styles from '../../pages/Pages.module.css';
 import { submitMutation, toastIfFailed } from '../teams/submit.js';
+import { openComposerWith } from './composer-request.js';
 import { IssueNotFound } from './IssueNotFound.js';
 import { useIssueApi } from './issue-api.js';
 import { COPY_ITEMS, planCopy, runCopy, type CopyKind } from './copy-actions.js';
 import { readListSource } from './focus-model.js';
 import {
   chooseIssueSource,
+  findRejectedCreate,
   heldRejection,
   loadMissingIssue,
   NO_TEAM_SUBSCRIPTION,
@@ -162,13 +164,43 @@ export function IssuePage({ issueRef }: { issueRef: string }) {
       );
     case 'create-rejected':
       return (
-        <Unavailable title={`This issue couldn't be created: ${source.message}`} description="" />
+        <Unavailable
+          title={`This issue couldn't be created: ${source.message}`}
+          description=""
+          action={<RestoreInComposer issueRef={issueRef} />}
+        />
       );
     case 'view':
       // Keyed by issue, so stepping to another one starts with fresh title-edit, drawer and address
       // state.
       return <IssueBody key={source.view.id} view={source.view} readOnly={source.readOnly} />;
   }
+}
+
+/** E9: reopens the composer with what was sent (SPEC-012 §3.1 item 9). */
+function RestoreInComposer({ issueRef }: { issueRef: string }) {
+  const app = useApp();
+  const commands = useCommandRegistry();
+  const input = useObserved(
+    useCallback(() => {
+      const store = app.store;
+      const parsed = parseIssueRef(issueRef);
+      if (store === null || parsed?.by !== 'id') return undefined;
+      return findRejectedCreate(store.rejections, parsed.id)?.input;
+    }, [app, issueRef]),
+    Object.is,
+  );
+  if (input === undefined) return null;
+  return (
+    <Button
+      variant="primary"
+      onClick={() => {
+        openComposerWith({ kind: 'rejected', input }, (id) => commands.run(id));
+      }}
+    >
+      Restore in composer
+    </Button>
+  );
 }
 
 function IssueLoading() {

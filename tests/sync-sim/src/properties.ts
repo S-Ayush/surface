@@ -141,6 +141,38 @@ function asSeenBy(
 }
 
 /**
+ * Drafts (PLAN-012 S5, SPEC-012 §4.3, AC-3, E13): property 1 for the debug items; every tab shows
+ * exactly its user's stored drafts and nobody else's (the `user:<id>` group, rule 4); every stored
+ * draft is in its owner's group only; and one user holds at most one draft per key, however the
+ * saves and discards of several tabs interleave.
+ */
+export const draftConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    convergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isIssueServer(server)) throw new Error('The draft property needs the real server.');
+    const stored = await server.drafts();
+    const keys = new Set<string>();
+    for (const [id, draft] of Object.entries(stored)) {
+      expect(draft.groups, id).toEqual([`user:${String(draft.userId)}`]);
+      const key = `${String(draft.userId)} ${String(draft.kind)} ${String(draft.teamId ?? draft.issueId)}`;
+      expect(keys.has(key), `two drafts for ${key}`).toBe(false);
+      keys.add(key);
+    }
+    for (const tab of world.live) {
+      const mine = Object.fromEntries(
+        Object.entries(stored)
+          .filter(([, draft]) => draft.userId === tab.user.id)
+          .map(([id, { groups: _groups, ...shown }]) => [id, shown]),
+      );
+      expect(world.draftView(tab), tab.name).toEqual(mine);
+    }
+  },
+};
+
+/**
  * Issue numbering and labels (SPEC-011 AC-2, AC-4, E1, E3, E5–E7): property 1 for the debug
  * items; every tab shows exactly the server's issues, numbers and sort keys included; numbers are
  * gap-free in commit order with distinct keys; no issue holds two labels of the exclusive group,

@@ -54,6 +54,8 @@ import {
   groupByHandler as issueGroupBy,
   listHandler as issueList,
 } from './issues/list.js';
+import draftSave from './drafts/save.js';
+import draftDiscard from './drafts/discard.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -110,4 +112,6 @@ export const HANDLERS: readonly Handler[] = [
   issueUpdate,
   issueDelete,
   issueRestore,
+  draftSave,
+  draftDiscard,
 ];

@@ -38,6 +38,11 @@ export interface SimServer {
   restart(): void;
   /** The last sync id committed. */
   head(): Promise<number>;
+  /**
+   * The last sync id `userId`'s connections can receive: `head()` but for rows only other users'
+   * `user:` groups hold (their drafts, PLAN-012 S5), which never reach this user.
+   */
+  headFor(userId: string): Promise<number>;
   /** The database's debug items, by id. */
   items(): Promise<Record<string, ItemState>>;
   /**
@@ -87,6 +92,22 @@ export interface IssueServer extends SimServer {
   issues(): Promise<Record<string, IssueState>>;
   /** The database's issues with their commit order, for the numbering checks. */
   issueRows(): Promise<readonly IssueRecord[]>;
+  /** The database's drafts, by id (PLAN-012 S5). */
+  drafts(): Promise<Record<string, StoredDraft>>;
+}
+
+/** What a client should show for one draft (PLAN-012 S5): its owner's replica only. */
+export interface DraftState {
+  readonly userId: unknown;
+  readonly kind: unknown;
+  readonly teamId: unknown;
+  readonly issueId: unknown;
+  readonly data: unknown;
+}
+
+/** A stored draft: what its owner shows, and the sync groups only the server holds. */
+export interface StoredDraft extends DraftState {
+  readonly groups: readonly string[];
 }
 
 /** One stored issue, with the `sync_id` of its insert (its commit order). */
@@ -142,6 +163,11 @@ export class FakeHubServer implements SimServer {
 
   head(): Promise<number> {
     return Promise.resolve(this.#hub.head);
+  }
+
+  /** The fake hub's rows reach everyone. */
+  headFor(_userId: string): Promise<number> {
+    return this.head();
   }
 
   items(): Promise<Record<string, ItemState>> {

@@ -69,6 +69,14 @@ export interface OperationDef<
    * wired in PLAN-011 S5b). Refused on a query.
    */
   contentParent?(input: z.output<In>): ContentParentRef;
+  /**
+   * Input paths (`teamId`, `data.labelIds[]`, as registry lint names them) whose uuids the server
+   * stores without resolving them, so a reference type would be wrong: resolving checks
+   * visibility, and these must not (a draft's team and issue, and the choices it keeps, SPEC-012
+   * §4.3, D23). Exempt from §11 rule 4; each must name a uuid path of the input, or rule 4 flags
+   * it.
+   */
+  readonly opaqueIds?: readonly string[];
   /** Hidden from the API, the catalog and MCP (`debug.*`). Dev-only debug operations. */
   readonly internal?: boolean;
   /**

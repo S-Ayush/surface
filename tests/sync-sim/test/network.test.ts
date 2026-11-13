@@ -39,6 +39,7 @@ function fakeServer() {
       for (const handlers of state.sockets.splice(0)) handlers.onClose(1012);
     },
     head: () => Promise.resolve(0),
+    headFor: () => Promise.resolve(0),
     items: () => Promise.resolve({}),
     seed: () => Promise.resolve(),
     compactLog: () => undefined,

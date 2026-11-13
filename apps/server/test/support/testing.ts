@@ -93,6 +93,17 @@ export interface IssueRow {
   readonly insertedAt: number | null;
 }
 
+/** A `drafts` row as stored (PLAN-012 S5): what the draft property compares. */
+export interface DraftRow {
+  readonly id: string;
+  readonly userId: string;
+  readonly kind: string;
+  readonly teamId: string | null;
+  readonly issueId: string | null;
+  readonly data: unknown;
+  readonly syncGroups: readonly string[];
+}
+
 /** The SPEC-003 response body of `POST /api/ops/:name`. */
 export type OpResponse =
   | { readonly ok: true; readonly result: unknown }
@@ -111,10 +122,17 @@ export interface TestServer {
   run(user: TestUser, name: string, input: unknown): Promise<OpResponse>;
   /** The last committed `sync_id` (0 when nothing is logged yet). */
   head(): Promise<number>;
+  /**
+   * The last committed `sync_id` that may reach `userId`'s connections: rows held only by other
+   * users' `user:` groups (their drafts, PLAN-012 S5) are left out. 0 when none.
+   */
+  headFor(userId: string): Promise<number>;
   /** Every `debug_items` row, by id. */
   items(): Promise<DebugItemRow[]>;
   /** Every `issues` row, by id (PLAN-011 S4). */
   issues(): Promise<IssueRow[]>;
+  /** Every `drafts` row, by id (PLAN-012 S5). */
+  drafts(): Promise<DraftRow[]>;
   /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
@@ -145,6 +163,16 @@ const IssueDbRow = z.object({
   sort_order: z.string(),
   sync_groups: z.array(z.string()),
   inserted_at: z.string().nullable(),
+});
+
+const DraftDbRow = z.object({
+  id: z.string(),
+  user_id: z.string(),
+  kind: z.string(),
+  team_id: z.string().nullable(),
+  issue_id: z.string().nullable(),
+  data: z.unknown(),
+  sync_groups: z.array(z.string()),
 });
 
 const ItemRow = z.object({
@@ -214,6 +242,15 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
         );
         return Number(rows[0]?.head ?? 0);
       },
+      headFor: async (userId) => {
+        // A row only other users' `user:` groups hold never reaches this user's connections.
+        const { rows } = await db.query<{ head: string | null }>(
+          `SELECT max(sync_id)::text AS head FROM sync_log
+            WHERE EXISTS (SELECT 1 FROM unnest(groups) g WHERE g NOT LIKE 'user:%' OR g = $1)`,
+          [`user:${userId}`],
+        );
+        return Number(rows[0]?.head ?? 0);
+      },
       items: async () => {
         const { rows } = await db.query(
           `SELECT id, title, counter, archived_at IS NOT NULL AS archived, archived_at, sync_groups
@@ -252,6 +289,23 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             sortOrder: issue.sort_order,
             syncGroups: issue.sync_groups,
             insertedAt: issue.inserted_at === null ? null : Number(issue.inserted_at),
+          };
+        });
+      },
+      drafts: async () => {
+        const { rows } = await db.query(
+          `SELECT id, user_id, kind, team_id, issue_id, data, sync_groups FROM drafts ORDER BY id`,
+        );
+        return rows.map((row) => {
+          const draft = DraftDbRow.parse(row);
+          return {
+            id: draft.id,
+            userId: draft.user_id,
+            kind: draft.kind,
+            teamId: draft.team_id,
+            issueId: draft.issue_id,
+            data: draft.data,
+            syncGroups: draft.sync_groups,
           };
         });
       },

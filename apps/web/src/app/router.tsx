@@ -18,6 +18,7 @@ import { reaction } from 'mobx';
 import { useCallback, useEffect } from 'react';
 import { IssuePage } from '../features/issues/IssuePage.js';
 import { IssueListPage } from '../features/issues/IssueListPage.js';
+import { DraftsPage } from '../features/issues/DraftsPage.js';
 import { MyIssuesPage } from '../features/issues/MyIssuesPage.js';
 import { NotFoundPage, StandaloneNotFoundPage } from '../pages/NotFoundPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
@@ -199,6 +200,13 @@ const myIssuesCreatedRoute = createRoute({
   },
 });
 
+// The Drafts page (SPEC-012 §3.2, PLAN-012 S5).
+const draftsRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: 'drafts',
+  component: DraftsPage,
+});
+
 // The team's issue list (SPEC-012 §3.3); replaces the reserved route.
 const teamIssuesRoute = createRoute({
   getParentRoute: () => shellRoute,
@@ -255,6 +263,7 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     myIssuesRoute,
     myIssuesCreatedRoute,
+    draftsRoute,
     teamRoute,
     teamIssuesRoute,
     issueRoute,

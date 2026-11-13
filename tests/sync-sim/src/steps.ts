@@ -12,6 +12,8 @@ import {
   debugRename,
   debugTouch,
   debugUnarchive,
+  draftDiscard,
+  draftSave,
   issueCreate,
   issueUpdate,
 } from '@surface/operations';
@@ -78,6 +80,12 @@ export type Step =
       readonly addLabels: readonly LabelPick[];
       readonly removeLabels: readonly LabelPick[];
     }
+  /**
+   * `draft.save` and `draft.discard` (PLAN-012 S5) of one of a few keys, from any tab: tabs of
+   * one user race on the same draft (E13), and each user's drafts reach only that user's tabs.
+   */
+  | { readonly t: 'draftSave'; readonly tab: number; readonly key: number; readonly title: string }
+  | { readonly t: 'draftDiscard'; readonly tab: number; readonly key: number }
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -252,6 +260,28 @@ export function issueCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
   return caseOf(step);
 }
 
+/**
+ * The draft keys the steps use: two composer teams and two comment issues. Opaque ids (the
+ * server resolves none, SPEC-012 D23), so they need no rows.
+ */
+export const DRAFT_KEYS = [
+  { kind: 'composer', teamId: '01930000-0000-7000-8000-0000000d7a01' },
+  { kind: 'composer', teamId: '01930000-0000-7000-8000-0000000d7a02' },
+  { kind: 'comment', issueId: '01930000-0000-7000-8000-0000000d7a03' },
+  { kind: 'comment', issueId: '01930000-0000-7000-8000-0000000d7a04' },
+] as const;
+
+/** Draft saves and discards from every tab, with every fault (PLAN-012 S5, SPEC-012 E13, E19). */
+export function draftCase(): fc.Arbitrary<Case> {
+  const key = fc.nat(DRAFT_KEYS.length - 1);
+  const step = fc.oneof(
+    { weight: 8, arbitrary: fc.record({ t: fc.constant('draftSave'), tab, key, title }) },
+    { weight: 3, arbitrary: fc.record({ t: fc.constant('draftDiscard'), tab, key }) },
+    ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
+  );
+  return caseOf(step);
+}
+
 /** A UUIDv7 from the case's randomness, as `issue.create` takes, so a case replays exactly. */
 function uuidV7From(random: Random): string {
   const hex = Array.from({ length: 32 }, () => Math.floor(random() * 16).toString(16));
@@ -375,6 +405,36 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
         ...(add.length === 0 ? {} : { addLabels: add }),
         ...(remove.length === 0 ? {} : { removeLabels: remove }),
       });
+      return;
+    }
+    case 'draftSave':
+    case 'draftDiscard': {
+      const target = pick(readyTabs(live), step.tab);
+      const key = DRAFT_KEYS[step.key % DRAFT_KEYS.length];
+      if (target === undefined || key === undefined) return;
+      if (step.t === 'draftDiscard') {
+        world.dispatch(target, draftDiscard, { ...key });
+        return;
+      }
+      const data =
+        key.kind === 'composer'
+          ? {
+              title: step.title,
+              description: null,
+              statusId: null,
+              priority: 0,
+              assigneeId: null,
+              labelIds: [],
+              estimate: null,
+              dueDate: null,
+            }
+          : {
+              text: {
+                type: 'doc' as const,
+                content: [{ type: 'paragraph', content: [{ type: 'text', text: step.title }] }],
+              },
+            };
+      world.dispatch(target, draftSave, { id: uuidV7From(world.random), ...key, data });
       return;
     }
     case 'wait':

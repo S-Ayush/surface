@@ -1,8 +1,19 @@
 // The sidebar (SPEC-005 §7, M0): workspace and avatar menu, search, My issues, the user's teams
-// (live, expandable to their pages) with "Browse teams", and Settings.
+// (live, expandable to their pages) with "Browse teams", and Settings. PLAN-012 S5 adds Drafts and
+// the New issue button.
 import { IconButton, Kbd } from '@surface/ui';
 import { Link } from '@tanstack/react-router';
-import { ChevronRight, CircleDot, House, Plus, Search, Settings, Users } from 'lucide-react';
+import {
+  ChevronRight,
+  CircleDot,
+  FilePen,
+  House,
+  Plus,
+  Search,
+  Settings,
+  SquarePen,
+  Users,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useObserved } from '../app/context.js';
 import { useCommandRegistry } from '../shortcuts/ShortcutProvider.js';
@@ -54,6 +65,7 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
           <WorkspaceLogo key={online ? 'online' : 'offline'} src={logo} />
           <span className={styles.workspaceName}>{workspace}</span>
         </span>
+        <NewIssueButton />
         <AvatarMenu />
       </div>
       <button
@@ -72,6 +84,12 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
           <Link to="/my-issues" className={styles.item}>
             <CircleDot aria-hidden="true" />
             My issues
+          </Link>
+        </li>
+        <li>
+          <Link to="/drafts" className={styles.item}>
+            <FilePen aria-hidden="true" />
+            Drafts
           </Link>
         </li>
       </ul>
@@ -150,6 +168,25 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
         </li>
       </ul>
     </nav>
+  );
+}
+
+/** **New issue** (SPEC-012 §3.1 item 1): opens the composer, like `C`. */
+function NewIssueButton() {
+  const commands = useCommandRegistry();
+  const available = useObserved(
+    useCallback(() => commands.isAvailable('issue:create'), [commands]),
+  );
+  if (!available) return null;
+  return (
+    <IconButton
+      aria-label="New issue"
+      size="sm"
+      icon={<SquarePen />}
+      onClick={() => {
+        commands.run('issue:create');
+      }}
+    />
   );
 }
 

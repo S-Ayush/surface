@@ -12,6 +12,7 @@ import { COLOR_HUES, ESTIMATE_SCALES, SIGNUP_POLICIES, USER_ROLES } from '../wor
 import { backRef, defineModel, ref } from './define-model.js';
 import { array, bool, enumOf, int, json, str, timestamp, uuid } from './fields.js';
 import { Issue, IssueContent, IssueHistory } from './issue-models.js';
+import { Draft } from './draft.js';
 
 const audit = { createdAt: timestamp(), updatedAt: timestamp() };
 
@@ -172,4 +173,5 @@ export const PRODUCTION_MODELS = [
   Issue,
   IssueContent,
   IssueHistory,
+  Draft,
 ] as const;

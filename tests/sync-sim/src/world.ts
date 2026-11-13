@@ -8,7 +8,7 @@
  */
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { DebugItem, Issue } from '@surface/domain/model';
+import { DebugItem, Draft, Issue } from '@surface/domain/model';
 import type { AnyOperation, InputOf } from '@surface/operations';
 import type { MutationOutcome, StorageConnector } from '@surface/sync-client';
 import { SyncStore } from '@surface/sync-client';
@@ -20,7 +20,7 @@ import type { Link } from './network.js';
 import { Network } from './network.js';
 import type { Random } from './random.js';
 import { seededRandom, uuidFrom } from './random.js';
-import type { IssueState, ItemState, SimServer } from './server.js';
+import type { DraftState, IssueState, ItemState, SimServer } from './server.js';
 import { TabTimers } from './timers.js';
 
 export interface WorldOptions {
@@ -321,13 +321,23 @@ export class World {
     // run on the server after the check: wait for it.
     if (this.network.requestsInFlight > 0) return false;
     const head = await this.server.head();
-    return this.live.every(
-      ({ store }) =>
+    const heads = new Map<string, number>();
+    for (const { user } of this.live) {
+      if (!heads.has(user.id)) heads.set(user.id, await this.server.headFor(user.id));
+    }
+    // A tab never receives another user's drafts (PLAN-012 S5), so it is caught up once it holds
+    // everything its user can see, whether or not the hub has moved it past the rest.
+    return this.live.every(({ store, user }) => {
+      const at = store.position?.lastSyncId;
+      return (
         store.status === 'ready' &&
         store.connection === 'online' &&
         store.pending.length === 0 &&
-        store.position?.lastSyncId === head,
-    );
+        at !== undefined &&
+        at >= (heads.get(user.id) ?? head) &&
+        at <= head
+      );
+    });
   }
 
   /**
@@ -379,6 +389,21 @@ export class World {
         labelIds: [...issue.labelIds],
         sortOrder: issue.sortOrder,
         groups: issue.groups,
+      },
+    ]);
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /** The drafts a tab shows (PLAN-012 S5), by id, in the shape `IssueServer.drafts` gives. */
+  draftView(tab: Tab): Record<string, DraftState> {
+    const entries = tab.store.pool.all(Draft).map((draft): [string, DraftState] => [
+      draft.id,
+      {
+        userId: draft.userId,
+        kind: draft.kind,
+        teamId: draft.teamId,
+        issueId: draft.issueId,
+        data: draft.data,
       },
     ]);
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));

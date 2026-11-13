@@ -39,7 +39,14 @@ import { createDatabaseFrom, errorLogger, startTestServer } from '@surface/serve
 import type { SocketConnection, SocketHandlers } from '@surface/sync-client';
 import { CSRF_HEADER, computeSchemaHash } from '@surface/sync-protocol';
 import { addRealEvents, trackRealWork } from './clock.js';
-import type { IssueFixtures, IssueRecord, IssueServer, IssueState, ItemState } from './server.js';
+import type {
+  StoredDraft,
+  IssueFixtures,
+  IssueRecord,
+  IssueServer,
+  IssueState,
+  ItemState,
+} from './server.js';
 
 export interface RealServerOptions {
   /** Superuser URL of the cluster (`startTestPostgres`). */
@@ -137,6 +144,8 @@ interface RealSocket {
   abandoned: boolean;
   /** The id of the last packet received (the connect `since` at first). */
   lastSeen: number;
+  /** The signed-in user: a row only other users' `user:` groups hold never reaches it. */
+  readonly userId: string;
   /** Told to re-bootstrap: it will receive nothing more. */
   resynced: boolean;
 }
@@ -228,6 +237,7 @@ export class RealServer implements IssueServer {
       closed: false,
       abandoned: false,
       lastSeen: Number.isSafeInteger(since) ? since : 0,
+      userId: signedIn.id,
       resynced: false,
     };
     this.#sockets.push(socket);
@@ -248,8 +258,8 @@ export class RealServer implements IssueServer {
         socket.closed = true;
         socket.arrived.push(() => handlers.onClose(event.code));
       });
-      await this.#until(
-        (head) => socket.closed || (socket.open && (socket.resynced || socket.lastSeen >= head)),
+      await this.#untilSeen(
+        (seen) => socket.closed || (socket.open && (socket.resynced || seen(socket))),
         signal,
       );
     }).catch(() => undefined);
@@ -287,6 +297,10 @@ export class RealServer implements IssueServer {
 
   head(): Promise<number> {
     return this.#serially('read the head', () => this.#entry.head());
+  }
+
+  headFor(userId: string): Promise<number> {
+    return this.#serially('read the head', () => this.#entry.headFor(userId));
   }
 
   items(): Promise<Record<string, ItemState>> {
@@ -380,6 +394,25 @@ export class RealServer implements IssueServer {
     });
   }
 
+  drafts(): Promise<Record<string, StoredDraft>> {
+    return this.#serially('read the drafts', async () => {
+      const rows = await this.#entry.drafts();
+      return Object.fromEntries(
+        rows.map((row): [string, StoredDraft] => [
+          row.id,
+          {
+            userId: row.userId,
+            kind: row.kind,
+            teamId: row.teamId,
+            issueId: row.issueId,
+            data: row.data,
+            groups: [...row.syncGroups],
+          },
+        ]),
+      );
+    });
+  }
+
   compactLog(): void {
     void this.#serially('compact the log', () => this.#entry.compactLog()).catch(() => undefined);
   }
@@ -429,27 +462,48 @@ export class RealServer implements IssueServer {
   }
 
   /**
-   * Every open socket has received everything committed, or will receive
-   * nothing more. Assumes each socket may see every row the simulation
-   * writes: its steps only write `debug.*` items in the `workspace` group, and
-   * issues and labels of public teams (PLAN-011 S4). A
-   * row outside a socket's groups is never sent to it (`DeltaWriter`), so a
-   * step that writes one would wait out the deadline here.
+   * Every open socket has received everything committed that its user can see, or will receive
+   * nothing more. Assumes each socket may see every row the simulation writes except other
+   * users' drafts: its steps write `debug.*` items in the `workspace` group, issues and labels of
+   * public teams (PLAN-011 S4), and drafts in their owner's `user:` group only (PLAN-012 S5),
+   * which `headFor` leaves out for everyone else. A row outside a socket's groups is never sent
+   * to it (`DeltaWriter`), so a step that wrote another kind would wait out the deadline here.
    */
   #caughtUp(signal: AbortSignal): Promise<void> {
-    return this.#until(
-      (head) => this.#sockets.every((socket) => !this.#waitsOn(socket) || socket.lastSeen >= head),
+    return this.#untilSeen(
+      (seen) => this.#sockets.every((socket) => !this.#waitsOn(socket) || seen(socket)),
       signal,
     );
+  }
+
+  /**
+   * Poll until `done(seen)` holds, on the real clock, until the step's deadline: `seen(socket)`
+   * says the socket has received every row its user can (up to `headFor` that user).
+   */
+  async #untilSeen(
+    done: (seen: (socket: RealSocket) => boolean) => boolean,
+    signal: AbortSignal,
+  ): Promise<void> {
+    for (;;) {
+      const heads = new Map<string, number>();
+      for (const socket of this.#sockets) {
+        if (!heads.has(socket.userId)) {
+          heads.set(socket.userId, await this.#entry.headFor(socket.userId));
+        }
+      }
+      if (done((socket) => socket.lastSeen >= (heads.get(socket.userId) ?? 0))) return;
+      signal.throwIfAborted();
+      await delay(1, undefined, { signal });
+    }
   }
 
   #waitsOn(socket: RealSocket): boolean {
     return socket.open && !socket.closed && !socket.abandoned && !socket.resynced;
   }
 
-  /** Poll until `done(head)` holds, on the real clock, until the step's deadline. */
-  async #until(done: (head: number) => boolean, signal: AbortSignal): Promise<void> {
-    while (!done(await this.#entry.head())) {
+  /** Poll until `done()` holds, on the real clock, until the step's deadline. */
+  async #until(done: () => boolean, signal: AbortSignal): Promise<void> {
+    while (!done()) {
       signal.throwIfAborted();
       await delay(1, undefined, { signal });
     }

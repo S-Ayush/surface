@@ -242,13 +242,13 @@ describe('IssuePage read-only and held states (SPEC-012 §3.4 items 8; E9)', () 
     expect(shown).toContain('Deleted');
   });
 
-  it('says why a pending issue’s create was rejected (E9)', async () => {
+  it('says why a pending issue’s create was rejected, with Restore in composer (E9)', async () => {
     const app = new FakeApp({
       issues: [],
       rejections: [{ op: 'issue.create', input: { id: LOST }, message: 'Title is required.' }],
     });
-    expect(text(await render(app, LOST))).toContain(
-      "This issue couldn't be created: Title is required.",
-    );
+    const shown = text(await render(app, LOST));
+    expect(shown).toContain("This issue couldn't be created: Title is required.");
+    expect(shown).toContain('Restore in composer');
   });
 });

@@ -71,15 +71,25 @@ export async function loadMissingIssue(
  * in memory, so the page can say why. Undefined after a reload, when it is just not found.
  */
 export function heldRejection(
-  rejections: readonly { readonly op: string; readonly input: unknown; readonly message: string }[],
+  rejections: readonly HeldRejection[],
   issueId: string,
 ): string | undefined {
+  return findRejectedCreate(rejections, issueId)?.message;
+}
+
+type HeldRejection = { readonly op: string; readonly input: unknown; readonly message: string };
+
+/** The rejected `issue.create` of `issueId`, newest first: its input reopens the composer (S5). */
+export function findRejectedCreate(
+  rejections: readonly HeldRejection[],
+  issueId: string,
+): HeldRejection | undefined {
   for (let i = rejections.length - 1; i >= 0; i--) {
     const rejection = rejections[i];
     if (rejection?.op !== 'issue.create') continue;
     const input = rejection.input;
     if (typeof input === 'object' && input !== null && Reflect.get(input, 'id') === issueId) {
-      return rejection.message;
+      return rejection;
     }
   }
   return undefined;

@@ -192,9 +192,17 @@ function optimisticForUi(op: AnyOperation, add: Add): void {
 function referenceTypes(op: AnyOperation, add: Add): void {
   if (!isPublicOperation(op)) return;
   const ownId = verbOf(op).startsWith('create') ? 'id' : undefined;
-  for (const path of rawUuidPaths(toJsonSchema(op.input, 'input'))) {
-    if (path === ownId) continue;
+  const opaque = new Set(op.opaqueIds ?? []);
+  const paths = rawUuidPaths(toJsonSchema(op.input, 'input'));
+  for (const path of paths) {
+    if (path === ownId || opaque.has(path)) continue;
     add(4, `input ${path} is a raw uuid. Use a reference type, like TeamRef or IssueRef (§4)`);
+  }
+  // SPEC-012 D23: the exemption names real uuid paths only, so a stale entry can't hide a new one.
+  for (const path of opaque) {
+    if (!paths.includes(path)) {
+      add(4, `opaqueIds names ${path}, which is not a uuid in the input. Remove it`);
+    }
   }
 }
 

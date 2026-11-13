@@ -38,6 +38,7 @@ import {
   resolveFocus,
   type IssueListSource,
 } from './focus-model.js';
+import { openComposerWith } from './composer-request.js';
 import styles from './IssueList.module.css';
 import {
   flattenGroups,
@@ -302,8 +303,8 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
           {...(addAvailable
             ? {
                 onAdd: () => {
-                  // PLAN-012 S5 reads the group's `add` target when the composer opens.
-                  commands.run('issue:create');
+                  // The composer opens with the group's status (and the user, on Assigned).
+                  openComposerWith({ kind: 'group', add: group.add }, (id) => commands.run(id));
                 },
               }
             : {})}

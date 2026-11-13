@@ -4,3 +4,4 @@ export * from './define-model.js';
 export * from './debug-item.js';
 export * from './workspace-models.js';
 export * from './issue-models.js';
+export * from './draft.js';

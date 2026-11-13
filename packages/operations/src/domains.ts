@@ -24,6 +24,8 @@ export const OPERATION_DOMAINS = [
   'template',
   'view',
   'personal',
+  // SPEC-003 §3.1 (M1 gate): `draft.save`, `draft.discard` (SPEC-012 §4.3).
+  'draft',
   'platform',
   'io',
   // Internal test fixtures only (`debug.echo`, `debug.touch`, PLAN-002 `DebugItem` ops).

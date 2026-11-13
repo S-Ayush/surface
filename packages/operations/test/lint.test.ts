@@ -110,6 +110,20 @@ describe('rule 4: reference types', () => {
     expect(rules([op]).map(([rule]) => rule)).toEqual([4, 4]);
   });
 
+  it('exempts the opaqueIds an op names, and flags a name that is no uuid path (SPEC-012 D23)', () => {
+    const input = z.object({ teamId: z.uuid(), data: z.object({ ids: z.array(z.uuid()) }) });
+    const op = { ...mutation('team.keep', input), examples: [{ teamId: uuid, data: { ids: [] } }] };
+    expect(rules([op]).map(([rule]) => rule)).toEqual([4, 4]);
+    expect(rules([{ ...op, opaqueIds: ['teamId', 'data.ids[]'] }])).toEqual([]);
+    // Only the named path is exempt.
+    expect(rules([{ ...op, opaqueIds: ['teamId'] }]).map(([, m]) => m.split(' is')[0])).toEqual([
+      'input data.ids[]',
+    ]);
+    expect(rules([{ ...op, opaqueIds: ['teamId', 'data.ids[]', 'gone'] }])).toEqual([
+      [4, 'opaqueIds names gone, which is not a uuid in the input. Remove it'],
+    ]);
+  });
+
   it('flags ids elsewhere, nested and in arrays', () => {
     const input = z.object({
       id: z.uuid(),

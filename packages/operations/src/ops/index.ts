@@ -47,6 +47,7 @@ import {
   issueUpdate,
 } from './issue.js';
 import { issueDelete, issueRestore } from './issue-lifecycle.js';
+import { draftDiscard, draftSave } from './draft.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -61,6 +62,7 @@ export * from './status.js';
 export * from './label.js';
 export * from './issue.js';
 export * from './issue-lifecycle.js';
+export * from './draft.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -134,6 +136,9 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   // Delete, then restore, the same issue (ENG-3): the seed ends as it started (SPEC-015 §6.1).
   issueDelete,
   issueRestore,
+  // The actor's own drafts (SPEC-012 §4.3): save, then discard what was saved.
+  draftSave,
+  draftDiscard,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

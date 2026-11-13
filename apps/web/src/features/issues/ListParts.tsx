@@ -34,7 +34,10 @@ export function ListSkeleton() {
   );
 }
 
-/** "Create issue" runs PLAN-012 S5's `issue:create`; hidden until the composer registers it. */
+/**
+ * "Create issue" opens the composer (`issue:create`), prefilled from the route's team like `C`;
+ * hidden while the command has no handler.
+ */
 export function CreateIssueButton() {
   const commands = useCommandRegistry();
   const available = useObserved(

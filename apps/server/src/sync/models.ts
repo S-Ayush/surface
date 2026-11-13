@@ -6,6 +6,7 @@
 import { teamGroup, userGroup, WORKSPACE_GROUP } from '@surface/domain';
 import {
   DebugItem,
+  Draft,
   Issue,
   IssueContent,
   IssueHistory,
@@ -25,6 +26,7 @@ import {
   debugItems,
   issueContent,
   issueHistory,
+  drafts,
   issues,
   labels,
   teamMemberships,
@@ -314,6 +316,19 @@ export const SYNCED_MODELS = {
     groupsOf: groupsOfIssueChild,
     groupFields: ['issueId', 'teamId'],
     teamColumn: issueHistory.teamId,
+  },
+  // PLAN-012 S5 (SPEC-012 §4.3): only its owner sees a draft. The groups come from `userId`
+  // alone, never from the team or issue it names, so a draft says nothing to anyone else.
+  Draft: {
+    table: drafts,
+    def: Draft,
+    fixture: false,
+    groupsOf: (row: AnyRow): readonly string[] => {
+      const userId = stringField(row, 'userId');
+      return userId === undefined ? [] : [userGroup(userId)];
+    },
+    groupFields: ['userId'],
+    teamColumn: null,
   },
 } as const satisfies Record<
   string,

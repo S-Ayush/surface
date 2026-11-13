@@ -4,6 +4,7 @@
 import type { ComponentType } from 'react';
 import { AnnouncerHost } from './issues/AnnouncerHost.js';
 import { IssueNavHost } from './issues/IssueNavHost.js';
+import { IssuesHost } from './issues/IssuesHost.js';
 import { TeamMenu } from './teams/TeamMenu.js';
 import { TeamsHost } from './teams/TeamsHost.js';
 
@@ -15,7 +16,12 @@ export type TeamRef = { readonly id: string; readonly key: string; readonly name
  * (`useCommand`, e.g. `form:create-team`). They mount before the replica is ready, so a command
  * that needs the store says so in its `when`.
  */
-export const SHELL_HOSTS: readonly ComponentType[] = [TeamsHost, AnnouncerHost, IssueNavHost];
+export const SHELL_HOSTS: readonly ComponentType[] = [
+  TeamsHost,
+  AnnouncerHost,
+  IssueNavHost,
+  IssuesHost,
+];
 
 /**
  * The team ⋯ menu in the team page header (SPEC-001 §3.7: Join team / Leave team). One menu, so
