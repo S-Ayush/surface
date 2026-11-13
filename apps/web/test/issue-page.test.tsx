@@ -1,7 +1,8 @@
-// PLAN-012 S4 part 1, SPEC-012 §3.4 (AC-11 minus the activity stream, AC-15, AC-17 rendering, E9
-// page part): the issue page renders from the replica's rows. Server-rendered markup, as apps/web
-// has no DOM test environment; the decisions behind it are unit-tested in issue-loader.test.ts,
-// issue-source-list.test.ts and issue-url.test.ts.
+// PLAN-012 S4 part 1, SPEC-012 §3.4 (AC-11 minus the activity stream, AC-17 rendering, E9 page
+// part): the issue page renders from the replica's rows. Server-rendered markup, so no effects run
+// here; keys, navigation and the not-found page are `issue-page-keys.test.tsx` and
+// `issue-not-found.test.tsx` (jsdom), and the decisions behind it are unit-tested in
+// issue-loader.test.ts, issue-source-list.test.ts and issue-url.test.ts.
 import { userActor, type Actor } from '@surface/domain';
 import { Issue, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
 import type { SyncStore } from '@surface/sync-client';
@@ -16,7 +17,6 @@ import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/AppModel.js';
 import { AuthState, type Session } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
-import { IssueNotFound, notFoundSubject } from '../src/features/issues/IssueNotFound.js';
 import { IssuePage } from '../src/features/issues/IssuePage.js';
 import { sourceListState } from '../src/features/issues/source-list.js';
 import { ShellContext } from '../src/shell/ShellContext.js';
@@ -244,49 +244,5 @@ describe('IssuePage read-only and held states (SPEC-012 §3.4 items 8; E9)', () 
     expect(text(await render(app, LOST))).toContain(
       "This issue couldn't be created: Title is required.",
     );
-  });
-});
-
-describe('IssueNotFound (AC-15)', () => {
-  async function renderNotFound(ref: string, teamKey?: string): Promise<string> {
-    const rootRoute = createRootRoute({
-      component: () => <IssueNotFound issueRef={ref} teamKey={teamKey} />,
-    });
-    const router = createRouter({
-      routeTree: rootRoute,
-      history: createMemoryHistory({ initialEntries: ['/'] }),
-      origin: 'http://localhost',
-      isServer: false,
-      scrollRestoration: false,
-    });
-    await router.load();
-    return renderToString(
-      <AppContext value={new FakeApp({ issues: [] })}>
-        <ShellContext value={new ShellStore(null)}>
-          <ShortcutProvider>
-            <RouterProvider router={router} />
-          </ShortcutProvider>
-        </ShellContext>
-      </AppContext>,
-    );
-  }
-
-  it('words the page the same for an unknown issue and one the user can’t see, naming only what was typed', async () => {
-    // A private team's key is not in the replica, so it is given no team key, like an unknown one.
-    const unknown = await renderNotFound('ENG-99');
-    const invisible = await renderNotFound('PRV-7');
-    expect(text(unknown)).toContain("ENG-99 doesn't exist, or you don't have access to it.");
-    expect(text(invisible)).toContain("PRV-7 doesn't exist, or you don't have access to it.");
-    expect(unknown.replaceAll('ENG-99', 'X')).toBe(invisible.replaceAll('PRV-7', 'X'));
-    expect(text(invisible)).toContain('Go home');
-  });
-
-  it('offers the team list only for a team the replica holds', async () => {
-    expect(text(await renderNotFound('ENG-99', 'ENG'))).toContain('Go to ENG issues');
-  });
-
-  it('says "This issue" for an id, which names no team', () => {
-    expect(notFoundSubject(ISSUE_A)).toBe('This issue');
-    expect(notFoundSubject('eng-99')).toBe('ENG-99');
   });
 });

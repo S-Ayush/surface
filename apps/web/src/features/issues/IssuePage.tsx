@@ -7,6 +7,7 @@
 // live deleted/archived switch with hydration on open.
 import {
   Badge,
+  Button,
   EditableTitle,
   EmptyState,
   IconButton,
@@ -16,7 +17,7 @@ import {
   type MenuEntry,
 } from '@surface/ui';
 import { issueUpdate } from '@surface/operations';
-import { Link, useLocation, useNavigate } from '@tanstack/react-router';
+import { Link, useLocation, useNavigate, useRouter } from '@tanstack/react-router';
 import {
   ArrowDown,
   ArrowUp,
@@ -28,7 +29,7 @@ import {
   PanelRight,
   WifiOff,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { parseIssueRef } from '@surface/domain';
 import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
@@ -94,14 +95,21 @@ function useIssueSource(issueRef: string) {
     }, [app, issueRef]),
   );
 
-  const [last, setLast] = useState<IssueView | undefined>(undefined);
+  // Both are tied to the ref they were made for, so stepping to another issue never shows the
+  // previous one while the next loads.
+  const [last, setLast] = useState<{ readonly ref: string; readonly view: IssueView } | undefined>(
+    undefined,
+  );
   const [loaded, setLoaded] = useState<
     { readonly ref: string; readonly result: IssueLoadResult } | undefined
   >(undefined);
+  const [attempt, setAttempt] = useState(0);
   const inReplica = replica !== undefined;
   // Adjusting state while rendering (react.dev "storing information from previous renders"): the
   // last row the replica had, shown read-only if it leaves the replica while open (E3).
-  if (replica !== undefined && !structurallyEqual(replica, last)) setLast(replica);
+  if (replica !== undefined && (last?.ref !== issueRef || !structurallyEqual(replica, last.view))) {
+    setLast({ ref: issueRef, view: replica });
+  }
 
   useEffect(() => {
     // Nothing to fetch while the replica loads, while it holds the row, or for a held rejection.
@@ -110,6 +118,7 @@ function useIssueSource(issueRef: string) {
     void loadMissingIssue(issueRef, {
       get: (ref) => api.get(ref),
       online: () => app.store?.connection === 'online',
+      pool: app.store?.pool,
       subscribeTeam: NO_TEAM_SUBSCRIPTION,
     }).then((result) => {
       if (current) setLoaded({ ref: issueRef, result });
@@ -117,40 +126,44 @@ function useIssueSource(issueRef: string) {
     return () => {
       current = false;
     };
-  }, [app, api, issueRef, ready, online, inReplica, rejected]);
+  }, [app, api, issueRef, ready, online, inReplica, rejected, attempt]);
 
   return {
     ready,
+    retry: () => {
+      setLoaded(undefined);
+      setAttempt((n) => n + 1);
+    },
     source: chooseIssueSource({
       replica,
       rejected,
-      last: last?.id === replica?.id || replica === undefined ? last : undefined,
+      last: last?.ref === issueRef ? last.view : undefined,
       loaded: loaded?.ref === issueRef ? loaded.result : undefined,
     }),
   };
 }
 
 export function IssuePage({ issueRef }: { issueRef: string }) {
-  const app = useApp();
-  const { ready, source } = useIssueSource(issueRef);
-  const teamKey = useObserved(
-    useCallback(() => {
-      const store = app.store;
-      if (store === null || store.status !== 'ready') return undefined;
-      const parsed = parseIssueRef(issueRef);
-      if (parsed?.by !== 'identifier') return undefined;
-      return resolveIssueAddress(`${parsed.key}-1`, poolIssueLookup(store.pool)).kind === 'found'
-        ? parsed.key
-        : undefined;
-    }, [app, issueRef]),
-  );
+  const { ready, source, retry } = useIssueSource(issueRef);
 
   if (!ready) return null;
   switch (source.kind) {
     case 'loading':
       return <IssueLoading />;
     case 'not-found':
-      return <IssueNotFound issueRef={issueRef} teamKey={teamKey} />;
+      return <IssueNotFound issueRef={issueRef} />;
+    case 'error':
+      return (
+        <Unavailable
+          title="Couldn't load this issue"
+          description="Something went wrong on our side. Try again in a moment."
+          action={
+            <Button variant="primary" onClick={retry}>
+              Try again
+            </Button>
+          }
+        />
+      );
     case 'offline':
       return (
         <Unavailable title="Available when online" description="Connect to open this issue." />
@@ -160,7 +173,9 @@ export function IssuePage({ issueRef }: { issueRef: string }) {
         <Unavailable title={`This issue couldn't be created: ${source.message}`} description="" />
       );
     case 'view':
-      return <IssueBody view={source.view} readOnly={source.readOnly} />;
+      // Keyed by issue, so stepping to another one starts with fresh title-edit, drawer and address
+      // state.
+      return <IssueBody key={source.view.id} view={source.view} readOnly={source.readOnly} />;
   }
 }
 
@@ -177,7 +192,15 @@ function IssueLoading() {
   );
 }
 
-function Unavailable({ title, description }: { title: string; description: string }) {
+function Unavailable({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
   return (
     <>
       <PageHeader crumbs={['Issue']} title="Issue" />
@@ -186,6 +209,7 @@ function Unavailable({ title, description }: { title: string; description: strin
           icon={<WifiOff />}
           title={title}
           {...(description === '' ? {} : { description })}
+          {...(action === undefined ? {} : { action })}
         />
       </div>
     </>
@@ -208,6 +232,7 @@ async function copy(value: string | null, what: string) {
 function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   const app = useApp();
   const navigate = useNavigate();
+  const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
   const routerState = useLocation({ select: (location) => location.state });
   const mode = usePanelMode();
@@ -223,14 +248,16 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   useEffect(() => {
     const next = addressReplacement(
       address.current,
-      { id: view.id, teamId: view.teamId, number: view.number, title: view.title },
+      { id: view.id, number: view.number, title: view.title },
       view.teamKey,
     );
     if (next !== undefined) {
+      // On purpose the router's location stays stale: `issue/$ref` and `issue/$ref/$slug` are
+      // different routes, so telling the router would remount the page and lose focus and scroll.
       replaceAddress(window.history, next);
       address.current = next;
     }
-  }, [view.id, view.teamId, view.number, view.title, view.teamKey]);
+  }, [view.id, view.number, view.title, view.teamKey]);
 
   const source = readSourceList(routerState);
   const position = source === undefined ? undefined : stepInfo(source.ids, view.id);
@@ -249,16 +276,31 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
       // Read again at each press (E11): the ids in router state are the list's current ones.
       const target = stepTarget(readSourceList(routerState)?.ids, view.id, direction);
       if (target === undefined) return;
-      void navigate({ to: '/issue/$ref', params: { ref: target }, state: routerState });
+      // `replace`, so the page is one history entry however far the user steps and Back (or Esc)
+      // returns to the list.
+      void navigate({
+        to: '/issue/$ref',
+        params: { ref: target },
+        state: routerState,
+        replace: true,
+      });
     },
     [navigate, routerState, view.id],
   );
 
   const goBack = useCallback(() => {
-    void navigate({ to: backTarget(source, view.teamKey) }).then(() => {
+    // Esc and the browser's Back are the same step (SPEC-012 §3.3 item 8). From a list the page
+    // is the entry after it, so going back pops it; without a list there is nothing to pop to.
+    const restore = router.subscribe('onResolved', () => {
+      restore();
       restoreFocusOn(view.id);
     });
-  }, [navigate, source, view.teamKey, view.id]);
+    if (source === undefined) {
+      void navigate({ to: backTarget(source, view.teamKey), replace: true });
+    } else {
+      router.history.back();
+    }
+  }, [navigate, router, source, view.teamKey, view.id]);
 
   // SPEC-012 §3.4 item 9, §4.2: Esc leaves a text field first (the field handles it), then goes back.
   useCommand('ui:escape', goBack, {
@@ -396,10 +438,14 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
               controller. Until `issue.updateDescription` exists the page has no description to
               show: the row doesn't carry one (IssueContent arrives with S5a/S6). */}
           <DescriptionArea />
-          {!readOnly && <Slots view={view} part="under-description" />}
+          {!readOnly && view.teamId !== null && (
+            <Slots view={view} teamId={view.teamId} part="under-description" />
+          )}
           {/* TODO(PLAN-012 S4 follow-up): ActivityStream (needs IssueHistory, PLAN-011 S6). */}
           <section aria-label="Activity" data-slot="activity" />
-          {!readOnly && <Slots view={view} part="comments" />}
+          {!readOnly && view.teamId !== null && (
+            <Slots view={view} teamId={view.teamId} part="comments" />
+          )}
         </article>
         {(mode === 'inline' || drawerOpen) && (
           <aside className={mode === 'drawer' ? pageStyles.drawer : pageStyles.aside}>
@@ -419,9 +465,17 @@ function DescriptionArea() {
   );
 }
 
-function Slots({ view, part }: { view: IssueView; part: 'under-description' | 'comments' }) {
+function Slots({
+  view,
+  teamId,
+  part,
+}: {
+  view: IssueView;
+  teamId: string;
+  part: 'under-description' | 'comments';
+}) {
   const { reactions: Reactions, attachments: Attachments, comments: Comments } = ISSUE_PAGE_SLOTS;
-  const props = { issueId: view.id, teamId: view.teamId };
+  const props = { issueId: view.id, teamId };
   if (part === 'comments') return Comments === null ? null : <Comments {...props} />;
   return (
     <>

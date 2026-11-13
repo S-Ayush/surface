@@ -20,7 +20,8 @@ export type IssueLifecycle = 'live' | 'archived' | 'deleted';
 
 export type IssueView = {
   readonly id: string;
-  readonly teamId: string;
+  /** Null for an `issue.get` answer about a team the replica doesn't hold. */
+  readonly teamId: string | null;
   readonly teamKey: string;
   /** Null while the issue is pending (no number yet). */
   readonly number: number | null;
@@ -114,7 +115,7 @@ export function issueViewFromOutput(output: IssueOutput, pool?: ReadonlyPool): I
   const number = Number(output.identifier.slice(output.identifier.lastIndexOf('-') + 1));
   return {
     id: output.id,
-    teamId: team?.id ?? '',
+    teamId: team?.id ?? null,
     teamKey: output.teamKey,
     number: Number.isInteger(number) ? number : null,
     identifier: output.identifier,

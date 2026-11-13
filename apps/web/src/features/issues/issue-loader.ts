@@ -3,6 +3,7 @@
 // `issue.get` and shows what comes back. The parts that need later slices sit behind two seams
 // (`IssueLoaderDeps`), so this file doesn't change when they land.
 import { parseIssueRef } from '@surface/domain';
+import type { ReadonlyPool } from '@surface/sync-client';
 import type { OperationAnswer } from '../files/operation.js';
 import { issueViewFromOutput, type IssueOutput, type IssueView } from './issue-view.js';
 
@@ -11,6 +12,8 @@ export type IssueLoadResult =
   | { readonly kind: 'not-found' }
   /** Offline, or the server couldn't be reached: "Available when online". */
   | { readonly kind: 'offline' }
+  /** Any other refusal or failure: not "not found", so the page offers to try again. */
+  | { readonly kind: 'error' }
   /** Shown read-only from the server's answer; nothing of it is stored. */
   | { readonly kind: 'remote'; readonly view: IssueView }
   /** The team was subscribed and the row is now in the replica: read it from there. */
@@ -21,6 +24,8 @@ export interface IssueLoaderDeps {
   readonly get: (ref: string) => Promise<OperationAnswer<IssueOutput>>;
   /** Whether the store's connection is up. */
   readonly online: () => boolean;
+  /** The replica, for the team's id and estimate settings when it holds the team. */
+  readonly pool?: ReadonlyPool | undefined;
   /**
    * Subscribes the issue's (public) team on demand and resolves when the row is in the replica
    * ('local'), or 'unavailable' when it can't be done.
@@ -44,7 +49,11 @@ export async function loadMissingIssue(
   if (!deps.online()) return { kind: 'offline' };
   const answer = await deps.get(ref);
   if (!answer.ok) {
-    return answer.code === 'UNREACHABLE' ? { kind: 'offline' } : { kind: 'not-found' };
+    // Only `NOT_FOUND` says the issue doesn't exist or isn't visible (an invisible issue is
+    // `NOT_FOUND`, never `FORBIDDEN`, CLAUDE.md rule 4). A 5xx, `RATE_LIMITED` or
+    // `UNAUTHENTICATED` says nothing about the issue, so it must not read as "doesn't exist".
+    if (answer.code === 'NOT_FOUND') return { kind: 'not-found' };
+    return answer.code === 'UNREACHABLE' ? { kind: 'offline' } : { kind: 'error' };
   }
   const issue = answer.result;
   if (issue.archivedAt === null && issue.deletedAt === null) {
@@ -54,7 +63,7 @@ export async function loadMissingIssue(
   }
   // TODO(PLAN-011 S5a/S4c): server-backed read-only view. The row, description, attachments and
   // reactions come from this answer and the activity from `content.peek`; for now the row alone.
-  return { kind: 'remote', view: issueViewFromOutput(issue) };
+  return { kind: 'remote', view: issueViewFromOutput(issue, deps.pool) };
 }
 
 /**
@@ -84,6 +93,8 @@ export type IssueSource =
   | { readonly kind: 'loading' }
   | { readonly kind: 'not-found' }
   | { readonly kind: 'offline' }
+  /** The server failed or refused for a reason that says nothing about the issue: try again. */
+  | { readonly kind: 'error' }
   /** E9: a pending issue whose create was rejected. */
   | { readonly kind: 'create-rejected'; readonly message: string };
 
@@ -111,8 +122,9 @@ export function chooseIssueSource(inputs: IssueSourceInputs): IssueSource {
   if (rejected !== undefined) return { kind: 'create-rejected', message: rejected };
   if (loaded?.kind === 'remote') return { kind: 'view', view: loaded.view, readOnly: true };
   if (loaded?.kind === 'not-found') return { kind: 'not-found' };
-  if (loaded?.kind === 'offline') {
-    return last === undefined ? { kind: 'offline' } : { kind: 'view', view: last, readOnly: true };
+  if (loaded?.kind === 'offline' || loaded?.kind === 'error') {
+    if (last !== undefined) return { kind: 'view', view: last, readOnly: true };
+    return loaded.kind === 'offline' ? { kind: 'offline' } : { kind: 'error' };
   }
   return last === undefined ? { kind: 'loading' } : { kind: 'view', view: last, readOnly: true };
 }

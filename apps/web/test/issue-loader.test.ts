@@ -1,6 +1,7 @@
 // SPEC-012 §3.4 items 7 to 11, AC-28 (the parts that work before PLAN-011 S4c), E3, E9, E27: an
 // issue the replica doesn't hold is read with `issue.get`; what the page shows is decided by
 // `chooseIssueSource`.
+import type { ReadonlyPool } from '@surface/sync-client';
 import { describe, expect, it } from 'vitest';
 import type { OperationAnswer } from '../src/features/files/operation.js';
 import {
@@ -109,6 +110,39 @@ describe('loadMissingIssue (AC-28)', () => {
   it('answers not found for NOT_FOUND, whatever the reason', async () => {
     const notFound = { ok: false, code: 'NOT_FOUND', message: 'No such issue.' } as const;
     expect(await loadMissingIssue('ENG-99', deps(notFound))).toEqual({ kind: 'not-found' });
+  });
+
+  it('says "not found" only for NOT_FOUND; any other failure is an error to retry', async () => {
+    for (const code of ['INTERNAL', 'RATE_LIMITED', 'UNAUTHENTICATED', 'FORBIDDEN']) {
+      const failed = deps({ ok: false, code, message: 'x' });
+      expect(await loadMissingIssue('ENG-42', failed), code).toEqual({ kind: 'error' });
+    }
+    const none = chooseIssueSource({
+      replica: undefined,
+      rejected: undefined,
+      last: undefined,
+      loaded: { kind: 'error' },
+    });
+    expect(none).toEqual({ kind: 'error' });
+  });
+
+  it('passes the pool on, so a team the replica holds fills the view', async () => {
+    const team = {
+      id: 'team-1',
+      key: 'ENG',
+      estimateScale: 'fibonacci',
+      estimateExtended: false,
+      estimateAllowZero: false,
+    };
+    const pool = { findBy: () => [team] } as unknown as ReadonlyPool;
+    const result = await loadMissingIssue('ENG-42', deps({ ok: true, result: OUTPUT }, { pool }));
+    expect(result).toMatchObject({
+      kind: 'remote',
+      view: { teamId: 'team-1', estimateConfig: { scale: 'fibonacci' } },
+    });
+    // Without the team there is no id, never an empty string.
+    const without = await loadMissingIssue('ENG-42', deps({ ok: true, result: OUTPUT }));
+    expect(without).toMatchObject({ view: { teamId: null, estimateConfig: null } });
   });
 
   it('does not ask the server about a ref that names no issue', async () => {

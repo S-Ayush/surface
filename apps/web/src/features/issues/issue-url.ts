@@ -40,7 +40,10 @@ export type ResolvedIssueAddress =
   | { readonly kind: 'not-found' };
 
 /** `/issue/ENG-42/<slug>`, or `/issue/<id>` while the number is pending (Q14). */
-export function canonicalIssuePath(issue: IssueAddressRow, teamKey: string): string {
+export function canonicalIssuePath(
+  issue: Pick<IssueAddressRow, 'id' | 'number' | 'title'>,
+  teamKey: string,
+): string {
   return issue.number === null
     ? `/issue/${issue.id}`
     : issuePath(issueIdentifier(teamKey, issue.number), issue.title);
@@ -99,7 +102,7 @@ export function poolIssueLookup(pool: ReadonlyPool): IssueAddressLookup {
  */
 export function addressReplacement(
   currentPath: string,
-  issue: IssueAddressRow,
+  issue: Pick<IssueAddressRow, 'id' | 'number' | 'title'>,
   teamKey: string,
 ): string | undefined {
   const canonical = canonicalIssuePath(issue, teamKey);

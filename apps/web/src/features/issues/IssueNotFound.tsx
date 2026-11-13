@@ -1,7 +1,7 @@
-// The issue page's not-found state (SPEC-012 §3.4 item 7, AC-15). One component for an issue that
-// doesn't exist and one the user can't see: it takes the same props for both and names nothing
-// the user didn't type. `teamKey` is set only when the replica holds that team, which a private
-// team the user isn't in never is, so its key gets the same "Go home" as an unknown one.
+// The issue page's not-found state (SPEC-012 §3.4 item 7, AC-15). One component, no data but what
+// the user typed: an issue that doesn't exist, one in an unknown team and one in a private team
+// the user can't see all give the same markup. So it always offers "Go home": a "Go to ENG issues"
+// button would tell the user which team keys exist.
 import { issueIdentifier, parseIssueRef } from '@surface/domain';
 import { Button, EmptyState } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
@@ -15,14 +15,7 @@ export function notFoundSubject(ref: string): string {
   return parsed?.by === 'identifier' ? issueIdentifier(parsed.key, parsed.number) : 'This issue';
 }
 
-export function IssueNotFound({
-  issueRef,
-  teamKey,
-}: {
-  issueRef: string;
-  /** The key of a team the replica holds, for "Go to ENG issues". */
-  teamKey?: string | undefined;
-}) {
+export function IssueNotFound({ issueRef }: { issueRef: string }) {
   const navigate = useNavigate();
   const title = `${notFoundSubject(issueRef)} doesn't exist, or you don't have access to it.`;
   return (
@@ -36,10 +29,10 @@ export function IssueNotFound({
             <Button
               variant="primary"
               onClick={() => {
-                void navigate({ to: teamKey === undefined ? '/' : `/team/${teamKey}` });
+                void navigate({ to: '/' });
               }}
             >
-              {teamKey === undefined ? 'Go home' : `Go to ${teamKey} issues`}
+              Go home
             </Button>
           }
         />
