@@ -8,5 +8,5 @@ import { issueOutput } from './access.js';
 export default handler(issueGet, async (ctx, input) => {
   const row = await ctx.query.get('Issue', resolved(ctx.refs['issue'], 'issue').id);
   if (row === undefined) throw refNotFound('IssueRef', input.issue, ['issue']);
-  return issueOutput(ctx.tx, row);
+  return issueOutput(ctx, row);
 });

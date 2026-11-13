@@ -80,8 +80,90 @@ const example: Case = {
   ],
 };
 
+/**
+ * Two tabs edit the labels of the same issues while the second is offline, so its edits commit
+ * last: on Five, labels of different groups both stay (E5); on Six, two labels of one exclusive
+ * group, and the later commit wins (E6).
+ */
+const sameIssue: Case = {
+  seed: 7,
+  users: 2,
+  lateUsers: 0,
+  webLocks: true,
+  steps: [
+    { t: 'issueCreate', tab: 0, title: 'Five', status: 'default', labels: ['Flaky'] },
+    { t: 'issueCreate', tab: 0, title: 'Six', status: 'default', labels: [] },
+    { t: 'wait', ms: 2_000 },
+    { t: 'offline', tab: 1, ms: 3_000 },
+    {
+      t: 'issueUpdate',
+      tab: 1,
+      issue: 0,
+      status: 'keep',
+      addLabels: ['Size/Small'],
+      removeLabels: [],
+    },
+    {
+      t: 'issueUpdate',
+      tab: 1,
+      issue: 1,
+      status: 'keep',
+      addLabels: ['Size/Small'],
+      removeLabels: [],
+    },
+    {
+      t: 'issueUpdate',
+      tab: 0,
+      issue: 0,
+      status: 'keep',
+      addLabels: ['Frontend'],
+      removeLabels: [],
+    },
+    {
+      t: 'issueUpdate',
+      tab: 0,
+      issue: 1,
+      status: 'keep',
+      addLabels: ['Size/Large'],
+      removeLabels: [],
+    },
+    { t: 'wait', ms: 6_000 },
+  ],
+};
+
 describe('issues against the real server', () => {
-  it('numbers the accepted creates 1, 2, 3, takes no number for a refused one, and replaces exclusive labels (E1, E5)', async () => {
+  it('keeps label edits of two offline-separated tabs on one issue, and the later exclusive add wins (E5, E6)', async () => {
+    const servers = issueServers();
+    const result = await simulate(
+      sameIssue,
+      { ...issueConvergence.options, server: servers.server },
+      async (outcome) => {
+        await issueConvergence.check(outcome);
+        const issues = (await servers.last()?.issues()) ?? {};
+        return {
+          updates: outcome.world.dispatched
+            .filter((d) => d.op === 'issue.update')
+            .map((d) => d.outcome?.status),
+          labels: Object.fromEntries(
+            Object.values(issues).map((i) => [
+              String(i.title),
+              Array.isArray(i.labelIds) ? i.labelIds.map(String).sort() : i.labelIds,
+            ]),
+          ),
+          fixtures: servers.last()?.issueFixtures?.labels ?? {},
+        };
+      },
+    );
+    expect(result.updates).toEqual(['confirmed', 'confirmed', 'confirmed', 'confirmed']);
+    const id = (ref: string) => result.fixtures[ref] ?? ref;
+    expect(result.labels).toEqual({
+      Five: [id('Flaky'), id('Frontend'), id('Size/Small')].sort(),
+      // The offline tab's add commits last, so it replaces the other tab's (D20, E6).
+      Six: [id('Size/Small')],
+    });
+  });
+
+  it('numbers the accepted creates 1, 2, 3, takes no number for a refused one, and replaces exclusive labels (E1, D20)', async () => {
     const servers = issueServers();
     const result = await simulate(
       example,
@@ -138,11 +220,18 @@ describe('issues against the real server', () => {
 });
 
 describe('concurrent creates over HTTP (E3)', () => {
-  /** A create of each kind: accepted, or refused by the server inside its transaction. */
-  const kinds = fc.array(fc.constantFrom('ok', 'ok', 'ok', 'triage', 'unknown-label'), {
-    minLength: 2,
-    maxLength: 24,
-  });
+  /**
+   * A create of each kind: accepted, or refused by the server inside its transaction. A
+   * `duplicate-id` create reuses the first issue's id, so it fails at the insert, after it took
+   * the counter (`newIssuePosition`): its rollback must give the number back (AC-2, E1).
+   */
+  const kinds = fc.array(
+    fc.constantFrom('ok', 'ok', 'ok', 'triage', 'unknown-label', 'duplicate-id'),
+    {
+      minLength: 2,
+      maxLength: 24,
+    },
+  );
 
   it('gives gap-free numbers in commit order and distinct, falling sort keys', async () => {
     await fc.assert(
@@ -152,11 +241,21 @@ describe('concurrent creates over HTTP (E3)', () => {
         try {
           entry = await startTestServer({ databaseUrl: database.url, users: 3 });
           const server = entry;
+          const [ada] = server.users;
+          if (ada === undefined) throw new Error('no user');
+          const first = '01930000-0000-7000-8000-00000000f157'; // a fresh database each run
+          const created = await server.run(ada, 'issue.create', {
+            id: first,
+            team: 'SIM',
+            title: 'First',
+          });
+          expect(created.ok).toBe(true);
           const results = await Promise.all(
             batch.map((kind, n) => {
               const user = server.users[n % server.users.length];
               if (user === undefined) throw new Error('no user');
               return server.run(user, 'issue.create', {
+                ...(kind === 'duplicate-id' ? { id: first } : {}),
                 team: 'SIM',
                 title: `Issue ${n}`,
                 ...(kind === 'triage' ? { status: 'Triage' } : {}),
@@ -166,9 +265,25 @@ describe('concurrent creates over HTTP (E3)', () => {
           );
           batch.forEach((kind, n) => {
             expect(results[n]?.ok, `${kind} ${n}`).toBe(kind === 'ok');
+            if (kind === 'duplicate-id') {
+              expect(results[n], `${kind} ${n}`).toMatchObject({
+                ok: false,
+                error: { code: 'CONFLICT', message: 'Issue id already exists. Use a new id.' },
+              });
+            }
           });
+          const accepted = batch.filter((k) => k === 'ok').length + 1;
+          // A create rolled back after taking the counter gives its number to the next one.
+          const again = await server.run(ada, 'issue.create', {
+            id: first,
+            team: 'SIM',
+            title: 'Again',
+          });
+          expect(again).toMatchObject({ ok: false, error: { code: 'CONFLICT' } });
+          const next = await server.run(ada, 'issue.create', { team: 'SIM', title: 'Next' });
+          expect(next).toMatchObject({ ok: true, result: { identifier: `SIM-${accepted + 1}` } });
           const rows = await server.issues();
-          expect(rows).toHaveLength(batch.filter((k) => k === 'ok').length);
+          expect(rows).toHaveLength(accepted + 1);
           checkNumbering(
             rows.map((r) => ({
               id: r.id,

@@ -13,6 +13,7 @@ export default handler(issueCreate, async (ctx, input) => {
     teamRef: input.team,
     title: input.title,
     statusId: optionalId(ctx, 'status'),
+    statusRef: input.status,
     priority: input.priority,
     assigneeId: optionalId(ctx, 'assignee') ?? null,
     labelIds: resolvedIds(ctx.refs['labels']),
@@ -20,5 +21,5 @@ export default handler(issueCreate, async (ctx, input) => {
     dueDate: input.dueDate ?? null,
     creatorId: creatorOf(ctx),
   });
-  return issueOutput(ctx.tx, row);
+  return issueOutput(ctx, row);
 });

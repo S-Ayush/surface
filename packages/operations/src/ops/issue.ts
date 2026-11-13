@@ -75,7 +75,7 @@ const NewId = z
 
 const Named = z.object({ id: z.uuid(), name: z.string() });
 
-/** One issue in a list (§6.1). `url` is the path on your Surface address, `/issue/ENG-42/<slug>`. */
+/** One issue in a list (§6.1). `url` is absolute, on your Surface address: `https://surface.example.com/issue/ENG-42/<slug>` (D11). */
 export const IssueSummarySchema = z.object({
   id: z.uuid(),
   identifier: z.string(),

@@ -216,16 +216,20 @@ export async function groupByQuery<T extends PgTable, F extends FilterFields>(
       key: string | null;
       label: string | null;
       count: number;
+      estimateSum?: number;
     }>(
       sql`SELECT ${grouping.key} AS key, ${grouping.label} AS label, count(*)::int AS count
+                 ${estimate ? sql`, coalesce(sum(${estimate}), 0)::float8 AS "estimateSum"` : sql``}
             FROM ${table} LEFT JOIN LATERAL ${grouping.lateral} ON TRUE
            WHERE ${where ?? sql`TRUE`}
            GROUP BY 1, 2 ORDER BY 3 DESC, 1 ASC NULLS LAST ${limit ?? sql``}`,
     );
+    // A row with two labels adds its estimate to both groups, as it counts in both.
     return result.rows.map((row) => ({
       key: row.key,
       label: row.label ?? 'None',
       count: row.count,
+      ...(row.estimateSum === undefined ? {} : { estimateSum: row.estimateSum }),
     }));
   }
   const query = ctx.tx

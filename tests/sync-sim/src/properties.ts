@@ -105,7 +105,10 @@ export function checkNumbering(rows: readonly IssueRecord[]): void {
   }
 }
 
-/** Whether the server must refuse a create with this input (§4.2, §4.6, INV-06). */
+/**
+ * Whether the server must refuse a create for its input alone (§4.2, §4.6, INV-06). A create that
+ * reuses a stored id is refused too (CONFLICT at the insert), which `issueConvergence` checks per id.
+ */
 function refusedCreate(input: unknown, fixtures: IssueFixtures): boolean {
   if (typeof input !== 'object' || input === null) return false;
   const status: unknown = Reflect.get(input, 'status');
@@ -152,15 +155,26 @@ export const issueConvergence: Property = {
       ).toBe(true);
       expect(new Set(row.labelIds).size, row.id).toBe(row.labelIds.length);
     }
+    // Creates by id: a create may reuse an earlier one's id (AC-2), so the creates of one id
+    // commit at most once, and a create the inputs refuse never commits.
+    const byId = new Map<string, typeof world.dispatched>();
     for (const d of world.dispatched.filter((x) => x.op === 'issue.create')) {
       const id: unknown =
         typeof d.input === 'object' && d.input !== null ? Reflect.get(d.input, 'id') : undefined;
-      if (typeof id !== 'string') continue;
-      if (refusedCreate(d.input, fixtures)) {
-        expect(issues[id], `${d.key} should have been refused`).toBeUndefined();
-        if (d.outcome !== undefined) expect(d.outcome.status, d.key).toBe('rejected');
-      } else if (d.outcome?.status === 'confirmed') {
-        expect(issues[id], d.key).toBeDefined();
+      if (typeof id === 'string') byId.set(id, [...(byId.get(id) ?? []), d]);
+    }
+    for (const [id, creates] of byId) {
+      for (const d of creates) {
+        if (refusedCreate(d.input, fixtures) && d.outcome !== undefined) {
+          expect(d.outcome.status, `${d.key} should have been refused`).toBe('rejected');
+        }
+      }
+      const confirmed = creates.filter((d) => d.outcome?.status === 'confirmed');
+      expect(confirmed.length, `${id} committed more than once`).toBeLessThanOrEqual(1);
+      if (confirmed.length === 1) expect(issues[id], id).toBeDefined();
+      const refusedAll = creates.every((d) => refusedCreate(d.input, fixtures));
+      if (refusedAll || creates.every((d) => d.outcome?.status === 'rejected')) {
+        expect(issues[id], `${id} should have been refused`).toBeUndefined();
       }
     }
   },

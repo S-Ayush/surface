@@ -124,7 +124,10 @@ export interface ExecutorDeps {
    * synced mutation that changed nothing (`visibleHead`). Default: the production models.
    */
   readonly syncedModels?: readonly string[];
-  /** `SURFACE_URL`, for the links handlers issue (`ctx.links`). Without it, issuing one fails. */
+  /**
+   * `SURFACE_URL`, for the links handlers issue (`ctx.links`) and absolute URLs in outputs
+   * (`ctx.publicUrl`). Without it, a handler that needs one fails.
+   */
   readonly publicUrl?: string;
   /** The sign-in lockout's store, for `ctx.attempts`. Without it, using it fails. */
   readonly attempts?: AttemptStore;
@@ -351,6 +354,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
         return ids.length;
       },
       links: handlerLinks(client, deps.publicUrl, now),
+      publicUrl: deps.publicUrl,
       attempts: deps.attempts ?? NO_ATTEMPT_STORE,
     };
     const raw = await handler.run(ctx, input);

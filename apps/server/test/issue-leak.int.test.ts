@@ -60,6 +60,7 @@ const secIssue = uuidv7();
 const engIssue = uuidv7();
 const opsIssue = uuidv7();
 const secLabel = uuidv7();
+const opsLabel = uuidv7();
 let secStatusId = '';
 
 /** One committed transaction through the repo, as the executor runs it. */
@@ -157,6 +158,7 @@ beforeAll(async () => {
   );
   await ok('issue.create', { id: engIssue, team: 'ENG', title: 'Fix login' }, anaActor);
   await ok('issue.create', { id: opsIssue, team: 'OPS', title: 'Renew the cert' }, anaActor);
+  await ok('label.create', { id: opsLabel, team: 'OPS', name: 'On call' }, zoeActor);
 
   const config = testConfig();
   const lifecycle = new Lifecycle();
@@ -479,6 +481,18 @@ describe('an API key limited to ENG (E13)', () => {
         expect(real).toEqual(none);
       }
     }
+    // A label id resolves only to a label of the key's teams or a workspace label (SPEC-010 §6).
+    for (const operation of ['issue.update', 'issue.create'] as const) {
+      const input = (label: string) =>
+        operation === 'issue.update'
+          ? { issue: engIssue, addLabels: [label] }
+          : { team: 'ENG', title: 'Tag it', labels: [label] };
+      const unknown = uuidv7();
+      const real = await failure(operation, input(opsLabel), engKeyActor, [opsLabel]);
+      const none = await failure(operation, input(unknown), engKeyActor, [unknown]);
+      expect(real, operation).toMatchObject({ code: 'NOT_FOUND' });
+      expect(real).toEqual(none);
+    }
     const real = await failure('issue.list', { team: 'OPS' }, engKeyActor, ['OPS']);
     const none = await failure('issue.list', { team: 'ZZZ' }, engKeyActor, ['ZZZ']);
     expect(real).toMatchObject({ code: 'NOT_FOUND' });
@@ -508,6 +522,8 @@ describe('a member of SEC', () => {
       id: secIssue,
       identifier: 'SEC-1',
       labels: [{ name: 'Secret sauce' }],
+      // Absolute, on `SURFACE_URL` (D11).
+      url: 'https://surface.example.com/issue/SEC-1/rotate-the-leaked-token',
     });
     expect(await ok('issue.update', { issue: secIssue, priority: 2 }, samActor)).toMatchObject({
       priority: 2,

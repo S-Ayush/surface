@@ -4,10 +4,9 @@
  * each for a whole page. Every one of them is visible to whoever sees the issue: its team's status
  * and labels or workspace labels (INV-06), and users, who are workspace-wide.
  */
-import { issueIdentifier, issuePath, isStatusCategory } from '@surface/domain';
+import { issueIdentifier, issueUrl, isStatusCategory } from '@surface/domain';
 import type { IssueOutputSchema } from '@surface/operations';
 import { asc, eq, inArray } from 'drizzle-orm';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { z } from 'zod';
 import { labels, teams, users, workflowStatuses } from '../../db/schema/index.js';
 import type { HandlerContext } from '../../executor/context.js';
@@ -91,10 +90,12 @@ const iso = (value: Date | null): string | null => (value === null ? null : valu
 
 /** The full output of each row, in the rows' order (§6.1). */
 export async function issueOutputs(
-  tx: NodePgDatabase,
+  ctx: Pick<HandlerContext, 'tx' | 'publicUrl'>,
   rows: readonly IssueRow[],
 ): Promise<IssueOutput[]> {
   if (rows.length === 0) return [];
+  const { tx, publicUrl } = ctx;
+  if (publicUrl === undefined) throw new Error('Issue outputs need the executor’s publicUrl');
   const unique = (ids: (string | null)[]) => [
     ...new Set(ids.filter((id): id is string => id !== null)),
   ];
@@ -168,7 +169,8 @@ export async function issueOutputs(
       archivedAt: iso(row.archivedAt),
       deletedAt: iso(row.deletedAt),
       deletedBy: person(row.deletedById),
-      url: issuePath(identifier, row.title),
+      // Absolute, on `SURFACE_URL`, as Linear's (§6.1, D11).
+      url: issueUrl(publicUrl, identifier, row.title),
       creator,
       startedAt: iso(row.startedAt),
       canceledAt: iso(row.canceledAt),
@@ -177,8 +179,11 @@ export async function issueOutputs(
 }
 
 /** One row's full output. */
-export async function issueOutput(tx: NodePgDatabase, row: IssueRow): Promise<IssueOutput> {
-  const [output] = await issueOutputs(tx, [row]);
+export async function issueOutput(
+  ctx: Pick<HandlerContext, 'tx' | 'publicUrl'>,
+  row: IssueRow,
+): Promise<IssueOutput> {
+  const [output] = await issueOutputs(ctx, [row]);
   if (output === undefined) throw new Error(`No output for issue ${row.id}`);
   return output;
 }

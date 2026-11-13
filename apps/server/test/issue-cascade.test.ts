@@ -3,6 +3,8 @@
 // label, whatever its lifecycle state, to the repo in one `updateWhere` with `touchUpdatedAt:
 // false`, and records no history and emits no event. The run against Postgres is ⏸ held with
 // PLAN-010 S5 (`label-delete-cascade.int.test.ts`).
+import { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 import { removeLabelFromIssues } from '../src/issues/cascade.js';
 import { memoryIssues } from './support/memory-issues.js';
@@ -39,9 +41,17 @@ describe('removeLabelFromIssues (AC-17, E20)', () => {
     const { db } = issuesWithLabel(ISSUES);
     const m = memoryIssues();
     const rewritten = await removeLabelFromIssues(db, m.repo, LABEL);
-    expect(m.writes).toEqual([
+    expect(m.writes.map(({ patch: _patch, ...write }) => write)).toEqual([
       { action: 'updateWhere', ids: ISSUES, fields: ['labelIds'], touchUpdatedAt: false },
     ]);
+    // Computed per row in SQL, so a concurrent edit of the issue's other labels is kept.
+    const value = m.writes[0]?.patch?.['labelIds'];
+    if (!(value instanceof SQL)) throw new Error('labelIds should be computed in SQL');
+    // Rendered as the repo renders it (the app's drizzle uses snake_case).
+    expect(new PgDialect({ casing: 'snake_case' }).sqlToQuery(value)).toMatchObject({
+      sql: 'array_remove("issues"."label_ids", $1::uuid)',
+      params: [LABEL],
+    });
     expect(rewritten).toEqual([...ISSUES].sort());
     expect(m.events).toEqual([]);
   });

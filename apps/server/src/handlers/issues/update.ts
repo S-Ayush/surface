@@ -11,6 +11,7 @@ export default handler(issueUpdate, async (ctx, input) => {
     teamId: issue.teamId,
     title: input.title,
     statusId: optionalId(ctx, 'status'),
+    statusRef: input.status,
     priority: input.priority,
     // `null` clears the assignee; the executor resolves only a present one.
     assigneeId: input.assignee === null ? null : optionalId(ctx, 'assignee'),
@@ -19,5 +20,5 @@ export default handler(issueUpdate, async (ctx, input) => {
     addLabelIds: resolvedIds(ctx.refs['addLabels']),
     removeLabelIds: resolvedIds(ctx.refs['removeLabels']),
   });
-  return issueOutput(ctx.tx, row);
+  return issueOutput(ctx, row);
 });

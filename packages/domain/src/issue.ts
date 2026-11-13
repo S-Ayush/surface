@@ -299,6 +299,15 @@ export function issuePath(identifier: string, title: string): string {
   return slug === '' ? `/issue/${identifier}` : `/issue/${identifier}/${slug}`;
 }
 
+/**
+ * The issue's absolute URL on the workspace's address (`SURFACE_URL` on the server, the page's
+ * origin on the client), as Linear's `url` (SPEC-011 §6.1, D11). A trailing slash on the base is
+ * dropped, and a base with a path keeps it.
+ */
+export function issueUrl(base: string, identifier: string, title: string): string {
+  return `${base.replace(/\/+$/, '')}${issuePath(identifier, title)}`;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Filters (SPEC-011 §6.1, SPEC-003 §7.4)
 

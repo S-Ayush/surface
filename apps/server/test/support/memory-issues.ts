@@ -37,6 +37,8 @@ export interface IssueWrite {
   /** The fields a patch carried. */
   readonly fields: readonly string[];
   readonly touchUpdatedAt?: boolean;
+  /** An `updateWhere`'s patch as given, so a test can render its SQL values. */
+  readonly patch?: Readonly<Record<string, unknown>>;
 }
 
 export interface MemoryIssues {
@@ -183,6 +185,7 @@ export function memoryIssues(): MemoryIssues {
         ids: [...ids],
         fields: Object.keys(patch),
         touchUpdatedAt: options.touchUpdatedAt,
+        patch: { ...patch },
       });
       return Promise.resolve([...ids].sort());
     },

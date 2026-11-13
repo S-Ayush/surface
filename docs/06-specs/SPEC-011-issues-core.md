@@ -1,6 +1,6 @@
 # SPEC-011: Issues core: create, properties, history, IDs
 
-Status: **Accepted** (2026-11-12, M1 acceptance gate) · Milestone: **M1** · Date: 2026-11-12 (review round 1 applied 2026-11-12)
+Status: **Accepted** (2026-11-12, M1 acceptance gate) · Milestone: **M1** · Date: 2026-11-12 (review round 1 applied 2026-11-12; D11 and the §6.4 status wording 2026-11-13)
 Implements: FR-ISS-01, 02 (domain and operation; the composer UI is SPEC-012), 03 (the M1 properties, §2), 04 (operations), 05, 08 (identifier and URL forms) · NFR-01, 02, 06, 07, 08, 10, 14 · sync-protocol §2 and §4.2 (content models, first use) · the issue half of SPEC-010 AC-10, AC-12
 Depends on: SPEC-010 (statuses, labels, estimates), SPEC-002 (sync), SPEC-003 (registry, filter engine, lists)
 Related: [domain-model §4.6, §4.10, §6](../03-domain/domain-model.md) · [state-machines §1](../03-domain/state-machines.md) · [events](../03-domain/events.md) · [sync-protocol §2, §4.2, §4.3, §5.4](../04-architecture/sync-protocol.md) · SPEC-012 (UI) · SPEC-013 (comments, editor) · SPEC-014 (attachments) · SPEC-015 (recently deleted, archive)
@@ -459,7 +459,7 @@ The server accepts a subscription to a public team, or to a private team the use
 | `issue.count` | q | `countInput` (filter, `team?`, includeArchived) → `{count}`. |
 | `issue.groupBy` | q | `{filter?, team?, includeArchived?, by: 'status' \| 'assignee' \| 'priority' \| 'label'}` → `{groups: [{key, name, count}]}`. `key` is the id (or the priority number), or `null` for "No assignee" and "No label". By label, an issue counts in each of its labels. At most 500 groups. |
 
-- `IssueSummary` = id, identifier, team key, title, status (id, name, category), priority, assignee (id, name), labels (id, name, color), estimate, dueDate, createdAt, updatedAt, completedAt, archivedAt, deletedAt, deletedBy (id, name), url.
+- `IssueSummary` = id, identifier, team key, title, status (id, name, category), priority, assignee (id, name), labels (id, name, color), estimate, dueDate, createdAt, updatedAt, completedAt, archivedAt, deletedAt, deletedBy (id, name), url. `url` is absolute: `SURFACE_URL` with `/issue/ENG-42/<slug>` appended, a trailing slash on `SURFACE_URL` dropped (D11).
 - `IssueOutput` adds the description, creator, `startedAt`, `canceledAt`, `version`, `attachments[]` (SPEC-014) and `reactions[]` (emoji, count, mine: the reactions on the issue itself, SPEC-013 §4.2).
 - `fields` can ask for any path of the full shape (SPEC-003 E6 lands here).
 
@@ -503,7 +503,7 @@ SPEC-003 shape, naming the field:
 - "Bug is a label group. Choose one of its labels."
 - "An issue can have up to 20 labels. Remove one first."
 - "Triage and Duplicate are set by their own actions."
-- "That status belongs to another team." (resolves as `NOT_FOUND` per SPEC-003 §4)
+- Another team's status reads like an unknown one (`NOT_FOUND`, SPEC-003 §4): 'Status "Todo" not found in ENG. Use a status name of that team, or a status id.'
 - "That status was deleted. Choose another status." / "That label was deleted. Choose another label." (`CONFLICT`, §4.8)
 - "ENG-42 is archived. Restore it to edit it." / "ENG-42 was deleted. Restore it to edit it." (`CONFLICT`)
 - "Someone changed this description since you opened it. Your text is kept: copy it, then reload." (`CONFLICT`)
@@ -621,6 +621,7 @@ None. Every question has been decided; see the Decisions table below.
 | D8 | Copy Linear: a status can't be deleted while any issue uses it, so there is no `status.delete` cascade, replacement or lock-order exception here. SPEC-010 owns the refusal. Reverses the status half of D5. | 2026-11-12 |
 | D9 | Copy Linear: activity lines read "<name> created the issue", "moved from A to B", "self-assigned the issue", "assigned the issue to B", "removed assignee", "deleted the issue", "restored the issue", and "Issue was automatically archived". Lines show "via API" or "via MCP" for those actors. History kinds are `created`, `updated`, `deleted`, `restored`, `archived` (§4.4). | 2026-11-12 |
 | D10 | Copy Linear: label groups are single-select by default (`exclusive`), so INV-07 and the replace-on-add rule apply only to exclusive groups (§4.2). | 2026-11-12 |
+| D11 | Copy Linear: `url` is absolute, built from `SURFACE_URL` (§6.1). The client builds the same shape from the page's origin when it needs one. | 2026-11-13 |
 | Q13 | The filter conformance run for Issue (Postgres) is allowed under the testing hold, as an exception the user granted at the M1 gate. | 2026-11-12 |
 | Q15 | Copy Linear: partial issue loading (§5.7, ADR-0020) instead of raising the budget. The 35 MB eager budget stays, per replica. VISION §6 changes with it (§12). | 2026-11-12 |
 | Q18 | Description history stays v2 (PRD FR-ISS-14); M1 shows only the "updated the description" activity line. | 2026-11-12 |

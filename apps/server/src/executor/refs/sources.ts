@@ -435,6 +435,8 @@ async function lookupLabel(value: string, ctx: LookupContext): Promise<LabelRow>
   const team = ctx.scopeTeam;
   const ref = parseLabelRef(value);
   const groups = visibleGroups(ctx.actor);
+  // An API key limited to teams sees their labels and workspace labels only, as for issues.
+  const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
   let rows: LabelRow[] = [];
   const columns = `l.id, l.team_id AS "teamId", l.parent_id AS "parentId", p.name AS "groupName",
               l.name, l.is_group AS "isGroup", l.sync_groups AS "syncGroups"`;
@@ -444,8 +446,9 @@ async function lookupLabel(value: string, ctx: LookupContext): Promise<LabelRow>
     ({ rows } = await ctx.db.query<LabelRow>(
       `SELECT ${columns}
          FROM labels l LEFT JOIN labels p ON p.id = l.parent_id
-        WHERE l.id = $1 AND ($2::text[] IS NULL OR l.sync_groups && $2::text[])`,
-      [ref.id, groups],
+        WHERE l.id = $1 AND ($2::text[] IS NULL OR l.sync_groups && $2::text[])
+          AND ($3::uuid[] IS NULL OR l.team_id IS NULL OR l.team_id = ANY($3::uuid[]))`,
+      [ref.id, groups, keyTeams],
     ));
   } else if (ref?.by === 'name' || ref?.by === 'groupLabel') {
     ({ rows } = await ctx.db.query<LabelRow>(
@@ -454,8 +457,9 @@ async function lookupLabel(value: string, ctx: LookupContext): Promise<LabelRow>
         WHERE lower(l.name) = lower($1) AND (l.team_id IS NULL OR l.team_id = $2::uuid)
           AND ($3::text[] IS NULL OR l.sync_groups && $3::text[])
           AND ($4::text IS NULL OR lower(p.name) = lower($4))
+          AND ($5::uuid[] IS NULL OR l.team_id IS NULL OR l.team_id = ANY($5::uuid[]))
         ORDER BY p.name COLLATE "C" NULLS FIRST, l.name COLLATE "C", l.id`,
-      [ref.name, team?.id ?? null, groups, ref.by === 'groupLabel' ? ref.group : null],
+      [ref.name, team?.id ?? null, groups, ref.by === 'groupLabel' ? ref.group : null, keyTeams],
     ));
   }
 

@@ -81,7 +81,6 @@ export interface IssueWriteContext {
 
 export const STATUS_GONE = 'That status was deleted. Choose another status.';
 export const LABEL_GONE = 'That label was deleted. Choose another label.';
-const OTHER_TEAM_STATUS = 'That status belongs to another team.';
 
 function invalid(path: readonly (string | number)[], message: string): SurfaceError {
   return new SurfaceError('INVALID_INPUT', message, { issues: [{ path, message }] });
@@ -108,18 +107,26 @@ function ascending(ids: readonly string[]): string[] {
   return [...new Set(ids)].sort();
 }
 
-/** Re-reads the status under its key lock and checks it for an issue of `teamId` (INV-06, §4.6). */
-async function lockedStatus(
-  access: IssueAccess,
-  statusId: string,
-  teamId: string,
-): Promise<StatusFacts> {
+/** Re-reads the status under its key lock; one deleted since resolution is `CONFLICT` (E19). */
+async function lockedStatus(access: IssueAccess, statusId: string): Promise<StatusFacts> {
   const status = await access.shareStatus(statusId);
   if (status === undefined) throw conflict(['status'], STATUS_GONE);
-  if (status.teamId !== teamId) throw invalid(['status'], OTHER_TEAM_STATUS);
+  return status;
+}
+
+/**
+ * Checks a locked status for an issue of `team` (INV-06, §4.6). A status resolves within the
+ * issue's team (§6.4), so one of another team reads exactly like an unknown status.
+ */
+function checkStatus(status: StatusFacts, team: IssueTeam, statusRef: string | undefined): void {
+  if (status.teamId !== team.id) {
+    throw refNotFound('StatusRef', statusRef ?? status.id, ['status'], {
+      id: team.id,
+      key: team.key,
+    });
+  }
   const problem = issueStatusProblem(status.category);
   if (problem !== undefined) throw invalid(['status'], problem);
-  return status;
 }
 
 /**
@@ -193,6 +200,8 @@ export interface CreateIssueInput {
   readonly title: string;
   /** Resolved within the team; the team's default status when absent (AC-1). */
   readonly statusId?: string | undefined;
+  /** The input's spelling of the status, for messages. */
+  readonly statusRef?: string | undefined;
   readonly priority?: number | undefined;
   readonly assigneeId: string | null;
   /** Resolved label ids, in input order. */
@@ -213,7 +222,8 @@ export async function createIssue(
   // Resolved and visible at step 7; gone only if deleted since, so it reads like an unknown team.
   if (team === undefined) throw refNotFound('TeamRef', input.teamRef, ['team']);
 
-  const status = await lockedStatus(access, input.statusId ?? team.defaultStatusId, team.id);
+  const status = await lockedStatus(access, input.statusId ?? team.defaultStatusId);
+  checkStatus(status, team, input.statusRef);
   const facts = await lockedLabels(access, input.labelIds, 'labels');
   checkNewLabels(input.labelIds, () => true, facts, team, 'labels');
   const merged = mergeLabels([], input.labelIds, [], facts);
@@ -257,6 +267,8 @@ export interface UpdateIssueInput {
   readonly teamId: string;
   readonly title?: string | undefined;
   readonly statusId?: string | undefined;
+  /** The input's spelling of the status, for messages. */
+  readonly statusRef?: string | undefined;
   readonly priority?: number | undefined;
   /** `null` clears; `undefined` leaves it. */
   readonly assigneeId?: string | null | undefined;
@@ -276,10 +288,6 @@ export async function updateIssue(
   input: UpdateIssueInput,
 ): Promise<{ readonly row: IssueRow; readonly changes: IssueChangeSet }> {
   const { access, repo, now } = ctx;
-  const both = input.addLabelIds.findIndex((id) => input.removeLabelIds.includes(id));
-  if (both >= 0) {
-    throw invalid(['addLabels', both], "A label can't be in both addLabels and removeLabels.");
-  }
   // Read before any lock: the team's key and estimate settings. A plain read takes no lock, so
   // nothing about the team is read under the issue lock (§4.8).
   const team = await access.readTeam(input.teamId);
@@ -287,11 +295,18 @@ export async function updateIssue(
 
   // Key locks on what the edit sets, before the issue lock (§4.8, AC-20).
   const status =
-    input.statusId === undefined ? undefined : await lockedStatus(access, input.statusId, team.id);
+    input.statusId === undefined ? undefined : await lockedStatus(access, input.statusId);
   const facts = await lockedLabels(access, input.addLabelIds, 'addLabels');
+  // The issue's own state is checked first (AC-23): an archived or deleted issue is CONFLICT
+  // whatever else the edit gets wrong, so the input checks run after the issue lock.
   const issue = await access.lockIssue(input.issueId);
   if (issue.teamId !== team.id) {
     throw new SurfaceError('CONFLICT', 'This issue moved to another team. Reload and try again.');
+  }
+  if (status !== undefined) checkStatus(status, team, input.statusRef);
+  const both = input.addLabelIds.findIndex((id) => input.removeLabelIds.includes(id));
+  if (both >= 0) {
+    throw invalid(['addLabels', both], "A label can't be in both addLabels and removeLabels.");
   }
 
   checkNewLabels(input.addLabelIds, (id) => !issue.labelIds.includes(id), facts, team, 'addLabels');

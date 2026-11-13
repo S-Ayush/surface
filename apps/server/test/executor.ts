@@ -400,6 +400,8 @@ export function testExecutor(pool: pg.Pool, overrides: Partial<ExecutorDeps> = {
     log,
     allowInternal: true,
     backoff: () => 0,
+    // The `SURFACE_URL` of `testConfig()`, for absolute URLs in outputs (an issue's `url`).
+    publicUrl: 'https://surface.example.com',
     ...overrides,
     // A test's own checks run after the write audit, never instead of it.
     checks: [repoWritesOnly, ...(overrides.checks ?? [])],

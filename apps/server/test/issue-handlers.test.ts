@@ -139,10 +139,15 @@ describe('issue.create (AC-1, AC-3, AC-4)', () => {
     expect(m.writes).toEqual([]);
   });
 
-  it("refuses another team's status (INV-06)", async () => {
+  it("refuses another team's status as NOT_FOUND, like an unknown status (INV-06, §6.4)", async () => {
     const m = memoryIssues();
-    const error = await failure(create(m, { statusId: m.status(m.des, 'Todo').id }));
-    expect(error.message).toBe('That status belongs to another team.');
+    const error = await failure(
+      create(m, { statusId: m.status(m.des, 'Todo').id, statusRef: 'Todo' }),
+    );
+    expect([error.code, error.message]).toEqual([
+      'NOT_FOUND',
+      'Status "Todo" not found in ENG. Use a status name of that team, or a status id.',
+    ]);
   });
 
   it("refuses another team's label by uuid (INV-06), a group, and archived labels (SPEC-010 E12, E13)", async () => {
@@ -378,6 +383,24 @@ describe('issue.update (AC-3, AC-4, AC-23, E8, E12)', () => {
     expect([d.code, d.message]).toEqual(['CONFLICT', 'ENG-2 was deleted. Restore it to edit it.']);
     expect(m.writes).toEqual([]);
     expect(m.issues.get(archived.id)?.archivedAt).toEqual(NOW);
+  });
+
+  it('refuses an archived issue as archived before any input problem (AC-23)', async () => {
+    const m = memoryIssues();
+    const archived = await create(m);
+    m.issues.set(archived.id, { ...archived, archivedAt: NOW });
+    const archivedMessage = 'ENG-1 is archived. Restore it to edit it.';
+    const bug = m.addLabel({ name: 'Bug' });
+    m.writes.length = 0;
+    for (const extra of [
+      { statusId: m.status(m.eng, 'Triage').id },
+      { statusId: m.status(m.des, 'Todo').id },
+      { addLabelIds: [bug.id], removeLabelIds: [bug.id] },
+    ]) {
+      const error = await failure(update(m, archived, extra));
+      expect([error.code, error.message]).toEqual(['CONFLICT', archivedMessage]);
+    }
+    expect(m.writes).toEqual([]);
   });
 });
 

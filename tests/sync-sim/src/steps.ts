@@ -56,13 +56,18 @@ export type Step =
   /** `debug.archive` and `debug.unarchive` (PLAN-011 S2, SPEC-011 §5.5). */
   | { readonly t: 'archive'; readonly tab: number; readonly item: number }
   | { readonly t: 'unarchive'; readonly tab: number; readonly item: number }
-  /** `issue.create` in SIM; refused for Triage, another team's status, a group or `Nope`. */
+  /**
+   * `issue.create` in SIM; refused for Triage, another team's status, a group or `Nope`. With
+   * `reuse`, it takes the id of an earlier create (wrapped around them): refused with CONFLICT at
+   * the insert, after the counter was taken, when that id is already stored (AC-2, E1).
+   */
   | {
       readonly t: 'issueCreate';
       readonly tab: number;
       readonly title: string;
       readonly status: StatusPick;
       readonly labels: readonly LabelPick[];
+      readonly reuse?: number | undefined;
     }
   /** `issue.update` of an issue an earlier step created (wrapped around them). */
   | {
@@ -224,6 +229,7 @@ export function issueCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
         title,
         status: fc.constantFrom('default', 'default', ...STATUS_PICKS),
         labels: labelPicks,
+        reuse: fc.option(index, { nil: undefined, freq: 6 }),
       }),
     ),
     issueStep(
@@ -336,7 +342,9 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       const target = pick(readyTabs(live), step.tab);
       const fixtures = isIssueServer(world.server) ? world.server.issueFixtures : undefined;
       if (target === undefined || fixtures === undefined) return;
-      const id = uuidV7From(world.random);
+      const fresh = uuidV7From(world.random);
+      const reused = step.reuse === undefined ? undefined : pick(world.issueIds, step.reuse);
+      const id = reused ?? fresh;
       const status = statusRef(step.status, fixtures);
       const labels = step.labels.map((l) => labelRef(l, fixtures));
       const input = {
@@ -346,7 +354,8 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
         ...(status === undefined ? {} : { status }),
         ...(labels.length === 0 ? {} : { labels }),
       };
-      if (world.dispatch(target, issueCreate, input)) world.issueIds.push(id);
+      if (world.dispatch(target, issueCreate, input) && reused === undefined)
+        world.issueIds.push(id);
       return;
     }
     case 'issueUpdate': {

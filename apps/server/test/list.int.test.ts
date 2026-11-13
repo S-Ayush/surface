@@ -69,6 +69,13 @@ const taskList = defineListModel({
         WHERE t.id = ${tasks.teamId} AND t.sync_groups && ${sql.param([...groups])}::text[])`,
     },
     points: { key: sql`${tasks.points}::text`, label: sql`${tasks.points}::text` },
+    // A row in one group per word of its title, as an issue is in one group per label.
+    word: {
+      lateral: sql`unnest(CASE WHEN ${tasks.title} IS NULL THEN ARRAY[NULL]::text[]
+        ELSE string_to_array(${tasks.title}, ' ') END) AS w(word)`,
+      key: sql`w.word`,
+      label: sql`w.word`,
+    },
   }),
   estimateColumn: 'points',
 });
@@ -420,11 +427,24 @@ describe('groupBy', () => {
     ]);
   });
 
+  it('counts and sums a row in each of its groups for a per-value (lateral) grouping', async () => {
+    await seed([
+      { title: 'red blue', points: 2 },
+      { title: 'red', points: 3 },
+      { title: null, points: 1 },
+    ]);
+    expect(await groupByQuery(ctxFor(who.engMember), taskList, { groupBy: 'word' })).toEqual([
+      { key: 'red', label: 'red', count: 2, estimateSum: 5 },
+      { key: 'blue', label: 'blue', count: 1, estimateSum: 2 },
+      { key: null, label: 'None', count: 1, estimateSum: 1 },
+    ]);
+  });
+
   it('names the groupings for an unknown one', async () => {
     const error = await failure(
       groupByQuery(ctxFor(who.engMember), taskList, { groupBy: 'colour' }),
     );
-    expect(error.message).toBe('Can\'t group by "colour". Group by one of: points, team.');
+    expect(error.message).toBe('Can\'t group by "colour". Group by one of: points, team, word.');
   });
 });
 

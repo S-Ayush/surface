@@ -3,7 +3,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { foldToSlug } from './git-branch.js';
-import { issuePath, issueSlug, ISSUE_SLUG_MAX_LENGTH } from './issue.js';
+import { issuePath, issueSlug, issueUrl, ISSUE_SLUG_MAX_LENGTH } from './issue.js';
 
 describe('issueSlug (AC-24)', () => {
   it('gives lowercase words joined by hyphens, letters and digits only', () => {
@@ -49,6 +49,20 @@ describe('issueSlug (AC-24)', () => {
         expect(slug === '').toBe(!/[\p{L}\p{N}]/u.test(title) || folded === '');
       }),
       { numRuns: 500 },
+    );
+  });
+});
+
+describe('issueUrl (SPEC-011 §6.1, D11)', () => {
+  it('appends the slugged path to the base, with or without a trailing slash', () => {
+    const want = 'https://surface.example.com/issue/ENG-42/fix-login';
+    expect(issueUrl('https://surface.example.com', 'ENG-42', 'Fix login')).toBe(want);
+    expect(issueUrl('https://surface.example.com/', 'ENG-42', 'Fix login')).toBe(want);
+  });
+
+  it('keeps a base path, and drops the slug for a title without letters or digits', () => {
+    expect(issueUrl('https://example.com/surface//', 'ENG-42', '???')).toBe(
+      'https://example.com/surface/issue/ENG-42',
     );
   });
 });

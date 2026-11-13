@@ -102,6 +102,11 @@ export interface HandlerContext {
    */
   readonly links: HandlerLinks;
   /**
+   * `SURFACE_URL`, for absolute links in outputs (an issue's `url`, SPEC-011 §6.1). Undefined
+   * only for an executor built without one (some tests); a handler that needs it then fails.
+   */
+  readonly publicUrl: string | undefined;
+  /**
    * The sign-in lockout's store (AC-6, `auth/attempts.ts`), for a handler that checks a password
    * (`user.changePassword`, PLAN-001 S6 review). It works on its own pool connection, outside this
    * transaction, so a wrong guess stays counted after the refusal rolls the operation back.
