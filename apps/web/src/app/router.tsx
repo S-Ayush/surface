@@ -17,7 +17,8 @@ import {
 import { reaction } from 'mobx';
 import { useCallback, useEffect } from 'react';
 import { IssuePlaceholderPage } from '../features/issues/IssuePlaceholderPage.js';
-import { MyIssuesPage } from '../pages/MyIssuesPage.js';
+import { IssueListPage } from '../features/issues/IssueListPage.js';
+import { MyIssuesPage } from '../features/issues/MyIssuesPage.js';
 import { NotFoundPage, StandaloneNotFoundPage } from '../pages/NotFoundPage.js';
 import { LoginPage } from '../pages/LoginPage.js';
 import { PublicPage } from '../pages/PublicPage.js';
@@ -185,7 +186,26 @@ function HomeRedirect() {
 const myIssuesRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: 'my-issues',
-  component: MyIssuesPage,
+  component: function Assigned() {
+    return <MyIssuesPage tab="assigned" />;
+  },
+});
+
+const myIssuesCreatedRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: 'my-issues/created',
+  component: function Created() {
+    return <MyIssuesPage tab="created" />;
+  },
+});
+
+// The team's issue list (SPEC-012 §3.3); replaces the reserved route.
+const teamIssuesRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: 'team/$key/issues',
+  component: function TeamIssues() {
+    return <IssueListPage teamKey={useRouteParams().key ?? ''} />;
+  },
 });
 
 const teamRoute = createRoute({
@@ -234,7 +254,9 @@ const routeTree = rootRoute.addChildren([
   shellRoute.addChildren([
     homeRoute,
     myIssuesRoute,
+    myIssuesCreatedRoute,
     teamRoute,
+    teamIssuesRoute,
     issueRoute,
     issueSlugRoute,
     settingsRoute.addChildren([

@@ -76,6 +76,15 @@ export const navigationSource: CommandSource = (ctx) => [
     when: canNavigate,
     run: (c) => c.navigate?.(teamPath(team.key)),
   })),
+  // SPEC-012 §3.3 item 1, §3.8: "Go to ENG issues", one per team.
+  ...ctx.teams().map((team): Command => ({
+    id: `nav:team-issues:${team.id}`,
+    title: `Go to ${team.key} issues`,
+    section: 'navigation',
+    keywords: [team.name, 'issues'],
+    when: canNavigate,
+    run: (c) => c.navigate?.(`${teamPath(team.key)}/issues`),
+  })),
 ];
 
 /**

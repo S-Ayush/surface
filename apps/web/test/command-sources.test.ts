@@ -34,11 +34,16 @@ describe('navigation commands', () => {
       'Open team…',
       'Go to Engineering',
       'Go to Design',
+      'Go to ENG issues',
+      'Go to DES issues',
     ]);
     expect(commands.find((c) => c.id === 'nav:settings')?.shortcuts).toEqual(['Mod+,', ['G', 'S']]);
     expect(commands.find((c) => c.id === 'nav:open-team')?.shortcuts).toEqual([['O', 'T']]);
     void commands.find((c) => c.title === 'Go to Engineering')?.run?.(ctx);
     expect(navigate).toHaveBeenCalledWith('/team/ENG');
+    // SPEC-012 §3.3 item 1: "Go to ENG issues" opens the team's list.
+    void commands.find((c) => c.title === 'Go to ENG issues')?.run?.(ctx);
+    expect(navigate).toHaveBeenCalledWith('/team/ENG/issues');
   });
 
   it('"Open team…" is a page of teams that navigates to the chosen one', () => {
@@ -70,6 +75,16 @@ describe('identifier fast path (command-menu §3.1, SPEC-011 §7)', () => {
     expect(first?.title).toBe('Open ENG-87');
     void first?.run?.(ctx);
     expect(navigate).toHaveBeenCalledWith('/issue/ENG-87');
+  });
+
+  it('offers Open for an identifier the replica does not hold, whatever the team (E29)', () => {
+    // No team has the key ZZZ and no issue is in the context: the route resolves it (issue.get).
+    const navigate = vi.fn();
+    const ctx = context({ navigate });
+    const first = ranked('zzz-9', ctx)[0]?.items[0]?.command;
+    expect(first?.title).toBe('Open ZZZ-9');
+    void first?.run?.(ctx);
+    expect(navigate).toHaveBeenCalledWith('/issue/ZZZ-9');
   });
 
   it('stays first even when another command matches the query', () => {

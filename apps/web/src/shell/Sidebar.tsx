@@ -109,6 +109,17 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
                 <ul id={pagesId} className={styles.pages}>
                   <li>
                     <Link
+                      to="/team/$key/issues"
+                      params={{ key: team.key }}
+                      className={styles.item}
+                      aria-label={`${team.name} issues`}
+                    >
+                      <CircleDot aria-hidden="true" />
+                      Issues
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
                       to="/team/$key"
                       params={{ key: team.key }}
                       className={styles.item}
