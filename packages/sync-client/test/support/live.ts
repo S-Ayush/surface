@@ -80,7 +80,9 @@ export function keptMemoryStorage() {
     ((await kept.storage?.readRows(model, undefined, 10_000))?.rows ?? []).map((r) => r.row.id);
   /** The stored replica's `lastSyncId`. */
   const lastSyncId = async () => (await kept.storage?.readMeta())?.lastSyncId ?? 0;
-  return { connect, persisted, has, stored, lastSyncId };
+  /** The persisted queue: every client (with its `nextSeq`) and pending record. */
+  const queue = async () => kept.storage?.readQueue();
+  return { connect, persisted, has, stored, lastSyncId, queue };
 }
 
 /** Wait for an observable condition on the store; fails after `ms` instead of hanging. */

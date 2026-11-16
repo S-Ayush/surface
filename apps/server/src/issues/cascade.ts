@@ -5,8 +5,10 @@
  *
  * Lock order (§4.8): the caller (`label.delete`, PLAN-010 S5) has taken the team row (the
  * workspace row for a workspace label) and then the label row `FOR UPDATE`. Holding the label
- * means no edit can newly add it, so the set of issues read here is final; `updateWhere` then
- * locks those issues in ascending id.
+ * means no edit can newly add it. An edit can still remove it meanwhile, so the issues are read
+ * `FOR UPDATE` in ascending id: Postgres checks the condition again on a row it waited for, so an
+ * issue that lost the label in the meantime is skipped, and gets no empty `U` and no count.
+ * `updateWhere` then rewrites exactly those issues, whose locks this transaction already holds.
  */
 import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -14,9 +16,9 @@ import { issues } from '../db/schema/index.js';
 import type { Repo } from '../sync/repo.js';
 
 /**
- * Removes `labelId` from `labelIds` of every issue that has it, whatever its lifecycle state, with
- * one logged `U` per issue under its stored groups. Returns the ids of the issues it rewrote, in
- * ascending order. Call it only while holding the label row `FOR UPDATE`.
+ * Removes `labelId` from `labelIds` of every issue that still has it once locked, whatever its
+ * lifecycle state, with one logged `U` per issue under its stored groups. Returns the ids of the
+ * issues it rewrote, in ascending order. Call it only while holding the label row `FOR UPDATE`.
  */
 export async function removeLabelFromIssues(
   tx: NodePgDatabase,
@@ -27,7 +29,8 @@ export async function removeLabelFromIssues(
     .select({ id: issues.id })
     .from(issues)
     .where(sql`${issues.labelIds} @> ARRAY[${labelId}]::uuid[]`)
-    .orderBy(issues.id);
+    .orderBy(issues.id)
+    .for('update');
   if (rows.length === 0) return [];
   return repo.updateWhere(
     'Issue',

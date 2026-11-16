@@ -140,10 +140,15 @@ describe('the issue count per status (§3.1, §5)', () => {
     expect(Object.values(counts())).toEqual(['—', '—', '—', '—']);
   });
 
-  it('asks again when the window regains focus', async () => {
+  it('asks again once when the tab becomes visible, and not on focus alone', async () => {
     const { reads, asked } = groupByReads([{ key: TODO, count: 3 }]);
     await mount(new EstimateApp([ENG]), reads);
     await settle(() => window.dispatchEvent(new Event('focus')));
+    expect(asked).toHaveLength(1);
+    await settle(() => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     expect(asked).toHaveLength(2);
   });
 
@@ -185,6 +190,26 @@ describe('deleting a status (§3.1 item 6, AC-17, E8)', () => {
     await deleteFromMenu('Shipped');
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(page.dispatched).toEqual([]);
+    expect(toasts()).toEqual([
+      'Can\'t delete the "Shipped" status. It has 2 issues (1 archived or recently deleted). Move them to another status first.',
+    ]);
+  });
+
+  it('says the server’s count once it has answered, when it is larger than the replica’s', async () => {
+    const issues = [issue('01'), issue('02', { archivedAt: '2026-11-01T00:00:00.000Z' })];
+    const { reads } = groupByReads([{ key: SHIPPED, count: 7 }]);
+    await mount(app({ issues }), reads);
+    await deleteFromMenu('Shipped');
+    expect(toasts()).toEqual([
+      'Can\'t delete the "Shipped" status. It has 7 issues (1 archived or recently deleted). Move them to another status first.',
+    ]);
+  });
+
+  it('keeps the replica’s count when the server’s is smaller (it leaves deleted issues out)', async () => {
+    const issues = [issue('01'), issue('02', { deletedAt: '2026-11-01T00:00:00.000Z' })];
+    const { reads } = groupByReads([{ key: SHIPPED, count: 1 }]);
+    await mount(app({ issues }), reads);
+    await deleteFromMenu('Shipped');
     expect(toasts()).toEqual([
       'Can\'t delete the "Shipped" status. It has 2 issues (1 archived or recently deleted). Move them to another status first.',
     ]);

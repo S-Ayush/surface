@@ -1,8 +1,8 @@
 // The signed-in part of the app: opens the client store for the session (SPEC-002 §5), renders
 // the shell around the page, and holds the page back until the replica is first ready (SPEC-005
 // §3 "Store not ready → shell with a bootstrap progress bar", SPEC-002 §7; app/gate.ts).
-import { PRODUCTION_MODELS } from '@surface/domain/model';
-import { SyncStore, statusGoneMessage } from '@surface/sync-client';
+import { PRODUCTION_MODELS, Team } from '@surface/domain/model';
+import { SyncStore, statusGoneMessage, type SeenDeletes } from '@surface/sync-client';
 import { SyncInspector, SyncStoreProvider, inspectorAllowed } from '@surface/sync-react';
 import { BANNER_PRIORITY, Button, EmptyState, ProgressBar, banner, toast } from '@surface/ui';
 import { Outlet } from '@tanstack/react-router';
@@ -133,7 +133,7 @@ function useSyncStore(app: AppModel, { userId, workspaceId }: Session, epoch: nu
       // SPEC-002 §3.5: the optimistic change is gone; say why. A change naming a status this
       // replica saw deleted says so instead of "not found" (SPEC-010 E1).
       onRejected: (rejection) => {
-        toast({ tone: 'danger', message: statusGoneMessage(rejection, store) });
+        toast({ tone: 'danger', message: statusGoneMessage(rejection, seenDeletes) });
       },
       // SPEC-002 E7, SPEC-005 §8: persistent, and above any dismissible warning.
       onOutdated: () => {
@@ -147,6 +147,13 @@ function useSyncStore(app: AppModel, { userId, workspaceId }: Session, epoch: nu
         });
       },
     });
+    // E1's lookups: the session's remembered status deletes, and a team key to its id.
+    const seenDeletes: SeenDeletes = {
+      seenDeleted: (model, rowId) => store.seenDeleted(model, rowId),
+      seenDeletedRows: (model) => store.seenDeletedRows(model),
+      teamIdOf: (key) =>
+        store.pool.all(Team).find((team) => team.key.toLowerCase() === key.toLowerCase())?.id,
+    };
     const stopWatching = reaction(
       () => store.status === 'ready',
       (ready) => {

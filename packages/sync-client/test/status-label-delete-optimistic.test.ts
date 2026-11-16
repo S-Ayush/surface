@@ -25,9 +25,10 @@ import type { OverlayMutation } from '../src/overlay.js';
 import { OverlayEngine } from '../src/overlay.js';
 import { ObjectPool } from '../src/pool.js';
 import { STATUS_GONE_MESSAGE, statusGoneMessage } from '../src/status-gone.js';
+import { REMEMBERED_DELETES } from '../src/store.js';
 import { FakeHub } from './support/hub.js';
-import { liveStore, until } from './support/live.js';
-import { DebugItem, id } from './support/models.js';
+import { eventually, keptMemoryStorage, liveStore, teamStore, until } from './support/live.js';
+import { DebugItem, OTHER_USER, USER_ID, id } from './support/models.js';
 import {
   debugBroken,
   debugCreate,
@@ -233,7 +234,7 @@ const OPS = createRegistry([
 ]);
 
 describe('dispatch of a mutation the store refuses (AC-17, E8)', () => {
-  it('throws the refusal, queues nothing and sends nothing; the next dispatch is seq 1', async () => {
+  it('throws the refusal, queues nothing and sends nothing; the next dispatch takes its seq', async () => {
     const hub = new FakeHub();
     hub.upsert(1);
     const { store } = liveStore(hub, { operations: OPS });
@@ -256,37 +257,122 @@ describe('dispatch of a mutation the store refuses (AC-17, E8)', () => {
     expect(seqs).toEqual([1, 2]);
     await store.close();
   });
+
+  it('offline, between two queued changes, persists neither the refused one nor its seq', async () => {
+    const hub = new FakeHub();
+    hub.upsert(1, { title: 'Locked' });
+    hub.upsert(2);
+    const kept = keptMemoryStorage();
+    const { store, timers } = liveStore(hub, { operations: OPS, connectStorage: kept.connect });
+    await store.start();
+    await until(() => store.connection === 'online');
+    hub.last.close();
+    await until(() => store.connection === 'offline');
+
+    const a = store.dispatch(debugTouch, { id: id(2) });
+    expect(() => store.dispatch(debugGuarded, { id: id(1), title: 'Open' })).toThrow(
+      OptimisticRefusal,
+    );
+    const c = store.dispatch(debugTouch, { id: id(2) });
+    expect(store.pending.map((p) => p.seq)).toEqual([1, 2]);
+    await eventually(async () => (await kept.persisted()) === 2);
+    const queue = await kept.queue();
+    expect(queue?.pending.map((r) => [r.seq, r.op])).toEqual([
+      [1, 'debug.touch'],
+      [2, 'debug.touch'],
+    ]);
+    expect(queue?.clients.map((client) => client.nextSeq)).toEqual([3]);
+    expect(hub.mutateRequests).toEqual([]);
+
+    // Back online: the server receives seqs 1 and 2, nothing for the refused change.
+    timers.runNext();
+    expect(await a).toEqual({ status: 'confirmed' });
+    expect(await c).toEqual({ status: 'confirmed' });
+    const seqs = hub.mutateRequests.flatMap((request) => request.mutations.map((m) => m.seq));
+    expect(seqs).toEqual([1, 2]);
+    expect(hub.mutateRequests.flatMap((r) => r.mutations.map((m) => m.op))).not.toContain(
+      'debug.guarded',
+    );
+    await store.close();
+  });
 });
 
 describe('the E1 message (statusGoneMessage)', () => {
-  const seen = (deleted: { id: string; name: string }[]) => ({
+  const OPS_TEAM = '0192f0c1-7e5a-7b3c-9d4e-0000000000e2';
+  const teams: Record<string, string> = { eng: ENG, ops: OPS_TEAM };
+  const seen = (deleted: { id: string; name: string; teamId: string }[]) => ({
     seenDeleted: (_model: string, rowId: string) => deleted.find((d) => d.id === rowId),
     seenDeletedRows: () => deleted,
+    teamIdOf: (key: string) => teams[key.toLowerCase()],
   });
-  const rejection = (code: string, input: unknown) => ({
+  const onStatus = [{ path: ['status'] }];
+  const rejection = (
+    code: string,
+    input: unknown,
+    issues?: readonly { path: readonly (string | number)[] }[],
+  ) => ({
     code,
-    message: 'No status matches "x" in ENG. Use a status name or id.',
+    message: 'Status "x" not found in ENG. Use a status name of that team, or a status id.',
     input,
+    ...(issues === undefined ? {} : { issues }),
+  });
+  // ENG's "Review" was deleted; OPS has a "Review" of its own.
+  const store = seen([{ id: REVIEW, name: 'Review', teamId: ENG }]);
+
+  it('says the status was deleted when the replica saw its delete, by id', () => {
+    expect(
+      statusGoneMessage(
+        rejection('NOT_FOUND', { issue: 'ENG-1', status: REVIEW }, onStatus),
+        store,
+      ),
+    ).toBe(STATUS_GONE_MESSAGE);
+    // The server's CONFLICT when it went during the transaction names `status` (E19).
+    expect(
+      statusGoneMessage(rejection('CONFLICT', { issue: 'ENG-1', status: REVIEW }, onStatus), store),
+    ).toBe(STATUS_GONE_MESSAGE);
   });
 
-  it('says the status was deleted when the replica saw its delete, by id or by name', () => {
-    const store = seen([{ id: REVIEW, name: 'In Review' }]);
+  it('matches a name only among the deletes of the team the input names', () => {
     expect(
-      statusGoneMessage(rejection('NOT_FOUND', { issue: 'ENG-1', status: REVIEW }), store),
+      statusGoneMessage(rejection('NOT_FOUND', { team: 'ENG', status: 'review' }), store),
     ).toBe(STATUS_GONE_MESSAGE);
-    expect(statusGoneMessage(rejection('CONFLICT', { status: 'in review' }), store)).toBe(
-      'That status was deleted. Choose another.',
+    expect(statusGoneMessage(rejection('NOT_FOUND', { team: ENG, status: 'Review' }), store)).toBe(
+      STATUS_GONE_MESSAGE,
     );
+    // OPS's own "Review" is unknown for another reason: the server's words stand.
+    const ops = rejection('NOT_FOUND', { team: 'OPS', status: 'Review' });
+    expect(statusGoneMessage(ops, store)).toBe(ops.message);
+    // No team in the input (issue.update names its issue): a name never matches.
+    const noTeam = rejection('NOT_FOUND', { issue: 'OPS-3', status: 'Review' }, onStatus);
+    expect(statusGoneMessage(noTeam, store)).toBe(noTeam.message);
+    // A team the replica doesn't hold.
+    const unknown = rejection('NOT_FOUND', { team: 'ZZZ', status: 'Review' });
+    expect(statusGoneMessage(unknown, store)).toBe(unknown.message);
+  });
+
+  it('keeps an archived issue’s CONFLICT, even when its status was deleted too (AC-23)', () => {
+    const archived = {
+      code: 'CONFLICT',
+      message: 'ENG-1 is archived. Unarchive it to edit it.',
+      input: { issue: 'ENG-1', status: REVIEW },
+    };
+    expect(statusGoneMessage(archived, store)).toBe(archived.message);
+    const onIssue = { ...archived, issues: [{ path: ['issue'] }] };
+    expect(statusGoneMessage(onIssue, store)).toBe(archived.message);
   });
 
   it('keeps the server’s message otherwise', () => {
-    const store = seen([{ id: REVIEW, name: 'In Review' }]);
-    const server = rejection('NOT_FOUND', { status: DONE });
+    const server = rejection('NOT_FOUND', { status: DONE }, onStatus);
     expect(statusGoneMessage(server, store)).toBe(server.message);
     expect(statusGoneMessage(rejection('INVALID_INPUT', { status: REVIEW }), store)).toBe(
       server.message,
     );
     expect(statusGoneMessage(rejection('NOT_FOUND', { title: 'x' }), store)).toBe(server.message);
+    // A NOT_FOUND about another field (the issue) is not about the status.
+    const issueGone = rejection('NOT_FOUND', { issue: 'ENG-9', status: REVIEW }, [
+      { path: ['issue'] },
+    ]);
+    expect(statusGoneMessage(issueGone, store)).toBe(issueGone.message);
   });
 
   it('is fed by the store: a D delta of a remembered model is remembered with its fields', async () => {
@@ -312,5 +398,29 @@ describe('the E1 message (statusGoneMessage)', () => {
     await until(() => plain.pool.get(DebugItem, id(1)) === undefined);
     expect(plain.seenDeleted('DebugItem', id(1))).toBeUndefined();
     await plain.close();
+    // Statuses only: nothing reads a remembered label.
+    expect(REMEMBERED_DELETES).toEqual(['WorkflowStatus']);
+  });
+
+  it('forgets a row a later packet of the same batch writes again (D+U, a change of groups)', async () => {
+    const hub = new FakeHub().withTeams();
+    hub.addSquad(1);
+    hub.join(USER_ID, 1);
+    hub.putTask(110, 1, { creatorId: OTHER_USER });
+    hub.putTask(111, 1, { creatorId: OTHER_USER });
+    const { store } = teamStore(hub, { rememberDeletes: ['Task'] });
+    await store.start();
+    await eventually(() => hub.live.length > 0);
+    await until(() => store.pool.get('Task', id(111)) !== undefined);
+    // A reassignment logs D with the old groups, then U with the new ones, in one batch.
+    hub.putTask(110, 1, { assigneeId: USER_ID });
+    const groups = () => store.pool.get('Task', id(110))?.['groups'];
+    await until(() => Array.isArray(groups()) && (groups() as unknown[]).length === 2);
+    expect(store.seenDeleted('Task', id(110))).toBeUndefined();
+    // A lone D (a purge) is remembered.
+    hub.purgeTask(111);
+    await until(() => store.pool.get('Task', id(111)) === undefined);
+    expect(store.seenDeleted('Task', id(111))).toMatchObject({ id: id(111), teamId: id(1) });
+    await store.close();
   });
 });

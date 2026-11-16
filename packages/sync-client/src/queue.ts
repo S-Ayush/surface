@@ -239,7 +239,12 @@ export class MutationQueue {
     return [...this.#entries.values()].flatMap((entry) => this.#overlayOf(entry) ?? []);
   }
 
-  /** SPEC-002 §3.3. Throws `InvalidInputError` before queueing anything. */
+  /**
+   * SPEC-002 §3.3. Throws `InvalidInputError` before queueing anything. Throws the
+   * `OptimisticRefusal` the operation's prediction raised (SPEC-010 §5, E8) the same way: the
+   * prediction runs before the entry exists, so a refused change is never pending, persisted or
+   * sent, and does not use up its seq.
+   */
   dispatch<Op extends AnyOperation>(
     op: Op,
     input: InputOf<Op>,
@@ -275,7 +280,6 @@ export class MutationQueue {
       ]);
     }
 
-    this.#nextSeq += 1;
     let settle: (outcome: MutationOutcome) => void = () => undefined;
     const outcome = new Promise<MutationOutcome>((resolve) => {
       settle = resolve;
@@ -290,18 +294,14 @@ export class MutationQueue {
       settle,
       ...(options.reportRejection ? { reportRejection: options.reportRejection } : {}),
     };
-    this.#entries.set(seq, entry);
-    this.#publish();
+    // The prediction first: when the store already shows the server would refuse it (SPEC-010
+    // §5), nothing has been queued yet, so refusing leaves no trace.
     const mutation = this.#overlayOf(entry);
     const refusal = mutation && this.#options.onPush(mutation);
-    if (refusal instanceof Error) {
-      // The store already shows the server would refuse it (SPEC-010 §5): nothing was written
-      // yet, so taking the entry back leaves no trace, and no request is sent.
-      this.#entries.delete(seq);
-      this.#nextSeq = seq;
-      this.#publish();
-      throw refusal;
-    }
+    if (refusal instanceof Error) throw refusal;
+    this.#nextSeq += 1;
+    this.#entries.set(seq, entry);
+    this.#publish();
     this.#write({ nextSeq: this.#nextSeq, put: [record] }).then(
       () => {
         entry.persisted = true;

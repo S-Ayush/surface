@@ -201,19 +201,25 @@ export function descriptionText(status: Pick<StatusItem, 'description'>): string
  * operation's prediction would refuse it anyway. The replica holds only some issues (SPEC-011
  * §5.7), so undefined means "ask the server", not "empty". Other refusals (default, last of a
  * category) are the server's, after the dialog.
+ *
+ * The replica's count is a lower bound, so once `issue.groupBy` has answered (`serverCount`:
+ * live and archived issues the actor can see) the toast says the larger of the two. Only the
+ * replica tells archived and recently deleted apart, so the suffix counts what it holds.
  */
 export function replicaDeleteRefusal(
   statuses: readonly StatusItem[],
   statusId: string,
   defaultStatusId: string,
   issues: readonly StatusIssueLike[],
+  serverCount?: number,
 ): string | undefined {
   if (!statuses.some((s) => s.id === statusId)) return undefined;
-  const problem = statusDeleteProblem(
-    { statuses, statusId },
-    defaultStatusId,
-    countStatusIssues(issues, statusId),
-  );
+  const replica = countStatusIssues(issues, statusId);
+  const total = replica.live + replica.archived + replica.recentlyDeleted;
+  if (total === 0) return undefined;
+  const larger = Math.max(total, serverCount ?? 0);
+  const counts = { ...replica, live: larger - replica.archived - replica.recentlyDeleted };
+  const problem = statusDeleteProblem({ statuses, statusId }, defaultStatusId, counts);
   return problem?.reason === 'hasIssues' ? problem.message : undefined;
 }
 

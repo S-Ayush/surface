@@ -2,8 +2,9 @@
 // issues of subscribed teams (SPEC-011 §5.7), so it can't count them. `label.usage` fills the
 // labels page's Used in, Issues and Last applied columns; `issue.groupBy` by status the workflow
 // page's issue counts. Reads, not state changes, so they go over `POST /api/ops/:name` and never
-// through the mutation queue. Asked when the page opens and again when the window regains focus;
-// offline, and until the answer arrives, the page shows "—". Tests provide a fake through the
+// through the mutation queue. Asked when the page opens and again when the tab becomes visible
+// (`visibilitychange` only: a focus event as well would ask twice on one return); offline, and
+// until the answer arrives, the page shows "—". Tests provide a fake through the
 // context.
 import { issueGroupBy, labelUsage, type InputOf, type OutputOf } from '@surface/operations';
 import { createContext, useContext, useEffect, useEffectEvent, useState } from 'react';
@@ -48,7 +49,7 @@ export function useSettingsReads(): SettingsReads {
 
 /**
  * The latest answer of `read` while `online`, asked again whenever `key` changes and when the
- * window regains focus. `undefined` until an answer arrives, offline (the counts may be stale and
+ * tab becomes visible again. `undefined` until an answer arrives, offline (the counts may be stale and
  * nothing can refresh them), and after a refusal or a failed request.
  */
 export function useServerRead<T>(
@@ -63,12 +64,8 @@ export function useServerRead<T>(
     const again = () => {
       if (document.visibilityState !== 'hidden') setRound((n) => n + 1);
     };
-    window.addEventListener('focus', again);
     document.addEventListener('visibilitychange', again);
-    return () => {
-      window.removeEventListener('focus', again);
-      document.removeEventListener('visibilitychange', again);
-    };
+    return () => document.removeEventListener('visibilitychange', again);
   }, []);
 
   // `read` is rebuilt each render; `key` names what it asks, so only a new key asks again.

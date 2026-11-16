@@ -82,6 +82,7 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
       status.id,
       workflow.defaultStatusId,
       store.pool.findBy(Issue, 'statusId', status.id),
+      statusIssueCount(counts, status.id),
     );
     if (refusal !== undefined) toast({ tone: 'danger', message: refusal });
     else setDeleting(status);

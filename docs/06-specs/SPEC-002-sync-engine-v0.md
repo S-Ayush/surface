@@ -53,6 +53,8 @@ Every Surface feature assumes data is **local, live, and offline-tolerant**. v0 
 3. Run `optimistic(store, input)` to update the overlay. MobX re-renders.
 4. The flusher sends batches, one in flight at a time, in seq order.
 
+*Changed 2026-11-16 (SPEC-010 §5, E8; PLAN-010 S5).* `optimistic` may refuse the change by throwing `OptimisticRefusal` (from `@surface/operations`) when the replica already shows the server would refuse it, as `status.delete` does for a status with an issue on it. The prediction runs before the mutation is queued, so `dispatch` then throws that refusal synchronously, like an input that fails step 1: nothing is queued, nothing is stored in IDB or sent, the overlay is unchanged, and the seq is not used (the next dispatch gets it). Any other error from `optimistic` keeps its existing meaning.
+
 `options.reportRejection` (a function, asked when the server rejects the mutation) says whether the app's rejection handler (the toast, §3.5) should hear of it. A form that shows the refusal on its own field answers `false` while it is still waiting for the answer, and `true` once it stopped waiting (closed, or queued offline), so the user hears of a refusal once. The default, and the answer when it throws, is `true`. It isn't stored: a mutation sent again after a reload is reported.
 
 ### 3.4 Delta received

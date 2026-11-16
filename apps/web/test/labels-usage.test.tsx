@@ -157,11 +157,16 @@ describe('the usage columns (§3.2, AC-26)', () => {
     expect(columns('Perf')).toEqual(['—', '—', '—']);
   });
 
-  it('asks again when the window regains focus', async () => {
+  it('asks again once when the tab becomes visible, and not on focus alone', async () => {
     const app = new FakeApp([TEAM]);
     const { reads, asked } = usageReads(app, {});
     await mount(app, teamPage, reads);
     await settle(() => window.dispatchEvent(new Event('focus')));
+    expect(asked).toHaveLength(1);
+    await settle(() => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     expect(asked).toHaveLength(2);
   });
 });

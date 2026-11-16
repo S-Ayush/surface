@@ -128,8 +128,8 @@ const RECENT_REJECTIONS = 20;
 /** Applied packets kept for the inspector (SPEC-002 §5.4). */
 export const RECENT_PACKETS = 50;
 
-/** Models whose deletes `seenDeleted` remembers: settings rows a queued change may name (E1). */
-export const REMEMBERED_DELETES: readonly string[] = ['WorkflowStatus', 'Label'];
+/** Models whose deletes `seenDeleted` remembers: the statuses a queued change may name (E1). */
+export const REMEMBERED_DELETES: readonly string[] = ['WorkflowStatus'];
 
 /** A row a `D` delta removed, as the replica held it before. */
 export interface DeletedRow {
@@ -830,11 +830,19 @@ export class SyncStore {
     return [...(this.#seenDeleted.get(model)?.values() ?? [])];
   }
 
-  /** Before the batch is applied: the rows its `D` packets remove, as the replica held them. */
+  /**
+   * Before the batch is applied: the rows its `D` packets remove, as the replica held them, in
+   * packet order. Any later packet that writes the row again forgets it: a `D` followed by a `U`
+   * of the same row is a change of its groups, not a delete (sync-protocol §6).
+   */
   #rememberDeletes(applied: readonly AppliedPacket[]): void {
+    const remembered = this.#options.rememberDeletes ?? REMEMBERED_DELETES;
     for (const packet of applied) {
-      const remembered = this.#options.rememberDeletes ?? REMEMBERED_DELETES;
-      if (packet.action !== 'D' || !remembered.includes(packet.model)) continue;
+      if (!remembered.includes(packet.model)) continue;
+      if (packet.action !== 'D') {
+        this.#seenDeleted.get(packet.model)?.delete(packet.rowId.toLowerCase());
+        continue;
+      }
       const row = this.#pool.baseOf(packet.model, packet.rowId)?.row;
       const name = row?.['name'];
       const teamId = row?.['teamId'];

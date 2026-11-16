@@ -1,28 +1,45 @@
-// PLAN-010 S5, SPEC-010 E16, AC-10 with real issue shapes, §4.4: `label.delete` raced with
-// `issue.update`s on a model of Postgres row locks (READ COMMITTED: writes show at commit, a lock
-// waits for a conflicting holder until it commits). A fast-check scheduler picks which transaction
-// moves at every read and lock. The rules are the real ones (`deleteLabel`, `updateIssue`); the
-// accesses below give them the lock modes their Postgres accesses take:
-// - `label.delete`: team row FOR UPDATE → label row FOR UPDATE → the issues carrying the label
-//   (a plain read) → each of them FOR UPDATE in ascending id, `array_remove` computed per row.
-// - `issue.update`: FOR KEY SHARE on newly added labels (ascending id) → the issue FOR UPDATE.
-// Whatever the interleaving: nothing deadlocks (a wait-for cycle fails the run), the delete
-// commits, an edit adding the label either commits first (and the cascade rewrites its issue) or
-// fails with "That label was deleted. Choose another label.", a concurrent edit of another label
-// on an issue the cascade rewrites keeps its label, and no issue references the deleted label.
+// PLAN-010 S5, SPEC-010 §4.4 and AC-19's label race (AC-10 with real issue shapes), and E16's
+// status half: `label.delete` and `status.delete` raced with `issue.update`s on a model of
+// Postgres row locks (READ COMMITTED: writes show at commit, a lock waits for a conflicting holder
+// until it commits). A fast-check scheduler picks which transaction moves at every read and lock.
+// The rules are the real ones (`deleteLabel`, `deleteStatus`, `updateIssue`); the accesses below
+// give them the lock modes their Postgres accesses take:
+// - `label.delete`: team row FOR UPDATE → label row FOR UPDATE → the issues carrying the label,
+//   FOR UPDATE in ascending id (a row waited for is checked again, so one that lost the label
+//   meanwhile is skipped), `array_remove` computed per row.
+// - `status.delete`: team row FOR UPDATE → status row FOR UPDATE → the issue count (no lock).
+// - `issue.update`: FOR KEY SHARE on a new status and newly added labels → the issue FOR UPDATE.
+// Label race, whatever the interleaving: nothing deadlocks (a wait-for cycle fails the run), the
+// delete commits, an edit adding the label either commits first (and the cascade rewrites its
+// issue) or fails with "That label was deleted. Choose another label.", a concurrent edit of
+// another label on an issue the cascade rewrites keeps its label, and no issue references the
+// deleted label. Status race: the edit into the status commits first and the delete is refused
+// for its issue, or the delete commits and the edit is CONFLICT; never both.
 import { randomUUID } from 'node:crypto';
-import { lifecycleOf, lifecycleRefusal, lockRefusal, type IssueLockMode } from '@surface/domain';
+import {
+  countStatusIssues,
+  lifecycleOf,
+  lifecycleRefusal,
+  lockRefusal,
+  type IssueLockMode,
+} from '@surface/domain';
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { SurfaceError } from '../src/executor/errors.js';
 import {
   LABEL_GONE,
+  STATUS_GONE,
   updateIssue,
   type IssueAccess,
   type IssueRow,
   type LabelRow,
 } from '../src/handlers/issues/core.js';
 import { deleteLabel, type LabelAccess } from '../src/handlers/labels/core.js';
+import {
+  deleteStatus,
+  type StatusRow,
+  type WorkflowAccess,
+} from '../src/handlers/statuses/core.js';
 import type { Repo } from '../src/sync/repo.js';
 import { memoryIssues, NOW } from './support/memory-issues.js';
 
@@ -218,15 +235,19 @@ function world(step: () => Promise<void>) {
         },
         shareLabel: () => Promise.reject(new Error('no group here')),
         async removeFromIssues(labelId) {
-          // `removeLabelFromIssues`: a plain read of the ids, then `updateWhere` locks each in
-          // ascending id and computes `array_remove` on the row it locked.
+          // `removeLabelFromIssues`: SELECT … FOR UPDATE in ascending id over the rows that carry
+          // the label now; a row it waited for is checked again (Postgres re-evaluates the
+          // condition on the newest version), then `array_remove` runs on the locked row.
           await step();
-          const ids = [...m.issues.values()]
+          const found = [...m.issues.values()]
             .filter((row) => row.labelIds.includes(labelId))
             .map((row) => row.id)
             .sort();
-          for (const id of ids) {
+          const ids: string[] = [];
+          for (const id of found) {
             await locked(`issue:${id}`);
+            if (m.issues.get(id)?.labelIds.includes(labelId) !== true) continue;
+            ids.push(id);
             pending.push(() => {
               const row = m.issues.get(id);
               if (row) {
@@ -257,7 +278,7 @@ const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 type Outcome = { ok: true; value: unknown } | { ok: false; error: unknown };
 
-describe('label.delete raced with issue.update (E16, AC-10, §4.4)', () => {
+describe('label.delete raced with issue.update (§4.4, AC-19 label race, AC-10)', () => {
   it('never deadlocks and never leaves an issue with the deleted label', async () => {
     let addedFirst = 0;
     let refused = 0;
@@ -325,5 +346,254 @@ describe('label.delete raced with issue.update (E16, AC-10, §4.4)', () => {
     // Both orders happen across the runs.
     expect(addedFirst).toBeGreaterThan(0);
     expect(refused).toBeGreaterThan(0);
+  });
+});
+
+/** One status race: "In Review" (not the default, not alone in Started) and one issue in Todo. */
+function statusWorld(step: () => Promise<void>) {
+  const m = memoryIssues();
+  const review = m.status(m.eng, 'In Review');
+  const todo = m.status(m.eng, 'Todo');
+  const issue: IssueRow = {
+    id: randomUUID(),
+    teamId: m.eng.id,
+    number: 1,
+    title: 'An issue',
+    statusId: todo.id,
+    priority: 0,
+    assigneeId: null,
+    creatorId: randomUUID(),
+    labelIds: [],
+    estimate: null,
+    dueDate: null,
+    sortOrder: 'a0',
+    startedAt: null,
+    completedAt: null,
+    canceledAt: null,
+    archivedAt: null,
+    deletedAt: null,
+    deletedById: null,
+    syncGroups: [`team:${m.eng.id}`],
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+  m.issues.set(issue.id, issue);
+  const locks = new Locks();
+  let nextTx = 0;
+
+  async function transaction<T>(
+    body: (tx: number, pending: (() => void)[]) => Promise<T>,
+  ): Promise<T> {
+    const tx = ++nextTx;
+    const pending: (() => void)[] = [];
+    try {
+      const result = await body(tx, pending);
+      for (const write of pending) write();
+      return result;
+    } finally {
+      locks.release(tx);
+    }
+  }
+
+  const statusRow = (id: string): StatusRow | undefined => {
+    const found = m.statuses.get(id);
+    return (
+      found && {
+        ...found,
+        color: 'gray',
+        description: null,
+        position: 'a0',
+        archivedAt: null,
+        syncGroups: ['workspace'],
+        createdAt: NOW,
+        updatedAt: NOW,
+      }
+    );
+  };
+
+  /** `issue.update` moving the issue into In Review. */
+  function moveIn() {
+    return transaction((tx, pending) => {
+      const locked = async (row: string, mode: Mode) => {
+        await step();
+        await locks.acquire(tx, row, mode);
+      };
+      const access: IssueAccess = {
+        shareTeam: () => Promise.reject(new Error('no creates here')),
+        readTeam: async (teamId) => {
+          await step();
+          return teamId === m.eng.id ? m.eng : undefined;
+        },
+        async shareStatus(statusId) {
+          await locked(`status:${statusId}`, 'keyShare');
+          const found = m.statuses.get(statusId);
+          return found && { id: found.id, teamId: found.teamId, category: found.category };
+        },
+        shareLabels: () => Promise.resolve([]),
+        readLabels: () => Promise.resolve([]),
+        statusCategory: (statusId) => Promise.resolve(m.statuses.get(statusId)?.category),
+        position: () => Promise.reject(new Error('no creates here')),
+        async lockIssue(issueId, mode: IssueLockMode) {
+          await locked(`issue:${issueId}`, 'update');
+          const row = m.issues.get(issueId);
+          if (!row) throw new Error('no such issue');
+          const state = lifecycleOf(row);
+          const refused = lockRefusal(mode, state);
+          if (refused) throw new SurfaceError('CONFLICT', lifecycleRefusal('ENG-1', refused));
+          return { ...row, state };
+        },
+      };
+      const repo = {
+        update(model: string, id: string, patch: Partial<IssueRow>) {
+          if (model !== 'Issue') throw new Error(`unexpected update of ${model}`);
+          pending.push(() => {
+            const row = m.issues.get(id);
+            if (row) m.issues.set(id, { ...row, ...patch, updatedAt: NOW });
+          });
+          return Promise.resolve({ ...m.issues.get(id), ...patch });
+        },
+      } as unknown as Repo;
+      return updateIssue(
+        { access, repo, emit: () => undefined, now: NOW },
+        {
+          issueId: issue.id,
+          teamId: m.eng.id,
+          statusId: review.id,
+          statusRef: 'In Review',
+          addLabelIds: [],
+          removeLabelIds: [],
+        },
+      );
+    });
+  }
+
+  /** `status.delete` of In Review. */
+  function deleteReview() {
+    return transaction(async (tx, pending) => {
+      const locked = async (row: string) => {
+        await step();
+        await locks.acquire(tx, row, 'update');
+      };
+      const access: WorkflowAccess = {
+        async lockTeam(teamId) {
+          await locked(`team:${teamId}`);
+          return teamId === m.eng.id
+            ? {
+                id: m.eng.id,
+                key: m.eng.key,
+                defaultStatusId: m.eng.defaultStatusId,
+                autoCloseStatusId: null,
+              }
+            : undefined;
+        },
+        async statuses(teamId) {
+          await step();
+          return [...m.statuses.keys()]
+            .flatMap((id) => statusRow(id) ?? [])
+            .filter((row) => row.teamId === teamId);
+        },
+        async lockStatus(statusId) {
+          await locked(`status:${statusId}`);
+          return statusRow(statusId);
+        },
+        shareStatus: () => Promise.reject(new Error('no anchor here')),
+        async issueCounts(statusId) {
+          // A plain read of committed rows: no lock (§4.4).
+          await step();
+          return countStatusIssues([...m.issues.values()], statusId);
+        },
+      };
+      const repo = {
+        purge(model: string, id: string) {
+          if (model !== 'WorkflowStatus') throw new Error(`unexpected purge of ${model}`);
+          pending.push(() => m.statuses.delete(id));
+          return Promise.resolve();
+        },
+      } as unknown as Repo;
+      return deleteStatus(access, repo, {
+        teamRef: 'ENG',
+        team: { id: m.eng.id, key: m.eng.key },
+        statusId: review.id,
+      });
+    });
+  }
+
+  return { m, review, issue, moveIn, deleteReview };
+}
+
+const now = () => Promise.resolve();
+const outcome = (run: () => Promise<unknown>): Promise<Outcome> =>
+  run().then(
+    (value): Outcome => ({ ok: true, value }),
+    (error: unknown): Outcome => ({ ok: false, error }),
+  );
+
+describe('status.delete raced with issue.update into the same status (E16, §4.4)', () => {
+  it('when the edit commits first, the delete is refused for its issue and the status stays', async () => {
+    const w = statusWorld(now);
+    expect(await outcome(() => w.moveIn())).toMatchObject({ ok: true });
+    const deleted = await outcome(() => w.deleteReview());
+    expect(deleted).toMatchObject({
+      ok: false,
+      error: {
+        code: 'CONFLICT',
+        message:
+          'Can\'t delete the "In Review" status. It has 1 issue. Move it to another status first.',
+      },
+    });
+    expect(w.m.statuses.has(w.review.id)).toBe(true);
+    expect(w.m.issues.get(w.issue.id)?.statusId).toBe(w.review.id);
+  });
+
+  it('when the delete commits first, the edit is CONFLICT and the issue keeps its status', async () => {
+    const w = statusWorld(now);
+    expect(await outcome(() => w.deleteReview())).toMatchObject({ ok: true });
+    const moved = await outcome(() => w.moveIn());
+    expect(moved).toMatchObject({ ok: false, error: { code: 'CONFLICT', message: STATUS_GONE } });
+    expect(w.m.statuses.has(w.review.id)).toBe(false);
+    expect(w.m.issues.get(w.issue.id)?.statusId).not.toBe(w.review.id);
+  });
+
+  it('interleaved anyhow, exactly one of them commits and no issue is left on a deleted status', async () => {
+    let editFirst = 0;
+    let deleteFirst = 0;
+    await fc.assert(
+      fc.asyncProperty(fc.scheduler(), fc.boolean(), async (s, editQueuedFirst) => {
+        const w = statusWorld(() => s.schedule(Promise.resolve()).then(() => undefined));
+        const outcomes = new Map<string, Outcome>();
+        const runs: [string, () => Promise<unknown>][] = [
+          ['edit', () => w.moveIn()],
+          ['delete', () => w.deleteReview()],
+        ];
+        for (const [name, run] of editQueuedFirst ? runs : [...runs].reverse()) {
+          void outcome(run).then((result) => outcomes.set(name, result));
+        }
+        for (;;) {
+          await settle();
+          if (s.count() === 0) break;
+          await s.waitNext(1);
+        }
+        await settle();
+        const report = JSON.stringify(s.report());
+        const edit = outcomes.get('edit');
+        const del = outcomes.get('delete');
+        expect(edit, report).toBeDefined();
+        expect(del, report).toBeDefined();
+        for (const result of [edit, del]) {
+          if (result?.ok === false) {
+            expect(result.error, report).not.toBeInstanceOf(Deadlock);
+            expect(result.error, report).toMatchObject({ code: 'CONFLICT' });
+          }
+        }
+        expect(edit?.ok !== del?.ok, report).toBe(true);
+        if (edit?.ok === true) editFirst++;
+        else deleteFirst++;
+        const statusId = w.m.issues.get(w.issue.id)?.statusId ?? '';
+        expect(w.m.statuses.has(statusId), report).toBe(true);
+      }),
+      { seed: 20261116, numRuns: 200 },
+    );
+    expect(editFirst).toBeGreaterThan(0);
+    expect(deleteFirst).toBeGreaterThan(0);
   });
 });

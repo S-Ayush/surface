@@ -26,12 +26,12 @@ function issuesWithLabel(ids: readonly string[]) {
 }
 
 describe('removeLabelFromIssues (AC-17, E20)', () => {
-  it('reads every issue carrying the label, whatever its state, in id order', async () => {
+  it('locks every issue carrying the label, whatever its state, in id order', async () => {
     const { db, statements } = issuesWithLabel(ISSUES);
     await removeLabelFromIssues(db, memoryIssues().repo, LABEL);
     expect(statements).toHaveLength(1);
     expect(statements[0]?.text).toBe(
-      'select "id" from "issues" where "issues"."label_ids" @> ARRAY[$1]::uuid[] order by "issues"."id"',
+      'select "id" from "issues" where "issues"."label_ids" @> ARRAY[$1]::uuid[] order by "issues"."id" for update',
     );
     expect(statements[0]?.params).toEqual([LABEL]);
     expect(statements[0]?.text).not.toMatch(/archived_at|deleted_at/);
@@ -54,6 +54,19 @@ describe('removeLabelFromIssues (AC-17, E20)', () => {
     });
     expect(rewritten).toEqual([...ISSUES].sort());
     expect(m.events).toEqual([]);
+  });
+
+  it('rewrites only the issues the locked read still finds with the label', async () => {
+    // Postgres re-checks the condition on a row it waited for: an issue whose edit removed the
+    // label meanwhile is not returned, so it gets no no-op U and is not counted.
+    const [kept, lost, other] = ISSUES;
+    if (kept === undefined || lost === undefined || other === undefined) throw new Error('ids');
+    const { db } = issuesWithLabel([kept, other]);
+    const m = memoryIssues();
+    const rewritten = await removeLabelFromIssues(db, m.repo, LABEL);
+    expect(rewritten).toEqual([kept, other].sort());
+    expect(rewritten).not.toContain(lost);
+    expect(m.writes.map((w) => w.ids)).toEqual([[kept, other]]);
   });
 
   it('writes nothing when no issue carries the label', async () => {
