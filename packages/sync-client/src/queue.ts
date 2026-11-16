@@ -105,6 +105,12 @@ export interface PendingView {
   readonly op: string;
   readonly at: string;
   readonly state: 'queued' | 'sent' | 'committed';
+  /**
+   * What was dispatched, as dispatched: lets a page tell whose change is still unconfirmed (the
+   * issue page's description waits for one, PLAN-012 S4b). Never send or store it from here.
+   * Optional so views built elsewhere (the inspector's tests) needn't carry it.
+   */
+  readonly input?: unknown;
 }
 
 /** The input did not match the operation's schema; nothing was queued. */
@@ -415,6 +421,7 @@ export class MutationQueue {
       op: record.op,
       at: record.at,
       state: record.lastSyncId !== undefined ? 'committed' : sent ? 'sent' : 'queued',
+      input: record.input,
     }));
     runInAction(() => this.#view.replace(view));
   }

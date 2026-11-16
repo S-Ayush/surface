@@ -13,7 +13,7 @@ import {
   visibleActivity,
   type HistoryRow,
 } from '../src/features/issues/activity-model.js';
-import type { CommentRow, Thread } from '../src/features/comments/model.js';
+import { commentRows, type Thread } from '../src/features/comments/model.js';
 import {
   IRIS,
   ME,
@@ -141,6 +141,10 @@ describe('the activity stream (AC-11)', () => {
     });
     expect(activityText()).toHaveLength(35);
     expect(document.body.textContent).not.toContain('Show 5 earlier');
+    // The button is gone: focus moves to the first item it revealed, the oldest.
+    const first = document.querySelector('ol[aria-label="Activity"] > li article');
+    expect(first).not.toBeNull();
+    expect(document.activeElement).toBe(first);
   });
 
   it('shows no "earlier" button at 30 items or fewer', async () => {
@@ -153,7 +157,9 @@ describe('the activity stream (AC-11)', () => {
 
 describe('activity model', () => {
   const thread = (id: number, at: string): Thread => {
-    const root = { id: uuidOf(id), createdAt: at } as unknown as CommentRow;
+    const row = { ...commentRow(uuidOf(id), { createdAt: at, updatedAt: at }), id: uuidOf(id) };
+    const [root] = commentRows([row]);
+    if (root === undefined) throw new Error('not a comment row');
     return { root, replies: [], resolved: false };
   };
 

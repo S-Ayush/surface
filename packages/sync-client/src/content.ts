@@ -70,15 +70,11 @@ export type ContentLoadState = 'loading' | 'ready' | 'offline';
 
 /**
  * A parent's content read once from the server and kept nowhere (`content.peek`, PLAN-012 S4b):
- * `ready` with the rows per content model (`found` false when the server doesn't show the parent),
- * `offline` when the connection is down, `failed` when the request failed while online.
+ * `ready` with the rows per content model (none when the server doesn't show the parent), `offline`
+ * when the connection is down, `failed` when the request failed while online.
  */
 export type ContentPeek =
-  | {
-      readonly state: 'ready';
-      readonly found: boolean;
-      readonly rows: Readonly<Record<string, readonly ModelRow[]>>;
-    }
+  | { readonly state: 'ready'; readonly rows: Readonly<Record<string, readonly ModelRow[]>> }
   | { readonly state: 'offline' }
   | { readonly state: 'failed' };
 
@@ -379,7 +375,7 @@ export class ContentHydration {
       if (this.#parentOf(model, row)?.toLowerCase() === id) rows[model]?.push(row);
     }
     for (const list of Object.values(rows)) list.sort((a, b) => (a.id < b.id ? -1 : 1));
-    return { state: 'ready', found: answer.parents.includes(id), rows };
+    return { state: 'ready', rows };
   }
 
   /** How a refusal names `ref`'s parent: its identifier (`ENG-42`) when the pool shows it. */

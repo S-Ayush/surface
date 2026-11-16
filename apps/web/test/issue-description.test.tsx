@@ -32,13 +32,17 @@ const TEAM = '0192f0c1-7e5a-7b3c-9d4e-0000000000e1';
 const AT = '2026-11-12T10:00:00.000Z';
 
 /** The replica's IssueContent row, observable, so a remote save re-renders the page. */
-function contentWorld(state: 'loading' | 'ready' | 'offline' = 'ready') {
+function contentWorld(
+  state: 'loading' | 'ready' | 'offline' = 'ready',
+  text = 'Steps to reproduce',
+  version = 3,
+) {
   const row = observable.box({
     id: ISSUE_A,
     issueId: ISSUE_A,
     teamId: TEAM,
-    description: docOfText('Steps to reproduce'),
-    version: 3,
+    description: docOfText(text),
+    version,
     createdAt: AT,
     updatedAt: AT,
   });
@@ -222,5 +226,86 @@ describe('the description on the issue page (AC-12)', () => {
     const copied = writeText.mock.calls[0]?.[0] ?? '';
     expect(copied).toContain('# ENG-42 Login page flickers');
     expect(copied).toContain('Steps to reproduce');
+  });
+});
+
+describe('an earlier save of this description still unconfirmed when the page opens (SPEC-012 D31)', () => {
+  // A save of "Mine" on v5 from before (an earlier visit to the page, or before a reload) is still
+  // in the queue: the replica shows its predicted v6.
+  function opened() {
+    const content = contentWorld('ready', 'Mine', 6);
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], content: content.api });
+    app.pending.push({
+      op: 'issue.updateDescription',
+      input: { issue: ISSUE_A, baseVersion: 5, description: docOfText('Mine') },
+    });
+    return { content, app };
+  }
+
+  it('sends nothing on the predicted version, and saves on the confirmed one once it is confirmed', async () => {
+    const { app } = opened();
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await type('Mine, more');
+    await blur();
+    expect(saves(app)).toEqual([]);
+
+    await inAct(() => {
+      app.pending.clear();
+    });
+    await settle();
+    expect(saves(app)).toEqual([
+      { issue: ISSUE_A, baseVersion: 6, description: docOfText('Mine, more') },
+    ]);
+  });
+
+  it('shows the conflict banner and sends nothing when that save was refused', async () => {
+    const { app, content } = opened();
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await type('Mine, more');
+    await blur();
+    // Refused with CONFLICT: the overlay is rolled back to the server's row, Bob's v6.
+    await inAct(() => {
+      runInAction(() => {
+        content.remote('Theirs', 6);
+        app.pending.clear();
+      });
+    });
+    await settle();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      DESCRIPTION_CONFLICT_MESSAGE,
+    );
+    expect(editor()?.value).toBe('Mine, more');
+    await blur();
+    expect(saves(app)).toEqual([]);
+  });
+});
+
+describe('leaving the tab', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  it('saves now when the tab is hidden or the page is closed', async () => {
+    const content = contentWorld();
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], content: content.api });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await type('Hidden mid-sentence');
+    await inAct(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(saves(app)).toEqual([
+      { issue: ISSUE_A, baseVersion: 3, description: docOfText('Hidden mid-sentence') },
+    ]);
+    await settle();
+    await type('Closed mid-sentence');
+    await inAct(() => {
+      window.dispatchEvent(new Event('pagehide'));
+    });
+    expect(saves(app).at(-1)).toEqual({
+      issue: ISSUE_A,
+      baseVersion: 4,
+      description: docOfText('Closed mid-sentence'),
+    });
   });
 });

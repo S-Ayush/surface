@@ -34,7 +34,7 @@ import { SyncStoreProvider, usePrefetchContent } from '@surface/sync-react';
 import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
 import { useCommandContext } from '../../command-menu/context.js';
-import { askDelete, lastDelete } from './delete-flow.js';
+import { askDelete } from './delete-flow.js';
 import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
 import { structurallyEqual } from '../../app/equal.js';
 import { PageHeader } from '../../shell/PageHeader.js';
@@ -77,6 +77,17 @@ import { useIssueCommands } from './useIssueCommands.js';
 import { ISSUE_PAGE_SLOTS } from './slots.js';
 import { teamListPath, stepInfo, stepTarget, type Direction } from './source-list.js';
 import pageStyles from './issue-page.module.css';
+
+/** The issues an unconfirmed `issue.delete` in this tab's queue deletes, lowercased. */
+function pendingDeletes(pending: readonly { op: string; input?: unknown }[]): string[] {
+  const ids: string[] = [];
+  for (const { op, input } of pending) {
+    if (op !== 'issue.delete' || typeof input !== 'object' || input === null) continue;
+    const issue: unknown = Reflect.get(input, 'issue');
+    if (typeof issue === 'string') ids.push(issue.toLowerCase());
+  }
+  return ids;
+}
 
 /** The replica's row for `issueRef`, the held create rejection, and the server's answer. */
 function useIssueSource(issueRef: string) {
@@ -124,6 +135,10 @@ function useIssueSource(issueRef: string) {
       [app],
     ),
   );
+  const deleting = useObserved(useCallback(() => pendingDeletes(app.store?.pending ?? []), [app]));
+  // The issue this page shows as Deleted after deleting it here (PLAN-012 S6 handoff): from the
+  // moment its delete is queued until the server's next answer, or until the row is back.
+  const [deletedHere, setDeletedHere] = useState<string | undefined>(undefined);
   const replicaTeam = replica?.teamId ?? null;
   useEffect(() => {
     // SPEC-011 §5.7: opening one of a team's issues opens the team on demand, also when the replica
@@ -150,7 +165,10 @@ function useIssueSource(issueRef: string) {
       pool: app.store?.pool,
       subscribeTeam: storeTeamSubscription(app.store),
     }).then((result) => {
-      if (current) setLoaded({ ref: issueRef, result });
+      if (!current) return;
+      setLoaded({ ref: issueRef, result });
+      // Asked after any delete was confirmed: the answer says what the issue is now.
+      setDeletedHere(undefined);
     });
     return () => {
       current = false;
@@ -158,6 +176,15 @@ function useIssueSource(issueRef: string) {
   }, [app, api, issueRef, ready, online, inReplica, rejected, attempt, lifecyclePending, refresh]);
 
   const lastView = last?.ref === issueRef ? last.view : undefined;
+  const loadedHere = loaded?.ref === issueRef ? loaded.result : undefined;
+  const shownId = (
+    lastView?.id ?? (loadedHere?.kind === 'remote' ? loadedHere.view.id : undefined)
+  )?.toLowerCase();
+  if (replica === undefined && shownId !== undefined && deleting.includes(shownId)) {
+    if (deletedHere !== shownId) setDeletedHere(shownId);
+  } else if (deletedHere !== undefined && (replica !== undefined || deletedHere !== shownId)) {
+    setDeletedHere(undefined);
+  }
   return {
     ready,
     refresh,
@@ -169,8 +196,8 @@ function useIssueSource(issueRef: string) {
       replica,
       rejected,
       last: lastView,
-      loaded: loaded?.ref === issueRef ? loaded.result : undefined,
-      deletedHere: lastView !== undefined && lastDelete.get()?.id === lastView.id,
+      loaded: loadedHere,
+      deletedHere: deletedHere !== undefined && deletedHere === shownId,
     }),
   };
 }

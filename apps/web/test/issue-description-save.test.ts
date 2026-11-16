@@ -9,6 +9,7 @@ import {
   DescriptionSaver,
   descriptionSendResult,
   type DescriptionSendResult,
+  unconfirmedDescriptionChanges,
 } from '../src/features/issues/description-save.js';
 
 const doc = (text: string): DocNodeJSON => ({
@@ -39,19 +40,23 @@ class Timers {
 }
 
 /** A dispatcher the test answers by hand, recording what was sent. */
-function world(initial = { doc: doc('First'), version: 3 }) {
+function world(initial = { doc: doc('First'), version: 3 }, unconfirmed = 0) {
   const timers = new Timers();
   const sent: { baseVersion: number; description: DocNodeJSON }[] = [];
   const answers: ((result: DescriptionSendResult) => void)[] = [];
   const refused: string[] = [];
-  const saver = new DescriptionSaver(initial, {
-    timers,
-    send: (input) => {
-      sent.push(input);
-      return new Promise((resolve) => answers.push(resolve));
+  const saver = new DescriptionSaver(
+    initial,
+    {
+      timers,
+      send: (input) => {
+        sent.push(input);
+        return new Promise((resolve) => answers.push(resolve));
+      },
+      onRefused: (message) => refused.push(message),
     },
-    onRefused: (message) => refused.push(message),
-  });
+    unconfirmed,
+  );
   /** Answers the oldest unanswered save, then lets the controller's continuation run. */
   const answer = async (result: DescriptionSendResult) => {
     const next = answers.shift();
@@ -180,6 +185,7 @@ describe('a conflict (AC-12, D17)', () => {
     expect(descriptionSendResult({ status: 'confirmed' })).toEqual({ kind: 'confirmed' });
 
     const { sent, saver, answer, refused } = world();
+    saver.attach();
     saver.edit(doc('Mine'));
     saver.blur();
     await answer({ kind: 'refused', message: deleted });
@@ -278,6 +284,33 @@ describe('leaving the page', () => {
     expect(shownAtAnswer).toEqual([false]);
   });
 
+  it('leaves a refusal after the page closed to the shell: no second toast', async () => {
+    const { saver, answer, refused } = world();
+    const detach = saver.attach();
+    saver.edit(doc('Typed, then left'));
+    detach();
+    await answer({ kind: 'refused', message: 'ENG-42 was deleted. Restore it to edit it.' });
+    expect(refused).toEqual([]);
+  });
+
+  it('still reports a save that never reached the store after the page closed', async () => {
+    const refused: string[] = [];
+    const saver = new DescriptionSaver(
+      { doc: doc('First'), version: 3 },
+      {
+        timers: new Timers(),
+        send: () => Promise.reject(new Error("Couldn't save the description. Try again.")),
+        onRefused: (message) => refused.push(message),
+      },
+    );
+    const detach = saver.attach();
+    saver.edit(doc('Typed, then left'));
+    detach();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refused).toEqual(["Couldn't save the description. Try again."]);
+  });
+
   it('saves unsaved text when disposed, and sends nothing more after the timer', () => {
     const { sent, saver, timers } = world();
     saver.edit(doc('Leaving'));
@@ -286,5 +319,116 @@ describe('leaving the page', () => {
     timers.advance(DESCRIPTION_IDLE_MS);
     expect(sent).toHaveLength(1);
     expect(timers.pending.size).toBe(0);
+  });
+});
+
+describe('after a confirmation', () => {
+  it('saves text typed back to the old base during the save, after the idle time', async () => {
+    const { sent, saver, answer, timers } = world();
+    saver.edit(doc('Second'));
+    saver.saveNow();
+    // Back to what was loaded: not unsaved against "First", so nothing is scheduled…
+    saver.edit(doc('First'));
+    expect(timers.pending.size).toBe(0);
+    // …but it is against the confirmed "Second".
+    await answer({ kind: 'confirmed' });
+    expect(saver.getState().dirty).toBe(true);
+    timers.advance(DESCRIPTION_IDLE_MS);
+    expect(sent).toEqual([
+      { baseVersion: 3, description: doc('Second') },
+      { baseVersion: 4, description: doc('First') },
+    ]);
+  });
+});
+
+describe('an earlier save still unconfirmed (SPEC-012 D31: never on a predicted version)', () => {
+  // Opened while an earlier page's save of "Mine" on v5 is queued: the replica shows its predicted
+  // v6, which the server may never make.
+  const predicted = { doc: doc('Mine'), version: 6 };
+
+  it('sends nothing while it is unconfirmed, then saves on the confirmed version', () => {
+    const { sent, saver, timers } = world(predicted, 1);
+    saver.edit(doc('Mine, more'));
+    timers.advance(DESCRIPTION_IDLE_MS);
+    saver.blur();
+    saver.saveNow();
+    expect(sent).toEqual([]);
+    expect(saver.getState().doc).toEqual(doc('Mine, more'));
+    // Confirmed: the server made v6 with "Mine".
+    saver.remote({ doc: doc('Mine'), version: 6 }, 0);
+    expect(sent).toEqual([{ baseVersion: 6, description: doc('Mine, more') }]);
+    expect(saver.getState().conflict).toBe(false);
+  });
+
+  it('shows the conflict and sends nothing when it was refused because someone saved first', () => {
+    const { sent, saver, timers } = world(predicted, 1);
+    saver.edit(doc('Mine, more'));
+    saver.blur();
+    // Refused (Bob had made v6): the overlay is gone and the replica shows Bob's text.
+    saver.remote({ doc: doc('Theirs'), version: 6 }, 0);
+    expect(saver.getState()).toMatchObject({ conflict: true, doc: doc('Mine, more') });
+    timers.advance(DESCRIPTION_IDLE_MS);
+    saver.blur();
+    expect(sent).toEqual([]);
+    // Discard and reload takes the server's row, and saves continue from it.
+    saver.discardAndReload();
+    saver.edit(doc('Theirs, and mine'));
+    saver.blur();
+    expect(sent).toEqual([{ baseVersion: 6, description: doc('Theirs, and mine') }]);
+  });
+
+  it('shows the conflict when that save was confirmed but someone saved after it', () => {
+    const { sent, saver } = world(predicted, 1);
+    saver.remote({ doc: doc('Theirs'), version: 7 }, 0);
+    expect(saver.getState()).toMatchObject({ conflict: true, doc: doc('Mine') });
+    expect(sent).toEqual([]);
+  });
+
+  it('never adopts a predicted row as its base: a save queued elsewhere after opening waits too', () => {
+    // Opened on the confirmed v3; another save of this description is then queued (an earlier
+    // page's save on close), and the replica shows its prediction.
+    const { sent, saver } = world();
+    saver.remote({ doc: doc('Queued'), version: 4 }, 1);
+    expect(saver.getState().doc).toEqual(doc('Queued'));
+    saver.edit(doc('Queued, more'));
+    saver.blur();
+    expect(sent).toEqual([]);
+    // Refused: the replica is back on the server's v3 "First"; the saver built on "Queued".
+    saver.remote({ doc: doc('First'), version: 3 }, 0);
+    expect(saver.getState().conflict).toBe(true);
+    expect(sent).toEqual([]);
+  });
+
+  it('counts its own save once: with only that one unconfirmed, the next save is queued, not blocked', async () => {
+    const { sent, saver, answer } = world();
+    saver.edit(doc('Second'));
+    saver.blur();
+    // The store now holds this saver's own save.
+    saver.remote({ doc: doc('Second'), version: 4 }, 1);
+    saver.edit(doc('Third'));
+    saver.blur();
+    await answer({ kind: 'confirmed' });
+    saver.remote({ doc: doc('Second'), version: 4 }, 0);
+    expect(sent).toEqual([
+      { baseVersion: 3, description: doc('Second') },
+      { baseVersion: 4, description: doc('Third') },
+    ]);
+  });
+
+  it('counts the queue’s saves and create of this issue only', () => {
+    const issue = '0192f0c1-7e5a-7b3c-9d4e-0000000000b1';
+    const other = '0192f0c1-7e5a-7b3c-9d4e-0000000000b2';
+    expect(
+      unconfirmedDescriptionChanges(
+        [
+          { op: 'issue.updateDescription', input: { issue, baseVersion: 1 } },
+          { op: 'issue.updateDescription', input: { issue: other, baseVersion: 1 } },
+          { op: 'issue.create', input: { id: issue.toUpperCase(), title: 'x' } },
+          { op: 'issue.update', input: { issue, title: 'x' } },
+          { op: 'issue.updateDescription', input: null },
+        ],
+        issue,
+      ),
+    ).toBe(2);
   });
 });

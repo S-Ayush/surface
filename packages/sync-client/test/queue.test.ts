@@ -62,6 +62,19 @@ describe('confirming a mutation', () => {
     await store.close();
   });
 
+  it('shows each unconfirmed mutation with the input it was dispatched with, until it is confirmed', async () => {
+    // PLAN-012 S4b: the issue page tells a pending description save for its issue by its input.
+    const hub = seededHub();
+    const { store } = liveStore(hub);
+    await store.start();
+    await until(() => store.connection === 'online');
+    const outcome = store.dispatch(debugTouch, { id: id(2) });
+    expect(store.pending).toMatchObject([{ op: 'debug.touch', input: { id: id(2) } }]);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    expect(store.pending).toEqual([]);
+    await store.close();
+  });
+
   it('is confirmed by an ack that arrives before the HTTP response, and not applied twice', async () => {
     const hub = seededHub();
     const { store } = liveStore(hub);

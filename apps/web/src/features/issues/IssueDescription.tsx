@@ -13,8 +13,8 @@ import type { DocNodeJSON } from '@surface/domain';
 import type { RichTextEditorHandle } from '@surface/editor';
 import { docToMarkdown } from '@surface/editor/schema';
 import { Button, Skeleton, toast } from '@surface/ui';
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { useApp } from '../../app/context.js';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useApp, useObserved } from '../../app/context.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
 import { CommentDoc, CommentEditor } from '../comments/editor-host.js';
 import { hasContent } from '../comments/model.js';
@@ -24,6 +24,7 @@ import {
   descriptionSendResult,
   type DescriptionTimers,
   type SavedDescription,
+  unconfirmedDescriptionChanges,
 } from './description-save.js';
 import { docInput } from './draft-adapter.js';
 import { descriptionOf, useIssueContentView, type ContentView } from './server-issue.js';
@@ -51,34 +52,60 @@ export function LiveDescription({ issueId }: { issueId: string }) {
 
 function EditableDescription({ issueId, saved }: { issueId: string; saved: SavedDescription }) {
   const app = useApp();
+  // SPEC-012 D31: while an earlier save of this description (or the issue's create) is
+  // unconfirmed, the replica's version is a prediction the saver must not send on.
+  const unconfirmed = useObserved(
+    useCallback(
+      () => unconfirmedDescriptionChanges(app.store?.pending ?? [], issueId),
+      [app, issueId],
+    ),
+  );
   const [saver] = useState(
     () =>
-      new DescriptionSaver(saved, {
-        timers: BROWSER_TIMERS,
-        send: async ({ baseVersion, description }, shown) => {
-          const store = app.readyStore;
-          if (store === null) {
-            return { kind: 'refused', message: "Couldn't save the description. Try again." };
-          }
-          // While the page is open it shows the refusal itself (the banner, or the toast below);
-          // after it closed, the shell's toast does.
-          const outcome = await store.dispatch(
-            issueUpdateDescription,
-            { issue: issueId, baseVersion, description: docInput(description) },
-            { reportRejection: () => !shown() },
-          );
-          return descriptionSendResult(outcome);
+      new DescriptionSaver(
+        saved,
+        {
+          timers: BROWSER_TIMERS,
+          send: async ({ baseVersion, description }, shown) => {
+            const store = app.readyStore;
+            // Thrown, so the saver reports it: the store never saw it.
+            if (store === null) throw new Error("Couldn't save the description. Try again.");
+            // While the page is open it shows the refusal itself (the banner, or the toast below);
+            // after it closed, the shell's toast does.
+            const outcome = await store.dispatch(
+              issueUpdateDescription,
+              { issue: issueId, baseVersion, description: docInput(description) },
+              { reportRejection: () => !shown() },
+            );
+            return descriptionSendResult(outcome);
+          },
+          onRefused: (message) => {
+            toast({ tone: 'danger', message });
+          },
         },
-        onRefused: (message) => {
-          toast({ tone: 'danger', message });
-        },
-      }),
+        unconfirmed,
+      ),
   );
   useEffect(() => {
-    saver.remote(saved);
-  }, [saver, saved]);
+    saver.remote(saved, unconfirmed);
+  }, [saver, saved, unconfirmed]);
   // Detaching (leaving the page, or stepping to another issue) saves what is unsaved.
   useEffect(() => saver.attach(), [saver]);
+  // A tab closed or hidden may never run React's cleanup: the queue keeps what is sent now.
+  useEffect(() => {
+    const flush = () => {
+      saver.saveNow();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') saver.saveNow();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [saver]);
   const state = useSyncExternalStore(saver.subscribe, saver.getState, saver.getState);
   const editor = useRef<RichTextEditorHandle>(null);
 

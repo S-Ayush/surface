@@ -52,7 +52,6 @@ describe('content.peek (PLAN-012 S4b)', () => {
     const peek = await store.content.peek(id(1));
     expect(peek.state).toBe('ready');
     if (peek.state !== 'ready') return;
-    expect(peek.found).toBe(true);
     expect(bodies(peek.rows['Note'])).toEqual({ [id(11)]: 'Note 11', [id(12)]: 'Note 12' });
     expect(hub.contentRequests).toEqual([[issueParent(id(1))]]);
     // Nothing kept: not in the pool, not in storage, not hydrated, not paged in.
@@ -72,11 +71,11 @@ describe('content.peek (PLAN-012 S4b)', () => {
     expect(await kept.content(id(1))).toEqual({ hydrated: false, ids: [] });
   });
 
-  it('answers a parent the server doesn’t show as found: false, with no rows', async () => {
+  it('answers a parent the server doesn’t show with no rows', async () => {
     const { hub, store } = await itemWorld();
     hub.hiddenParents.add(id(2));
     const peek = await store.content.peek(id(2));
-    expect(peek).toEqual({ state: 'ready', found: false, rows: { Note: [] } });
+    expect(peek).toEqual({ state: 'ready', rows: { Note: [] } });
   });
 
   it('is offline without asking when the connection is down', async () => {
@@ -119,7 +118,7 @@ describe('content.peek (PLAN-012 S4b)', () => {
       [111, 611],
     ] as const) {
       const peek = await store.content.peek(id(task));
-      expect(peek).toMatchObject({ state: 'ready', found: true });
+      expect(peek.state).toBe('ready');
       if (peek.state !== 'ready') return;
       expect((peek.rows['TaskNote'] ?? []).map((row) => row.id)).toEqual([id(note)]);
     }

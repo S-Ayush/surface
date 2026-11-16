@@ -1,10 +1,11 @@
 // The issue page's activity stream (SPEC-012 §3.4 item 4, §7.4, D18; SPEC-013 §7; PLAN-012 S4b):
 // history lines and comment threads in one list, oldest first, the newest 30 with "Show N earlier"
 // above them. Presentational: the caller hands the items, the actor names and how a thread renders
-// (`ThreadView`, which reads the comments' context).
+// (`ThreadView`, which reads the comments' context). "Show N earlier" moves focus to the first
+// item it reveals, since the button itself goes away.
 import { activityActor, activityLines } from '@surface/domain';
 import { Button } from '@surface/ui';
-import { Fragment, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { absoluteTime, agoLong } from '../comments/model.js';
 import type { Thread } from '../comments/model.js';
 import {
@@ -27,7 +28,16 @@ export interface ActivityStreamProps {
 
 export function ActivityStream({ items, actorName, now, renderThread }: ActivityStreamProps) {
   const [expanded, setExpanded] = useState(false);
+  // Set by the click, read once the revealed items are in the DOM.
+  const focusFirst = useRef(false);
+  const list = useRef<HTMLOListElement>(null);
   const { earlier, shown } = visibleActivity(items, expanded);
+  useEffect(() => {
+    if (!focusFirst.current) return;
+    focusFirst.current = false;
+    // The first item's `article`: a history entry (focusable, not in the tab order) or a card.
+    list.current?.firstElementChild?.querySelector<HTMLElement>('article')?.focus();
+  });
   if (items.length === 0) return null;
   return (
     <div className={styles.stream} data-slot="activity">
@@ -38,12 +48,13 @@ export function ActivityStream({ items, actorName, now, renderThread }: Activity
           className={styles.earlier}
           onClick={() => {
             setExpanded(true);
+            focusFirst.current = true;
           }}
         >
           {showEarlierLabel(earlier)}
         </Button>
       )}
-      <ol className={styles.list} aria-label="Activity">
+      <ol ref={list} className={styles.list} aria-label="Activity">
         {shown.map((item) =>
           item.kind === 'history' ? (
             <HistoryItem key={item.id} entry={item.entry} name={actorName(item.entry)} now={now} />
@@ -66,7 +77,7 @@ export function HistoryItem({ entry, name, now }: { entry: HistoryRow; name: str
   const at = entry.createdAt;
   return (
     <li className={styles.item}>
-      <article className={styles.history} aria-label={`${who}, ${agoLong(at, now)}`}>
+      <article className={styles.history} aria-label={`${who}, ${agoLong(at, now)}`} tabIndex={-1}>
         {lines.map((line, index) => (
           <p key={index} className={styles.line}>
             {line}

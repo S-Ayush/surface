@@ -76,7 +76,6 @@ const history = (id: number, kind: string, minutes: number) => ({
 
 const PEEKED: ContentPeek = {
   state: 'ready',
-  found: true,
   rows: {
     IssueHistory: [history(1, 'created', 0), history(2, 'deleted', 30)],
     Comment: [
@@ -192,6 +191,28 @@ describe('an archived or deleted issue opens read-only from the server (AC-26)',
     expect(document.querySelector('button[aria-label="Reply"]')).toBeNull();
     expect(document.querySelector('[aria-label="Add reaction"]')).toBeNull();
     expect(document.querySelector('textarea[aria-label="Description"]')).toBeNull();
+    expect(document.querySelector('[contenteditable="true"]')).toBeNull();
+    // Nor through the menu or the keys: the issue's reaction picker, and a focused comment's writes.
+    const registry = page.registry();
+    expect(registry?.isAvailable('reaction:add')).toBe(false);
+    const card = document.querySelector<HTMLElement>(`article#comment-${COMMENT}`);
+    if (card === null) throw new Error('the comment is not shown');
+    await inAct(() => {
+      card.focus();
+    });
+    // Focused: its read-only commands answer…
+    expect(registry?.isAvailable('comment:copy-link')).toBe(true);
+    // …and none that writes.
+    for (const command of [
+      'reaction:add',
+      'comment:reply',
+      'comment:edit',
+      'comment:delete',
+      'comment:resolve',
+      'comment:reopen',
+    ] as const) {
+      expect(registry?.isAvailable(command), command).toBe(false);
+    }
     // Read with one peek; nothing opened (hydrated) in the replica, nothing sent.
     expect(store.peeked).toEqual([ISSUE_A]);
     expect(store.opened).toEqual([]);
@@ -282,11 +303,10 @@ describe('an open issue that leaves the replica (E3)', () => {
     const api = issueApi(() => ({ ok: true, result: output({ deletedAt: AT }) }));
     page = await mountIssuePage({ app, ref: 'ENG-42', api });
 
-    // What `deleteIssue` does: remember it, then the optimistic delete removes the row; the
-    // mutation waits for its confirmation.
-    lastDelete.set({ id: ISSUE_A, identifier: 'ENG-42' });
+    // What `deleteIssue` does: the delete is queued and its optimistic effect removes the row; it
+    // waits for its confirmation.
     await inAct(() => {
-      app.pending.push({ op: 'issue.delete' });
+      app.pending.push({ op: 'issue.delete', input: { issue: ISSUE_A } });
     });
     app.removeIssue(ISSUE_A);
     await settle();
@@ -302,5 +322,46 @@ describe('an open issue that leaves the replica (E3)', () => {
     expect(api.asked).toEqual(['ENG-42']);
     expect(text()).toContain('Deleted');
     expect(text()).toContain('Iris deleted the issue');
+  });
+
+  it('shows an archived issue deleted from its page as Deleted at once', async () => {
+    const store = content();
+    const app = new FakeApp({ issues: [], users: [IRIS], content: store.api });
+    let answer = output({ archivedAt: AT });
+    const api = issueApi(() => ({ ok: true, result: answer }));
+    page = await mountIssuePage({ app, ref: 'ENG-42', api });
+    await settle();
+    expect(text()).toContain('Archived issues');
+
+    await inAct(() => {
+      app.pending.push({ op: 'issue.delete', input: { issue: ISSUE_A } });
+    });
+    await settle();
+    expect(text()).toContain('Recently deleted issues');
+    expect(api.asked).toEqual(['ENG-42']);
+
+    answer = output({ archivedAt: AT, deletedAt: AT });
+    await inAct(() => {
+      app.pending.clear();
+    });
+    await settle();
+    expect(api.asked).toEqual(['ENG-42', 'ENG-42']);
+    expect(text()).toContain('Recently deleted issues');
+  });
+
+  it('never shows a live issue as Deleted because it was deleted and restored earlier', async () => {
+    const store = content();
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], users: [IRIS], content: store.api });
+    // The server hasn't answered yet: the page shows the last row.
+    const api = { get: () => new Promise<OperationAnswer<IssueOutput>>(() => undefined) };
+    // Deleted earlier in the session, then restored: the undo slot still names it.
+    lastDelete.set({ id: ISSUE_A, identifier: 'ENG-42' });
+    page = await mountIssuePage({ app, ref: 'ENG-42', api });
+    // Auto-archived by the server while open: it leaves the replica, with no delete queued.
+    app.removeIssue(ISSUE_A);
+    await settle();
+    expect(text()).toContain('Login page flickers');
+    expect(text()).not.toContain('Recently deleted issues');
+    expect(text()).not.toContain('Deleted');
   });
 });

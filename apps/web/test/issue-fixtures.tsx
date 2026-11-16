@@ -16,7 +16,7 @@ import {
 } from '@tanstack/react-router';
 import { TooltipProvider } from '@surface/ui';
 import { observable, runInAction, type IObservableArray } from 'mobx';
-import { act } from 'react';
+import { act, useEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { AppModel } from '../src/app/AppModel.js';
 import { AuthState, type Session } from '../src/app/auth.js';
@@ -27,7 +27,8 @@ import { IssueApiContext } from '../src/features/issues/issue-api.js';
 import { IssuePage } from '../src/features/issues/IssuePage.js';
 import { ShellContext } from '../src/shell/ShellContext.js';
 import { ShellStore } from '../src/shell/ShellStore.js';
-import { ShortcutProvider } from '../src/shortcuts/ShortcutProvider.js';
+import type { CommandRegistry } from '../src/commands/registry.js';
+import { ShortcutProvider, useCommandRegistry } from '../src/shortcuts/ShortcutProvider.js';
 import { SHORTCUTS, type Shortcut } from '../src/shortcuts/registry.js';
 
 export const TEAM = '0192f0c1-7e5a-7b3c-9d4e-0000000000e1';
@@ -87,7 +88,7 @@ export class FakeApp extends AppModel {
   readonly opened: string[] = [];
   readonly issues: IObservableArray<Row>;
   /** The store's unconfirmed mutations (`store.pending`), observable. */
-  readonly pending = observable.array<{ op: string }>([], { deep: false });
+  readonly pending = observable.array<{ op: string; input?: unknown }>([], { deep: false });
 
   constructor(options: {
     issues: readonly Row[];
@@ -220,8 +221,19 @@ function IssueRoute() {
 export type Mounted = {
   readonly router: AnyRouter;
   readonly host: HTMLElement;
+  /** The page's command registry, to ask what the menu and the keys would offer. */
+  readonly registry: () => CommandRegistry | undefined;
   unmount(): Promise<void>;
 };
+
+/** Hands the command registry to the test. */
+function RegistryProbe({ onRegistry }: { onRegistry: (registry: CommandRegistry) => void }) {
+  const registry = useCommandRegistry();
+  useEffect(() => {
+    onRegistry(registry);
+  }, [onRegistry, registry]);
+  return null;
+}
 
 /**
  * The page on a memory router: the list at `/team/ENG` first, then the issue `ref` on top of it
@@ -271,6 +283,10 @@ export async function mountIssuePage(options: {
   document.body.append(host);
   const root: Root = createRoot(host);
   const api: IssueApi = options.api ?? { get: () => new Promise(() => undefined) };
+  const holder: { registry?: CommandRegistry } = {};
+  const onRegistry = (registry: CommandRegistry) => {
+    holder.registry = registry;
+  };
   await act(async () => {
     root.render(
       <AppContext value={options.app}>
@@ -278,6 +294,7 @@ export async function mountIssuePage(options: {
           <ShellContext value={new ShellStore(null)}>
             <TargetContext value={new TargetStore()}>
               <ShortcutProvider bindings={ALL_KEYS}>
+                <RegistryProbe onRegistry={onRegistry} />
                 {/* The shell's overlays provide it; the comment cards' tooltips need it. */}
                 <TooltipProvider>
                   <RouterProvider router={router} />
@@ -293,6 +310,7 @@ export async function mountIssuePage(options: {
   return {
     router,
     host,
+    registry: () => holder.registry,
     async unmount() {
       await act(async () => {
         root.unmount();

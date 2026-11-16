@@ -34,6 +34,11 @@
   line-height: var(--text-sm-line);
 }
 
+.history:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
 .line {
   margin: 0;
   overflow-wrap: anywhere;

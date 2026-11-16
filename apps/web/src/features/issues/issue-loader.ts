@@ -134,8 +134,9 @@ export type IssueSourceInputs = {
   /** The server's answer, once the loader has one; undefined while it hasn't asked or waits. */
   readonly loaded: IssueLoadResult | undefined;
   /**
-   * This page deleted the issue (its `lastDelete` slot holds it): until the server answers, the
-   * last row shows as deleted, so the page stays open in the deleted state (PLAN-012 S6 handoff).
+   * The issue's delete is unconfirmed in this tab's queue (and no answer came since): the last row
+   * or the server's earlier answer shows as deleted, so the page stays open in the deleted state
+   * (PLAN-012 S6 handoff).
    */
   readonly deletedHere?: boolean;
 };
@@ -153,7 +154,11 @@ export function chooseIssueSource(inputs: IssueSourceInputs): IssueSource {
     return { kind: 'view', view: replica, readOnly: replica.lifecycle !== 'live' };
   }
   if (rejected !== undefined) return { kind: 'create-rejected', message: rejected };
-  if (loaded?.kind === 'remote') return { kind: 'view', view: loaded.view, readOnly: true };
+  if (loaded?.kind === 'remote') {
+    // Deleted here after this answer (an archived issue's delete): Deleted at once.
+    const view = deletedHere ? { ...loaded.view, lifecycle: 'deleted' as const } : loaded.view;
+    return { kind: 'view', view, readOnly: true };
+  }
   if (loaded?.kind === 'not-found') return { kind: 'not-found' };
   if (loaded?.kind === 'offline' || loaded?.kind === 'error') {
     if (last !== undefined) return { kind: 'view', view: last, readOnly: true };
