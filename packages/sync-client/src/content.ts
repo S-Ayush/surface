@@ -68,6 +68,20 @@ import type { TeamLoadState } from './subscriptions.js';
  */
 export type ContentLoadState = 'loading' | 'ready' | 'offline';
 
+/**
+ * A parent's content read once from the server and kept nowhere (`content.peek`, PLAN-012 S4b):
+ * `ready` with the rows per content model (`found` false when the server doesn't show the parent),
+ * `offline` when the connection is down, `failed` when the request failed while online.
+ */
+export type ContentPeek =
+  | {
+      readonly state: 'ready';
+      readonly found: boolean;
+      readonly rows: Readonly<Record<string, readonly ModelRow[]>>;
+    }
+  | { readonly state: 'offline' }
+  | { readonly state: 'failed' };
+
 /** An open parent (`content.open`). */
 export interface ContentHandle {
   /** Settles once the parent is paged in, or can't be now: its load state then. */
@@ -341,6 +355,31 @@ export class ContentHydration {
     } finally {
       this.#unwant(parent);
     }
+  }
+
+  /**
+   * One `GET /sync/content` answer for a parent, returned to the caller and never stored, paged
+   * in or marked hydrated (SPEC-012 §3.4 item 8, PLAN-012 S4b): the read-only view of an archived
+   * or deleted issue, which the replica doesn't hold. No packet is buffered for it, so the rows
+   * are a snapshot; the view asks again to refresh.
+   */
+  async peek(parent: string): Promise<ContentPeek> {
+    const id = parent.toLowerCase();
+    if (this.#closed.get() || !this.#online()) return { state: 'offline' };
+    let answer: ContentAnswer;
+    try {
+      answer = await this.#host.fetchContent([id], this.#abort.signal);
+    } catch (error) {
+      if (error instanceof ClientOutdatedError) this.#host.outdated();
+      return this.#online() ? { state: 'failed' } : { state: 'offline' };
+    }
+    const rows: Record<string, ModelRow[]> = {};
+    for (const model of this.#byModel.keys()) rows[model] = [];
+    for (const { model, row } of answer.rows) {
+      if (this.#parentOf(model, row)?.toLowerCase() === id) rows[model]?.push(row);
+    }
+    for (const list of Object.values(rows)) list.sort((a, b) => (a.id < b.id ? -1 : 1));
+    return { state: 'ready', found: answer.parents.includes(id), rows };
   }
 
   /** How a refusal names `ref`'s parent: its identifier (`ENG-42`) when the pool shows it. */

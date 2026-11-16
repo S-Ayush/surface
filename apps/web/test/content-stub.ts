@@ -1,5 +1,6 @@
 // A store's `content` for tests that mount the issue page but not its comments: the issue's
-// content never loads, so the comment slots show only their loading state.
+// content never loads, so the comment slots show only their loading state, and a read-only view's
+// server-backed read (`peek`, PLAN-012 S4b) never answers.
 export const NO_CONTENT = {
   state: () => 'loading',
   rows: () => ({}),
@@ -8,6 +9,7 @@ export const NO_CONTENT = {
   prefetch: () => undefined,
   prefetchList: () => undefined,
   prefetchOnHover: () => () => undefined,
+  peek: () => new Promise(() => undefined),
 };
 
 /**

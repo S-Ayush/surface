@@ -1,10 +1,8 @@
-// The issue page (SPEC-012 §3.4, PLAN-012 S4 part 1): header, title, description (read-only for
-// now), the slots later slices fill, and the properties panel. It renders one `IssueView`, from the
-// replica (live, editable) or from `issue.get` (read-only), chosen by `chooseIssueSource`.
-//
-// Not here yet (PLAN-012 S4 follow-up, PLAN-011 S6): the description editor and its save
-// controller, the activity stream with history lines, `content.peek` for the read-only view, the
-// live deleted/archived switch with hydration on open.
+// The issue page (SPEC-012 §3.4; PLAN-012 S4 and S4b): header, title, description, the slots later
+// slices fill (reactions, attachments, the activity stream with comments), and the properties
+// panel. It renders one `IssueView`, from the replica (live, editable) or from `issue.get`
+// (read-only), chosen by `chooseIssueSource`. The read-only view reads its activity, comments and
+// reactions from one `content.peek` answer (`server-issue.ts`), never from the replica.
 import {
   Badge,
   Button,
@@ -30,12 +28,13 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { parseIssueRef } from '@surface/domain';
+import { parseIssueRef, type DocNodeJSON } from '@surface/domain';
+import type { ContentPeek } from '@surface/sync-client';
 import { SyncStoreProvider, usePrefetchContent } from '@surface/sync-react';
 import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
 import { useCommandContext } from '../../command-menu/context.js';
-import { askDelete } from './delete-flow.js';
+import { askDelete, lastDelete } from './delete-flow.js';
 import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
 import { structurallyEqual } from '../../app/equal.js';
 import { PageHeader } from '../../shell/PageHeader.js';
@@ -67,6 +66,13 @@ import type { PickerKind } from './issue-pickers.js';
 import { usePanelMode } from './panel-layout.js';
 import { openPicker } from './pickers/picker-request.js';
 import { PropertiesPanel } from './PropertiesPanel.js';
+import { LiveDescription, ReadOnlyDescription } from './IssueDescription.js';
+import {
+  descriptionOf,
+  ServerContentContext,
+  useServerContent,
+  type ServerContent,
+} from './server-issue.js';
 import { useIssueCommands } from './useIssueCommands.js';
 import { ISSUE_PAGE_SLOTS } from './slots.js';
 import { teamListPath, stepInfo, stepTarget, type Direction } from './source-list.js';
@@ -106,7 +112,18 @@ function useIssueSource(issueRef: string) {
     { readonly ref: string; readonly result: IssueLoadResult } | undefined
   >(undefined);
   const [attempt, setAttempt] = useState(0);
+  const refresh = useWindowFocusCount();
   const inReplica = replica !== undefined;
+  // A delete or restore not confirmed yet: the server's answer could predate it, so the page asks
+  // once it is confirmed (the deleted state after a delete from this page, PLAN-012 S6 handoff).
+  const lifecyclePending = useObserved(
+    useCallback(
+      () =>
+        app.store?.pending.some((p) => p.op === 'issue.delete' || p.op === 'issue.restore') ===
+        true,
+      [app],
+    ),
+  );
   const replicaTeam = replica?.teamId ?? null;
   useEffect(() => {
     // SPEC-011 §5.7: opening one of a team's issues opens the team on demand, also when the replica
@@ -119,10 +136,13 @@ function useIssueSource(issueRef: string) {
   if (replica !== undefined && (last?.ref !== issueRef || !structurallyEqual(replica, last.view))) {
     setLast({ ref: issueRef, view: replica });
   }
+  // An answer from before the row was (again) in the replica says nothing about it once it leaves.
+  if (replica !== undefined && loaded?.ref === issueRef) setLoaded(undefined);
 
   useEffect(() => {
-    // Nothing to fetch while the replica loads, while it holds the row, or for a held rejection.
-    if (!ready || inReplica || rejected !== undefined) return;
+    // Nothing to fetch while the replica loads, while it holds the row, for a held rejection, or
+    // while a delete or restore waits for its confirmation. A focus asks again (§3.4 item 8).
+    if (!ready || inReplica || rejected !== undefined || lifecyclePending) return;
     let current = true;
     void loadMissingIssue(issueRef, {
       get: (ref) => api.get(ref),
@@ -135,10 +155,12 @@ function useIssueSource(issueRef: string) {
     return () => {
       current = false;
     };
-  }, [app, api, issueRef, ready, online, inReplica, rejected, attempt]);
+  }, [app, api, issueRef, ready, online, inReplica, rejected, attempt, lifecyclePending, refresh]);
 
+  const lastView = last?.ref === issueRef ? last.view : undefined;
   return {
     ready,
+    refresh,
     retry: () => {
       setLoaded(undefined);
       setAttempt((n) => n + 1);
@@ -146,14 +168,30 @@ function useIssueSource(issueRef: string) {
     source: chooseIssueSource({
       replica,
       rejected,
-      last: last?.ref === issueRef ? last.view : undefined,
+      last: lastView,
       loaded: loaded?.ref === issueRef ? loaded.result : undefined,
+      deletedHere: lastView !== undefined && lastDelete.get()?.id === lastView.id,
     }),
   };
 }
 
+/** Counts the window's focus events: the read-only view asks the server again on each (§3.4). */
+function useWindowFocusCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    const onFocus = () => {
+      setCount((n) => n + 1);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
+  return count;
+}
+
 export function IssuePage({ issueRef }: { issueRef: string }) {
-  const { ready, source, retry } = useIssueSource(issueRef);
+  const { ready, source, retry, refresh } = useIssueSource(issueRef);
 
   if (!ready) return null;
   switch (source.kind) {
@@ -188,7 +226,14 @@ export function IssuePage({ issueRef }: { issueRef: string }) {
     case 'view':
       // Keyed by issue, so stepping to another one starts with fresh title-edit, drawer and address
       // state.
-      return <IssueBody key={source.view.id} view={source.view} readOnly={source.readOnly} />;
+      return (
+        <IssueBody
+          key={source.view.id}
+          view={source.view}
+          readOnly={source.readOnly}
+          refresh={refresh}
+        />
+      );
   }
 }
 
@@ -255,8 +300,23 @@ function Unavailable({
   );
 }
 
-function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
+function IssueBody({
+  view,
+  readOnly,
+  refresh,
+}: {
+  view: IssueView;
+  readOnly: boolean;
+  refresh: number;
+}) {
   const app = useApp();
+  // The read-only view's activity, comments and reactions: one server answer, kept in memory.
+  const peek = useCallback(
+    (issueId: string): Promise<ContentPeek> =>
+      app.readyStore?.content.peek(issueId) ?? Promise.resolve({ state: 'offline' }),
+    [app],
+  );
+  const server = useServerContent(view.id, readOnly, peek, refresh);
   const navigate = useNavigate();
   const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -342,6 +402,12 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
     step('previous');
   });
   const editable = !readOnly && view.lifecycle === 'live' && view.teamId !== null;
+  // For "Copy issue as Markdown" (§3.7), read when the copy runs: the replica's content on a live
+  // page, the server's answer on a read-only one.
+  const description = (): DocNodeJSON | null =>
+    (readOnly
+      ? (view.description ?? descriptionOf(server?.rows['IssueContent'])?.doc)
+      : descriptionOf(app.readyStore?.content.rows(view.id)['IssueContent'])?.doc) ?? null;
   // The open issue is the command target (the chip in `Mod+K`, the property commands), and the
   // `issue` commands act on it (PLAN-012 S6).
   useCommandContext({ kind: 'issue', ids: [view.id], label: view.identifier ?? 'New issue' });
@@ -353,6 +419,7 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
       teamKey: view.teamKey,
       lifecycle: view.lifecycle,
       editable,
+      description: description(),
     }),
     {
       // The properties panel's pill; with the panel closed (the drawer), the page itself.
@@ -367,7 +434,12 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
 
   // Read on click, not in render: the origin is the browser's.
   const copyOf = (kind: CopyKind) => {
-    const plan = planCopy(kind, view, window.location.origin, userName);
+    const plan = planCopy(
+      kind,
+      { ...view, description: description() },
+      window.location.origin,
+      userName,
+    );
     void runCopy(plan, navigator.clipboard);
   };
   const deleteKeys = shortcutsFor('issue:delete')[0];
@@ -515,18 +587,24 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
             {badge !== null && <Badge>{badge}</Badge>}
           </div>
           {mode === 'stacked' && panel}
-          {/* TODO(PLAN-012 S4 follow-up, PLAN-011 S6): the description editor and its save
-              controller. Until `issue.updateDescription` exists the page has no description to
-              show: the row doesn't carry one (IssueContent arrives with S5a/S6). */}
-          <DescriptionArea />
-          {!readOnly && view.teamId !== null && (
-            <Slots view={view} teamId={view.teamId} part="under-description" />
+          {editable ? (
+            <StoreProvided>
+              <LiveDescription issueId={view.id} />
+            </StoreProvided>
+          ) : (
+            <ReadOnlyDescription
+              doc={view.description ?? descriptionOf(server?.rows['IssueContent'])?.doc}
+              state={server?.state ?? 'loading'}
+            />
           )}
-          {/* TODO(PLAN-012 S4 follow-up): ActivityStream (needs IssueHistory, PLAN-011 S6). */}
-          <section aria-label="Activity" data-slot="activity" />
-          {!readOnly && view.teamId !== null && (
-            <Slots view={view} teamId={view.teamId} part="comments" />
-          )}
+          {readOnly
+            ? server !== undefined && <ServerSlots view={view} server={server} />
+            : view.teamId !== null && (
+                <>
+                  <Slots view={view} teamId={view.teamId} part="under-description" />
+                  <Slots view={view} teamId={view.teamId} part="comments" />
+                </>
+              )}
         </article>
         {mode !== 'stacked' && (mode === 'inline' || drawerOpen) && (
           <aside className={mode === 'drawer' ? pageStyles.drawer : pageStyles.aside}>
@@ -538,11 +616,24 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   );
 }
 
-function DescriptionArea() {
+/** The store for sync-react's hooks, wherever the page mounts (the shell provides it too). */
+function StoreProvided({ children }: { children: ReactNode }) {
+  const app = useApp();
+  const store = app.readyStore;
+  return store === null ? null : <SyncStoreProvider store={store}>{children}</SyncStoreProvider>;
+}
+
+/**
+ * The read-only view's reactions and activity (§3.4 item 8): the same slots, fed by the server's
+ * answer through `ServerContentContext` (`useIssueContentView`), with every write control hidden.
+ * A slot reads `content.server` to know it is read-only.
+ */
+function ServerSlots({ view, server }: { view: IssueView; server: ServerContent }) {
   return (
-    <section aria-label="Description" className={pageStyles.description}>
-      <p className={pageStyles.placeholder}>No description</p>
-    </section>
+    <ServerContentContext value={server}>
+      <Slots view={view} teamId={view.teamId ?? ''} part="under-description" />
+      <Slots view={view} teamId={view.teamId ?? ''} part="comments" />
+    </ServerContentContext>
   );
 }
 

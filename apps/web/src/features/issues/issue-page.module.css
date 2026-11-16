@@ -34,6 +34,27 @@
   color: var(--text-tertiary);
 }
 
+/* The description's CONFLICT banner (SPEC-012 §3.4 item 3): the text stays below it. */
+.conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-8);
+  padding: var(--space-8) var(--space-12);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+
+.conflictMessage {
+  flex: 1;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
 .aside {
   width: var(--properties-width);
   flex: none;

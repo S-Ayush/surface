@@ -3,7 +3,7 @@
 // the page), a store that records what is dispatched, and the page mounted on a real router.
 import { userActor, type Actor } from '@surface/domain';
 import { Issue, Label, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
-import type { SyncStore } from '@surface/sync-client';
+import type { MutationOutcome, SyncStore } from '@surface/sync-client';
 import { NO_CONTENT } from './content-stub.js';
 import {
   createMemoryHistory,
@@ -14,7 +14,8 @@ import {
   useParams,
   type AnyRouter,
 } from '@tanstack/react-router';
-import { observable, runInAction } from 'mobx';
+import { TooltipProvider } from '@surface/ui';
+import { observable, runInAction, type IObservableArray } from 'mobx';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { AppModel } from '../src/app/AppModel.js';
@@ -34,6 +35,15 @@ export const STATUS = '0192f0c1-7e5a-7b3c-9d4e-0000000000c1';
 export const ISSUE_A = '0192f0c1-7e5a-7b3c-9d4e-0000000000b1';
 export const ISSUE_B = '0192f0c1-7e5a-7b3c-9d4e-0000000000b2';
 export const ISSUE_C = '0192f0c1-7e5a-7b3c-9d4e-0000000000b3';
+/** A user whose id is a uuid, for content rows (pass it as `users`). */
+export const IRIS_ID = '0192f0c1-7e5a-7b3c-9d4e-0000000000a2';
+export const IRIS: Row = {
+  id: IRIS_ID,
+  name: 'Iris West',
+  displayName: 'Iris',
+  email: 'i@x.test',
+  active: true,
+};
 /** In a source list but not in the replica. */
 export const UNHELD = '0192f0c1-7e5a-7b3c-9d4e-0000000000b9';
 
@@ -75,7 +85,9 @@ export class FakeApp extends AppModel {
   readonly dispatched: Dispatched[] = [];
   /** The teams the page opened (`store.openTeam`), in order. */
   readonly opened: string[] = [];
-  readonly issues: Row[];
+  readonly issues: IObservableArray<Row>;
+  /** The store's unconfirmed mutations (`store.pending`), observable. */
+  readonly pending = observable.array<{ op: string }>([], { deep: false });
 
   constructor(options: {
     issues: readonly Row[];
@@ -84,10 +96,17 @@ export class FakeApp extends AppModel {
     labels?: readonly Row[];
     /** The store's `content` (`content-stub.ts`); `NO_CONTENT` by default. */
     content?: unknown;
+    /** More users (content rows name users by uuid: `IRIS`). */
+    users?: readonly Row[];
+    /** How a dispatch ends; confirmed by default. */
+    answer?: (op: string, input: unknown) => Promise<MutationOutcome>;
   }) {
     const unused = () => Promise.reject(new Error('unused'));
     super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
-    this.issues = options.issues.map((row) => observable({ ...row }));
+    this.issues = observable.array(
+      options.issues.map((row) => observable({ ...row })),
+      { deep: false },
+    );
     const teams = options.teams ?? [teamRow];
     const byModel = new Map<unknown, readonly Row[]>([
       [Team, teams],
@@ -102,6 +121,7 @@ export class FakeApp extends AppModel {
             email: 'a@x.test',
             active: true,
           },
+          ...(options.users ?? []),
         ],
       ],
       [
@@ -117,10 +137,11 @@ export class FakeApp extends AppModel {
       status: 'ready',
       connection: 'online',
       rejections: [],
+      pending: this.pending,
       content: options.content ?? NO_CONTENT,
       dispatch: (op: { name: string }, input: unknown) => {
         this.dispatched.push({ op: op.name, input });
-        return Promise.resolve({ status: 'confirmed' });
+        return options.answer?.(op.name, input) ?? Promise.resolve({ status: 'confirmed' });
       },
       openTeam: (teamId: string) => {
         this.opened.push(teamId);
@@ -140,6 +161,13 @@ export class FakeApp extends AppModel {
     const row = this.issues.find((r) => r['id'] === id);
     if (row === undefined) throw new Error('no such issue');
     runInAction(() => Object.assign(row, change));
+  }
+
+  /** The issue leaves the replica (a delete or archive packet, or an optimistic delete). */
+  removeIssue(id: string): void {
+    runInAction(() => {
+      this.issues.replace(this.issues.filter((row) => row['id'] !== id));
+    });
   }
 
   override get store(): SyncStore | null {
@@ -250,7 +278,10 @@ export async function mountIssuePage(options: {
           <ShellContext value={new ShellStore(null)}>
             <TargetContext value={new TargetStore()}>
               <ShortcutProvider bindings={ALL_KEYS}>
-                <RouterProvider router={router} />
+                {/* The shell's overlays provide it; the comment cards' tooltips need it. */}
+                <TooltipProvider>
+                  <RouterProvider router={router} />
+                </TooltipProvider>
               </ShortcutProvider>
             </TargetContext>
           </ShellContext>

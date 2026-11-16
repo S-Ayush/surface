@@ -112,6 +112,8 @@ export class FakeServer {
   readonly reactions = observable.array<Row>([], { deep: false });
   readonly drafts = observable.array<Row>([], { deep: false });
   readonly issues = observable.array<Row>([], { deep: false });
+  /** The issue's history entries (PLAN-012 S4b: the activity stream interleaves them). */
+  readonly history = observable.array<Row>([], { deep: false });
   readonly contentState = observable.box<'loading' | 'ready' | 'offline'>('ready');
   /** The refusal the next dispatch of an operation gets (consumed once). */
   readonly refusals = new Map<string, string>();
@@ -257,7 +259,11 @@ export class FakeServer {
       openTeam: () => undefined,
       content: {
         state: () => this.contentState.get(),
-        rows: () => ({ Comment: this.comments.slice(), Reaction: this.reactions.slice() }),
+        rows: () => ({
+          Comment: this.comments.slice(),
+          Reaction: this.reactions.slice(),
+          IssueHistory: this.history.slice(),
+        }),
         open: () => ({ release: () => undefined }),
       },
       pool: {
@@ -351,6 +357,7 @@ export async function mountComments(
     comments?: readonly Row[];
     reactions?: readonly Row[];
     drafts?: readonly Row[];
+    history?: readonly Row[];
     issue?: Row;
     hash?: string;
     state?: 'loading' | 'ready' | 'offline';
@@ -362,6 +369,7 @@ export async function mountComments(
     server.comments.replace([...(options.comments ?? seedComments())]);
     server.reactions.replace([...(options.reactions ?? [])]);
     server.drafts.replace([...(options.drafts ?? [])]);
+    server.history.replace([...(options.history ?? [])]);
     server.issues.replace([
       options.issue ?? issueRow(ISSUE_A, 42, { assigneeId: null, creatorId: ME }),
     ]);

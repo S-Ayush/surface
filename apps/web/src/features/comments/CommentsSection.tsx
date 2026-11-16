@@ -1,20 +1,20 @@
-// The comments of the issue page (SPEC-013 §3, §7; PLAN-013 S5): the timeline of threads and the
-// comment box, in the issue page's `comments` slot.
+// The issue page's activity and comments (SPEC-012 §3.4 item 4, SPEC-013 §3, §7; PLAN-013 S5,
+// PLAN-012 S4b), in the issue page's `comments` slot: the activity stream (history lines and
+// comment threads interleaved by time, `ActivityStream`) and the comment box at its end.
 //
-// Seam for PLAN-012 S4b: the timeline here holds only comments. S4b's activity stream interleaves
-// history lines with the top-level comments "by time" and adds "N earlier": it takes `buildThreads`
-// (model.ts) and renders `ThreadView` for each comment entry, or mounts this section after its own
-// stream and drops the empty `Activity` section. The read-only view of an archived or deleted
-// issue (comments from the server) is S4b's too; this section hides every write control when the
-// replica holds the issue not live (D10) but only ever shows comments the replica holds.
+// In the read-only view of an archived or deleted issue (or one that left the replica while open)
+// the page provides the server-backed content (`ServerContentContext`): the same stream, read
+// from one `content.peek` answer, with every write control hidden (D10).
 import type { DocNodeJSON } from '@surface/domain';
-import { useIssueContent } from '@surface/sync-react';
 import { Skeleton, toast } from '@surface/ui';
 import { useLocation } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
 import { copyText } from '../members/reset-link.js';
 import { docToMarkdown } from '@surface/editor/schema';
 import { useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
+import { activityItems, historyRows, type HistoryRow } from '../issues/activity-model.js';
+import { ActivityStream } from '../issues/ActivityStream.js';
+import { useIssueContentView } from '../issues/server-issue.js';
 import { CommentBox } from './CommentBox.js';
 import { CommentTarget } from './CommentTarget.js';
 import { CommentsEnvContext, type CommentRequest, type CommentsEnv } from './env.js';
@@ -37,17 +37,21 @@ import styles from './comments.module.css';
 type SlotProps = { readonly issueId: string };
 
 export const COMMENTS_OFFLINE_MESSAGE = "Comments are available when you're back online.";
+/** The server-backed read failed while online (the read-only view asks again on focus). */
+export const ACTIVITY_FAILED_MESSAGE = "Couldn't load the activity. Try again in a moment.";
 /** SPEC-013 §7: a comment link highlights its comment for this long. */
 export const HIGHLIGHT_MS = 2000;
 
 export function CommentsSection({ issueId }: SlotProps) {
   const world = useCommentWorld(issueId);
-  const content = useIssueContent(issueId);
+  const content = useIssueContentView(issueId);
   const now = useNow();
 
   const comments = useMemo(() => commentRows(content.rows['Comment']), [content.rows]);
   const reactions = useMemo(() => reactionRows(content.rows['Reaction']), [content.rows]);
   const threads = useMemo(() => buildThreads(comments), [comments]);
+  const history = useMemo(() => historyRows(content.rows['IssueHistory']), [content.rows]);
+  const items = useMemo(() => activityItems(history, threads), [history, threads]);
 
   const [request, setRequest] = useState<CommentRequest | undefined>(undefined);
   const counter = useRef(0);
@@ -102,7 +106,13 @@ export function CommentsSection({ issueId }: SlotProps) {
   }, [highlightId]);
 
   const { store, me, isAdmin, userName, issue } = world;
-  const readOnly = issue !== undefined && issue.lifecycle !== 'live';
+  // SPEC-011 §4.4: the actor's name from the replica; the system's own lines don't use it.
+  const actorName = useCallback(
+    (entry: HistoryRow) => (entry.actorId === null ? 'Surface' : userName(entry.actorId)),
+    [userName],
+  );
+  // Server-backed content is an issue the replica doesn't hold live: read-only (SPEC-012 §3.4 item 8).
+  const readOnly = content.server || (issue !== undefined && issue.lifecycle !== 'live');
   const identifier = issue?.identifier ?? null;
   const actions = useMemo(() => (store === null ? null : commentActionsFor(store)), [store]);
 
@@ -191,19 +201,21 @@ export function CommentsSection({ issueId }: SlotProps) {
         </div>
       )}
       {content.state === 'offline' && <p className={styles.notice}>{COMMENTS_OFFLINE_MESSAGE}</p>}
+      {content.state === 'failed' && <p className={styles.notice}>{ACTIVITY_FAILED_MESSAGE}</p>}
       {content.state === 'ready' && (
         <CommentsEnvContext value={env}>
-          {threads.length > 0 && (
-            <ol className={styles.timeline} aria-label="Comment threads">
-              {threads.map((thread) => (
-                <ThreadView
-                  key={thread.root.id}
-                  thread={thread}
-                  reactionsOf={(commentId) => reactionsOf(reactions, commentId)}
-                />
-              ))}
-            </ol>
-          )}
+          <ActivityStream
+            items={items}
+            actorName={actorName}
+            now={now}
+            renderThread={(thread) => (
+              <ThreadView
+                key={thread.root.id}
+                thread={thread}
+                reactionsOf={(commentId) => reactionsOf(reactions, commentId)}
+              />
+            )}
+          />
           {!readOnly && <CommentBox issueId={issueId} store={store} actions={actions} />}
         </CommentsEnvContext>
       )}

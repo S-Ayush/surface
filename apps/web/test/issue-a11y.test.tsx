@@ -4,7 +4,8 @@
 // PLAN-012 S7a (SPEC-012 §7.4, AC-18, AC-19): the accessibility contract of what is on `main`:
 // grid roles and names, pill names, the live region, and the composer's focus trap and return.
 // axe itself runs on the stories (`pnpm --filter @surface/ui test:storybook`, local DoD). The
-// activity stream's `article` items are PLAN-012 S4b and PLAN-013 S5 (not built yet).
+// activity stream's `article` items (actor and time in each label) are pinned in
+// `issue-activity.test.tsx` (PLAN-012 S4b) and the comment cards' in the comment tests.
 import { overlayManager } from '@surface/ui';
 import { act } from 'react';
 import { renderToString } from 'react-dom/server';

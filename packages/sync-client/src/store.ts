@@ -41,7 +41,7 @@ import type { TeamLoadState } from './subscriptions.js';
 import { TeamSubscriptions } from './subscriptions.js';
 import type { BootstrapProgress, FetchLike } from './bootstrap.js';
 import { ClientOutdatedError, bootstrap } from './bootstrap.js';
-import type { ContentHandle, ContentLoadState } from './content.js';
+import type { ContentHandle, ContentLoadState, ContentPeek } from './content.js';
 import {
   CONTENT_CACHE_LIMIT,
   ContentHydration,
@@ -200,6 +200,11 @@ export interface ContentAccess {
   prefetchList(slot: string, issueIds: readonly string[], limit?: number): void;
   /** The pointer rests on an issue: prefetched after 150 ms. Call the result when it leaves. */
   prefetchOnHover(issueId: string): () => void;
+  /**
+   * The issue's content read once from the server, stored nowhere (PLAN-012 S4b): the read-only
+   * view of an archived or deleted issue, which the replica doesn't hold.
+   */
+  peek(issueId: string): Promise<ContentPeek>;
 }
 
 /** Where the replica position stands after a start or resync. */
@@ -433,6 +438,7 @@ export class SyncStore {
       prefetch: (issueIds) => content.prefetch(issueIds),
       prefetchList: (slot, issueIds, limit) => this.#prefetch.list(slot, issueIds, limit),
       prefetchOnHover: (issueId) => this.#prefetch.hover(issueId),
+      peek: (issueId) => content.peek(issueId),
     };
   }
 

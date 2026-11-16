@@ -1,11 +1,11 @@
 // The issue's own reactions, under its description (SPEC-013 §3.4, D8; the page's `reactions` slot).
 // Chips and **Add reaction** from the design system, on the issue's `Reaction` rows (`commentId`
 // null). It also answers the command **Add reaction…** when the issue is the target.
-import { useIssueContent } from '@surface/sync-react';
 import { ReactionBar } from '@surface/ui';
 import { use, useMemo, useState } from 'react';
 import { TargetContext } from '../../command-menu/context.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
+import { useIssueContentView } from '../issues/server-issue.js';
 import { loadEmojiLazy, useEmojiNames } from './editor-host.js';
 import { reactionChips, reactionRows, reactionsOf } from './model.js';
 import { commentActionsFor, useCommentWorld } from './useComments.js';
@@ -16,7 +16,8 @@ type SlotProps = { readonly issueId: string };
 
 export function IssueReactions({ issueId }: SlotProps) {
   const { store, me, userName, issue } = useCommentWorld(issueId);
-  const content = useIssueContent(issueId);
+  // The server-backed answer in the read-only view (PLAN-012 S4b), else the replica's.
+  const content = useIssueContentView(issueId);
   const targets = use(TargetContext);
   const [pickerOpen, setPickerOpen] = useState(false);
   const rows = useMemo(
@@ -25,7 +26,7 @@ export function IssueReactions({ issueId }: SlotProps) {
   );
   const names = useEmojiNames(rows.length > 0);
   const ready = content.state === 'ready';
-  const readOnly = issue !== undefined && issue.lifecycle !== 'live';
+  const readOnly = content.server || (issue !== undefined && issue.lifecycle !== 'live');
 
   // "Add reaction…" with the issue as the target opens this picker; a focused comment's own
   // command (`useCommentCommands`) answers when a comment is.

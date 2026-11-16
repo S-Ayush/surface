@@ -66,7 +66,7 @@ export type { TeamLoadState } from './subscriptions.js';
 export type { PartialLoading } from './partial.js';
 // Per-issue content (SPEC-011 §5.3, §5.4, PLAN-011 S5b): `store.content` and its refusal offline.
 export { ContentLoadFailedError, ContentUnavailableError } from './content.js';
-export type { ContentHandle, ContentLoadState } from './content.js';
+export type { ContentHandle, ContentLoadState, ContentPeek } from './content.js';
 export type { ContentAccess } from './store.js';
 // Content prefetch (SPEC-011 §5.4, PLAN-011 S7): how many issues the views ask for.
 export { PREFETCH_ASSIGNED, PREFETCH_LIST_ROWS } from './prefetch.js';

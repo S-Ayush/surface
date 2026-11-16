@@ -77,8 +77,8 @@ export async function loadMissingIssue(
       return { kind: 'in-replica' };
     }
   }
-  // TODO(PLAN-011 S5a/S4c): server-backed read-only view. The row, description, attachments and
-  // reactions come from this answer and the activity from `content.peek`; for now the row alone.
+  // The server-backed read-only view (§3.4 item 8): the row and description from this answer; the
+  // page reads the activity, comments and reactions with `content.peek` (`server-issue.ts`).
   return { kind: 'remote', view: issueViewFromOutput(issue, deps.pool) };
 }
 
@@ -133,6 +133,11 @@ export type IssueSourceInputs = {
   readonly last: IssueView | undefined;
   /** The server's answer, once the loader has one; undefined while it hasn't asked or waits. */
   readonly loaded: IssueLoadResult | undefined;
+  /**
+   * This page deleted the issue (its `lastDelete` slot holds it): until the server answers, the
+   * last row shows as deleted, so the page stays open in the deleted state (PLAN-012 S6 handoff).
+   */
+  readonly deletedHere?: boolean;
 };
 
 /**
@@ -141,7 +146,9 @@ export type IssueSourceInputs = {
  * while open keeps showing its last row, read-only, until the server answers (E3).
  */
 export function chooseIssueSource(inputs: IssueSourceInputs): IssueSource {
-  const { replica, rejected, last, loaded } = inputs;
+  const { replica, rejected, last: kept, loaded, deletedHere = false } = inputs;
+  const last =
+    kept !== undefined && deletedHere ? { ...kept, lifecycle: 'deleted' as const } : kept;
   if (replica !== undefined) {
     return { kind: 'view', view: replica, readOnly: replica.lifecycle !== 'live' };
   }

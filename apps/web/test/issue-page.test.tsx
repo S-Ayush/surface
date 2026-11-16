@@ -86,6 +86,7 @@ class FakeApp extends AppModel {
       status: 'ready',
       connection: 'online',
       rejections: rows.rejections ?? [],
+      pending: [],
       content: NO_CONTENT,
       pool: {
         all: (model: unknown) => byModel.get(model) ?? [],

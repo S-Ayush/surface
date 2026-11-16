@@ -528,11 +528,12 @@ export class FakeHub {
   contentSnapshot(parents: readonly ContentParent[]): ContentFrame[] {
     // In request order, as the server's `ORDER BY array_position` (PLAN-011 S6), cut to the
     // budget: whole parents while they fit, the first always.
-    // With the team world on, a live task is a parent too (as an Issue is, PLAN-011 S5b): visible
-    // when its squad is public or the user is a member.
+    // With the team world on, a task is a parent too (as an Issue is, PLAN-011 S5b): visible
+    // when its squad is public or the user is a member. Archived and deleted tasks are answered
+    // too, as the server answers archived and deleted issues (PLAN-011 S5a; `content.peek`).
     const visibleTask = (taskId: string) => {
       const task = this.tasks.get(taskId);
-      if (task === undefined || !this.#live(task)) return false;
+      if (task === undefined) return false;
       const team = String(task['teamId']);
       return !this.isPrivate(team) || this.isMember(USER_ID, team);
     };

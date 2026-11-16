@@ -4,10 +4,12 @@
 import {
   COLOR_HUES,
   isPriority,
+  isDocJson,
   isValidEstimate,
   issueIdentifier,
   labelsOf,
   type ColorHue,
+  type DocNodeJSON,
   type EstimateConfig,
   type Priority,
   type StatusCategory,
@@ -51,6 +53,11 @@ export type IssueView = {
    * (a read-only view of an issue of a team the user isn't in), so no hint can be worked out.
    */
   readonly estimateConfig: EstimateConfig | null;
+  /**
+   * The description, only on an `issue.get` answer (the read-only view, PLAN-012 S4b). A replica
+   * row has none: the live page reads it from the issue's content.
+   */
+  readonly description?: DocNodeJSON;
 };
 
 export function isColorHue(value: string): value is ColorHue {
@@ -147,6 +154,7 @@ export function issueViewFromOutput(output: IssueOutput, pool?: ReadonlyPool): I
             extended: team.estimateExtended,
             allowZero: team.estimateAllowZero,
           },
+    ...(isDocJson(output.description.json) ? { description: output.description.json } : {}),
   };
 }
 

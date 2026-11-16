@@ -74,6 +74,23 @@ describe('subscriptions', () => {
     expect(store.followedTeams.has(id(3))).toBe(true);
   });
 
+  it('serves the issue page’s link open: openTeam, then whenTeamLoaded, then the row is local (AC-28, E27)', async () => {
+    // What `storeTeamSubscription` (apps/web issue-loader.ts) does for an issue of a public team
+    // the user isn't in, after `issue.get` answered it live.
+    const hub = world();
+    const { store } = await started(hub);
+    expect(store.pool.get('Task', id(140))).toBeUndefined();
+    store.openTeam(id(4));
+    expect(await store.whenTeamLoaded(id(4))).toBe('ready');
+    expect(store.pool.get('Task', id(140))).toBeDefined();
+    // Offline, a team never loaded can't be: the page shows "Available when online".
+    hub.last.close();
+    await until(() => store.connection === 'offline');
+    store.openTeam(id(5));
+    expect(await store.whenTeamLoaded(id(5))).toBe('offline');
+    expect(store.pool.get('Task', id(150))).toBeUndefined();
+  });
+
   it('ignores a private team and a member team: nothing to subscribe', async () => {
     const hub = world();
     const { store } = await started(hub);
