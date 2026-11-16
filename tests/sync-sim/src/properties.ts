@@ -526,7 +526,8 @@ export const lifecycleConvergence: Property = {
     );
     const comments = await server.comments();
     const reactions = await server.reactions();
-    const deleted = namedBy(outcome, 'issue.delete');
+    // Archived like deleted: its content returns only when the issue is opened again (§5.3).
+    const deleted = new Set([...namedBy(outcome, 'issue.delete'), ...world.autoArchived]);
     // As `commentConvergence`: the live issues open in every tab first (PLAN-011 S5b).
     const liveIds = world.issueIds.filter((id) => live[id] !== undefined);
     // A page left open across its issue's delete and restore doesn't load the content again (the

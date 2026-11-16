@@ -18,6 +18,8 @@ import { createEmailQueue, startEmailWorker } from '../mail/job.js';
 import type { SmtpSettings } from '../mail/smtp.js';
 import { pruneSyncLog, SYNC_LOG_RETENTION_DAYS } from '../sync/repo.js';
 import { registerDailyJob } from './daily-batch.js';
+import { autoArchiveJob, autoArchiveMetrics, pgAutoArchiveDb } from './auto-archive.js';
+import { autoCloseJob, autoCloseMetrics, pgAutoCloseDb } from './auto-close.js';
 import { fileJobs } from './files.js';
 import { pgTrashDb, trashPurgeJob, trashPurgeMetrics } from './trash-purge.js';
 
@@ -40,6 +42,10 @@ export const QUEUES = {
   // transaction of a few deletes (about 0.1 to 0.3 s), so 10 to 25 minutes. Two hours is several
   // full runs; a run still active then is stuck, and expiring it aborts its loop.
   trashPurge: { name: 'trash-purge', cron: '53 3 * * *', expireInSeconds: 2 * 60 * 60 },
+  /** Archives closed issues past their team's period (SPEC-015 §6.3): daily, with catch-up. */
+  autoArchive: { name: 'auto-archive', cron: '29 3 * * *', expireInSeconds: 2 * 60 * 60 },
+  /** Closes stale issues in teams with auto-close on (SPEC-015 §6.3): daily, with catch-up. */
+  autoClose: { name: 'auto-close', cron: '17 3 * * *', expireInSeconds: 2 * 60 * 60 },
 } as const;
 
 export interface Jobs {
@@ -195,6 +201,28 @@ export async function registerJobs(
       clock,
       log: jobLog,
       ...(metrics ? { metrics: trashPurgeMetrics(metrics, trashDb, jobLog, clock) } : {}),
+    }),
+    { clock, log: jobLog, pollingIntervalSeconds },
+  );
+  await registerDailyJob(
+    boss,
+    autoCloseJob(QUEUES.autoClose, {
+      db: pgAutoCloseDb(pool),
+      executor,
+      clock,
+      log: jobLog,
+      ...(metrics ? { metrics: autoCloseMetrics(metrics) } : {}),
+    }),
+    { clock, log: jobLog, pollingIntervalSeconds },
+  );
+  await registerDailyJob(
+    boss,
+    autoArchiveJob(QUEUES.autoArchive, {
+      db: pgAutoArchiveDb(pool),
+      executor,
+      clock,
+      log: jobLog,
+      ...(metrics ? { metrics: autoArchiveMetrics(metrics) } : {}),
     }),
     { clock, log: jobLog, pollingIntervalSeconds },
   );

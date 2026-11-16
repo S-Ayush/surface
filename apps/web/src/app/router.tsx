@@ -342,6 +342,11 @@ const routeTree = rootRoute.addChildren([
           path: '$key/estimates',
           component: settingsScreen(SETTINGS.teamEstimates),
         }),
+        createRoute({
+          getParentRoute: () => teamsRoute,
+          path: '$key/automations',
+          component: settingsScreen(SETTINGS.teamAutomations),
+        }),
       ]),
     ]),
   ]),

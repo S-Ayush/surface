@@ -62,6 +62,8 @@ const PRUNES = [
   QUEUES.filesCleanup.name,
   QUEUES.filesSweep.name,
   QUEUES.trashPurge.name,
+  QUEUES.autoArchive.name,
+  QUEUES.autoClose.name,
 ];
 
 describe('registerJobs', () => {

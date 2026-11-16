@@ -1,0 +1,52 @@
+/* The team Automations page (SPEC-015 §3.2). Tokens only. */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  max-width: var(--content-max-width);
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-md-size);
+  font-weight: var(--weight-medium);
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.fieldLabel {
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+}
+
+.select {
+  padding: var(--space-4) var(--space-8);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm-size);
+  background: var(--bg-panel);
+  border: var(--border-width) solid var(--border-control);
+  border-radius: var(--radius-sm);
+}
+
+.select:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+}

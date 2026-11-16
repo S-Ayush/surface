@@ -6,6 +6,9 @@
 //   doesn't exist, by identifier and by id, and write nothing;
 // - an Admin outside SEC can't purge a deleted SEC issue (NOT_FOUND, E12), its delete and purge
 //   never reach an outsider's connection, and the job (the system actor) purges it;
+// - the `auto-archive` and `auto-close` jobs (the system actor, PLAN-015 S3) change a SEC issue
+//   in SEC's group only, never on an outsider's connection, and an Admin outside SEC can't read
+//   or change SEC's automations (`team.updateAutomations` is an unknown team);
 // - a SEC status or label named by id in an ENG issue's edit is as unknown as one that never
 //   existed;
 // - `issue.list`, `issue.count` and `issue.groupBy` never count SEC's issues or name its labels,
@@ -681,5 +684,74 @@ describe('purging a deleted SEC issue', () => {
     expect(await logLength()).toBe(before);
     // Zoe herself, an Admin of the workspace, may purge it: the key's teams are what hid it.
     expect(await ok('issue.purge', { issue: doomed }, zoeActor)).toEqual({ purged: true });
+  });
+});
+
+describe('the auto-archive and auto-close jobs in SEC', () => {
+  it('archive and close a SEC issue in SEC’s group only, and never reach an outsider’s connection', async () => {
+    const at = await head();
+    const outsider = connect('outsider', at);
+    const member = connect('member', at);
+    try {
+      const closed = uuidv7();
+      const stale = uuidv7();
+      await ok(
+        'issue.create',
+        { id: closed, team: 'SEC', title: 'Old secret', status: 'Done' },
+        samActor,
+      );
+      await ok('issue.create', { id: stale, team: 'SEC', title: 'Stale secret' }, samActor);
+      await ok('team.updateAutomations', { team: 'SEC', autoCloseMonths: 6 }, samActor);
+      // Due for the jobs: closed and last updated 13 months ago. Test setup, so the unlogged write
+      // is harmless: the checks below read the logged `A` and `U` that follow it.
+      await h.pool.query(
+        `UPDATE issues SET completed_at = now() - interval '13 months',
+                           updated_at = now() - interval '13 months'
+          WHERE id = ANY($1)`,
+        [[closed, stale]],
+      );
+      await ok('issue.autoArchive', { issue: closed }, systemActor());
+      await ok('issue.autoClose', { issue: stale }, systemActor());
+      const marker = uuidv7();
+      const secMarker = uuidv7();
+      await ok('issue.create', { id: marker, team: 'ENG', title: 'Marker' }, anaActor);
+      await ok('issue.create', { id: secMarker, team: 'SEC', title: 'Marker' }, samActor);
+      await eventually(() => outsider.text().includes(marker) && member.text().includes(secMarker));
+      for (const text of [closed, stale, 'Old secret', 'Stale secret']) {
+        expect(outsider.text(), text).not.toContain(text);
+      }
+      // The log holds each in SEC's group only (the member's socket takes Issue deltas only for
+      // a subscribed team, SPEC-011 §5.7, so what reaches it isn't what this checks).
+      const { rows } = await h.pool.query<{ action: string; model_id: string; groups: string[] }>(
+        `SELECT action, model_id, groups FROM sync_log
+          WHERE model = 'Issue' AND model_id = ANY($1) AND action IN ('A', 'U')
+          ORDER BY sync_id DESC LIMIT 2`,
+        [[closed, stale]],
+      );
+      expect(rows.map((r) => r.groups)).toEqual([[secGroup], [secGroup]]);
+      expect(rows.map((r) => r.action).sort()).toEqual(['A', 'U']);
+    } finally {
+      outsider.close();
+      member.close();
+    }
+  });
+
+  it('is an unknown team to an Admin outside SEC: team.updateAutomations writes nothing (E12)', async () => {
+    const before = await logLength();
+    const real = await failure(
+      'team.updateAutomations',
+      { team: 'SEC', autoArchiveMonths: 3 },
+      zoeActor,
+      ['SEC'],
+    );
+    const none = await failure(
+      'team.updateAutomations',
+      { team: 'ZZZ', autoArchiveMonths: 3 },
+      zoeActor,
+      ['ZZZ'],
+    );
+    expect(real).toMatchObject({ code: 'NOT_FOUND' });
+    expect(real).toEqual(none);
+    expect(await logLength()).toBe(before);
   });
 });

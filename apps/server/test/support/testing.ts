@@ -17,6 +17,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
+import { systemActor } from '@surface/domain';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
 import { pino, type Logger } from 'pino';
@@ -180,6 +181,14 @@ export interface TestServer {
    * null, so the lifecycle property tells live issues from archived and deleted ones.
    */
   issueLifecycles(): Promise<IssueLifecycleRow[]>;
+  /**
+   * Makes a live issue due for auto-archive and runs `issue.autoArchive` on it as the system
+   * actor, as the job does (PLAN-015 S3): its status becomes the team's first Completed one,
+   * closed and last updated 13 months ago (the default period is 6). A test-only raw write, so
+   * the issue's replicas are stale until the archive's `A` removes it. Returns false, doing
+   * nothing, for an issue that is not live or not there.
+   */
+  autoArchive(issueId: string): Promise<boolean>;
   /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
@@ -489,6 +498,26 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
           const issue = IssueLifecycleDbRow.parse(row);
           return { id: issue.id, archivedAt: issue.archived_at, deletedAt: issue.deleted_at };
         });
+      },
+      autoArchive: async (issueId) => {
+        const running = server;
+        if (running === undefined) throw new Error('The test server is stopped.');
+        const aged = await db.query(
+          `UPDATE issues i
+              SET status_id = s.id, completed_at = now() - interval '13 months',
+                  canceled_at = NULL, updated_at = now() - interval '13 months'
+             FROM (SELECT id, team_id FROM workflow_statuses WHERE category = 'completed') s
+            WHERE i.id = $1 AND i.archived_at IS NULL AND i.deleted_at IS NULL
+              AND s.team_id = i.team_id`,
+          [issueId],
+        );
+        if (aged.rowCount === 0) return false;
+        const result = await running.executor.execute(
+          'issue.autoArchive',
+          { issue: issueId },
+          systemActor(),
+        );
+        return result.ok;
       },
       events: async (type) => {
         const { rows } = await db.query(

@@ -11,6 +11,7 @@
  */
 import {
   issueIdentifier,
+  type IssueChangeSet,
   lifecycleOf,
   lifecycleRefusal,
   lockRefusal,
@@ -124,10 +125,10 @@ export function relogByIssueId(
 // History of lifecycle transitions (SPEC-015 §4.8)
 
 /** The history kinds of a lifecycle transition (SPEC-015 §4.8); never folded, `changes` empty. */
-export type LifecycleHistoryKind = 'deleted' | 'restored';
+export type LifecycleHistoryKind = 'deleted' | 'restored' | 'archived';
 
 /**
- * Writes the `deleted` or `restored` history entry of `issue`'s transition, in `ctx`'s
+ * Writes the `deleted`, `restored` or `archived` history entry of `issue`'s transition, in `ctx`'s
  * transaction, as `ctx.actor` (its kind and key). Nothing writes IssueHistory content until
  * PLAN-011 S6: its history writer (`issues/history.ts`) replaces this body with one insert through
  * `ctx.repo`, never folded, with empty `changes`. The handlers already call it with every argument.
@@ -138,5 +139,20 @@ export function writeLifecycleHistory(
   _issue: ModelRow<'Issue'>,
 ): Promise<void> {
   // TODO(PLAN-011 S6): insert the IssueHistory row through `ctx.repo`.
+  return Promise.resolve();
+}
+
+/**
+ * Writes the `updated` history entry of an auto-close (SPEC-015 §4.8): the status change, actor =
+ * system, shown as "Issue was automatically closed". A seam like `writeLifecycleHistory`: PLAN-011
+ * S6's history writer replaces this body. `changes` is the same change set the `issue.updated`
+ * event carries (`statusId`, and no other field).
+ */
+export function writeAutoCloseHistory(
+  _ctx: HandlerContext,
+  _issue: ModelRow<'Issue'>,
+  _changes: IssueChangeSet,
+): Promise<void> {
+  // TODO(PLAN-011 S6): insert the IssueHistory row through `ctx.repo`, never folded.
   return Promise.resolve();
 }

@@ -37,6 +37,8 @@ import { setReaction } from '../src/handlers/reactions/core.js';
 import { deleteLabel, type LabelAccess } from '../src/handlers/labels/core.js';
 import type { Repo } from '../src/sync/repo.js';
 import { deleteIssue, restoreIssue } from '../src/handlers/issues/lifecycle-core.js';
+import { autoArchiveIssue, autoCloseIssue } from '../src/handlers/issues/auto-core.js';
+import { memoryAuto } from './support/memory-auto.js';
 import { purgeIssue } from '../src/issues/purge.js';
 import { memoryComments } from './support/memory-comments.js';
 import { ADA_ID, memoryIssues, NOW, type MemoryIssues } from './support/memory-issues.js';
@@ -218,6 +220,22 @@ const CASES: Readonly<Record<string, Case>> = {
     const at = due.getTime() > now.getTime() ? due : now;
     return purgeIssue(m.purge({ actor: systemActor(), now: at }), issue.id);
   },
+  // PLAN-015 S3: the jobs' operations, as the system actor, on an issue due under a 1-month period
+  // (closed 2026-10-01 for the archive; open and last updated then for the close). A job counts the
+  // CONFLICT of a row listed `skipped` as skipped.
+  'issue.autoArchive': (m, issue, now) => {
+    m.issues.set(issue.id, {
+      ...issue,
+      statusId: m.status(m.eng, 'Done').id,
+      completedAt: EARLIER,
+    });
+    const auto = memoryAuto(m, { now, settings: { autoArchiveMonths: 1 } });
+    return autoArchiveIssue(auto.ctx, { issueId: issue.id, teamId: issue.teamId });
+  },
+  'issue.autoClose': (m, issue, now) => {
+    const auto = memoryAuto(m, { now, settings: { autoCloseMonths: 1 } });
+    return autoCloseIssue(auto.ctx, { issueId: issue.id, teamId: issue.teamId });
+  },
   'comment.create': commentCase((ctx, t) =>
     createComment(ctx, { id: randomUUID(), issueId: t.issueId, body: commentBody }),
   ),
@@ -285,8 +303,6 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
       'attachment.delete': 'PLAN-014 S4a',
       'attachment.setPreview': 'PLAN-014 S4b',
       'files-cleanup': 'PLAN-014 S4a',
-      'issue.autoArchive': 'PLAN-015 S3',
-      'issue.autoClose': 'PLAN-015 S3',
     });
   });
 
@@ -317,7 +333,17 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
         if (firstWrite >= 0) expect(m.calls.indexOf('lockIssue')).toBeLessThan(firstWrite);
         const listed = rule[state];
         // Before purgeAfter (now) a deleted issue is restored; the boundary case follows.
-        expect(result).toBe(listed === 'toLiveBeforePurgeAfter' ? 'toLive' : listed);
+        // A job counts a CONFLICT as `skipped` (§4.3); a purge's date check reads the same.
+        const expected =
+          listed === 'toLiveBeforePurgeAfter'
+            ? 'toLive'
+            : listed === 'skipped'
+              ? 'conflict'
+              : // The table's "applies (live issues only)" for the archive is the move to Archived.
+                name === 'issue.autoArchive' && listed === 'applies'
+                ? 'toArchived'
+                : listed;
+        expect(result).toBe(expected);
         if (result === 'conflict' || result === 'noop') {
           expect(m.writes).toEqual([]);
           expect(m.events).toEqual([]);
@@ -365,6 +391,13 @@ const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
   'reaction.set': { comment: COMMENT_ID, emoji: '👍', reacted: true },
   'label.delete': { label: LABEL_ID },
 };
+
+/**
+ * The jobs' operations read the team's settings and a status `FOR SHARE` before the issue lock
+ * (SPEC-011 §4.8), and a scripted row per table can't answer both a status's category and the
+ * Canceled one: `automations-handlers.test.ts` runs their handlers on SQL with its own script.
+ */
+const OWN_SQL_TEST = new Set(['issue.autoArchive', 'issue.autoClose']);
 
 const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const snakeRow = (row: Record<string, unknown>) =>
@@ -478,27 +511,31 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
 describe('each built row’s registered handler locks the issue first (AC-1, SPEC-011 §4.8)', () => {
   it('has a handler input for every built operation row', () => {
     for (const [name, rule] of built) {
-      if (rule.kind === 'operation') expect(HANDLER_INPUTS[name], name).toBeDefined();
+      if (rule.kind === 'operation' && !OWN_SQL_TEST.has(name)) {
+        expect(HANDLER_INPUTS[name], name).toBeDefined();
+      }
     }
   });
 
-  describe.each(built.filter(([, rule]) => rule.kind === 'operation' && rule.mode !== 'cascade'))(
-    '%s',
-    (name) => {
-      it.each(ISSUE_LIFECYCLES)(
-        'takes the issue row lock before reading the issue otherwise or writing (%s issue)',
-        async (state) => {
-          const statements = await runHandler(name, state);
-          const texts = statements.map((statement) => statement.text);
-          const lock = texts.findIndex((text) => text.includes('from "issues"'));
-          expect(lock, texts.join('\n')).toBeGreaterThanOrEqual(0);
-          expect(texts[lock]).toMatch(/^select .* from "issues" where .* for update$/);
-          const firstWrite = texts.findIndex((text) => text.startsWith('repo.'));
-          if (firstWrite >= 0) expect(lock).toBeLessThan(firstWrite);
-        },
-      );
-    },
-  );
+  describe.each(
+    built.filter(
+      ([name, rule]) =>
+        rule.kind === 'operation' && rule.mode !== 'cascade' && !OWN_SQL_TEST.has(name),
+    ),
+  )('%s', (name) => {
+    it.each(ISSUE_LIFECYCLES)(
+      'takes the issue row lock before reading the issue otherwise or writing (%s issue)',
+      async (state) => {
+        const statements = await runHandler(name, state);
+        const texts = statements.map((statement) => statement.text);
+        const lock = texts.findIndex((text) => text.includes('from "issues"'));
+        expect(lock, texts.join('\n')).toBeGreaterThanOrEqual(0);
+        expect(texts[lock]).toMatch(/^select .* from "issues" where .* for update$/);
+        const firstWrite = texts.findIndex((text) => text.startsWith('repo.'));
+        if (firstWrite >= 0) expect(lock).toBeLessThan(firstWrite);
+      },
+    );
+  });
 
   // A cascade row's handler locks the issues in the repo's bulk path (`updateWhere` locks them in
   // ascending id, SPEC-011 §5.1), after the scope and label rows; its plain read of the ids comes

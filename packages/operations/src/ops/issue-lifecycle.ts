@@ -149,3 +149,35 @@ export const issuePurge = defineOperation({
   // the Issue stays absent, so any content the client held goes too (SPEC-011 §5.3).
   optimistic: () => undefined,
 });
+
+export const issueAutoArchive = defineOperation({
+  name: 'issue.autoArchive',
+  kind: 'mutation',
+  domain: 'issue',
+  summary: 'Archive a closed issue (the auto-archive job)',
+  description:
+    'Archives one live issue that has been closed longer than its team’s auto-archive period. Only the auto-archive job calls it; nobody archives an issue by hand. Skips an issue that is no longer due. Name the issue by identifier, like ENG-42, or id.',
+  keywords: ['auto archive issue', 'archive closed issue', 'auto-archive job'],
+  input: z.object({ issue: IssueRef }),
+  output: IssueOutputSchema,
+  systemOnly: true,
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ issue: 'ENG-3' }],
+});
+
+export const issueAutoClose = defineOperation({
+  name: 'issue.autoClose',
+  kind: 'mutation',
+  domain: 'issue',
+  summary: 'Close a stale issue (the auto-close job)',
+  description:
+    'Moves one live, stale issue to its team’s auto-close status, with the usual completed or canceled timestamps. Only the auto-close job calls it. Skips an issue that is no longer stale. Name the issue by identifier, like ENG-42, or id.',
+  keywords: ['auto close issue', 'close stale issue', 'auto-close job'],
+  input: z.object({ issue: IssueRef }),
+  output: IssueOutputSchema,
+  systemOnly: true,
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ issue: 'ENG-3' }],
+});

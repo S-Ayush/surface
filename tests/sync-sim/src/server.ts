@@ -195,6 +195,12 @@ export interface IssueLifecycleState {
 export interface LifecycleServer extends CommentServer {
   /** Every stored issue's lifecycle, by id. A purged issue has no row, so no entry. */
   issueLifecycles(): Promise<Record<string, IssueLifecycleState>>;
+  /**
+   * Ages a live issue and runs `issue.autoArchive` on it as the system actor, like the job
+   * (PLAN-015 S3; `TestServer.autoArchive`). Queued behind the other server calls, so a later
+   * read sees it. Does nothing for an issue that is not live.
+   */
+  autoArchive(issueId: string): void;
 }
 
 export function isLifecycleServer(server: SimServer): server is LifecycleServer {

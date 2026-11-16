@@ -175,6 +175,55 @@ export function lifecycleRefusal(identifier: string, conflict: LifecycleConflict
 }
 
 // ---------------------------------------------------------------------------------------------
+// The automations' periods (SPEC-015 §3.2, §6.3)
+
+/** `at` plus `months` calendar months in UTC, clamping the day like Postgres (Jan 31 + 1 = Feb 28). */
+export function addMonthsUtc(at: Date, months: number): Date {
+  const result = new Date(at.getTime());
+  const day = result.getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + months);
+  const last = new Date(
+    Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  result.setUTCDate(Math.min(day, last));
+  return result;
+}
+
+const toDate = (value: Date | string | null | undefined): Date | undefined => {
+  if (value === null || value === undefined) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error(`Not a timestamp: ${String(value)}`);
+  return date;
+};
+
+/** The facts auto-archive and auto-close read about an issue (SPEC-015 §6.3). */
+export interface AutomationIssueFacts {
+  readonly completedAt: Date | string | null;
+  readonly canceledAt: Date | string | null;
+  readonly updatedAt: Date | string;
+}
+
+/**
+ * When a closed issue becomes due for auto-archive: `greatest(completedAt, canceledAt,
+ * updatedAt) + months` (§6.3). `updatedAt` makes a restored or edited issue wait a fresh period.
+ */
+export function autoArchiveDueAt(issue: AutomationIssueFacts, months: number): Date {
+  const times = [issue.completedAt, issue.canceledAt, issue.updatedAt].flatMap((value) => {
+    const date = toDate(value);
+    return date === undefined ? [] : [date.getTime()];
+  });
+  return addMonthsUtc(new Date(Math.max(...times)), months);
+}
+
+/** When an open issue becomes due for auto-close: `updatedAt + months` (§6.3, D18). */
+export function autoCloseDueAt(issue: { readonly updatedAt: Date | string }, months: number): Date {
+  const updated = toDate(issue.updatedAt);
+  if (updated === undefined) throw new Error('An issue has no updatedAt');
+  return addMonthsUtc(updated, months);
+}
+
+// ---------------------------------------------------------------------------------------------
 // The lifecycle rule table (SPEC-015 §4.3)
 
 /**
@@ -256,7 +305,6 @@ const AUTO = {
   archived: 'skipped',
   deleted: 'skipped',
   spec: 'SPEC-015',
-  pending: 'PLAN-015 S3',
 } as const;
 
 /**

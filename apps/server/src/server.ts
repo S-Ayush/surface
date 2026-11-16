@@ -63,6 +63,11 @@ export interface RunningServer {
   logger: Logger;
   /** Resolves when the server is ready; rejects with a StartupError otherwise. */
   ready: Promise<void>;
+  /**
+   * The app's executor, for the process's own jobs and for tests that run a system operation the
+   * way a job does (PLAN-015 S3). Throws before the app has built it.
+   */
+  executor: Pick<Executor, 'execute'>;
 }
 
 export async function startServer(
@@ -261,7 +266,13 @@ export async function startServer(
   // as an unhandled rejection. Awaiting `ready` still rejects.
   ready.catch(() => undefined);
 
-  return { app, lifecycle, pool, logger, ready };
+  const executor: RunningServer['executor'] = {
+    execute: (...args) => {
+      if (appExecutor === undefined) throw new Error('The app built no executor yet');
+      return appExecutor.execute(...args);
+    },
+  };
+  return { app, lifecycle, pool, logger, ready, executor };
 }
 
 /** `surface serve`: run until a signal arrives; exit 1 if startup fails. */

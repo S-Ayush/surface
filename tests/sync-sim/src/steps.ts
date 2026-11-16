@@ -33,7 +33,7 @@ import {
 import { Comment, Issue } from '@surface/domain/model';
 import type { Faults } from './network.js';
 import type { Random } from './random.js';
-import { isIssueServer, type IssueFixtures } from './server.js';
+import { isIssueServer, isLifecycleServer, type IssueFixtures } from './server.js';
 import type { Tab, World } from './world.js';
 
 /**
@@ -758,6 +758,7 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
     case 'issueDelete':
     case 'issueRestore':
     case 'issuePurge':
+    case 'issueAutoArchive':
       applyLifecycle(world, step);
       return;
     case 'wait':
@@ -829,7 +830,14 @@ export type LifecycleStep =
       readonly tab: number;
       readonly issue: number;
       readonly admin: boolean;
-    };
+    }
+  /**
+   * `issue.autoArchive` of an issue a step created, run by the system actor on the server, not
+   * from a tab (PLAN-015 S3): the server ages the issue first, so it is due, and does nothing for
+   * one that is not live. Then a restore (`issueRestore`) brings it back, equal to a fresh
+   * bootstrap.
+   */
+  | { readonly t: 'issueAutoArchive'; readonly issue: number };
 
 /**
  * Lifecycle interleavings: issues created, commented on and reacted to, deleted, restored and
@@ -885,6 +893,7 @@ export function lifecycleCase(): fc.Arbitrary<Case> {
         ),
       }),
     },
+    { weight: 3, arbitrary: fc.record({ t: fc.constant('issueAutoArchive'), issue: index }) },
     ...faultSteps.map((arbitrary) => ({
       weight: 1,
       arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
@@ -894,6 +903,13 @@ export function lifecycleCase(): fc.Arbitrary<Case> {
 }
 
 function applyLifecycle(world: World, step: LifecycleStep): void {
+  if (step.t === 'issueAutoArchive') {
+    const issue = pick(world.issueIds, step.issue);
+    if (issue === undefined || !isLifecycleServer(world.server)) return;
+    world.autoArchived.push(issue);
+    world.server.autoArchive(issue);
+    return;
+  }
   const ready = readyTabs(world.live);
   const admin = world.users[0];
   const from =

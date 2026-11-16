@@ -7,7 +7,9 @@
  * generated runs) and AC-10's purge part (a Member's purge is refused).
  *
  * The plan names `lifecycle.prop.test.ts`; the fake hub runs no operation handlers, so the suite
- * runs on the real server, like the comment suite. Auto-archive joins in PLAN-015 S3.
+ * runs on the real server, like the comment suite. PLAN-015 S3 adds `issueAutoArchive`: the system
+ * actor archives an aged issue (a restore brings it back), in the generated runs and the example
+ * at the bottom.
  */
 import fc from 'fast-check';
 import { describe, expect, inject, it } from 'vitest';
@@ -118,5 +120,67 @@ describe('the issue lifecycle against the real server', () => {
     for (const op of ['issue.delete', 'issue.restore', 'issue.purge']) {
       expect(confirmed.get(op) ?? 0, op).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * Auto-archive, then restore (PLAN-015 S3, AC-13): Alpha is aged and archived by the system actor
+ * while Beta stays live; every tab drops Alpha at the `A`, and the restore from another tab brings
+ * it back equal to a fresh bootstrap (the property's last check).
+ */
+const archiveExample: Case = {
+  seed: 11,
+  users: 2,
+  lateUsers: 0,
+  webLocks: true,
+  steps: [
+    { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+    { t: 'issueCreate', tab: 1, title: 'Beta', status: 'default', labels: [] },
+    { t: 'wait', ms: 3_000 },
+    { t: 'commentCreate', tab: 0, issue: 0, text: 'Before the archive' },
+    { t: 'wait', ms: 2_000 },
+    { t: 'issueAutoArchive', issue: 0 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueRestore', tab: 1, issue: 0 },
+    { t: 'wait', ms: 3_000 },
+  ],
+};
+
+describe('auto-archive against the real server (AC-13)', () => {
+  it('archives an aged issue for every tab and brings it back on restore, equal to a fresh bootstrap', async () => {
+    const servers = lifecycleServers();
+    const result = await simulate(
+      archiveExample,
+      { ...lifecycleConvergence.options, server: servers.server },
+      async (outcome) => {
+        await lifecycleConvergence.check(outcome);
+        const server = servers.last();
+        const lifecycles = Object.values((await server?.issueLifecycles()) ?? {});
+        return {
+          archivedEvents: ((await server?.events('issue.archived')) ?? []).length,
+          restores: outcome.world.dispatched
+            .filter((d) => d.op === 'issue.restore')
+            .map((d) => d.outcome?.status),
+          live: lifecycles.filter((s) => s.archivedAt === null && s.deletedAt === null).length,
+        };
+      },
+    );
+    // One `issue.archived` event, and both issues live again after the restore.
+    expect(result).toEqual({ archivedEvents: 1, restores: ['confirmed'], live: 2 });
+  });
+
+  it('the generated runs archive at least once', async () => {
+    const { server, last } = lifecycleServers();
+    let archived = 0;
+    await fc.assert(
+      fc.asyncProperty(lifecycleCase(), (simCase) =>
+        simulate(simCase, { ...lifecycleConvergence.options, server }, async (outcome) => {
+          await lifecycleConvergence.check(outcome);
+          archived += ((await last()?.events('issue.archived')) ?? []).length;
+        }),
+      ),
+      simParameters(),
+    );
+    expect(archived).toBeGreaterThan(0);
   });
 });

@@ -487,6 +487,13 @@ export class RealServer implements CommentServer, WorkflowServer, LifecycleServe
     );
   }
 
+  /** PLAN-015 S3: an aged issue archived by the system actor, like the `auto-archive` job. */
+  autoArchive(issueId: string): void {
+    void this.#serially('auto-archive an issue', () => this.#entry.autoArchive(issueId)).catch(
+      () => undefined,
+    );
+  }
+
   compactLog(): void {
     void this.#serially('compact the log', () => this.#entry.compactLog()).catch(() => undefined);
   }

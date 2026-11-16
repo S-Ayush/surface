@@ -31,6 +31,8 @@ export function teamOutput(row: ModelRow<'Team'>): TeamOutput {
     estimateAllowZero: row.estimateAllowZero,
     estimateCountUnestimatedAsOne: row.estimateCountUnestimatedAsOne,
     autoCloseStatusId: row.autoCloseStatusId,
+    autoArchiveMonths: row.autoArchiveMonths,
+    autoCloseMonths: row.autoCloseMonths,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

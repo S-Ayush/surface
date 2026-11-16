@@ -22,6 +22,9 @@ export type EstimateSettings = {
   estimateExtended?: boolean;
   estimateAllowZero?: boolean;
   estimateCountUnestimatedAsOne?: boolean;
+  autoArchiveMonths?: number;
+  autoCloseMonths?: number | null;
+  autoCloseStatusId?: string | null;
 };
 
 export const status = (id: string, name: string, category: string, position: string) => ({
@@ -89,6 +92,9 @@ export class EstimateApp extends AppModel {
       estimateExtended: false,
       estimateAllowZero: false,
       estimateCountUnestimatedAsOne: true,
+      autoArchiveMonths: 6,
+      autoCloseMonths: null,
+      autoCloseStatusId: null,
       groups: ['workspace'],
       createdAt: AT,
       updatedAt: AT,

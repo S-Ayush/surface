@@ -29,6 +29,9 @@ import teamSuggestKey from './teams/suggest-key.js';
 import teamUpdate from './teams/update.js';
 import teamSetDefaultStatus from './teams/set-default-status.js';
 import teamSetEstimates from './teams/set-estimates.js';
+import teamUpdateAutomations from './teams/update-automations.js';
+import issueAutoArchive from './issues/auto-archive.js';
+import issueAutoClose from './issues/auto-close.js';
 import userCreateResetLink from './account/create-reset-link.js';
 import userGet from './members/get.js';
 import userList from './members/list.js';
@@ -113,6 +116,7 @@ export const HANDLERS: readonly Handler[] = [
   labelDelete,
   teamSetDefaultStatus,
   teamSetEstimates,
+  teamUpdateAutomations,
   labelArchive,
   labelUnarchive,
   issueList,
@@ -124,6 +128,8 @@ export const HANDLERS: readonly Handler[] = [
   issueDelete,
   issueRestore,
   issuePurge,
+  issueAutoArchive,
+  issueAutoClose,
   draftSave,
   draftDiscard,
   commentList,

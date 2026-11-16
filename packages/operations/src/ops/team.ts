@@ -23,6 +23,7 @@ import {
   UserRef,
   WORKSPACE_GROUP,
   canonicalTimeZone,
+  comparePositions,
   teamKeyProblem,
   timeZoneProblem,
 } from '@surface/domain';
@@ -84,6 +85,10 @@ export const TeamSchema = z.object({
    * (SPEC-015 §3.2). PLAN-015 S3's `team.updateAutomations` sets it.
    */
   autoCloseStatusId: z.uuid().nullable(),
+  /** Automations (SPEC-015 §3.2): `team.updateAutomations` changes them. */
+  autoArchiveMonths: z.number().int(),
+  /** Null while auto-close is off. */
+  autoCloseMonths: z.number().int().nullable(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });
@@ -468,6 +473,98 @@ export const teamSetEstimates = defineOperation({
     const changes = Object.fromEntries(
       Object.entries(wanted).filter(([k, v]) => v !== undefined && saved[k] !== v),
     );
+    if (Object.keys(changes).length === 0) return;
+    store.patch('Team', teamId, { ...changes, updatedAt: store.now.toISOString() });
+  },
+});
+
+/** 1, 3, 6, 9 or 12 months (SPEC-015 §3.2, D15): the page offers nothing else. */
+const AutomationMonthsSchema = z.union([
+  z.literal(1),
+  z.literal(3),
+  z.literal(6),
+  z.literal(9),
+  z.literal(12),
+]);
+
+export const teamUpdateAutomations = defineOperation({
+  name: 'team.updateAutomations',
+  kind: 'mutation',
+  domain: 'team',
+  summary: 'Change a team’s auto-archive and auto-close settings',
+  description:
+    'Sets the months before closed issues are auto-archived (autoArchiveMonths: 1, 3, 6, 9 or 12; always on) and whether stale issues are auto-closed (autoCloseMonths: 1, 3, 6, 9, 12, or null for off). Turning auto-close on with no status uses 6 months and the first Canceled status. autoCloseStatus must be a Canceled status of the team. Takes effect at the next daily run.',
+  keywords: [
+    'auto archive',
+    'auto close stale issues',
+    'automations',
+    'archive closed issues after',
+  ],
+  input: z
+    .object({
+      team: TeamRef,
+      autoArchiveMonths: AutomationMonthsSchema.optional(),
+      autoCloseMonths: AutomationMonthsSchema.nullable().optional(),
+      autoCloseStatus: StatusRef.optional(),
+    })
+    .refine(
+      (v) =>
+        v.autoArchiveMonths !== undefined ||
+        v.autoCloseMonths !== undefined ||
+        v.autoCloseStatus !== undefined,
+      {
+        message: 'Give at least one of autoArchiveMonths, autoCloseMonths and autoCloseStatus',
+        path: ['autoArchiveMonths'],
+      },
+    ),
+  output: TeamSchema,
+  // The settings page calls it; it has no command (SPEC-015 §6.1).
+  permission: (p, { team }) => p.admin() || p.teamMember(team),
+  destructive: false,
+  examples: [
+    { team: 'ENG', autoArchiveMonths: 3, autoCloseMonths: 6, autoCloseStatus: 'Canceled' },
+  ],
+  optimistic: (store, input) => {
+    const team = store.get('Team', input.team);
+    const teamId = idOf(team);
+    if (team === undefined || teamId === undefined) return;
+    const changes: Record<string, unknown> = {};
+    if (
+      input.autoArchiveMonths !== undefined &&
+      team['autoArchiveMonths'] !== input.autoArchiveMonths
+    ) {
+      changes['autoArchiveMonths'] = input.autoArchiveMonths;
+    }
+    if (input.autoCloseMonths === null) {
+      // Off clears the status too, as the server does.
+      if (team['autoCloseMonths'] !== null) changes['autoCloseMonths'] = null;
+      if (team['autoCloseStatusId'] !== null) changes['autoCloseStatusId'] = null;
+    } else if (input.autoCloseMonths !== undefined || team['autoCloseMonths'] !== null) {
+      const wasOn = team['autoCloseMonths'] !== null;
+      const canceled = [...store.find('WorkflowStatus', { teamId, category: 'canceled' })].sort(
+        (a, b) => comparePositions(String(a['position']), String(b['position'])),
+      );
+      const lower = input.autoCloseStatus?.trim().toLowerCase();
+      const named =
+        lower === undefined
+          ? undefined
+          : canceled.find(
+              (s) => s['id'] === input.autoCloseStatus || String(s['name']).toLowerCase() === lower,
+            );
+      // The server refuses a status that is not a Canceled one of the team: predict nothing.
+      if (lower !== undefined && named === undefined) return;
+      const months = input.autoCloseMonths ?? (wasOn ? undefined : 6);
+      if (months !== undefined && team['autoCloseMonths'] !== months) {
+        changes['autoCloseMonths'] = months;
+      }
+      if (wasOn || months !== undefined) {
+        const statusId =
+          idOf(named) ?? (team['autoCloseStatusId'] === null ? idOf(canceled[0]) : undefined);
+        if (statusId !== undefined && statusId !== team['autoCloseStatusId']) {
+          changes['autoCloseStatusId'] = statusId;
+        }
+      }
+    }
     if (Object.keys(changes).length === 0) return;
     store.patch('Team', teamId, { ...changes, updatedAt: store.now.toISOString() });
   },

@@ -21,6 +21,7 @@ import {
   teamUpdate,
   teamSetDefaultStatus,
   teamSetEstimates,
+  teamUpdateAutomations,
 } from './team.js';
 import { userCreateResetLink } from './account.js';
 import { userGet, userList, userSetRole } from './member.js';
@@ -47,7 +48,13 @@ import {
   issueList,
   issueUpdate,
 } from './issue.js';
-import { issueDelete, issuePurge, issueRestore } from './issue-lifecycle.js';
+import {
+  issueAutoArchive,
+  issueAutoClose,
+  issueDelete,
+  issuePurge,
+  issueRestore,
+} from './issue-lifecycle.js';
 import { draftDiscard, draftSave } from './draft.js';
 import {
   commentCreate,
@@ -137,6 +144,7 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   // Settings of the team the seed's actor belongs to; run after the statuses above (SPEC-010 §6).
   teamSetDefaultStatus,
   teamSetEstimates,
+  teamUpdateAutomations,
   // Reads first, then create and update: the examples run in this order on one seed, which holds
   // ENG-1 to ENG-3 (SPEC-011 §6.1); `issue.update` edits ENG-1.
   issueList,
@@ -150,6 +158,9 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   issueRestore,
   // The seed's deleted ENG-4 (PLAN-015 S2), purged for good.
   issuePurge,
+  // System only: the jobs call them (SPEC-015 §6.1); no seed example runs.
+  issueAutoArchive,
+  issueAutoClose,
   // The actor's own drafts (SPEC-012 §4.3): save, then discard what was saved.
   draftSave,
   draftDiscard,
