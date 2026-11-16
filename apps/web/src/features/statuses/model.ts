@@ -8,14 +8,17 @@ import {
   STATUS_CATEGORY_TITLES,
   STATUS_DESCRIPTION_MAX_LENGTH,
   bindPredicates,
+  countStatusIssues,
   placeStatus,
   sortStatuses,
+  statusDeleteProblem,
   statusLimitProblem,
   statusNameProblem,
   type Actor,
   type ColorHue,
   type ResolvedRefs,
   type StatusCategory,
+  type StatusIssueLike,
 } from '@surface/domain';
 import { statusCreate, statusDelete, statusReorder, statusUpdate } from '@surface/operations';
 
@@ -190,4 +193,44 @@ export function dropTarget(
 export function descriptionText(status: Pick<StatusItem, 'description'>): string | undefined {
   const text = status.description?.trim();
   return text === undefined || text === '' ? undefined : text;
+}
+
+/**
+ * Why the replica already shows that deleting `statusId` will be refused for its issues, or
+ * undefined (SPEC-010 §3.1 item 6, E8): the page toasts it and opens no dialog, as the
+ * operation's prediction would refuse it anyway. The replica holds only some issues (SPEC-011
+ * §5.7), so undefined means "ask the server", not "empty". Other refusals (default, last of a
+ * category) are the server's, after the dialog.
+ */
+export function replicaDeleteRefusal(
+  statuses: readonly StatusItem[],
+  statusId: string,
+  defaultStatusId: string,
+  issues: readonly StatusIssueLike[],
+): string | undefined {
+  if (!statuses.some((s) => s.id === statusId)) return undefined;
+  const problem = statusDeleteProblem(
+    { statuses, statusId },
+    defaultStatusId,
+    countStatusIssues(issues, statusId),
+  );
+  return problem?.reason === 'hasIssues' ? problem.message : undefined;
+}
+
+/**
+ * The per-status counts from `issue.groupBy` by status (SPEC-010 §5, D15): live and archived
+ * issues the actor can see, never deleted ones. A status with no issue is not a group, so it is 0.
+ */
+export function countsByStatus(
+  groups: readonly { readonly key: string | null; readonly count: number }[],
+): ReadonlyMap<string, number> {
+  return new Map(groups.flatMap((g) => (g.key === null ? [] : [[g.key, g.count] as const])));
+}
+
+/** One row's count: undefined ("—") until the server answers and offline, else 0 or more. */
+export function statusIssueCount(
+  counts: ReadonlyMap<string, number> | undefined,
+  id: string,
+): number | undefined {
+  return counts === undefined ? undefined : (counts.get(id) ?? 0);
 }

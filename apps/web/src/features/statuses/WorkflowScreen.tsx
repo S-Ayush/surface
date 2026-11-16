@@ -1,7 +1,8 @@
 // Team settings → Workflow (SPEC-010 §3.1): the team's statuses grouped by category, with inline
 // add and edit, reorder (drag, or the `settings-row` keys), and delete behind a confirm dialog.
 // Everything shows at once (optimistic); a refusal rolls back and says why. Readers of a public
-// team see the page read-only with "Join the team to edit".
+// team see the page read-only with "Join the team to edit". Issue counts come from the server
+// (`issue.groupBy`, §5, D15): the replica holds only some issues (SPEC-011 §5.7).
 import {
   statusCreate,
   statusDelete,
@@ -9,18 +10,23 @@ import {
   statusUpdate,
   teamSetDefaultStatus,
 } from '@surface/operations';
-import { Button, Dialog, DialogClose, IconButton, StatusIcon } from '@surface/ui';
+import { Issue } from '@surface/domain/model';
+import { Button, Dialog, DialogClose, IconButton, StatusIcon, toast } from '@surface/ui';
 import { Plus } from 'lucide-react';
-import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
-import { useApp } from '../../app/context.js';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useApp, useObserved } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
+import { useServerRead, useSettingsReads } from '../teams/settings-reads.js';
 import { submitMutation, toastIfFailed, useShowsRejection } from '../teams/submit.js';
 import { TeamSettingsLayout } from '../teams/TeamSettingsLayout.js';
 import { clearAddStatus, subscribeAddStatus, takeAddStatus } from './add-intent.js';
 import {
+  countsByStatus,
   dropTarget,
   moveOne,
+  replicaDeleteRefusal,
+  statusIssueCount,
   workflowGroups,
   type EditableCategory,
   type StatusFormValues,
@@ -58,13 +64,28 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
   const [adding, setAdding] = useState<EditableCategory>();
   const [editing, setEditing] = useState<string>();
   const [deleting, setDeleting] = useState<StatusItem>();
-  const [deleteError, setDeleteError] = useState<string>();
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [activeId, setActiveId] = useState<string>();
   const [dragId, setDragId] = useState<string>();
   const current = workflow?.statuses;
   const canEdit = workflow?.access.edit === true;
   const formOpen = adding !== undefined || editing !== undefined;
+  const counts = useStatusCounts(teamKey);
+
+  // Delete (§3.1 item 6): when the replica already shows an issue on the status, the refusal is a
+  // toast and no dialog opens (the prediction would refuse it too, so nothing is sent).
+  const askDelete = (status: StatusItem) => {
+    const store = app.store;
+    if (store === null || workflow === null) return;
+    const refusal = replicaDeleteRefusal(
+      workflow.statuses,
+      status.id,
+      workflow.defaultStatusId,
+      store.pool.findBy(Issue, 'statusId', status.id),
+    );
+    if (refusal !== undefined) toast({ tone: 'danger', message: refusal });
+    else setDeleting(status);
+  };
 
   // "Add status…" from the command menu (§7.3): open the form in the chosen category.
   useEffect(() => {
@@ -108,9 +129,7 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
       },
       remove: (id) => {
         const status = current?.find((s) => s.id === id);
-        if (status === undefined) return;
-        setDeleteError(undefined);
-        setDeleting(status);
+        if (status !== undefined) askDelete(status);
       },
     },
   );
@@ -211,19 +230,16 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
     );
   };
 
+  // The row goes at once (optimistic). A refusal, the server's included (E8: issues the replica
+  // doesn't hold), puts it back and is a toast (§3.1 item 6): the shell's for a server refusal.
   const confirmDelete = async (status: StatusItem) => {
     const store = app.store;
     if (store === null || deleteBusy) return;
     setDeleteBusy(true);
-    const result = await submitMutation(
-      store,
-      statusDelete,
-      { team: teamKey, status: status.id },
-      { showsRejection },
-    );
+    const result = await submitMutation(store, statusDelete, { team: teamKey, status: status.id });
     setDeleteBusy(false);
-    if (result.kind === 'rejected' || result.kind === 'failed') setDeleteError(result.message);
-    else setDeleting(undefined);
+    setDeleting(undefined);
+    toastIfFailed(result);
   };
 
   return (
@@ -274,6 +290,7 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
                   key={status.id}
                   status={status}
                   isDefault={status.id === defaultStatusId}
+                  issueCount={statusIssueCount(counts, status.id)}
                   canEdit={canEdit}
                   active={status.id === tabStop}
                   dragging={status.id === dragId}
@@ -283,10 +300,7 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
                     setEditing(status.id);
                   }}
                   onMakeDefault={() => void makeDefault(status.id)}
-                  onDelete={() => {
-                    setDeleteError(undefined);
-                    setDeleting(status);
-                  }}
+                  onDelete={() => askDelete(status)}
                   onDragStart={() => setDragId(status.id)}
                 />
               ),
@@ -329,13 +343,7 @@ function Workflow({ teamId, teamKey }: { readonly teamId: string; readonly teamK
             </Button>
           </>
         }
-      >
-        {deleteError !== undefined && (
-          <p role="alert" className={styles.formError}>
-            {deleteError}
-          </p>
-        )}
-      </Dialog>
+      />
     </>
   );
 }
@@ -345,4 +353,24 @@ function focusRow(statusId: string): void {
   requestAnimationFrame(() => {
     document.querySelector<HTMLElement>(`[data-status-id="${statusId}"]`)?.focus();
   });
+}
+
+/**
+ * The team's issue count per status, from the server (§5, D15): live and archived issues the
+ * actor can see, asked on open and when the window regains focus. Undefined until it answers and
+ * offline, so the rows show "—".
+ */
+function useStatusCounts(teamKey: string): ReadonlyMap<string, number> | undefined {
+  const app = useApp();
+  const reads = useSettingsReads();
+  const online = useObserved(useCallback(() => app.store?.connection === 'online', [app]));
+  const answer = useServerRead(
+    () => reads.issueGroupBy({ team: teamKey, by: 'status', includeArchived: true }),
+    teamKey,
+    online,
+  );
+  return useMemo(
+    () => (answer === undefined ? undefined : countsByStatus(answer.groups)),
+    [answer],
+  );
 }

@@ -2,7 +2,7 @@
 // the shell around the page, and holds the page back until the replica is first ready (SPEC-005
 // §3 "Store not ready → shell with a bootstrap progress bar", SPEC-002 §7; app/gate.ts).
 import { PRODUCTION_MODELS } from '@surface/domain/model';
-import { SyncStore } from '@surface/sync-client';
+import { SyncStore, statusGoneMessage } from '@surface/sync-client';
 import { SyncInspector, SyncStoreProvider, inspectorAllowed } from '@surface/sync-react';
 import { BANNER_PRIORITY, Button, EmptyState, ProgressBar, banner, toast } from '@surface/ui';
 import { Outlet } from '@tanstack/react-router';
@@ -130,9 +130,10 @@ function useSyncStore(app: AppModel, { userId, workspaceId }: Session, epoch: nu
       userId,
       fetch: auth.fetch,
       onSessionRevoked: auth.onSessionRevoked,
-      // SPEC-002 §3.5: the optimistic change is gone; say why.
+      // SPEC-002 §3.5: the optimistic change is gone; say why. A change naming a status this
+      // replica saw deleted says so instead of "not found" (SPEC-010 E1).
       onRejected: (rejection) => {
-        toast({ tone: 'danger', message: rejection.message });
+        toast({ tone: 'danger', message: statusGoneMessage(rejection, store) });
       },
       // SPEC-002 E7, SPEC-005 §8: persistent, and above any dismissible warning.
       onOutdated: () => {

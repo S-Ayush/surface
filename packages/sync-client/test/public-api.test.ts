@@ -16,6 +16,7 @@ it('exports only the store, read helpers, UI bindings and errors', () => {
     'CLIENT_PROTOCOL_VERSION',
     'ClientOutdatedError',
     'InvalidInputError',
+    'STATUS_GONE_MESSAGE',
     'StorageUnavailableError',
     'SyncStore',
     // Framework-free bindings and selectors (ADR-0017).
@@ -25,6 +26,8 @@ it('exports only the store, read helpers, UI bindings and errors', () => {
     'observe',
     'pendingCountOf',
     'rowOf',
+    // SPEC-010 E1: the message for a rejection naming a status the replica saw deleted.
+    'statusGoneMessage',
     'storageUsage',
     'storageWarningOf',
   ]);

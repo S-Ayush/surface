@@ -6,6 +6,7 @@ import {
   isPriority,
   isValidEstimate,
   issueIdentifier,
+  labelsOf,
   type ColorHue,
   type EstimateConfig,
   type Priority,
@@ -73,12 +74,11 @@ export function issueViewFromPool(pool: ReadonlyPool, id: string): IssueView | u
   if (team === undefined || status === undefined) return undefined;
   const assignee = issue.assigneeId === null ? undefined : pool.get(User, issue.assigneeId);
   const creator = pool.get(User, issue.creatorId);
-  const labels = issue.labelIds.flatMap((labelId) => {
-    // A label deleted while its deltas are on the way is skipped (SPEC-012 §3.5).
+  // A label deleted while its deltas are on the way is skipped (SPEC-012 §3.5, SPEC-010 §5).
+  const labels = labelsOf(issue, (labelId) => {
     const label = pool.get(Label, labelId);
-    return label === undefined ? [] : [{ id: label.id, name: label.name, color: label.color }];
+    return label === undefined ? undefined : { id: label.id, name: label.name, color: label.color };
   });
-  labels.sort((a, b) => a.name.localeCompare(b.name, 'en') || a.id.localeCompare(b.id, 'en'));
   return {
     id: issue.id,
     teamId: issue.teamId,

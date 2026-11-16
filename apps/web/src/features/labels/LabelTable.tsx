@@ -5,7 +5,7 @@ import type { LabelScopeInfo } from '@surface/domain';
 import { ChevronRight } from 'lucide-react';
 import { LabelForm, type LabelFormValues } from './LabelForm.js';
 import { LabelRow } from './LabelRow.js';
-import type { LabelEntry, LabelItem } from './model.js';
+import { usageColumns, type LabelEntry, type LabelItem, type LabelUsage } from './model.js';
 import styles from './labels.module.css';
 
 export type LabelTableProps = {
@@ -21,6 +21,8 @@ export type LabelTableProps = {
   readonly canEdit: boolean;
   readonly canMove: boolean;
   readonly tabStop: string | undefined;
+  /** `label.usage` by label id; undefined until it answers, and offline ("—"). */
+  readonly usage: ReadonlyMap<string, LabelUsage> | undefined;
   readonly onFocusRow: (id: string) => void;
   readonly onToggle: (id: string) => void;
   readonly onEdit: (id: string | undefined) => void;
@@ -55,6 +57,9 @@ export function visibleIds(
   return [...idsOf(entries), ...(archivedOpen ? idsOf(archived) : [])];
 }
 
+/** A label the answer doesn't list (created since it was asked): nothing carries it yet. */
+const NO_USAGE: LabelUsage = { issues: 0, teams: [], lastAppliedAt: null };
+
 function archivedCount(entries: readonly LabelEntry[]): number {
   return entries.reduce((n, e) => n + 1 + e.children.length, 0);
 }
@@ -81,6 +86,9 @@ export function LabelTable(props: LabelTableProps) {
         canMove={canMove && depth === 0}
         groupArchived={groupArchived}
         active={label.id === tabStop}
+        usage={usageColumns(
+          props.usage === undefined ? undefined : (props.usage.get(label.id) ?? NO_USAGE),
+        )}
         onFocus={() => props.onFocusRow(label.id)}
         onToggle={() => props.onToggle(label.id)}
         onEdit={() => props.onEdit(label.id)}

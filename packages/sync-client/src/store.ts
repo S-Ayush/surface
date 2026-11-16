@@ -80,6 +80,8 @@ export interface SyncStoreOptions {
   readonly baseUrl?: string;
   /** How to open the replica; defaults to IndexedDB in a worker with a memory fallback. */
   readonly connectStorage?: StorageConnector;
+  /** Models whose `D` deltas `seenDeleted` remembers; defaults to `REMEMBERED_DELETES`. */
+  readonly rememberDeletes?: readonly string[];
   /**
    * Cross-tab locks; defaults to `navigator.locks` where available (see
    * `locks.ts`). `null`: none, as on a plain-HTTP origin.
@@ -125,6 +127,16 @@ const PROBE_TIMEOUT_MS = 10_000;
 const RECENT_REJECTIONS = 20;
 /** Applied packets kept for the inspector (SPEC-002 §5.4). */
 export const RECENT_PACKETS = 50;
+
+/** Models whose deletes `seenDeleted` remembers: settings rows a queued change may name (E1). */
+export const REMEMBERED_DELETES: readonly string[] = ['WorkflowStatus', 'Label'];
+
+/** A row a `D` delta removed, as the replica held it before. */
+export interface DeletedRow {
+  readonly id: string;
+  readonly name?: string;
+  readonly teamId?: string;
+}
 
 /** An applied delta packet, for the inspector: what changed, not the row (SPEC-002 §5.4). */
 export interface PacketView extends AppliedPacket {
@@ -189,6 +201,8 @@ export class SyncStore {
   readonly #rejections = observable.array<Rejection>([], { deep: false });
   /** Newest first. */
   readonly #packets = observable.array<PacketView>([], { deep: false });
+  /** Rows of `REMEMBERED_DELETES` models a `D` delta removed this session, by model and id. */
+  readonly #seenDeleted = new Map<string, Map<string, DeletedRow>>();
   readonly #roundTrip = observable.box<RoundTrip | undefined>(undefined, { deep: false });
   /**
    * The id a new queue gets if no queue is adopted. Never reused once a start
@@ -286,7 +300,9 @@ export class SyncStore {
   /**
    * Run a mutation locally and queue it for the server (SPEC-002 §3.3). The
    * input is validated first (`InvalidInputError`, nothing queued); then its
-   * `optimistic()` effect shows before this returns. The promise settles when
+   * `optimistic()` effect shows before this returns. An `optimistic()` that
+   * throws `OptimisticRefusal` (the replica already shows the server would
+   * refuse) makes this throw it, with nothing queued. The promise settles when
    * the server's change reaches the replica (`confirmed`) or the server
    * rejects it (`rejected`, effect rolled back). It stays pending if the store
    * closes first: the mutation stays queued and the next start sends it.
@@ -754,6 +770,7 @@ export class SyncStore {
         return 'ok';
       case 'apply': {
         this.#rejected = undefined;
+        this.#rememberDeletes(plan.applied);
         runInAction(() => {
           this.#pool.applyBase(plan.base);
           this.#position.set({ ...position, lastSyncId: plan.lastSyncId });
@@ -796,6 +813,39 @@ export class SyncStore {
     if (queue === undefined) return;
     const confirmed = queue.confirm(lastSyncId, acks);
     if (confirmed || baseTouched) this.#overlay.rebuild(queue.mutations);
+  }
+
+  /**
+   * Whether this session applied a `D` delta for the row (SPEC-010 E1): a status deleted while a
+   * change naming it waited in the queue reads, on the server, like one that never existed, so
+   * the client words the refusal itself. Only `REMEMBERED_DELETES` models; not kept across
+   * reloads, and a re-bootstrap carries no `D`.
+   */
+  seenDeleted(model: string, id: string): DeletedRow | undefined {
+    return this.#seenDeleted.get(model)?.get(id.toLowerCase());
+  }
+
+  /** Every row of `model` `seenDeleted` remembers, for a ref given by name. */
+  seenDeletedRows(model: string): readonly DeletedRow[] {
+    return [...(this.#seenDeleted.get(model)?.values() ?? [])];
+  }
+
+  /** Before the batch is applied: the rows its `D` packets remove, as the replica held them. */
+  #rememberDeletes(applied: readonly AppliedPacket[]): void {
+    for (const packet of applied) {
+      const remembered = this.#options.rememberDeletes ?? REMEMBERED_DELETES;
+      if (packet.action !== 'D' || !remembered.includes(packet.model)) continue;
+      const row = this.#pool.baseOf(packet.model, packet.rowId)?.row;
+      const name = row?.['name'];
+      const teamId = row?.['teamId'];
+      const deleted = this.#seenDeleted.get(packet.model) ?? new Map<string, DeletedRow>();
+      deleted.set(packet.rowId.toLowerCase(), {
+        id: packet.rowId,
+        ...(typeof name === 'string' ? { name } : {}),
+        ...(typeof teamId === 'string' ? { teamId } : {}),
+      });
+      this.#seenDeleted.set(packet.model, deleted);
+    }
   }
 
   #recordPackets(applied: readonly AppliedPacket[]): void {

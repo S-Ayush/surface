@@ -126,8 +126,11 @@ export interface QueueOptions {
   readonly clock: () => number;
   /** The `lastSyncId` the replica has reached, if it is ready. */
   readonly replicaAt: () => number | undefined;
-  /** The overlay changed: one mutation added on top, or the list changed. */
-  readonly onPush: (mutation: OverlayMutation) => void;
+  /**
+   * One mutation added on top of the overlay. An error returned means its `optimistic()` refused
+   * it from the store (`OptimisticRefusal`): the dispatch throws it and queues nothing.
+   */
+  readonly onPush: (mutation: OverlayMutation) => Error | undefined | void;
   readonly onRebuild: () => void;
   /** `report`: whether the app's handler should hear of it (`DispatchOptions.reportRejection`). */
   readonly onRejected: (rejection: Rejection, report: boolean) => void;
@@ -290,7 +293,15 @@ export class MutationQueue {
     this.#entries.set(seq, entry);
     this.#publish();
     const mutation = this.#overlayOf(entry);
-    if (mutation) this.#options.onPush(mutation);
+    const refusal = mutation && this.#options.onPush(mutation);
+    if (refusal instanceof Error) {
+      // The store already shows the server would refuse it (SPEC-010 §5): nothing was written
+      // yet, so taking the entry back leaves no trace, and no request is sent.
+      this.#entries.delete(seq);
+      this.#nextSeq = seq;
+      this.#publish();
+      throw refusal;
+    }
     this.#write({ nextSeq: this.#nextSeq, put: [record] }).then(
       () => {
         entry.persisted = true;

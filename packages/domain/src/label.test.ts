@@ -8,6 +8,7 @@ import {
   labelGroupProblem,
   labelLimitProblem,
   labelNameProblem,
+  labelsOf,
   parseLabelInput,
   type LabelGroupCandidate,
 } from './label.js';
@@ -157,5 +158,31 @@ describe('labelGroupProblem (AC-9, E14)', () => {
         group({ archivedAt: '2026-11-12T10:00:00.000Z' }),
       ),
     ).toBe('The Size group is archived. Unarchive the group first.');
+  });
+});
+
+describe('labelsOf (SPEC-010 §5, AC-17)', () => {
+  const known = new Map([
+    ['b', { id: 'b', name: 'Bug' }],
+    ['f', { id: 'f', name: 'frontend' }],
+    ['a', { id: 'a', name: 'API' }],
+  ]);
+
+  it('skips a label id the store no longer holds, as after label.delete', () => {
+    expect(labelsOf({ labelIds: ['b', 'gone', 'a'] }, (id) => known.get(id))).toEqual([
+      { id: 'a', name: 'API' },
+      { id: 'b', name: 'Bug' },
+    ]);
+  });
+
+  it('orders by name, case-insensitively, then by id', () => {
+    const twins = new Map([...known, ['c', { id: 'c', name: 'Bug' }]]);
+    expect(
+      labelsOf({ labelIds: ['f', 'c', 'b', 'a'] }, (id) => twins.get(id)).map((l) => l.id),
+    ).toEqual(['a', 'b', 'c', 'f']);
+  });
+
+  it('shows nothing for an issue whose only label was deleted', () => {
+    expect(labelsOf({ labelIds: ['gone'] }, (id) => known.get(id))).toEqual([]);
   });
 });

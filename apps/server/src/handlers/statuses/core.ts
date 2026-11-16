@@ -46,8 +46,8 @@ export interface WorkflowAccess {
   /** An anchor or other relied-on status, re-read `FOR KEY SHARE`; undefined when it is gone. */
   shareStatus(statusId: string): Promise<StatusRow | undefined>;
   /**
-   * Issues that use the status, by lifecycle state. Until PLAN-010 S5 there is no issue table:
-   * the count is zero by construction.
+   * Issues that use the status, by lifecycle state (every row: live, archived, recently deleted).
+   * Takes no lock (SPEC-010 §4.4).
    */
   issueCounts(statusId: string): Promise<StatusIssueCounts>;
 }

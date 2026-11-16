@@ -2,17 +2,21 @@
  * The two properties' checks (SPEC-002 AC-2, AC-3), shared by the fake hub's
  * suite (`pnpm test`, `pnpm sim`) and the real server's (`pnpm test:int`).
  */
+import { Issue, Label, Team, WorkflowStatus } from '@surface/domain/model';
 import { expect } from 'vitest';
 import {
   isCommentServer,
   isIssueServer,
+  isWorkflowServer,
+  type WorkflowState,
   type CommentState,
   type IssueFixtures,
   type IssueRecord,
   type IssueState,
 } from './server.js';
 import type { Outcome, SimulateOptions } from './simulate.js';
-import { itemId } from './steps.js';
+import { ISSUE_TEAM, itemId } from './steps.js';
+import type { Tab } from './world.js';
 
 export interface Property {
   readonly options: SimulateOptions;
@@ -342,6 +346,130 @@ export const reactionConvergence: Property = {
     }
     for (const [subject, set] of emojiBySubject) {
       expect(set.size, `${subject}: distinct emoji`).toBeLessThanOrEqual(EMOJI_CAP);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// The workflow (PLAN-010 S5, SPEC-010 AC-19, E3, E16, E17).
+
+/** What a tab shows of SIM's workflow: its default, its statuses and the labels it can use. */
+interface WorkflowView {
+  readonly defaultStatusId: unknown;
+  readonly statuses: readonly string[];
+  readonly labels: readonly string[];
+}
+
+function workflowOf(state: WorkflowState): WorkflowView {
+  const team = state.teams.find((t) => t.key === ISSUE_TEAM);
+  if (team === undefined) throw new Error(`No ${ISSUE_TEAM} team on the server.`);
+  return {
+    defaultStatusId: team.defaultStatusId,
+    statuses: state.statuses
+      .filter((s) => s.teamId === team.id)
+      .map((s) => s.id)
+      .sort(),
+    labels: state.labels
+      .filter((l) => l.teamId === null || l.teamId === team.id)
+      .map((l) => l.id)
+      .sort(),
+  };
+}
+
+function workflowView(tab: Tab, teamId: string): WorkflowView {
+  const pool = tab.store.pool;
+  return {
+    defaultStatusId: pool.get(Team, teamId)?.defaultStatusId,
+    statuses: pool
+      .all(WorkflowStatus)
+      .filter((s) => s.teamId === teamId)
+      .map((s) => s.id)
+      .sort(),
+    labels: pool
+      .all(Label)
+      .filter((l) => l.teamId === null || l.teamId === teamId)
+      .map((l) => l.id)
+      .sort(),
+  };
+}
+
+/** Whether a replica's issues name only statuses and labels the same replica holds. */
+function checkNoDanglingRefs(tab: Tab): void {
+  const pool = tab.store.pool;
+  const statuses = new Set(pool.all(WorkflowStatus).map((s) => s.id));
+  const labels = new Set(pool.all(Label).map((l) => l.id));
+  for (const issue of pool.all(Issue)) {
+    expect(statuses.has(issue.statusId), `${tab.name} ${issue.id} status`).toBe(true);
+    for (const id of issue.labelIds) {
+      expect(labels.has(id), `${tab.name} ${issue.id} label ${id}`).toBe(true);
+    }
+  }
+}
+
+const REQUIRED_CATEGORIES = ['backlog', 'unstarted', 'started', 'completed', 'canceled'];
+
+/**
+ * The stored workflow after a run: INV-04 (every team keeps a status of each editable category,
+ * one Duplicate and one Triage, so of two concurrent deletes of a category's last two statuses
+ * one is refused, E3), INV-05 (the default is a Backlog or Unstarted status of its team, E17),
+ * and no issue names a status or label that is gone (AC-19, E16).
+ */
+export function checkWorkflow(
+  state: WorkflowState,
+  issues: Readonly<Record<string, IssueState>>,
+): void {
+  for (const team of state.teams) {
+    const own = state.statuses.filter((s) => s.teamId === team.id);
+    for (const category of REQUIRED_CATEGORIES) {
+      expect(
+        own.some((s) => s.category === category),
+        `${team.key} has no ${category} status`,
+      ).toBe(true);
+    }
+    expect(
+      own.filter((s) => s.category === 'duplicate'),
+      `${team.key} Duplicate`,
+    ).toHaveLength(1);
+    expect(
+      own.filter((s) => s.category === 'triage'),
+      `${team.key} Triage`,
+    ).toHaveLength(1);
+    const fallback = own.find((s) => s.id === team.defaultStatusId);
+    expect(fallback, `${team.key} default status`).toBeDefined();
+    expect(['backlog', 'unstarted'], `${team.key} default category`).toContain(fallback?.category);
+  }
+  const statuses = new Set(state.statuses.map((s) => s.id));
+  const labels = new Set(state.labels.map((l) => l.id));
+  for (const [id, issue] of Object.entries(issues)) {
+    expect(statuses.has(String(issue.statusId)), `${id} names a deleted status`).toBe(true);
+    const named = Array.isArray(issue.labelIds) ? issue.labelIds.map(String) : [];
+    for (const label of named) expect(labels.has(label), `${id} names deleted ${label}`).toBe(true);
+  }
+}
+
+/**
+ * The workflow property: the issue property, the stored workflow's invariants (`checkWorkflow`),
+ * no replica naming a status or label it doesn't hold, and every replica, streamed or freshly
+ * bootstrapped, showing the server's SIM workflow.
+ */
+export const workflowConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    await issueConvergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isWorkflowServer(server)) throw new Error('The workflow property needs the real server.');
+    const state = await server.workflow();
+    checkWorkflow(state, await server.issues());
+    const expected = workflowOf(state);
+    const teamId = state.teams.find((t) => t.key === ISSUE_TEAM)?.id ?? '';
+    const streamed = world.live;
+    const fresh = world.users.map((user) => world.open(user, { fresh: true }));
+    await world.quiesce();
+    expect(world.problems).toEqual([]);
+    for (const tab of [...streamed, ...fresh]) {
+      expect(workflowView(tab, teamId), tab.name).toEqual(expected);
+      checkNoDanglingRefs(tab);
     }
   },
 };

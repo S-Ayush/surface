@@ -8,6 +8,7 @@ import {
   isPriority,
   isValidEstimate,
   issueIdentifier,
+  labelsOf,
   namedStatusGroups,
   startsCollapsed,
   statusGroups,
@@ -194,12 +195,11 @@ function toRow(
     title: issue.title,
     priority: isPriority(issue.priority) ? issue.priority : 0,
     status: { name: status.name, category: status.category, color: status.color },
-    labels: issue.labelIds
-      .flatMap((id) => {
-        const label = lookups.labels.get(id);
-        return label === undefined ? [] : [{ id, ...label }];
-      })
-      .sort((a, b) => a.name.localeCompare(b.name, 'en')),
+    // A label deleted while its deltas are on the way is skipped (SPEC-010 §5).
+    labels: labelsOf(issue, (id) => {
+      const label = lookups.labels.get(id);
+      return label === undefined ? undefined : { id, ...label };
+    }),
     estimate,
     dueDate:
       issue.dueDate === null

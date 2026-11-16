@@ -33,6 +33,7 @@ import {
 } from '../src/handlers/comments/core.js';
 import { createIssue, updateIssue, type IssueRow } from '../src/handlers/issues/core.js';
 import { setReaction } from '../src/handlers/reactions/core.js';
+import { deleteLabel, type LabelAccess } from '../src/handlers/labels/core.js';
 import type { Repo } from '../src/sync/repo.js';
 import { deleteIssue, restoreIssue } from '../src/handlers/issues/lifecycle-core.js';
 import { memoryComments } from './support/memory-comments.js';
@@ -134,6 +135,51 @@ function commentCase(
   };
 }
 
+/**
+ * `label.delete` of a label ENG-1 carries (PLAN-010 S5): the rules run over a `LabelAccess` on
+ * `m`'s labels and issues. Its cascade stands in for `removeLabelFromIssues`: the repo's bulk path
+ * locks each issue in `cascade` mode (no lifecycle check), then writes through `m.repo.updateWhere`
+ * with `touchUpdatedAt: false`, so `m` records the mode, the write and the label removal.
+ */
+const labelDeleteCase: Case = async (m, issue) => {
+  const label = m.addLabel({ name: 'Flaky', teamId: issue.teamId });
+  m.issues.set(issue.id, { ...issue, labelIds: [label.id] });
+  const access: LabelAccess = {
+    lockWorkspace: () => Promise.resolve(),
+    lockTeam: (id) => Promise.resolve(id === m.eng.id ? { id, key: 'ENG' } : undefined),
+    scopeLabels: (teamId) =>
+      Promise.resolve([...m.labels.values()].filter((l) => l.teamId === teamId)),
+    lockLabel: (id) => Promise.resolve(m.labels.get(id)),
+    shareLabel: (id) => Promise.resolve(m.labels.get(id)),
+    async removeFromIssues(labelId) {
+      const ids = [...m.issues.values()]
+        .filter((row) => row.labelIds.includes(labelId))
+        .map((row) => row.id)
+        .sort();
+      for (let n = 0; n < ids.length; n++) {
+        m.calls.push('lockIssue');
+        m.lockModes.push('cascade');
+      }
+      if (ids.length === 0) return [];
+      await m.repo.updateWhere('Issue', ids, { labelIds: [] }, { touchUpdatedAt: false });
+      for (const id of ids) {
+        const row = m.issues.get(id);
+        if (row) m.issues.set(id, { ...row, labelIds: row.labelIds.filter((l) => l !== labelId) });
+      }
+      return ids;
+    },
+    visibleIssueCount: (ids) => Promise.resolve(ids.length),
+  };
+  const repo: Repo = {
+    ...m.repo,
+    purge: (model, id) => {
+      m.labels.delete(id);
+      return Promise.resolve();
+    },
+  };
+  return deleteLabel(access, repo, { label: { id: label.id, teamId: label.teamId } });
+};
+
 const commentBody = {
   type: 'doc',
   content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Looks good' }] }],
@@ -165,6 +211,7 @@ const CASES: Readonly<Record<string, Case>> = {
   'reaction.set': commentCase((ctx, t) =>
     setReaction(ctx, { subject: { kind: 'comment', target: t }, emoji: '👍', reacted: true }),
   ),
+  'label.delete': labelDeleteCase,
 };
 
 /** What happened, in the table's words. */
@@ -180,7 +227,8 @@ function outcome(
   if (!wrote) return 'noop';
   const state = (row: IssueRow): IssueLifecycle =>
     row.deletedAt !== null ? 'deleted' : row.archivedAt !== null ? 'archived' : 'live';
-  if (state(after) === state(before)) return 'applies';
+  // A write that leaves an archived or deleted issue as it was is a cascade's (§4.3 keepsState).
+  if (state(after) === state(before)) return state(before) === 'live' ? 'applies' : 'keepsState';
   return state(after) === 'live'
     ? 'toLive'
     : state(after) === 'deleted'
@@ -215,7 +263,6 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
       'attachment.update': 'PLAN-014 S4a',
       'attachment.delete': 'PLAN-014 S4a',
       'issue.purge': 'PLAN-015 S2',
-      'label.delete': 'PLAN-010 S5',
       'attachment.setPreview': 'PLAN-014 S4b',
       'files-cleanup': 'PLAN-014 S4a',
       'trash-purge': 'PLAN-015 S2',
@@ -281,6 +328,8 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
 
 /** The comment the comment handlers' inputs name, a top-level comment on ENG-1 by Ada. */
 const COMMENT_ID = '0190f0c0-0000-7000-8000-0000000000c1';
+/** The label `label.delete` names, an ENG label that ENG-1 carries. */
+const LABEL_ID = '0190f0c0-0000-7000-8000-0000000000b1';
 
 /** The input each built operation's registered handler runs with on ENG-1. */
 const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
@@ -293,6 +342,7 @@ const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
   'comment.resolve': { comment: COMMENT_ID },
   'comment.reopen': { comment: COMMENT_ID },
   'reaction.set': { comment: COMMENT_ID, emoji: '👍', reacted: true },
+  'label.delete': { label: LABEL_ID },
 };
 
 const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
@@ -324,8 +374,22 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
   const team = { ...NEW_TEAM_SETTINGS, ...m.eng, defaultStatusId: issue.statusId };
   const { db, statements } = recordingDb(
     answerFrom({
-      issues: snakeRow(issue),
+      issues: snakeRow({ ...issue, labelIds: [LABEL_ID] }),
       teams: snakeRow(team),
+      labels: snakeRow({
+        id: LABEL_ID,
+        teamId: issue.teamId,
+        name: 'Flaky',
+        color: 'red',
+        description: null,
+        parentId: null,
+        isGroup: false,
+        exclusive: true,
+        archivedAt: null,
+        syncGroups: [`team:${issue.teamId}`],
+        createdAt: EARLIER,
+        updatedAt: EARLIER,
+      }),
       workflow_statuses: { id: issue.statusId, name: 'Backlog', category: 'backlog' },
       users: { id: ADA_ID, name: 'Ada' },
       comments: snakeRow({
@@ -377,6 +441,7 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
     refs: {
       issue: { id: issue.id, teamId: issue.teamId, key: 'ENG-1' },
       comment: { id: COMMENT_ID, issueId: issue.id, teamId: issue.teamId, parentCommentId: null },
+      label: { id: LABEL_ID, teamId: issue.teamId, name: 'Flaky' },
     },
     now: () => NOW,
     emit: () => undefined,
@@ -395,20 +460,51 @@ describe('each built row’s registered handler locks the issue first (AC-1, SPE
     }
   });
 
-  describe.each(built.filter(([, rule]) => rule.kind === 'operation'))('%s', (name) => {
-    it.each(ISSUE_LIFECYCLES)(
-      'takes the issue row lock before reading the issue otherwise or writing (%s issue)',
-      async (state) => {
-        const statements = await runHandler(name, state);
-        const texts = statements.map((statement) => statement.text);
-        const lock = texts.findIndex((text) => text.includes('from "issues"'));
-        expect(lock, texts.join('\n')).toBeGreaterThanOrEqual(0);
-        expect(texts[lock]).toMatch(/^select .* from "issues" where .* for update$/);
-        const firstWrite = texts.findIndex((text) => text.startsWith('repo.'));
-        if (firstWrite >= 0) expect(lock).toBeLessThan(firstWrite);
-      },
-    );
-  });
+  describe.each(built.filter(([, rule]) => rule.kind === 'operation' && rule.mode !== 'cascade'))(
+    '%s',
+    (name) => {
+      it.each(ISSUE_LIFECYCLES)(
+        'takes the issue row lock before reading the issue otherwise or writing (%s issue)',
+        async (state) => {
+          const statements = await runHandler(name, state);
+          const texts = statements.map((statement) => statement.text);
+          const lock = texts.findIndex((text) => text.includes('from "issues"'));
+          expect(lock, texts.join('\n')).toBeGreaterThanOrEqual(0);
+          expect(texts[lock]).toMatch(/^select .* from "issues" where .* for update$/);
+          const firstWrite = texts.findIndex((text) => text.startsWith('repo.'));
+          if (firstWrite >= 0) expect(lock).toBeLessThan(firstWrite);
+        },
+      );
+    },
+  );
+
+  // A cascade row's handler locks the issues in the repo's bulk path (`updateWhere` locks them in
+  // ascending id, SPEC-011 §5.1), after the scope and label rows; its plain read of the ids comes
+  // first, under the label lock, which makes that set final (SPEC-010 §4.4).
+  describe.each(built.filter(([, rule]) => rule.kind === 'operation' && rule.mode === 'cascade'))(
+    '%s',
+    (name) => {
+      it.each(ISSUE_LIFECYCLES)(
+        'writes issues only through updateWhere, after its row locks (%s issue)',
+        async (state) => {
+          const statements = await runHandler(name, state);
+          const texts = statements.map((statement) => statement.text);
+          const read = texts.findIndex((text) => text.includes('from "issues"'));
+          const lastLock = texts.reduce(
+            (at, text, i) => (text.endsWith(' for update') && !text.includes('"issues"') ? i : at),
+            -1,
+          );
+          expect(lastLock, texts.join('\n')).toBeGreaterThanOrEqual(0);
+          expect(read).toBeGreaterThan(lastLock);
+          expect(texts[read]).not.toMatch(/archived_at|deleted_at/);
+          const writes = texts.filter((text) => text.startsWith('repo.'));
+          expect(writes).toContain('repo.updateWhere');
+          expect(writes).not.toContain('repo.update');
+          expect(texts.indexOf('repo.updateWhere')).toBeGreaterThan(read);
+        },
+      );
+    },
+  );
 });
 
 describe('cascades write archived and deleted issues and keep their state (AC-2, E11)', () => {

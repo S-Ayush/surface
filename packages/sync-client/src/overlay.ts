@@ -18,7 +18,12 @@
 import type { RefEntity, RefType } from '@surface/domain';
 import { isUuid } from '@surface/domain';
 import type { ModelRow } from '@surface/domain/model';
-import type { AnyOperation, OptimisticStore, StoreRow } from '@surface/operations';
+import {
+  OptimisticRefusal,
+  type AnyOperation,
+  type OptimisticStore,
+  type StoreRow,
+} from '@surface/operations';
 import { runInAction } from 'mobx';
 import { decodeRow } from './bootstrap.js';
 import type { ObjectPool, OverlayState } from './pool.js';
@@ -88,14 +93,22 @@ export class OverlayEngine {
     return this.#dependsOn.models.has(model) || this.#dependsOn.rows.has(rowKey(model, id));
   }
 
-  /** Apply one more mutation on top of the current overlay. */
-  push(mutation: OverlayMutation): void {
-    const layer = this.#run(this.#draft, this.#dependsOn, mutation);
-    if (layer === undefined) return;
+  /**
+   * Apply one more mutation on top of the current overlay. Returns the `OptimisticRefusal` its
+   * `optimistic()` threw, if it did: the store already shows the server will refuse it, so the
+   * dispatch queues nothing (SPEC-010 §5).
+   */
+  push(mutation: OverlayMutation): OptimisticRefusal | undefined {
+    let refusal: OptimisticRefusal | undefined;
+    const layer = this.#run(this.#draft, this.#dependsOn, mutation, (error) => {
+      if (error instanceof OptimisticRefusal) refusal = error;
+    });
+    if (layer === undefined) return refusal;
     for (const [key, row] of layer) this.#draft.set(key, row);
     runInAction(() => {
       for (const [key, row] of layer) this.#show(key, row);
     });
+    return undefined;
   }
 
   /** Recompute the overlay from base for these mutations, in order. */
@@ -120,6 +133,7 @@ export class OverlayEngine {
     draft: ReadonlyMap<string, DraftRow>,
     dependsOn: Dependencies,
     mutation: OverlayMutation,
+    failed: (error: unknown) => void = () => undefined,
   ): Map<string, DraftRow> | undefined {
     const layer = new Map<string, DraftRow>();
     const touched = new Set<string>();
@@ -218,6 +232,7 @@ export class OverlayEngine {
     try {
       mutation.op.optimistic?.(store, mutation.input);
     } catch (error) {
+      failed(error);
       this.#onError(mutation, error);
       return undefined;
     } finally {

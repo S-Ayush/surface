@@ -250,3 +250,46 @@ export function groupChoices(items: readonly LabelItem[], current?: string | nul
 export function dayText(iso: string | null | undefined): string {
   return iso === null || iso === undefined || iso.length < 10 ? '—' : iso.slice(0, 10);
 }
+
+/** One label's `label.usage` answer (SPEC-010 §5, D15). */
+export interface LabelUsage {
+  readonly issues: number;
+  readonly teams: readonly { readonly key: string }[];
+  readonly lastAppliedAt: string | null;
+}
+
+/** The usage columns of a row: Used in, Issues and Last applied. */
+export interface UsageColumns {
+  readonly usedIn: string;
+  readonly issues: string;
+  readonly lastApplied: string;
+}
+
+/** Until `label.usage` answers, and offline, every usage column is "—" (§3.2). */
+export const UNKNOWN_USAGE: UsageColumns = { usedIn: '—', issues: '—', lastApplied: '—' };
+
+/**
+ * The usage columns from the server's answer: the teams of the label's issues by key, the count,
+ * and the day of the latest update among them. A label no visible issue carries shows nothing in
+ * Used in and Last applied, and 0 issues.
+ */
+export function usageColumns(usage: LabelUsage | undefined): UsageColumns {
+  if (usage === undefined) return UNKNOWN_USAGE;
+  return {
+    usedIn: usage.teams.map((t) => t.key).join(', '),
+    issues: String(usage.issues),
+    lastApplied: usage.lastAppliedAt === null ? '' : dayText(usage.lastAppliedAt),
+  };
+}
+
+/**
+ * The delete dialog's sentence (§3.2 item 7): N is the label's Issues count from `label.usage`,
+ * so it counts only issues the actor can see; without it (offline, not answered yet) the count is
+ * left out.
+ */
+export function deleteLabelText(issues: number | undefined): string {
+  if (issues === undefined) {
+    return "It will be removed from every issue that has it. This can't be undone.";
+  }
+  return `It will be removed from ${issues} ${issues === 1 ? 'issue' : 'issues'}. This can't be undone.`;
+}

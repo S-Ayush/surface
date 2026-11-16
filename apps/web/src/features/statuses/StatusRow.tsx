@@ -1,6 +1,6 @@
 // One status on the workflow page (SPEC-010 §3.1): the category icon in the status color, the
-// name, a "Default" badge, "·" and the description, the issue count ("—" until the server's count
-// is wired, PLAN-010 S5), and a "…" menu. It is an option of the page's listbox in the
+// name, a "Default" badge, "·" and the description, the issue count (the server's, from
+// `issue.groupBy`; "—" until it answers and offline, §5), and a "…" menu. It is an option of the page's listbox in the
 // `settings-row` scope: its keys are the registry's (rowKeys.ts), not handlers here.
 import { Badge, Menu, StatusIcon } from '@surface/ui';
 import { CircleCheck, GripVertical, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
@@ -11,6 +11,8 @@ import { canMakeDefault, descriptionText, isSystemStatus, type StatusItem } from
 export type StatusRowProps = {
   readonly status: StatusItem;
   readonly isDefault: boolean;
+  /** Issues on the status, live and archived; undefined shows "—". */
+  readonly issueCount: number | undefined;
   readonly canEdit: boolean;
   /** The row the listbox's roving tab stop is on. */
   readonly active: boolean;
@@ -26,6 +28,7 @@ export type StatusRowProps = {
 export function StatusRow({
   status,
   isDefault,
+  issueCount,
   canEdit,
   active,
   dragging,
@@ -66,9 +69,15 @@ export function StatusRow({
         {system && <Badge>System</Badge>}
         {description !== undefined && <span className={styles.rowMeta}>· {description}</span>}
       </span>
-      <span className={styles.count} title="Issue counts arrive with issues">
-        <span aria-label="Issue count not available">—</span>
-      </span>
+      {issueCount === undefined ? (
+        <span className={styles.count} title="Issue counts show when you're online">
+          <span aria-label="Issue count not available">—</span>
+        </span>
+      ) : (
+        <span className={styles.count} aria-label={issueCountLabel(issueCount)}>
+          {issueCount}
+        </span>
+      )}
       {canEdit && !system ? (
         <Menu
           align="end"
@@ -103,4 +112,8 @@ export function StatusRow({
       )}
     </div>
   );
+}
+
+function issueCountLabel(count: number): string {
+  return `${count} ${count === 1 ? 'issue' : 'issues'}`;
 }

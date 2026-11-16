@@ -119,6 +119,34 @@ export function statusDeleteProblem(
   return undefined;
 }
 
+/** An issue as the status-delete count reads it: a stored row (live, archived or deleted). */
+export interface StatusIssueLike {
+  readonly statusId: string;
+  readonly archivedAt: unknown;
+  readonly deletedAt: unknown;
+}
+
+/**
+ * The issues of `issues` on `statusId`, by lifecycle state (AC-6): a deleted issue counts as
+ * recently deleted whether or not it was archived first. The server counts the same way in SQL;
+ * the client's `status.delete` prediction counts the issues its replica holds.
+ */
+export function countStatusIssues(
+  issues: readonly StatusIssueLike[],
+  statusId: string,
+): StatusIssueCounts {
+  let live = 0;
+  let archived = 0;
+  let recentlyDeleted = 0;
+  for (const issue of issues) {
+    if (issue.statusId !== statusId) continue;
+    if (issue.deletedAt != null) recentlyDeleted++;
+    else if (issue.archivedAt != null) archived++;
+    else live++;
+  }
+  return { live, archived, recentlyDeleted };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Create, reorder and the shape of a status row (SPEC-010 §4.1, §6). Shared by the handlers and
 // the operations' `optimistic`, so the client predicts the key the server commits.

@@ -169,6 +169,22 @@ export function isCommentServer(server: SimServer): server is CommentServer {
   return isIssueServer(server) && 'comments' in server;
 }
 
+/** The stored workflow (PLAN-010 S5): teams' defaults, statuses and labels. */
+export interface WorkflowState {
+  readonly teams: readonly { id: string; key: string; defaultStatusId: string }[];
+  readonly statuses: readonly { id: string; teamId: string; name: string; category: string }[];
+  readonly labels: readonly { id: string; teamId: string | null; name: string }[];
+}
+
+/** A server the workflow steps run against (SPEC-010 AC-19): only the real one has issues. */
+export interface WorkflowServer extends IssueServer {
+  workflow(): Promise<WorkflowState>;
+}
+
+export function isWorkflowServer(server: SimServer): server is WorkflowServer {
+  return isIssueServer(server) && 'workflow' in server;
+}
+
 /** The hub's ping interval (sync-protocol §4.2; PLAN-002 S4: every 25 s). */
 export const PING_INTERVAL_MS = 25_000;
 

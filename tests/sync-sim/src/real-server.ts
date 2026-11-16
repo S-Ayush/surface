@@ -48,6 +48,8 @@ import type {
   IssueRecord,
   IssueState,
   ItemState,
+  WorkflowServer,
+  WorkflowState,
 } from './server.js';
 
 export interface RealServerOptions {
@@ -152,7 +154,7 @@ interface RealSocket {
   resynced: boolean;
 }
 
-export class RealServer implements CommentServer {
+export class RealServer implements CommentServer, WorkflowServer {
   readonly users: readonly string[];
   readonly models = REAL_MODELS;
   /** What went wrong on the server side; each is a failure of the case. */
@@ -465,6 +467,10 @@ export class RealServer implements CommentServer {
   /** The server's `event_outbox` events of `type`, oldest first, with their data (PLAN-013 S4). */
   events(type: string): Promise<readonly { readonly type: string; readonly data: unknown }[]> {
     return this.#serially(`read the ${type} events`, () => this.#entry.events(type));
+  }
+
+  workflow(): Promise<WorkflowState> {
+    return this.#serially('read the workflow', () => this.#entry.workflow());
   }
 
   compactLog(): void {

@@ -37,3 +37,14 @@ export interface OptimisticStore {
   unarchive(model: string, ref: string): void;
   remove(model: string, ref: string): void;
 }
+
+/**
+ * Thrown by an `optimistic()` when the store already shows that the server will refuse the
+ * mutation, with the server's message (SPEC-010 §5: `status.delete` of a status the replica shows
+ * an issue on). The client's `dispatch` throws it and queues nothing, so no request is sent. A
+ * replay that throws it (an issue arrived after the dispatch) only drops the mutation's effect;
+ * the queued mutation still goes to the server, which decides.
+ */
+export class OptimisticRefusal extends Error {
+  override readonly name = 'OptimisticRefusal';
+}

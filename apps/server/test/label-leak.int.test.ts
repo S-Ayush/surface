@@ -115,6 +115,7 @@ const CALLS: Record<string, Call> = {
   'label.delete': (team) => ['label.delete', { team, label: 'Critical' }],
   'label.archive': (team) => ['label.archive', { team, label: 'Critical' }],
   'label.unarchive': (team) => ['label.unarchive', { team, label: 'Critical' }],
+  'label.usage': (team) => ['label.usage', { team }],
 };
 
 describe('a non-member naming private team SEC', () => {
@@ -440,5 +441,129 @@ describe('moving a public team label to the workspace (AC-24)', () => {
     expect(rows.map((r) => r.action)).toEqual(['U']);
     expect(rows[0]?.groups).toEqual(['workspace']);
     expect(rows[0]?.data).toMatchObject({ teamId: null });
+  });
+});
+
+// PLAN-010 S5 (SPEC-010 E7, AC-15, AC-26, D15): the issue-dependent halves. Two workspace labels
+// and one SEC label sit on an ENG issue and a SEC issue. `label.usage` counts and names only what
+// the actor can see; deleting a workspace label rewrites every issue but reports only the visible
+// ones; `status.delete` on a SEC status answers like a status that never existed, with no count.
+describe('the issue-dependent halves (PLAN-010 S5)', () => {
+  const engIssue = uuidv7();
+  const secIssue = uuidv7();
+  const common = uuidv7();
+  const spare = uuidv7();
+  // Issues are read through the public teams a session carries (SPEC-011 §5.6), as in production.
+  const seeing = (actor: Actor): Actor => ({ ...actor, publicTeams: [h.teams.eng] });
+
+  beforeAll(async () => {
+    for (const [input, actor] of [
+      [{ id: common, name: 'Common' }, seeing(zoeActor)],
+      [{ id: spare, name: 'Spare' }, seeing(zoeActor)],
+      [{ team: 'SEC', name: 'Secret' }, seeing(samActor)],
+    ] as const) {
+      expect(await executor.execute('label.create', input, actor)).toMatchObject({ ok: true });
+    }
+    for (const [input, actor] of [
+      [
+        { id: engIssue, team: 'ENG', title: 'Fix login', labels: ['Common', 'Spare'] },
+        seeing(anaActor),
+      ],
+      [
+        { id: secIssue, team: 'SEC', title: 'Rotate keys', labels: ['Common', 'Spare', 'Secret'] },
+        seeing(samActor),
+      ],
+    ] as const) {
+      expect(await executor.execute('issue.create', input, actor)).toMatchObject({ ok: true });
+    }
+  });
+
+  type Usage = {
+    labels: { label: { name: string }; issues: number; teams: { id: string; key: string }[] }[];
+  };
+  async function usage(input: object, actor: Actor): Promise<Usage> {
+    const result = await executor.execute('label.usage', input, actor);
+    if (!result.ok) throw new Error(result.error.message);
+    return result.result as Usage;
+  }
+
+  for (const [who, actor] of [
+    ['a Member', () => seeing(anaActor)],
+    ['an Admin', () => seeing(zoeActor)],
+  ] as const) {
+    it(`label.usage counts and names no SEC issue or team for ${who}`, async () => {
+      for (const input of [{}, { scope: 'workspace' }, { team: 'ENG' }]) {
+        const answer = await usage(input, actor());
+        const text = JSON.stringify(answer);
+        expect(text).not.toContain(h.teams.sec);
+        expect(text).not.toContain('"SEC"');
+        expect(text).not.toContain('Secret');
+        const found = answer.labels.find((l) => l.label.name === 'Common');
+        expect(found).toMatchObject({ issues: 1, teams: [{ id: h.teams.eng, key: 'ENG' }] });
+      }
+    });
+  }
+
+  it('label.usage counts the SEC issue for a SEC member (control)', async () => {
+    const answer = await usage({ scope: 'workspace' }, seeing(samActor));
+    const found = answer.labels.find((l) => l.label.name === 'Common');
+    expect(found?.issues).toBe(2);
+    expect(found?.teams.map((t) => t.key).sort()).toEqual(['ENG', 'SEC']);
+  });
+
+  it('label.delete of a workspace label reports only the visible issues, and rewrites the SEC one too (E7)', async () => {
+    const deleted = await executor.execute('label.delete', { label: 'Common' }, seeing(zoeActor));
+    expect(deleted).toMatchObject({ ok: true, result: { removedFromIssues: 1 } });
+    const { rows } = await h.pool.query<{ id: string; label_ids: string[] }>(
+      'SELECT id, label_ids FROM issues WHERE id = ANY($1::uuid[])',
+      [[engIssue, secIssue]],
+    );
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.label_ids).not.toContain(common);
+    // The SEC issue's rewrite is logged to SEC's group only.
+    const log = await h.pool.query<{ groups: string[] }>(
+      `SELECT groups FROM sync_log WHERE model = 'Issue' AND model_id = $1
+        ORDER BY sync_id DESC LIMIT 1`,
+      [secIssue],
+    );
+    expect(log.rows[0]?.groups).toEqual([`team:${h.teams.sec}`]);
+  });
+
+  it('label.delete reports both issues to a SEC member (control)', async () => {
+    const deleted = await executor.execute('label.delete', { label: spare }, seeing(samActor));
+    expect(deleted).toMatchObject({ ok: true, result: { removedFromIssues: 2 } });
+  });
+
+  it('status.delete on a SEC status answers like a status that never existed, with no count', async () => {
+    const { rows } = await h.pool.query<{ id: string }>(
+      `SELECT id FROM workflow_statuses WHERE team_id = $1 AND name = 'Todo'`,
+      [h.teams.sec],
+    );
+    const secTodo = rows[0]?.id ?? '';
+    expect(secTodo).not.toBe('');
+    // The SEC issue is on SEC's default status, so SEC's statuses do have issues to count.
+    const before = await logLength();
+    for (const actor of [seeing(anaActor), seeing(zoeActor)]) {
+      for (const [team, unknownTeam] of [
+        ['ENG', 'ENG'],
+        ['SEC', 'ZZZ'],
+      ] as const) {
+        const unknownId = randomUUID();
+        const real = await failure('status.delete', { team, status: secTodo }, actor, [
+          secTodo,
+          team,
+        ]);
+        const unknown = await failure(
+          'status.delete',
+          { team: unknownTeam, status: unknownId },
+          actor,
+          [unknownId, unknownTeam],
+        );
+        expect(real).toEqual(unknown);
+        expect(real).toMatchObject({ code: 'NOT_FOUND' });
+        expect(JSON.stringify(real)).not.toMatch(/\d+ issue/);
+      }
+    }
+    expect(await logLength()).toBe(before);
   });
 });

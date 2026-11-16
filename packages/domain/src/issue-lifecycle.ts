@@ -308,8 +308,8 @@ export const ISSUE_LIFECYCLE_RULES: Readonly<Record<string, LifecycleRule>> = {
     pending: 'PLAN-015 S2',
   },
   // Through `removeLabelFromIssues` (`repo.updateWhere`, `touchUpdatedAt: false`), which locks
-  // the issues in ascending id; `label.delete` calls it from PLAN-010 S5.
-  'label.delete': { ...CASCADE, kind: 'operation', spec: 'SPEC-010', pending: 'PLAN-010 S5' },
+  // the issues in ascending id after the scope and label rows (PLAN-010 S5).
+  'label.delete': { ...CASCADE, kind: 'operation', spec: 'SPEC-010' },
   'attachment.setPreview': {
     ...CASCADE,
     kind: 'operation',

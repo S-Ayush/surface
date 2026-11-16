@@ -36,6 +36,7 @@ import {
   labelMoveToWorkspace,
   labelUnarchive,
   labelUpdate,
+  labelUsage,
 } from './label.js';
 import { statusCreate, statusDelete, statusList, statusReorder, statusUpdate } from './status.js';
 import {
@@ -160,6 +161,8 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   commentDelete,
   // A reaction on the seed's first thread, then one on ENG-1 itself (SPEC-013 §6.1).
   reactionSet,
+  // A read of every label's issue count (SPEC-010 §6; PLAN-010 S5).
+  labelUsage,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

@@ -1,8 +1,9 @@
 /** `WorkflowAccess` over the operation's Postgres transaction, and the status output shape. */
+import type { StatusIssueCounts } from '@surface/domain';
 import type { StatusSchema } from '@surface/operations';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { z } from 'zod';
-import { teams, workflowStatuses } from '../../db/schema/index.js';
+import { issues, teams, workflowStatuses } from '../../db/schema/index.js';
 import type { HandlerContext } from '../../executor/context.js';
 import type { WorkflowAccess, StatusRow } from './core.js';
 
@@ -59,7 +60,28 @@ export function workflowAccess(ctx: HandlerContext): WorkflowAccess {
         .for('key share');
       return row;
     },
-    // No issue table until PLAN-010 S5 (PLAN-011 S3 adds it): nothing uses a status yet.
-    issueCounts: () => Promise.resolve({ live: 0, archived: 0, recentlyDeleted: 0 }),
+    issueCounts: (statusId) => statusIssueCounts(tx, statusId),
   };
+}
+
+/**
+ * The issues with `status_id = statusId`, by lifecycle state (SPEC-010 §4.4, AC-6). Every row
+ * counts: a permanently deleted issue has none. Not filtered by the actor's groups: the delete
+ * must refuse while any issue uses the status (the `RESTRICT` key would otherwise trip), and the
+ * actor can already see the whole team (§5), so the answer depends on no invisible issue. A
+ * deleted issue that was archived before counts as recently deleted (SPEC-015 D12). Takes no lock.
+ */
+export async function statusIssueCounts(
+  tx: HandlerContext['tx'],
+  statusId: string,
+): Promise<StatusIssueCounts> {
+  const [row] = await tx
+    .select({
+      live: sql<number>`count(*) filter (where ${issues.archivedAt} is null and ${issues.deletedAt} is null)::int`,
+      archived: sql<number>`count(*) filter (where ${issues.archivedAt} is not null and ${issues.deletedAt} is null)::int`,
+      recentlyDeleted: sql<number>`count(*) filter (where ${issues.deletedAt} is not null)::int`,
+    })
+    .from(issues)
+    .where(eq(issues.statusId, statusId));
+  return row ?? { live: 0, archived: 0, recentlyDeleted: 0 };
 }

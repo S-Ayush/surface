@@ -22,6 +22,10 @@ import {
   issueCreate,
   issueUpdate,
   reactionSet,
+  labelDelete,
+  statusCreate,
+  statusDelete,
+  teamSetDefaultStatus,
 } from '@surface/operations';
 import { Comment, Issue } from '@surface/domain/model';
 import type { Faults } from './network.js';
@@ -51,6 +55,24 @@ export type LabelPick = (typeof LABEL_PICKS)[number];
 export const STATUS_PICKS = ['default', 'Todo', 'In Progress', 'Done', 'Triage', 'other'] as const;
 export type StatusPick = (typeof STATUS_PICKS)[number];
 
+/**
+ * The statuses a workflow step creates (PLAN-010 S5): a third Started and a second Unstarted, so
+ * deletes of the last two of a category race (E3) and a default can move to a new status.
+ */
+export const EXTRA_STATUSES = { Review: 'started', Blocked: 'unstarted' } as const;
+export type ExtraStatus = keyof typeof EXTRA_STATUSES;
+/** A SIM status a workflow step names: the setup's, or an extra one (maybe not created yet). */
+export const WORKFLOW_PICKS = [
+  'Backlog',
+  'Todo',
+  'In Progress',
+  'In Review',
+  'Done',
+  'Review',
+  'Blocked',
+] as const;
+export type WorkflowPick = (typeof WORKFLOW_PICKS)[number];
+
 /** The team the issue steps create in: the one first-run setup made (`@surface/server/testing`). */
 export const ISSUE_TEAM = 'SIM';
 
@@ -73,7 +95,7 @@ export type Step =
       readonly t: 'issueCreate';
       readonly tab: number;
       readonly title: string;
-      readonly status: StatusPick;
+      readonly status: StatusPick | WorkflowPick;
       readonly labels: readonly LabelPick[];
       readonly reuse?: number | undefined;
     }
@@ -82,7 +104,7 @@ export type Step =
       readonly t: 'issueUpdate';
       readonly tab: number;
       readonly issue: number;
-      readonly status: StatusPick | 'keep';
+      readonly status: StatusPick | WorkflowPick | 'keep';
       readonly addLabels: readonly LabelPick[];
       readonly removeLabels: readonly LabelPick[];
     }
@@ -127,6 +149,15 @@ export type Step =
       readonly emoji: number;
       readonly reacted: boolean;
     }
+  /**
+   * The workflow steps (PLAN-010 S5, SPEC-010 AC-19): `status.create` of one of two extra
+   * statuses, `status.delete` and `team.setDefaultStatus` of a SIM status by name, and
+   * `label.delete` of a fixture label, interleaved with the issue steps that use them.
+   */
+  | { readonly t: 'statusCreate'; readonly tab: number; readonly status: ExtraStatus }
+  | { readonly t: 'statusDelete'; readonly tab: number; readonly status: WorkflowPick }
+  | { readonly t: 'setDefaultStatus'; readonly tab: number; readonly status: WorkflowPick }
+  | { readonly t: 'labelDelete'; readonly tab: number; readonly label: LabelPick }
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -302,6 +333,64 @@ export function issueCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
 }
 
 /**
+ * The workflow (PLAN-010 S5, SPEC-010 AC-19, E3, E16, E17): the issue steps, plus status creates,
+ * deletes and default moves, and label deletes, from every tab with every fault, so a delete
+ * interleaves with an issue edit into the same status or label. Only the real server has issues.
+ */
+export function workflowCase(): fc.Arbitrary<Case> {
+  const workflowPick = fc.constantFrom(...WORKFLOW_PICKS);
+  const step = fc.oneof(
+    {
+      weight: 6,
+      arbitrary: fc.record({
+        t: fc.constant('issueCreate'),
+        tab,
+        title,
+        status: fc.constantFrom<StatusPick | WorkflowPick>('default', ...WORKFLOW_PICKS),
+        labels: labelPicks,
+      }),
+    },
+    {
+      weight: 8,
+      arbitrary: fc.record({
+        t: fc.constant('issueUpdate'),
+        tab,
+        issue: index,
+        status: fc.constantFrom<StatusPick | WorkflowPick | 'keep'>(
+          'keep',
+          'keep',
+          ...WORKFLOW_PICKS,
+        ),
+        addLabels: labelPicks,
+        removeLabels: fc.constant([]),
+      }),
+    },
+    {
+      weight: 2,
+      arbitrary: fc.record({
+        t: fc.constant('statusCreate'),
+        tab,
+        status: fc.constantFrom<ExtraStatus>('Review', 'Blocked'),
+      }),
+    },
+    {
+      weight: 3,
+      arbitrary: fc.record({ t: fc.constant('statusDelete'), tab, status: workflowPick }),
+    },
+    {
+      weight: 2,
+      arbitrary: fc.record({ t: fc.constant('setDefaultStatus'), tab, status: workflowPick }),
+    },
+    { weight: 2, arbitrary: fc.record({ t: fc.constant('labelDelete'), tab, label: labelPick }) },
+    ...faultSteps.map((arbitrary) => ({
+      weight: 1,
+      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
+    })),
+  );
+  return caseOf(step);
+}
+
+/**
  * The draft keys the steps use: two composer teams and two comment issues. Opaque ids (the
  * server resolves none, SPEC-012 D23), so they need no rows.
  */
@@ -430,7 +519,7 @@ function labelRef(pick: LabelPick, fixtures: IssueFixtures): string {
   return pick;
 }
 
-function statusRef(pick: StatusPick, fixtures: IssueFixtures): string | undefined {
+function statusRef(pick: StatusPick | WorkflowPick, fixtures: IssueFixtures): string | undefined {
   if (pick === 'default') return undefined;
   if (pick === 'other') return fixtures.otherTeamStatusId;
   return pick;
@@ -631,6 +720,33 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       const issue = pick(shown, step.target);
       if (issue === undefined) return;
       world.dispatch(target, reactionSet, { issue, emoji, reacted: step.reacted });
+      return;
+    }
+    case 'statusCreate':
+    case 'statusDelete':
+    case 'setDefaultStatus':
+    case 'labelDelete': {
+      const target = pick(readyTabs(live), step.tab);
+      const fixtures = isIssueServer(world.server) ? world.server.issueFixtures : undefined;
+      if (target === undefined || fixtures === undefined) return;
+      if (step.t === 'statusCreate') {
+        world.dispatch(target, statusCreate, {
+          id: uuidV7From(world.random),
+          team: ISSUE_TEAM,
+          name: step.status,
+          category: EXTRA_STATUSES[step.status],
+        });
+      } else if (step.t === 'statusDelete') {
+        world.dispatch(target, statusDelete, { team: ISSUE_TEAM, status: step.status });
+      } else if (step.t === 'setDefaultStatus') {
+        world.dispatch(target, teamSetDefaultStatus, { team: ISSUE_TEAM, status: step.status });
+      } else {
+        // Flaky is the workspace's label: named without a team, as its page does.
+        world.dispatch(target, labelDelete, {
+          ...(step.label === 'Flaky' ? {} : { team: ISSUE_TEAM }),
+          label: labelRef(step.label, fixtures),
+        });
+      }
       return;
     }
     case 'wait':

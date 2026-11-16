@@ -2,7 +2,7 @@
 // estimate settings and a few statuses, a signed-in actor who is a member of the given teams, and
 // a dispatch spy that confirms everything. Not a test file.
 import { userActor, type Actor } from '@surface/domain';
-import { Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
+import { Issue, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
 import type { AnyOperation } from '@surface/operations';
 import type { SyncStore } from '@surface/sync-client';
 import { AppModel } from '../src/app/AppModel.js';
@@ -24,7 +24,7 @@ export type EstimateSettings = {
   estimateCountUnestimatedAsOne?: boolean;
 };
 
-const status = (id: string, name: string, category: string, position: string) => ({
+export const status = (id: string, name: string, category: string, position: string) => ({
   id,
   teamId: ENG,
   name,
@@ -46,16 +46,33 @@ export const STATUSES = [
 
 export type Dispatched = { readonly op: string; readonly input: unknown };
 
+/** An issue in the replica, as far as the workflow page reads one. */
+export type ReplicaIssue = {
+  readonly id: string;
+  readonly statusId: string;
+  readonly archivedAt?: string | null;
+  readonly deletedAt?: string | null;
+};
+
 export class EstimateApp extends AppModel {
   readonly #store: SyncStore;
   readonly dispatched: Dispatched[] = [];
   /** When `message` is set, `dispatch` throws it, like a store that did not take the change. */
   readonly failure: { message: string | undefined } = { message: undefined };
+  /** When set, `dispatch` answers with the server's refusal (`rejected`) instead of confirming. */
+  readonly refusal: { code: string; message: string } | undefined;
+  readonly #raw: { connection: string };
 
   constructor(
     private readonly memberOf: readonly string[],
     settings: EstimateSettings = {},
     private readonly role: 'admin' | 'member' = 'member',
+    options: {
+      readonly issues?: readonly ReplicaIssue[];
+      /** More statuses after `STATUSES`. */
+      readonly statuses?: readonly ReturnType<typeof status>[];
+      readonly refusal?: { code: string; message: string };
+    } = {},
   ) {
     const unused = () => Promise.reject(new Error('unused'));
     super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
@@ -84,24 +101,50 @@ export class EstimateApp extends AppModel {
         User,
         [{ id: 'u-ada', name: 'Ada', displayName: 'ada', email: 'a@example.com', active: true }],
       ],
-      [WorkflowStatus, STATUSES],
+      [WorkflowStatus, [...STATUSES, ...(options.statuses ?? [])]],
+      [
+        Issue,
+        (options.issues ?? []).map((i) => ({
+          teamId: ENG,
+          archivedAt: null,
+          deletedAt: null,
+          ...i,
+        })),
+      ],
     ]);
+    this.refusal = options.refusal;
     const dispatched = this.dispatched;
     const failure = this.failure;
-    this.#store = {
+    const refusal = this.refusal;
+    this.#raw = {
       status: 'ready',
       connection: 'online',
       pool: {
         all: (model: unknown) => byModel.get(model) ?? [],
         get: (model: unknown, id: string) =>
           (byModel.get(model) ?? []).find((row) => (row as { id?: string }).id === id),
+        findBy: (model: unknown, field: string, value: unknown) =>
+          (byModel.get(model) ?? []).filter(
+            (row) => (row as Record<string, unknown>)[field] === value,
+          ),
       },
       dispatch: (op: AnyOperation, input: unknown) => {
         if (failure.message !== undefined) throw new Error(failure.message);
         dispatched.push({ op: op.name, input });
-        return Promise.resolve({ status: 'confirmed' as const });
+        return Promise.resolve(
+          refusal === undefined
+            ? { status: 'confirmed' as const }
+            : { status: 'rejected' as const, error: refusal },
+        );
       },
-    } as unknown as SyncStore;
+    } as { connection: string };
+    this.#store = this.#raw as unknown as SyncStore;
+  }
+
+  /** The connection is down: set before mounting (the fake store is not observable). */
+  goOffline(): this {
+    this.#raw.connection = 'offline';
+    return this;
   }
 
   override get store(): SyncStore | null {

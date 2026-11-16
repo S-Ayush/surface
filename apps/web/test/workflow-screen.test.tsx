@@ -1,7 +1,8 @@
 // PLAN-010 S2 web half (SPEC-010 §3.1, §7.1): the workflow page renders from the replica's rows.
 // Statuses are grouped by category in page order, Triage is hidden, Duplicate is marked "System"
-// and has no menu, the default status has its badge, issue counts show "—" until S5, each category
-// but Duplicate has a "+", and a reader of a public team sees the page read-only. Server-rendered
+// and has no menu, the default status has its badge, issue counts show "—" before the server
+// answers (the counts themselves are `workflow-counts.test.tsx`), each category but Duplicate has
+// a "+", and a reader of a public team sees the page read-only. Server-rendered
 // markup, as apps/web has no DOM test environment; the keys are `settings-row-keys.test.tsx` and
 // the form and menu behaviour is covered by the model tests.
 import { userActor, type Actor } from '@surface/domain';

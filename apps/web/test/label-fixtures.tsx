@@ -13,6 +13,7 @@ import type { ReactNode } from 'react';
 import { AppModel } from '../src/app/AppModel.js';
 import { AuthState, type Session } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
+import { SettingsReadsContext, type SettingsReads } from '../src/features/teams/settings-reads.js';
 import { ShellContext } from '../src/shell/ShellContext.js';
 import { ShellStore } from '../src/shell/ShellStore.js';
 import { ShortcutProvider } from '../src/shortcuts/ShortcutProvider.js';
@@ -74,6 +75,7 @@ const LABELS = [
 
 export class FakeApp extends AppModel {
   readonly #store: SyncStore;
+  readonly #raw: { connection: string };
 
   constructor(
     private readonly memberOf: readonly string[],
@@ -96,7 +98,7 @@ export class FakeApp extends AppModel {
         ),
       ],
     ]);
-    this.#store = {
+    this.#raw = {
       status: 'ready',
       connection: 'online',
       ...(dispatch === undefined ? {} : { dispatch }),
@@ -105,7 +107,14 @@ export class FakeApp extends AppModel {
         get: (model: unknown, id: string) =>
           (byModel.get(model) ?? []).find((row) => (row as { id?: string }).id === id),
       },
-    } as unknown as SyncStore;
+    } as { connection: string };
+    this.#store = this.#raw as unknown as SyncStore;
+  }
+
+  /** The connection is down: set before mounting (the fake store is not observable). */
+  goOffline(): this {
+    this.#raw.connection = 'offline';
+    return this;
   }
 
   override get store(): SyncStore | null {
@@ -124,8 +133,18 @@ export class FakeApp extends AppModel {
     });
 }
 
+/** Server reads that never answer: the pages show "—" (SPEC-010 §5), and no test fetches. */
+export const SILENT_READS: SettingsReads = {
+  labelUsage: () => new Promise(() => undefined),
+  issueGroupBy: () => new Promise(() => undefined),
+};
+
 /** The page under the providers the app gives it, on a routable memory history. */
-export async function pageTree(app: AppModel, page: () => ReactNode): Promise<ReactNode> {
+export async function pageTree(
+  app: AppModel,
+  page: () => ReactNode,
+  reads: SettingsReads = SILENT_READS,
+): Promise<ReactNode> {
   const rootRoute = createRootRoute({ component: page });
   const router = createRouter({
     routeTree: rootRoute,
@@ -137,11 +156,13 @@ export async function pageTree(app: AppModel, page: () => ReactNode): Promise<Re
   await router.load();
   return (
     <AppContext value={app}>
-      <ShellContext value={new ShellStore(null)}>
-        <ShortcutProvider>
-          <RouterProvider router={router} />
-        </ShortcutProvider>
-      </ShellContext>
+      <SettingsReadsContext value={reads}>
+        <ShellContext value={new ShellStore(null)}>
+          <ShortcutProvider>
+            <RouterProvider router={router} />
+          </ShortcutProvider>
+        </ShellContext>
+      </SettingsReadsContext>
     </AppContext>
   );
 }

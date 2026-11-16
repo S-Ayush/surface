@@ -34,6 +34,8 @@ export type {
   StorageEstimator,
 } from './inspect.js';
 export { InvalidInputError } from './queue.js';
+export { STATUS_GONE_MESSAGE, statusGoneMessage } from './status-gone.js';
+export type { SeenDeletes } from './status-gone.js';
 export type {
   DispatchOptions,
   MutationOutcome,

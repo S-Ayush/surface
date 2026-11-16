@@ -1,5 +1,6 @@
 // One label or group on the labels page (SPEC-010 §3.2): a color dot, the name, the description
-// (editable in place), the usage columns ("—" until PLAN-010 S5), the created day and a "…" menu.
+// (editable in place), the usage columns (from `label.usage`, "—" until it answers and offline),
+// the created day and a "…" menu.
 // It is an option of the page's listbox in the `settings-row` scope: its keys are the registry's
 // (rowKeys.ts), not handlers here. A group row also has the group type select and an expand toggle.
 import { Menu } from '@surface/ui';
@@ -15,7 +16,7 @@ import {
 } from 'lucide-react';
 import { useState, type KeyboardEvent } from 'react';
 import { LABEL_ROW_ATTRIBUTE } from './rowKeys.js';
-import { dayText, type LabelItem } from './model.js';
+import { dayText, UNKNOWN_USAGE, type LabelItem, type UsageColumns } from './model.js';
 import styles from './labels.module.css';
 
 export type LabelRowProps = {
@@ -30,6 +31,8 @@ export type LabelRowProps = {
   readonly groupArchived?: boolean;
   /** The row the listbox's roving tab stop is on. */
   readonly active: boolean;
+  /** Used in, Issues and Last applied (`label.usage`); "—" each until it answers. */
+  readonly usage?: UsageColumns;
   readonly onFocus: () => void;
   readonly onToggle?: () => void;
   readonly onEdit: () => void;
@@ -50,6 +53,7 @@ export function LabelRow({
   canMove,
   groupArchived = false,
   active,
+  usage = UNKNOWN_USAGE,
   onFocus,
   onToggle,
   onEdit,
@@ -186,11 +190,15 @@ export function LabelRow({
       ) : (
         <span className={styles.descriptionText}>{saved}</span>
       )}
-      <span className={styles.column} title="Usage arrives with issues">
-        —
+      <span className={styles.column} data-column="used-in">
+        {usage.usedIn}
       </span>
-      <span className={styles.column}>—</span>
-      <span className={styles.column}>—</span>
+      <span className={styles.column} data-column="issues">
+        {usage.issues}
+      </span>
+      <span className={styles.column} data-column="last-applied">
+        {usage.lastApplied}
+      </span>
       <span className={styles.column}>{dayText(label.createdAt)}</span>
       {canEdit ? (
         <Menu

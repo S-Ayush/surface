@@ -11,11 +11,25 @@ import type { Repo, RowChange } from '../../src/sync/repo.js';
 const NOW = new Date('2026-11-13T10:00:00Z');
 
 export interface LabelWrite {
-  readonly action: 'insert' | 'update' | 'purge' | 'archive' | 'unarchive';
+  readonly action: 'insert' | 'update' | 'purge' | 'archive' | 'unarchive' | 'updateWhere';
   readonly id: string;
   readonly model: string;
   /** The fields a patch carried. */
   readonly fields?: readonly string[];
+  /** An `updateWhere`'s rows, in the order given. */
+  readonly ids?: readonly string[];
+  readonly touchUpdatedAt?: boolean;
+}
+
+/** An issue as the label cascade sees it (SPEC-010 §4.4). */
+export interface MemoryIssue {
+  readonly id: string;
+  labelIds: string[];
+  readonly archivedAt: Date | null;
+  readonly deletedAt: Date | null;
+  updatedAt: Date;
+  /** Whether the actor of the test can see it (`visibleTo`). */
+  readonly visible: boolean;
 }
 
 export interface MemoryLabels {
@@ -27,7 +41,11 @@ export interface MemoryLabels {
   readonly writes: LabelWrite[];
   readonly access: LabelAccess;
   readonly repo: Repo;
+  /** Issues by id, for the delete cascade. */
+  readonly issues: Map<string, MemoryIssue>;
   add(fields: Partial<LabelRow> & { name: string }): LabelRow;
+  /** An issue carrying `labelIds`; visible to the actor unless `visible: false`. */
+  addIssue(labelIds: readonly string[], fields?: Partial<Omit<MemoryIssue, 'id'>>): MemoryIssue;
   byName(name: string): LabelRow;
   snapshot(): string;
 }
@@ -39,6 +57,7 @@ export function memoryLabels(): MemoryLabels {
   const rows = new Map<string, LabelRow>();
   const calls: string[] = [];
   const writes: LabelWrite[] = [];
+  const issues = new Map<string, MemoryIssue>();
   const nameOf = (id: string) => rows.get(id)?.name ?? id;
 
   function add(fields: Partial<LabelRow> & { name: string }): LabelRow {
@@ -80,6 +99,32 @@ export function memoryLabels(): MemoryLabels {
     shareLabel: (id) => {
       calls.push(`shareLabel:${nameOf(id)}`);
       return Promise.resolve(rows.get(id));
+    },
+    removeFromIssues: (labelId) => {
+      calls.push(`removeFromIssues:${nameOf(labelId)}`);
+      // As `removeLabelFromIssues`: every state, ascending id, `updatedAt` left alone.
+      const ids = [...issues.values()]
+        .filter((issue) => issue.labelIds.includes(labelId))
+        .map((issue) => issue.id)
+        .sort();
+      if (ids.length === 0) return Promise.resolve([]);
+      for (const id of ids) {
+        const issue = issues.get(id);
+        if (issue) issue.labelIds = issue.labelIds.filter((l) => l !== labelId);
+      }
+      writes.push({
+        action: 'updateWhere',
+        id: labelId,
+        model: 'Issue',
+        ids,
+        fields: ['labelIds'],
+        touchUpdatedAt: false,
+      });
+      return Promise.resolve(ids);
+    },
+    visibleIssueCount: (ids) => {
+      calls.push('visibleIssueCount');
+      return Promise.resolve(ids.filter((id) => issues.get(id)?.visible === true).length);
     },
   };
 
@@ -141,7 +186,21 @@ export function memoryLabels(): MemoryLabels {
     writes,
     access,
     repo,
+    issues,
     add,
+    addIssue(labelIds, fields = {}) {
+      const issue: MemoryIssue = {
+        id: randomUUID(),
+        labelIds: [...labelIds],
+        archivedAt: null,
+        deletedAt: null,
+        updatedAt: NOW,
+        visible: true,
+        ...fields,
+      };
+      issues.set(issue.id, issue);
+      return issue;
+    },
     byName(name) {
       const row = [...rows.values()].find((r) => r.name === name);
       if (!row) throw new Error(`no label ${name}`);

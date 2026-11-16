@@ -277,9 +277,10 @@ describe('label.update (AC-9, AC-10)', () => {
 });
 
 describe('label.delete (AC-12, E7)', () => {
-  it('deletes a label and returns it with the count of issues it left (none until S5)', async () => {
+  it('deletes a label no issue carries, rewrites no issue and returns removedFromIssues 0', async () => {
     const m = memoryLabels();
     const row = m.add({ name: 'Bug' });
+    m.addIssue([]);
     const out = await deleteLabel(m.access, m.repo, { label: ref(row) });
     expect(out).toMatchObject({ label: { id: row.id }, removedFromIssues: 0 });
     expect(m.rows.size).toBe(0);
@@ -298,11 +299,16 @@ describe('label.delete (AC-12, E7)', () => {
     expect(m.rows.size).toBe(0);
   });
 
-  it('locks the scope row, then the label row, then reads the scope (§4.4)', async () => {
+  it('locks the scope row, then the label row, then reads the scope and rewrites issues (§4.4)', async () => {
     const m = memoryLabels();
     const row = m.add({ name: 'Bug', teamId: null });
     await deleteLabel(m.access, m.repo, { label: ref(row) });
-    expect(m.calls).toEqual(['lockWorkspace', 'lockLabel:Bug', 'scopeLabels']);
+    expect(m.calls).toEqual([
+      'lockWorkspace',
+      'lockLabel:Bug',
+      'scopeLabels',
+      'removeFromIssues:Bug',
+    ]);
   });
 
   it('answers CONFLICT when the label is already gone', async () => {

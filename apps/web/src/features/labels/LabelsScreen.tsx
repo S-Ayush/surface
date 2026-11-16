@@ -3,7 +3,8 @@
 // groups with a filter, inline new label, new group and edit rows, a description edited in place,
 // and Move to workspace and Delete behind dialogs with the §3.2 wording. Everything shows at once
 // (optimistic); a refusal rolls back and says why. Readers of a public team see the team page
-// read-only with "Join the team to edit". The usage columns are "—" until PLAN-010 S5.
+// read-only with "Join the team to edit". The usage columns and the delete dialog's count come from
+// `label.usage` (SPEC-010 §5, D15), asked on open and on window focus; "—" offline.
 import { uuidv7 } from '@surface/domain';
 import {
   labelArchive,
@@ -16,12 +17,13 @@ import {
 } from '@surface/operations';
 import { Button, Dialog, DialogClose, EmptyState, Input } from '@surface/ui';
 import { Tag } from 'lucide-react';
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link } from '@tanstack/react-router';
-import { useApp } from '../../app/context.js';
+import { useApp, useObserved } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
 import { rowFocusTarget } from '../statuses/rowKeys.js';
+import { useServerRead, useSettingsReads } from '../teams/settings-reads.js';
 import { submitMutation, toastIfFailed, useShowsRejection } from '../teams/submit.js';
 import { TeamSettingsLayout } from '../teams/TeamSettingsLayout.js';
 import {
@@ -35,6 +37,7 @@ import { LabelTable, visibleIds } from './LabelTable.js';
 import {
   allInScope,
   archivedEntries,
+  deleteLabelText,
   inheritedCount,
   inheritedText,
   labelEntries,
@@ -43,6 +46,7 @@ import {
   scopeInfo,
   scopeLabels,
   type LabelItem,
+  type LabelUsage,
   type LabelsScope,
 } from './model.js';
 import { NewLabelRow, type NewLabelValues } from './NewLabelRow.js';
@@ -100,6 +104,7 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
   const formOpen = newRow !== undefined || editing !== undefined;
   const scopeKey = scope.kind === 'team' ? scope.teamKey : WORKSPACE_SCOPE;
   const teamArg = scope.kind === 'team' ? { team: scope.teamKey } : {};
+  const usage = useLabelUsage(scope);
 
   // "Create label…" from the command menu (§7.3): open the New label row, name field focused.
   useEffect(() => {
@@ -323,6 +328,7 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
           canEdit={canEdit}
           canMove={data.access.move}
           tabStop={tabStop}
+          usage={usage}
           onFocusRow={setActiveId}
           onToggle={(id) =>
             setExpanded((open) => {
@@ -371,7 +377,11 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
           if (!open) setDeleting(undefined);
         }}
         title={`Delete label "${deleting?.name ?? ''}"?`}
-        description="It will be removed from every issue that has it. This can't be undone."
+        description={deleteLabelText(
+          deleting === undefined || usage === undefined
+            ? undefined
+            : (usage.get(deleting.id)?.issues ?? 0),
+        )}
         size="sm"
         footer={
           <>
@@ -475,6 +485,30 @@ function Labels({ scope }: { readonly scope: LabelsScope }) {
         )}
       </Dialog>
     </>
+  );
+}
+
+/**
+ * `label.usage` for the page's scope (every label in it, archived included) by label id, while
+ * online; undefined until it answers and offline. The workspace page asks for workspace labels;
+ * a team page for the team's labels, which is what its table shows.
+ */
+function useLabelUsage(scope: LabelsScope): ReadonlyMap<string, LabelUsage> | undefined {
+  const app = useApp();
+  const reads = useSettingsReads();
+  const online = useObserved(useCallback(() => app.store?.connection === 'online', [app]));
+  const input =
+    scope.kind === 'team'
+      ? { team: scope.teamKey, scope: 'team' as const }
+      : { scope: 'workspace' as const };
+  const answer = useServerRead(
+    () => reads.labelUsage(input),
+    scope.kind === 'team' ? `team:${scope.teamKey}` : 'workspace',
+    online,
+  );
+  return useMemo(
+    () => (answer === undefined ? undefined : new Map(answer.labels.map((u) => [u.label.id, u]))),
+    [answer],
   );
 }
 

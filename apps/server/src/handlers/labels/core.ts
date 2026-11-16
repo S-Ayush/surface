@@ -44,6 +44,15 @@ export interface LabelAccess {
   lockLabel(labelId: string): Promise<LabelRow | undefined>;
   /** A group the operation relies on, re-read `FOR KEY SHARE`; undefined when it is gone. */
   shareLabel(labelId: string): Promise<LabelRow | undefined>;
+  /**
+   * `label.delete`'s cascade (PLAN-011 S4's `removeLabelFromIssues`): removes the label from
+   * `labelIds` of every issue that has it, whatever its lifecycle state, through the repo's bulk
+   * path (issues locked in ascending id, `touchUpdatedAt: false`). Returns the rewritten ids.
+   * Called only while holding the scope row and the label row (SPEC-010 §4.4).
+   */
+  removeFromIssues(labelId: string): Promise<readonly string[]>;
+  /** How many of `issueIds` the actor can see (`visibleTo`: sync groups and a key's teams). */
+  visibleIssueCount(issueIds: readonly string[]): Promise<number>;
 }
 
 const LABEL_GONE = 'That label was deleted or moved. Reload and try again.';
@@ -231,8 +240,12 @@ export interface DeleteInput {
 }
 
 /**
- * AC-12. A hard delete: the row goes and clients get a `D` delta. Removing the id from issues is
- * PLAN-010 S5 (`removeLabelFromIssues`); until the issue table exists there is nothing to rewrite.
+ * AC-12, E7. Lock order (SPEC-010 §4.4, SPEC-011 §4.8): the scope row, then the label row
+ * `FOR UPDATE`, then the cascade locks the issues that carry the label in ascending id. Holding
+ * the label means no edit can newly add it (edits take `FOR KEY SHARE` on a label before the
+ * issue lock), so the set of issues is final. The issues keep their `updatedAt`, history and
+ * lifecycle; then the label row goes and clients get a `D` delta. `removedFromIssues` counts only
+ * the issues the actor can see: a workspace label leaves private teams' issues too.
  */
 export async function deleteLabel(
   access: LabelAccess,
@@ -244,8 +257,10 @@ export async function deleteLabel(
   const label = await lockedLabel(access, input.label.id, input.label.teamId);
   const problem = labelDeleteProblem(await access.scopeLabels(label.teamId), label);
   if (problem) throw refuse(problem);
+  const rewritten = await access.removeFromIssues(label.id);
+  const removedFromIssues = rewritten.length === 0 ? 0 : await access.visibleIssueCount(rewritten);
   await repo.purge('Label', label.id);
-  return { label, removedFromIssues: 0 };
+  return { label, removedFromIssues };
 }
 
 export interface MoveInput {

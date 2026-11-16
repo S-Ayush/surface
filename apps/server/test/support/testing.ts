@@ -173,6 +173,8 @@ export interface TestServer {
    * suite counts `reaction.removed`, emitted only when a clear removed a row).
    */
   events(type: string): Promise<OutboxEventRow[]>;
+  /** Every team's default status, and every `workflow_statuses` and `labels` row (PLAN-010 S5). */
+  workflow(): Promise<WorkflowRows>;
   /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
@@ -191,6 +193,30 @@ const OpResponseSchema = z.union([
     error: z.object({ code: z.string(), message: z.string() }),
   }),
 ]);
+
+/** The rows the workflow property reads (PLAN-010 S5, SPEC-010 AC-19). */
+export interface WorkflowRows {
+  readonly teams: readonly { id: string; key: string; defaultStatusId: string }[];
+  readonly statuses: readonly { id: string; teamId: string; name: string; category: string }[];
+  readonly labels: readonly { id: string; teamId: string | null; name: string }[];
+}
+
+const WorkflowTeamRow = z.object({
+  id: z.string(),
+  key: z.string(),
+  default_status_id: z.string(),
+});
+const WorkflowStatusRow = z.object({
+  id: z.string(),
+  team_id: z.string(),
+  name: z.string(),
+  category: z.string(),
+});
+const WorkflowLabelRow = z.object({
+  id: z.string(),
+  team_id: z.string().nullable(),
+  name: z.string(),
+});
 
 const IssueDbRow = z.object({
   id: z.string(),
@@ -440,6 +466,32 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
           [type],
         );
         return rows.map((row) => OutboxEventDbRow.parse(row));
+      },
+      workflow: async () => {
+        const teams = await db.query('SELECT id, key, default_status_id FROM teams ORDER BY id');
+        const statuses = await db.query(
+          'SELECT id, team_id, name, category FROM workflow_statuses ORDER BY id',
+        );
+        const labels = await db.query('SELECT id, team_id, name FROM labels ORDER BY id');
+        return {
+          teams: teams.rows.map((row) => {
+            const team = WorkflowTeamRow.parse(row);
+            return { id: team.id, key: team.key, defaultStatusId: team.default_status_id };
+          }),
+          statuses: statuses.rows.map((row) => {
+            const status = WorkflowStatusRow.parse(row);
+            return {
+              id: status.id,
+              teamId: status.team_id,
+              name: status.name,
+              category: status.category,
+            };
+          }),
+          labels: labels.rows.map((row) => {
+            const label = WorkflowLabelRow.parse(row);
+            return { id: label.id, teamId: label.team_id, name: label.name };
+          }),
+        };
       },
       compactLog: async () => {
         // Every row older than year 9999: all but the newest (`pruneSyncLog` keeps it).

@@ -5,8 +5,9 @@
  * reference to one is `NOT_FOUND` before any permission check.
  *
  * `label.archive` and `label.unarchive` are PLAN-010 S6 (archive state travels as `A`/`V`,
- * SPEC-011 §5.5), and `label.usage` is S5. The deleted label's id stays in issues' `labelIds`
- * until S5 rewrites them: no issue table exists yet.
+ * SPEC-011 §5.5). `label.delete` removes the label from issues on the server; the client predicts
+ * only the label row's removal, and renderers skip ids the store doesn't hold. `label.usage` (S5)
+ * counts from the server, since the replica holds only some issues (D15).
  *
  * Optimistic updates call the same `label*Problem` functions as the server, so the client
  * predicts what the handlers commit.
@@ -442,4 +443,35 @@ export const labelUnarchive = defineOperation({
   destructive: false,
   examples: [{ team: 'ENG', label: 'Needs design' }],
   optimistic: archiveOptimistic(labelUnarchivePlan, false),
+});
+
+/** At most this many labels in one `label.usage` answer (SPEC-010 §6). */
+export const LABEL_USAGE_LIMIT = 1000;
+
+export const LabelUsageSchema = z.object({
+  label: z.object({ id: z.uuid(), name: z.string() }),
+  /** Issues the caller can see that carry the label and aren't deleted; archived ones count. */
+  issues: z.int().min(0),
+  /** The teams of those issues, by key. */
+  teams: z.array(z.object({ id: z.uuid(), key: z.string(), name: z.string() })),
+  /** The latest `updatedAt` among those issues (SPEC-010 D7), or null when none. */
+  lastAppliedAt: Timestamp.nullable(),
+});
+
+export const labelUsage = defineOperation({
+  name: 'label.usage',
+  kind: 'query',
+  domain: 'label',
+  summary: 'Count how many issues use each label',
+  description:
+    'For every label in scope, archived ones included, counts the issues the caller can see that carry it and are not deleted (archived issues count), lists the teams of those issues, and gives the latest update among them as lastAppliedAt. Scope works as in label.list. Returns at most 1,000 labels, ordered by name.',
+  keywords: ['label usage', 'how many issues have label', 'label counts', 'unused labels'],
+  input: z.object({
+    team: TeamRef.optional(),
+    scope: z.enum(LABEL_SCOPES).default('all'),
+  }),
+  output: z.object({ labels: z.array(LabelUsageSchema).max(LABEL_USAGE_LIMIT) }),
+  permission: (p) => p.any(),
+  destructive: false,
+  examples: [{ team: 'ENG' }, { scope: 'workspace' }],
 });

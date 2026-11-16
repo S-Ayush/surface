@@ -5,8 +5,9 @@
  *
  * Optimistic updates use the same `placeStatus` as the server, so the client predicts the key
  * the server commits. `status.delete` predicts the removal unless the pure rules already refuse
- * it; the issue half (a status with issues) arrives with PLAN-010 S5, when the store can hold
- * issues.
+ * it. When the store shows an issue on the status it throws `OptimisticRefusal` with the server's
+ * message, so nothing is queued; when it shows none it removes the status, and the server, which
+ * sees every issue (the replica holds only some, SPEC-011 §5.7), decides (SPEC-010 E8, AC-17).
  */
 import {
   COLOR_HUES,
@@ -17,6 +18,7 @@ import {
   STATUS_NAME_MAX_LENGTH,
   StatusRef,
   TeamRef,
+  countStatusIssues,
   isStatusCategory,
   placeStatus,
   statusDeleteProblem,
@@ -27,7 +29,7 @@ import {
 import { z } from 'zod';
 import { defineOperation } from '../define.js';
 import { connectionOf, listInput } from '../list.js';
-import type { OptimisticStore, StoreRow } from '../optimistic.js';
+import { OptimisticRefusal, type OptimisticStore, type StoreRow } from '../optimistic.js';
 import { Timestamp } from './shared.js';
 
 const StatusName = z
@@ -291,18 +293,23 @@ export const statusDelete = defineOperation({
     if (found === undefined || status === undefined) return;
     const defaultId = text(found.team, 'defaultStatusId') ?? '';
     const autoClose = text(found.team, 'autoCloseStatusId');
-    const none = { live: 0, archived: 0, recentlyDeleted: 0 };
-    // The server refuses these too, so the row stays. Issues (S5) are the server's to count.
-    if (
-      statusDeleteProblem(
-        { statuses: found.statuses, statusId: status.id },
-        defaultId,
-        none,
-        autoClose,
-      )
-    ) {
-      return;
-    }
+    const issues = store.find('Issue', { statusId: status.id }).flatMap((row) => {
+      const statusId = text(row, 'statusId');
+      return statusId === undefined
+        ? []
+        : [{ statusId, archivedAt: row['archivedAt'], deletedAt: row['deletedAt'] }];
+    });
+    const problem = statusDeleteProblem(
+      { statuses: found.statuses, statusId: status.id },
+      defaultId,
+      countStatusIssues(issues, status.id),
+      autoClose,
+    );
+    // The store shows an issue on it: the server will refuse, so nothing is sent (E8).
+    if (problem?.reason === 'hasIssues') throw new OptimisticRefusal(problem.message);
+    // The server refuses the others too, so the row stays and the server's message shows.
+    if (problem) return;
+    // None in the store: a guess, since the store holds only some issues; the server decides.
     store.remove('WorkflowStatus', status.id);
   },
 });

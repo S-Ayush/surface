@@ -168,3 +168,21 @@ export function applyLabelAdd(
   }
   return result;
 }
+
+/**
+ * The labels an issue shows: those of `issue.labelIds` that `lookup` knows, by name (then id).
+ * A label deleted on the server leaves its id in `labelIds` until the cascade's deltas arrive, and
+ * `label.delete`'s prediction removes only the Label row, so every renderer and picker skips an
+ * id the store doesn't hold (SPEC-010 §5, AC-17; SPEC-012 §3.5). The one shared rule.
+ */
+export function labelsOf<L extends { readonly id: string; readonly name: string }>(
+  issue: { readonly labelIds: readonly string[] },
+  lookup: (id: string) => L | undefined,
+): L[] {
+  return issue.labelIds
+    .flatMap((id) => {
+      const label = lookup(id);
+      return label === undefined ? [] : [label];
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'en') || a.id.localeCompare(b.id, 'en'));
+}
