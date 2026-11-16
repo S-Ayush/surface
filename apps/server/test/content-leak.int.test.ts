@@ -1,13 +1,13 @@
 // PLAN-011 S5a leak test (SPEC-011 AC-10, §5.2, §5.6; permissions.md §5 "`/sync/content`";
-// CLAUDE.md rule 4; not held, plans README §6). With SEC's description and history written through
-// the repo, for a user outside private SEC (a Member and an Admin):
+// CLAUDE.md rule 4; not held, plans README §6). With SEC's description and history written by the
+// operations (since S6: `issue.create`, `issue.update`, `issue.updateDescription`), for a user
+// outside private SEC (a Member and an Admin):
 // - `/sync/content` leaves SEC parents out exactly like unknown ones (byte-identical answers) and
 //   never returns a SEC row, alone or next to a visible parent;
 // - catch-up and live deltas carry no SEC content or history row, and not SEC's id;
 // - bootstrap carries no content row at all (content loads per issue).
 // A SEC member gets SEC's content everywhere, so the answers come from visibility, not from a
 // broken endpoint. Content rows declare no groups, so a member's rows carry none at all.
-// S6 extends this file with content written by real operations.
 import { randomUUID } from 'node:crypto';
 import type { Actor } from '@surface/domain';
 import {
@@ -57,10 +57,11 @@ let keyActor: Actor;
 
 const secIssue = uuidv7();
 const engIssue = uuidv7();
-const secHistory = uuidv7();
+/** The issues' one history entry each (their `created`, the creator's edits folded in, §4.4). */
+let secHistory: string;
+let engHistory: string;
 /** The last write of the setup, an ENG issue: what an ENG member's catch-up waits for. */
 const engMarker = uuidv7();
-const engHistory = uuidv7();
 const SECRET = 'Rotate the leaked signing key';
 
 /** One committed transaction through the repo, as the executor runs it. */
@@ -86,32 +87,32 @@ const doc = (text: string) => ({
   content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
 });
 
-/** An issue's description and one history entry, through the repo (S6 writes them for real). */
+/**
+ * An issue with `text` in its description, written as a user does: created with a description,
+ * renamed (the title stays free of `text`: issues are in the bootstrap), the description saved
+ * again. The creator's edits fold into the
+ * one `created` entry (§4.4), whose id this returns.
+ */
 async function writeContent(
   issueId: string,
-  teamId: string,
-  historyId: string,
-  actorId: string,
+  team: string,
+  actor: Actor,
   text: string,
-): Promise<void> {
-  await transaction(async (repo) => {
-    await repo.insert('IssueContent', {
-      id: issueId,
-      issueId,
-      teamId,
-      description: doc(text),
-      version: 1,
-    });
-    await repo.insert('IssueHistory', {
-      id: historyId,
-      issueId,
-      teamId,
-      actorKind: 'user',
-      actorId,
-      kind: 'updated',
-      changes: { title: { from: 'Old', to: text } },
-    });
-  });
+): Promise<string> {
+  await ok('issue.create', { id: issueId, team, title: 'Draft', description: doc(text) }, actor);
+  await ok('issue.update', { issue: issueId, title: 'Renamed' }, actor);
+  await ok(
+    'issue.updateDescription',
+    { issue: issueId, baseVersion: 1, description: doc(`${text}, again`) },
+    actor,
+  );
+  const { rows } = await h.pool.query<{ id: string }>(
+    'SELECT id FROM issue_history WHERE issue_id = $1',
+    [issueId],
+  );
+  const [entry, ...more] = rows;
+  if (entry === undefined || more.length > 0) throw new Error(`${issueId}: not one entry`);
+  return entry.id;
 }
 
 async function ok(operation: string, input: object, actor: Actor): Promise<unknown> {
@@ -177,10 +178,8 @@ beforeAll(async () => {
   );
 
   executor = testExecutor(h.pool).executor;
-  await ok('issue.create', { id: secIssue, team: 'SEC', title: 'Secret work' }, samActor);
-  await ok('issue.create', { id: engIssue, team: 'ENG', title: 'Fix login' }, anaActor);
-  await writeContent(secIssue, h.teams.sec, secHistory, sam, SECRET);
-  await writeContent(engIssue, h.teams.eng, engHistory, ana, 'Public notes');
+  secHistory = await writeContent(secIssue, 'SEC', samActor, SECRET);
+  engHistory = await writeContent(engIssue, 'ENG', anaActor, 'Public notes');
   // Last in the log, so an ENG member's catch-up can wait for it (since PLAN-011 S4b a socket
   // follows its member teams only, so SEC's member waits for SEC's content instead).
   await ok('issue.create', { id: engMarker, team: 'ENG', title: 'Marker' }, anaActor);
@@ -349,6 +348,20 @@ const contentIn = (packets: readonly DeltaPacket[]) =>
       : [],
   );
 
+/** The teams of the issues whose content rows the packets carry (stored `team_id`), sorted. */
+async function contentTeams(packets: readonly DeltaPacket[]): Promise<string[]> {
+  const ids = packets.flatMap((p) =>
+    p.a !== 'D' && p.a !== 'G' && (p.m === 'IssueContent' || p.m === 'IssueHistory')
+      ? [String(p.d['issueId'])]
+      : [],
+  );
+  const { rows } = await h.pool.query<{ team_id: string }>(
+    'SELECT DISTINCT team_id FROM issues WHERE id = ANY($1::uuid[]) ORDER BY team_id',
+    [[...new Set(ids)]],
+  );
+  return rows.map((r) => r.team_id);
+}
+
 describe('SEC content in sync', () => {
   it('is never in a bootstrap: content loads per issue', async () => {
     for (const who of ['outsider', 'member'] as const) {
@@ -383,12 +396,13 @@ describe('SEC content in sync', () => {
           contentIn(member.packets()).includes(`IssueHistory ${secHistory}`),
       );
       for (const c of [outsider, admin]) {
+        // (an ENG member's catch-up also carries the marker's description and history)
         // Since PLAN-011 S4b an ENG member's socket follows `team:ENG`, so ENG's content comes
         // (the control); SEC's never does.
-        expect(contentIn(c.packets())).toEqual([
-          `IssueContent ${engIssue}`,
-          `IssueHistory ${engHistory}`,
-        ]);
+        expect(contentIn(c.packets())).toEqual(
+          expect.arrayContaining([`IssueContent ${engIssue}`, `IssueHistory ${engHistory}`]),
+        );
+        expect(await contentTeams(c.packets())).toEqual([h.teams.eng]);
         expect(c.text()).not.toContain(secIssue);
         expect(c.text()).not.toContain(secHistory);
         expect(c.text()).not.toContain(h.teams.sec);
@@ -410,9 +424,7 @@ describe('SEC content in sync', () => {
     const member = connect('member', at);
     try {
       const live = uuidv7();
-      const liveHistory = uuidv7();
-      await ok('issue.create', { id: live, team: 'SEC', title: 'Live secret' }, samActor);
-      await writeContent(live, h.teams.sec, liveHistory, sam, 'Live secret text');
+      const liveHistory = await writeContent(live, 'SEC', samActor, 'Live secret text');
       // Written last: once they arrive, anything earlier would have arrived too. One per
       // connection: since PLAN-011 S4b each follows its member teams only (SPEC-011 §5.7).
       const marker = uuidv7();
@@ -420,21 +432,33 @@ describe('SEC content in sync', () => {
       await ok('issue.create', { id: marker, team: 'ENG', title: 'Marker' }, anaActor);
       await ok('issue.create', { id: secMarker, team: 'SEC', title: 'Marker' }, samActor);
       await eventually(() => outsider.text().includes(marker) && member.text().includes(secMarker));
-      expect(contentIn(outsider.packets())).toEqual([]);
+      // Only the ENG marker's own description and history.
+      expect(contentIn(outsider.packets())).toHaveLength(2);
+      expect(await contentTeams(outsider.packets())).toEqual([h.teams.eng]);
       expect(outsider.text()).not.toContain(live);
       expect(outsider.text()).not.toContain(liveHistory);
       expect(outsider.text()).not.toContain(h.teams.sec);
       expect(outsider.text()).not.toContain('Live secret');
-      expect(contentIn(member.packets())).toEqual([
-        `IssueContent ${live}`,
-        `IssueHistory ${liveHistory}`,
-      ]);
+      // The create's rows, then the fold of the rename and the save (`U`), then the marker's.
+      expect(contentIn(member.packets())).toEqual(
+        expect.arrayContaining([`IssueContent ${live}`, `IssueHistory ${liveHistory}`]),
+      );
+      expect(await contentTeams(member.packets())).toEqual([h.teams.sec]);
       const rows = member
         .packets()
         .flatMap((p) => (p.a === 'I' && p.m === 'IssueContent' ? [p.d] : []));
-      expect(rows.map((d) => Object.keys(d).sort())).toEqual([
-        ['createdAt', 'description', 'id', 'issueId', 'teamId', 'updatedAt', 'version'],
-      ]);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const d of rows) {
+        expect(Object.keys(d).sort()).toEqual([
+          'createdAt',
+          'description',
+          'id',
+          'issueId',
+          'teamId',
+          'updatedAt',
+          'version',
+        ]);
+      }
     } finally {
       outsider.close();
       member.close();

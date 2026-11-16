@@ -137,6 +137,29 @@ export interface ReactionRow {
   readonly syncGroups: readonly string[];
 }
 
+/** A stored `issue_content` row (PLAN-011 S6): the fields the description property compares. */
+export interface IssueContentRow {
+  readonly id: string;
+  readonly issueId: string;
+  readonly teamId: string;
+  readonly description: unknown;
+  readonly version: number;
+  readonly syncGroups: readonly string[];
+}
+
+/** A stored `issue_history` row (PLAN-011 S6), without its timestamps. */
+export interface IssueHistoryRow {
+  readonly id: string;
+  readonly issueId: string;
+  readonly teamId: string;
+  readonly actorKind: string;
+  readonly actorId: string | null;
+  readonly apiKeyId: string | null;
+  readonly kind: string;
+  readonly changes: unknown;
+  readonly syncGroups: readonly string[];
+}
+
 /** The SPEC-003 response body of `POST /api/ops/:name`. */
 export type OpResponse =
   | { readonly ok: true; readonly result: unknown }
@@ -172,6 +195,10 @@ export interface TestServer {
   reactionCount(): Promise<number>;
   /** Every `reactions` row, by id (PLAN-013 S4). */
   reactions(): Promise<ReactionRow[]>;
+  /** Every `issue_content` row, by id (PLAN-011 S6). */
+  issueContents(): Promise<IssueContentRow[]>;
+  /** Every `issue_history` row, by id (PLAN-011 S6). */
+  issueHistories(): Promise<IssueHistoryRow[]>;
   /**
    * The `event_outbox` events of `type`, oldest first, with their `data` (PLAN-013 S4: the sync
    * suite counts `reaction.removed`, emitted only when a clear removed a row).
@@ -299,6 +326,27 @@ const ReactionDbRow = z.object({
   user_id: z.string(),
   emoji: z.string(),
   created_at: z.date().transform((value) => value.toISOString()),
+  sync_groups: z.array(z.string()),
+});
+
+const IssueContentDbRow = z.object({
+  id: z.string(),
+  issue_id: z.string(),
+  team_id: z.string(),
+  description: z.unknown(),
+  version: z.number(),
+  sync_groups: z.array(z.string()),
+});
+
+const IssueHistoryDbRow = z.object({
+  id: z.string(),
+  issue_id: z.string(),
+  team_id: z.string(),
+  actor_kind: z.string(),
+  actor_id: z.string().nullable(),
+  api_key_id: z.string().nullable(),
+  kind: z.string(),
+  changes: z.unknown(),
   sync_groups: z.array(z.string()),
 });
 
@@ -502,6 +550,44 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             emoji: r.emoji,
             createdAt: r.created_at,
             syncGroups: r.sync_groups,
+          };
+        });
+      },
+      issueContents: async () => {
+        const { rows } = await db.query(
+          `SELECT id, issue_id, team_id, description, version, sync_groups
+             FROM issue_content ORDER BY id`,
+        );
+        return rows.map((row) => {
+          const c = IssueContentDbRow.parse(row);
+          return {
+            id: c.id,
+            issueId: c.issue_id,
+            teamId: c.team_id,
+            description: c.description,
+            version: c.version,
+            syncGroups: c.sync_groups,
+          };
+        });
+      },
+      issueHistories: async () => {
+        const { rows } = await db.query(
+          `SELECT id, issue_id, team_id, actor_kind, actor_id, api_key_id, kind, changes,
+                  sync_groups
+             FROM issue_history ORDER BY id`,
+        );
+        return rows.map((row) => {
+          const h = IssueHistoryDbRow.parse(row);
+          return {
+            id: h.id,
+            issueId: h.issue_id,
+            teamId: h.team_id,
+            actorKind: h.actor_kind,
+            actorId: h.actor_id,
+            apiKeyId: h.api_key_id,
+            kind: h.kind,
+            changes: h.changes,
+            syncGroups: h.sync_groups,
           };
         });
       },

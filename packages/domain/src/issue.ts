@@ -2,11 +2,13 @@
  * Issue field rules (SPEC-011 §4.1). Pure functions, shared by the client's `optimistic` and the
  * server's handlers (PLAN-011 S4), so both refuse the same things with the same words.
  */
+import { docJsonBytes } from './doc.js';
 import { estimateValues, isValidEstimate, type EstimateConfig } from './estimate.js';
 import { defineFilterFields } from './filter/fields.js';
 import { foldToSlug } from './git-branch.js';
 import { applyLabelAdd, type LabelInfo } from './label.js';
 import { PRIORITIES, type Priority } from './priority.js';
+import { utf8Length } from './sha1.js';
 import { STATUS_CATEGORIES, type StatusCategory } from './status-category.js';
 import type { EstimateScale } from './workspace.js';
 
@@ -59,6 +61,22 @@ export const ISSUE_HISTORY_KINDS = [
   'archived',
 ] as const;
 export type IssueHistoryKind = (typeof ISSUE_HISTORY_KINDS)[number];
+
+/** The description messages of SPEC-011 §6.4 (PLAN-011 S6). */
+export const DESCRIPTION_MESSAGES = {
+  tooLong: 'Description is too long. Attach the long parts as a file.',
+  /** `CONFLICT` on a stale `baseVersion`; carries no extra fields (D3). */
+  stale:
+    'Someone changed this description since you opened it. Your text is kept: copy it, then reload.',
+} as const;
+
+/**
+ * The size `DOC_MAX_BYTES.description` limits (Q9): UTF-8 bytes of Markdown, or of a document's
+ * JSON. The operation input checks it, so Markdown is capped before the server parses it.
+ */
+export function descriptionInputBytes(description: unknown): number {
+  return typeof description === 'string' ? utf8Length(description) : docJsonBytes(description);
+}
 
 // ---------------------------------------------------------------------------------------------
 // Status changes (SPEC-011 §4.6, state-machines §1)

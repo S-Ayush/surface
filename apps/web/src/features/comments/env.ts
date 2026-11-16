@@ -32,6 +32,8 @@ export interface CommentsEnv {
   readonly requestReply: (rootId: string) => void;
   readonly copyLink: (commentId: string) => void;
   readonly copyMarkdown: (doc: DocNodeJSON) => void;
+  /** **New issue from comment…**: the composer with `doc` as the description (SPEC-013 §3.3). */
+  readonly newIssue: (doc: DocNodeJSON) => void;
 }
 
 export const CommentsEnvContext = createContext<CommentsEnv | null>(null);

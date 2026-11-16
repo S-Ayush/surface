@@ -2,6 +2,7 @@
 // arguments, so an entry point that has more to say than "open" (a group's `+`, a draft on the
 // Drafts page, **Restore in composer**) leaves a request here and then runs the command. Like
 // `labels/add-intent.ts`: one request at a time, taken by the composer when the command runs.
+import type { DocNodeJSON } from '@surface/domain';
 import type { AddTarget } from './list-model.js';
 
 export type ComposerRequest =
@@ -10,7 +11,9 @@ export type ComposerRequest =
   /** The Drafts page: this team's draft. `teamId` the user can no longer see opens in the default team (E7). */
   | { readonly kind: 'draft'; readonly teamId: string }
   /** **Restore in composer**: the rejected `issue.create` input. */
-  | { readonly kind: 'rejected'; readonly input: unknown };
+  | { readonly kind: 'rejected'; readonly input: unknown }
+  /** **New issue from comment…** (SPEC-013 §3.3): the comment's body as the description. */
+  | { readonly kind: 'comment'; readonly description: DocNodeJSON };
 
 let pending: ComposerRequest | undefined;
 

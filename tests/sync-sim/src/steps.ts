@@ -24,13 +24,14 @@ import {
   issuePurge,
   issueRestore,
   issueUpdate,
+  issueUpdateDescription,
   reactionSet,
   labelDelete,
   statusCreate,
   statusDelete,
   teamSetDefaultStatus,
 } from '@surface/operations';
-import { Comment, Issue } from '@surface/domain/model';
+import { Comment, Issue, IssueContent } from '@surface/domain/model';
 import type { Faults } from './network.js';
 import type { Random } from './random.js';
 import { isIssueServer, isLifecycleServer, type IssueFixtures } from './server.js';
@@ -110,6 +111,18 @@ export type Step =
       readonly status: StatusPick | WorkflowPick | 'keep';
       readonly addLabels: readonly LabelPick[];
       readonly removeLabels: readonly LabelPick[];
+    }
+  /**
+   * `issue.updateDescription` (PLAN-011 S6) of an issue the tab has open, from the version it holds
+   * (its prediction included, so queued saves chain) or, `stale`, from the one before: the server
+   * refuses a base that another save passed with CONFLICT (E10).
+   */
+  | {
+      readonly t: 'issueDescribe';
+      readonly tab: number;
+      readonly issue: number;
+      readonly text: string;
+      readonly stale: boolean;
     }
   /**
    * `draft.save` and `draft.discard` (PLAN-012 S5) of one of a few keys, from any tab: tabs of
@@ -242,6 +255,8 @@ const burst: fc.Arbitrary<Step> = fc.record({
 export interface CaseOptions {
   /** Include `burst` steps (the real server's rate limit). */
   readonly bursts?: boolean;
+  /** Include `issueDescribe` steps (PLAN-011 S6; `issueCase` only). */
+  readonly descriptions?: boolean;
 }
 
 /** Property 1 (AC-2): every kind of change, on colliding rows, with every fault. */
@@ -332,9 +347,19 @@ export function issueCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
       arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
     })),
     ...(options.bursts ? [{ weight: 1, arbitrary: burst }] : []),
+    ...(options.descriptions ? [{ weight: 8, arbitrary: describeStep }] : []),
   );
   return caseOf(step);
 }
+
+/** PLAN-011 S6: a description save, mostly from the version the tab holds. */
+const describeStep: fc.Arbitrary<Step> = fc.record({
+  t: fc.constant('issueDescribe'),
+  tab,
+  issue: index,
+  text: fc.constantFrom('Steps', 'Repro on **Safari**', '日本語', 'Steps'),
+  stale: fc.constantFrom(false, false, true),
+});
 
 /**
  * The workflow (PLAN-010 S5, SPEC-010 AC-19, E3, E16, E17): the issue steps, plus status creates,
@@ -627,6 +652,28 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
         ...(status === undefined ? {} : { status }),
         ...(add.length === 0 ? {} : { addLabels: add }),
         ...(remove.length === 0 ? {} : { removeLabels: remove }),
+      });
+      return;
+    }
+    case 'issueDescribe': {
+      const target = pick(readyTabs(live), step.tab);
+      if (target === undefined) return;
+      // The tab has the issue pages open, so their descriptions are paged in (PLAN-011 S5b).
+      world.showIssues(target, world.issueIds);
+      const shown = world.issueIds.filter(
+        (id) => target.store.pool.get(IssueContent, id) !== undefined,
+      );
+      const issue = pick(shown, step.issue);
+      const content = issue === undefined ? undefined : target.store.pool.get(IssueContent, issue);
+      // As the editor: nothing to edit until the description has loaded.
+      if (issue === undefined || content === undefined) return;
+      world.dispatch(target, issueUpdateDescription, {
+        issue,
+        baseVersion: step.stale ? Math.max(1, content.version - 1) : content.version,
+        description: {
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: step.text }] }],
+        },
       });
       return;
     }

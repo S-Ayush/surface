@@ -1,11 +1,11 @@
-// A stand-in for `features/comments/editor-host.tsx` in the comment flow tests: a textarea where the
+// A stand-in for `features/comments/editor-host.tsx` in the comment flow and composer tests: a textarea where the
 // real one lazy-loads TipTap. Typing in a textarea is deterministic in jsdom; the editor's own keys
 // (`Enter` sends, `Mod+Enter` reaches the engine, AC-19, AC-24) are `editor-keys.test.tsx`. This
 // fake keeps that contract: `Enter` calls `onSubmit`, `Mod+Enter` is left to the shortcut engine.
 import { EMPTY_DOC, type DocNodeJSON } from '@surface/domain';
 import type { DocViewProps, RichTextEditorProps } from '@surface/editor';
 import type { PickerEmoji } from '@surface/ui';
-import { useImperativeHandle } from 'react';
+import { useImperativeHandle, useRef } from 'react';
 
 export const textOf = (doc: DocNodeJSON): string =>
   (doc.content ?? [])
@@ -36,9 +36,14 @@ export function CommentEditor({
   autofocus,
   ref,
 }: RichTextEditorProps) {
-  useImperativeHandle(ref, () => ({ focus: () => undefined, openFileChooser: () => undefined }));
+  const field = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(ref, () => ({
+    focus: () => field.current?.focus(),
+    openFileChooser: () => undefined,
+  }));
   return (
     <textarea
+      ref={field}
       aria-label={ariaLabel}
       placeholder={placeholder}
       autoFocus={autofocus !== undefined && autofocus !== false}

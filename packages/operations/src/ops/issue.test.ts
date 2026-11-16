@@ -1,4 +1,5 @@
-// PLAN-011 S4, SPEC-011 §6.2, AC-7 (optimistic part): `issue.create` and `issue.update` predict
+// PLAN-011 S4/S6, SPEC-011 §6.2, AC-7 (optimistic part): `issue.create`, `issue.update` and
+// `issue.updateDescription` predict
 // the server's row except the number and sortOrder, predict nothing where the server would refuse,
 // and give identical rows on every rebuild. The client drops an optimistic row its model rejects,
 // so every row is parsed with the shared client model. That the predictions equal what the
@@ -7,7 +8,7 @@ import { NEW_TEAM_SETTINGS, isFractionalKey, isUuid } from '@surface/domain';
 import { PRODUCTION_MODELS } from '@surface/domain/model';
 import { describe, expect, it } from 'vitest';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
-import { issueCreate, issueUpdate } from './issue.js';
+import { issueCreate, issueUpdate, issueUpdateDescription } from './issue.js';
 
 const ENG = '0192f0c1-7e5a-7b3c-9d4e-0000000000e1';
 const DES = '0192f0c1-7e5a-7b3c-9d4e-0000000000e2';
@@ -331,6 +332,120 @@ describe('issue.update optimistic (§6.2)', () => {
       update(store, { priority: 3 });
       expect(issue(store, EXISTING)?.['priority']).toBe(0);
     }
+  });
+});
+
+const doc = (text: string) => ({
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+});
+
+function withContent(store: Store, version = 1, description: unknown = doc('Old')): Store {
+  store.insert('IssueContent', {
+    id: EXISTING,
+    issueId: EXISTING,
+    teamId: ENG,
+    description,
+    version,
+    createdAt: EARLIER,
+    updatedAt: EARLIER,
+  });
+  return store;
+}
+
+function content(store: Store, id = EXISTING): StoreRow | undefined {
+  return store.rows.get('IssueContent')?.get(id);
+}
+
+function updateDescription(store: Store, input: Record<string, unknown>): void {
+  issueUpdateDescription.optimistic?.(
+    store,
+    issueUpdateDescription.input.parse({ issue: EXISTING, baseVersion: 1, ...input }),
+  );
+}
+
+describe('issue.create with a description (S6)', () => {
+  it('inserts the IssueContent at version 1 when the description is editor JSON', () => {
+    const store = seeded();
+    create(store, { description: doc('Steps') });
+    expect(content(store, NEW_ID)).toEqual({
+      id: NEW_ID,
+      issueId: NEW_ID,
+      teamId: ENG,
+      description: doc('Steps'),
+      version: 1,
+      createdAt: AT,
+      updatedAt: AT,
+    });
+  });
+
+  it('predicts no content for Markdown or no description: the server converts and writes it', () => {
+    const store = seeded();
+    create(store, { description: '**Steps**' });
+    create(store, { id: '0192f0c1-7e5a-7b3c-9d4e-0000000000f2' });
+    expect(store.rows.get('IssueContent')?.size ?? 0).toBe(0);
+    expect(issue(store, NEW_ID)).toBeDefined();
+  });
+
+  it('refuses a description over 200 KB in the input', () => {
+    const big = 'x'.repeat(200 * 1024 + 1);
+    expect(
+      issueCreate.input.safeParse({ id: NEW_ID, team: 'ENG', title: 'T', description: big })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('issue.updateDescription optimistic (§6.2)', () => {
+  it('replaces the description, raises the version and moves the issue’s updatedAt', () => {
+    const store = withContent(seeded());
+    updateDescription(store, { description: doc('New') });
+    expect(content(store)).toMatchObject({ description: doc('New'), version: 2, updatedAt: AT });
+    expect(issue(store, EXISTING)?.['updatedAt']).toBe(AT);
+  });
+
+  it('a save of the same text raises the version only, so updatedAt stays (§4.1)', () => {
+    const store = withContent(seeded());
+    updateDescription(store, { description: doc('Old') });
+    expect(content(store)).toMatchObject({ version: 2 });
+    expect(issue(store, EXISTING)?.['updatedAt']).toBe(EARLIER);
+  });
+
+  it('queued saves chain: each carries the version the previous one predicted', () => {
+    const store = withContent(seeded());
+    updateDescription(store, { baseVersion: 1, description: doc('One') });
+    updateDescription(store, { baseVersion: 2, description: doc('Two') });
+    expect(content(store)).toMatchObject({ description: doc('Two'), version: 3 });
+  });
+
+  it('predicts nothing for a stale base, Markdown, missing content, or a non-live issue', () => {
+    const stale = withContent(seeded(), 4);
+    updateDescription(stale, { baseVersion: 3, description: doc('New') });
+    expect(content(stale)).toMatchObject({ version: 4, description: doc('Old') });
+
+    const markdown = withContent(seeded());
+    updateDescription(markdown, { description: 'New' });
+    expect(content(markdown)).toMatchObject({ version: 1 });
+
+    const unloaded = seeded();
+    updateDescription(unloaded, { description: doc('New') });
+    expect(content(unloaded)).toBeUndefined();
+    expect(issue(unloaded, EXISTING)?.['updatedAt']).toBe(EARLIER);
+
+    for (const state of [{ archivedAt: EARLIER }, { deletedAt: EARLIER, deletedById: ME }]) {
+      const store = withContent(seeded());
+      store.patch('Issue', EXISTING, state);
+      updateDescription(store, { description: doc('New') });
+      expect(content(store)).toMatchObject({ version: 1, description: doc('Old') });
+    }
+  });
+
+  it('refuses a description over 200 KB and a baseVersion below 1 in the input', () => {
+    const parse = (input: Record<string, unknown>) =>
+      issueUpdateDescription.input.safeParse({ issue: 'ENG-1', ...input }).success;
+    expect(parse({ baseVersion: 1, description: 'x'.repeat(200 * 1024 + 1) })).toBe(false);
+    expect(parse({ baseVersion: 0, description: 'Text' })).toBe(false);
+    expect(parse({ baseVersion: 1, description: 'Text' })).toBe(true);
   });
 });
 

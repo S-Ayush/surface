@@ -10,8 +10,18 @@
  * sets, then the issue row (`lockIssueForWrite`, mode `edit`). References were resolved before
  * these locks, so every status and label is **re-read** under its lock: one gone meanwhile is
  * `CONFLICT` (E19, E22), and INV-06, INV-07 and INV-20 are checked on the re-read rows.
+ *
+ * PLAN-011 S6: `issue.create` also writes the issue's IssueContent (`EMPTY_DOC` when no description,
+ * version 1), its search text and its `created` history entry, Issue first (§5.1). `issue.update`
+ * writes one `updated` entry (or a fold) after the issue lock. `issue.updateDescription` locks the
+ * issue in `edit` mode, re-reads the content's version under it (stale `baseVersion` is
+ * `CONFLICT`, D3), claims the document's inline files and bumps the version.
  */
 import {
+  DESCRIPTION_MESSAGES,
+  DOC_MAX_BYTES,
+  docJsonBytes,
+  EMPTY_DOC,
   inv20Problem,
   issueChangeSet,
   issueEstimateProblem,
@@ -21,15 +31,24 @@ import {
   mergeLabels,
   normalizeTitle,
   statusSideEffects,
+  type Actor,
+  type DocNodeJSON,
   type EstimateScale,
   type IssueChangeSet,
   type IssueLabelFacts,
   type IssueLockMode,
   type StatusCategory,
 } from '@surface/domain';
+import { docFileIds, docToText, markdownToDoc, validateDoc } from '@surface/editor/schema';
 import type { DomainEvent } from '../../executor/context.js';
 import { SurfaceError } from '../../executor/errors.js';
 import { refNotFound } from '../../executor/refs/sources.js';
+import {
+  writeCreatedHistory,
+  writeUpdatedHistory,
+  type HistoryAccess,
+  type HistoryWriteContext,
+} from '../../issues/history.js';
 import type { LockedIssue } from '../../issues/lifecycle.js';
 import type { ModelPatch, ModelRow } from '../../sync/models.js';
 import type { Repo } from '../../sync/repo.js';
@@ -53,8 +72,14 @@ export interface StatusFacts {
   readonly category: StatusCategory;
 }
 
+/** An issue's IssueContent, as stored. */
+export interface StoredContent {
+  readonly description: unknown;
+  readonly version: number;
+}
+
 /** Reads and locks, in the order of §4.8. Every method runs in the operation's transaction. */
-export interface IssueAccess {
+export interface IssueAccess extends HistoryAccess {
   /** The team row `FOR SHARE` (create); undefined when it is gone. */
   shareTeam(teamId: string): Promise<IssueTeam | undefined>;
   /** The team row without a lock (update, before the issue lock); undefined when it is gone. */
@@ -74,6 +99,18 @@ export interface IssueAccess {
    * (SPEC-015 §4.3): in `edit`, archived and deleted issues are `CONFLICT` (§6.1).
    */
   lockIssue(issueId: string, mode: IssueLockMode): Promise<LockedIssue>;
+  /** The issue's IssueContent without a lock (the issue lock covers it); undefined when absent. */
+  readContent(issueId: string): Promise<StoredContent | undefined>;
+  /**
+   * `claimInlineFiles(tx, doc, issue, actor, 'description')` (SPEC-014 §4.3): the document to
+   * store, or `INVALID_INPUT` on `description`.
+   */
+  claimFiles(
+    doc: DocNodeJSON,
+    issue: { readonly id: string; readonly teamId: string },
+  ): Promise<DocNodeJSON>;
+  /** Writes the server-only `issue_search_text` row (§4.3), in the content's transaction. */
+  setSearchText(issueId: string, text: string): Promise<void>;
 }
 
 /** What the rules need from the operation besides reads and writes. */
@@ -82,6 +119,12 @@ export interface IssueWriteContext {
   readonly repo: Repo;
   readonly emit: (event: DomainEvent) => void;
   readonly now: Date;
+  /** The operation's actor: who history entries name (§4.4). */
+  readonly actor: Actor;
+}
+
+function historyContext(ctx: IssueWriteContext): HistoryWriteContext {
+  return { access: ctx.access, repo: ctx.repo, actor: ctx.actor, now: ctx.now };
 }
 
 export const STATUS_GONE = 'That status was deleted. Choose another status.';
@@ -195,6 +238,41 @@ function checkInv20(
   if (problem !== undefined) throw new Error(`INV-20 broken: ${problem}`);
 }
 
+/**
+ * The input description as a valid document (§4.3, Q12): Markdown is converted first (the
+ * operation input already capped its length at 200 KB, so parsing is bounded), then the document is
+ * validated and measured against `DOC_MAX_BYTES.description` (Q9). An empty description is valid.
+ */
+export function descriptionDoc(input: string | object): DocNodeJSON {
+  const result = validateDoc(typeof input === 'string' ? markdownToDoc(input) : input);
+  if (!result.ok) {
+    const [first] = result.problems;
+    throw new SurfaceError('INVALID_INPUT', first?.message ?? 'Description is not a document.', {
+      issues: result.problems.map((p) => ({
+        path: ['description', ...p.path],
+        message: p.message,
+      })),
+    });
+  }
+  if (docJsonBytes(result.doc) > DOC_MAX_BYTES.description) {
+    throw invalid(['description'], DESCRIPTION_MESSAGES.tooLong);
+  }
+  return result.doc;
+}
+
+/** True for a description with no text and no file: the creator fold's default (§4.4). */
+export function isEmptyDescription(doc: DocNodeJSON): boolean {
+  return docToText(doc).trim() === '' && docFileIds(doc).length === 0;
+}
+
+/** JSON with sorted keys: `jsonb` stores keys in its own order, so compare by content. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
+    return Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 
 export interface CreateIssueInput {
@@ -215,6 +293,8 @@ export interface CreateIssueInput {
   readonly dueDate: string | null;
   /** The actor (for `api`/`mcp`, the key's owner). Never null (§4.1). */
   readonly creatorId: string;
+  /** Validated (`descriptionDoc`); `EMPTY_DOC` when absent (§4.3). */
+  readonly description?: DocNodeJSON | undefined;
 }
 
 /** `issue.create` (AC-1, AC-2, AC-4, §4.6): returns the inserted row. */
@@ -257,6 +337,21 @@ export async function createIssue(
     sortOrder,
     creatorId: input.creatorId,
     ...stamps,
+  });
+  // Content and history after the Issue, so the repo logs the Issue's `I` first (§5.1, §5.3 step
+  // 5). The new row is this transaction's: no other writer can see it, so it is the issue lock.
+  const description = await access.claimFiles(input.description ?? EMPTY_DOC, row);
+  await repo.insert('IssueContent', {
+    id: row.id,
+    issueId: row.id,
+    teamId: row.teamId,
+    description,
+    version: 1,
+  });
+  await access.setSearchText(row.id, docToText(description));
+  await writeCreatedHistory(historyContext(ctx), row, {
+    defaultStatusId: team.defaultStatusId,
+    descriptionEmpty: isEmptyDescription(description),
   });
   ctx.emit({
     type: 'issue.created',
@@ -360,6 +455,64 @@ export async function updateIssue(
     if (stamps.canceledAt !== issue.canceledAt) patch.canceledAt = stamps.canceledAt;
   }
   const row = await repo.update('Issue', issue.id, patch);
+  // One entry with every changed field, or a fold (§4.4), under the issue lock taken above.
+  await writeUpdatedHistory(historyContext(ctx), issue, changes, {
+    defaultStatusId: team.defaultStatusId,
+  });
   ctx.emit({ type: 'issue.updated', subject: { type: 'issue', id: issue.id }, changes });
   return { row, changes };
+}
+
+export interface UpdateDescriptionInput {
+  readonly issueId: string;
+  readonly baseVersion: number;
+  /** Validated (`descriptionDoc`). */
+  readonly description: DocNodeJSON;
+}
+
+/**
+ * `issue.updateDescription` (§3.3, §6.1; AC-6, AC-23, E10): locks the issue in `edit` mode
+ * (archived and deleted are `CONFLICT`), re-reads the content's version under the lock, refuses a
+ * stale `baseVersion` with `CONFLICT` and no extra fields (D3), claims the inline files, then bumps
+ * the version and writes the search text. A save that changes the document also moves the
+ * issue's `updatedAt` (§4.1) and writes `description: true` history, folded (§4.4, E21); a save
+ * of the same document only bumps the version, like `comment.update` (SPEC-013 E22).
+ */
+export async function updateDescription(
+  ctx: IssueWriteContext,
+  input: UpdateDescriptionInput,
+): Promise<{ readonly row: IssueRow; readonly version: number }> {
+  const { access, repo } = ctx;
+  const issue = await access.lockIssue(input.issueId, issueLockModeOf('issue.updateDescription'));
+  const content = await access.readContent(issue.id);
+  if (content === undefined) {
+    // Issues created before PLAN-011 S6 have no content row; nothing is released (plan §3).
+    throw new Error(
+      `Issue ${issue.id} has no IssueContent row (created before PLAN-011 S6). Recreate the development database.`,
+    );
+  }
+  if (content.version !== input.baseVersion) {
+    throw new SurfaceError('CONFLICT', DESCRIPTION_MESSAGES.stale);
+  }
+  const description = await access.claimFiles(input.description, issue);
+  const changed = canonical(description) !== canonical(content.description);
+  const version = content.version + 1;
+  let row: IssueRow = issue;
+  if (changed) row = await repo.update('Issue', issue.id, {});
+  await repo.update('IssueContent', issue.id, { description, version });
+  await access.setSearchText(issue.id, docToText(description));
+  if (changed) {
+    await writeUpdatedHistory(
+      historyContext(ctx),
+      issue,
+      {},
+      { description: { empty: isEmptyDescription(description) } },
+    );
+    ctx.emit({
+      type: 'issue.updated',
+      subject: { type: 'issue', id: issue.id },
+      data: { description: true, version },
+    });
+  }
+  return { row, version };
 }

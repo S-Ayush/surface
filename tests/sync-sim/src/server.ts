@@ -155,6 +155,40 @@ export interface ReactionState {
   readonly createdAt: unknown;
 }
 
+/**
+ * What a client should end up showing for an issue's description (PLAN-011 S6): every field
+ * `issue.updateDescription` writes but the timestamps.
+ */
+export interface IssueContentState {
+  readonly issueId: unknown;
+  readonly teamId: unknown;
+  readonly description: unknown;
+  readonly version: unknown;
+}
+
+/** One history entry as a client shows it (PLAN-011 S6), without its timestamps. */
+export interface IssueHistoryState {
+  readonly issueId: unknown;
+  readonly teamId: unknown;
+  readonly actorKind: unknown;
+  readonly actorId: unknown;
+  readonly apiKeyId: unknown;
+  readonly kind: unknown;
+  readonly changes: unknown;
+}
+
+/** A server the description steps run against (PLAN-011 S6): the real one. */
+export interface DescriptionServer extends IssueServer {
+  /** The database's `issue_content` rows, by id. */
+  issueContents(): Promise<Record<string, IssueContentState>>;
+  /** The database's `issue_history` rows, by id. */
+  issueHistories(): Promise<Record<string, IssueHistoryState>>;
+}
+
+export function isDescriptionServer(server: SimServer): server is DescriptionServer {
+  return isIssueServer(server) && 'issueContents' in server;
+}
+
 /** A server the comment steps run against: the real one, with issues. */
 export interface CommentServer extends IssueServer {
   /** The database's comments, by id. */

@@ -91,6 +91,8 @@ describe('the properties panel (§7.4)', () => {
     startedAt: null,
     canceledAt: null,
     reactions: [],
+    description: { markdown: '', json: { type: 'doc', content: [{ type: 'paragraph' }] } },
+    version: 1,
   };
   const view = issueViewFromOutput(output);
   const now = new Date('2026-11-13T10:00:00.000Z');

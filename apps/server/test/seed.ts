@@ -19,6 +19,9 @@
  *
  * PLAN-015 S2: ENG-4, deleted, with a comment and a reaction: `issue.purge`'s example purges it.
  *
+ * PLAN-011 S6: each issue's IssueContent (empty, version 1) and search text; no history entries.
+ * `issue.updateDescription`'s example saves ENG-2's description from version 1.
+ *
  * PLAN-013 S3: on ENG-1, a thread of the actor's with a reply by Iris (`SEED_COMMENTS.thread`), a
  * thread of Iris's the actor resolved, and a comment of the actor's with no replies. The comment
  * examples run in registry order: edit and resolve the first thread, reopen the second, delete the
@@ -31,7 +34,7 @@
  * password from `SEED_PASSWORD`.
  */
 import { randomUUID } from 'node:crypto';
-import { reactionId, type Actor } from '@surface/domain';
+import { EMPTY_DOC, reactionId, type Actor } from '@surface/domain';
 import { docToText, markdownToDoc } from '@surface/editor/schema';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedTeamWorkflow, teamWorkflow } from '../src/handlers/teams/seed.js';
@@ -154,6 +157,7 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
     }
     // PLAN-015 S2: ENG-4, deleted by the actor, with a comment and Iris's reaction on it, which
     // `issue.purge`'s example purges with its content rows.
+    let eng4Id = '';
     {
       const { number, sortOrder } = await newIssuePosition(tx, teams.eng);
       const eng4 = await repo.insert('Issue', {
@@ -167,6 +171,7 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
         deletedAt: new Date(),
         deletedById: users.me,
       });
+      eng4Id = eng4.id;
       const body = markdownToDoc('Superseded by the new page.');
       const commentId = randomUUID();
       await repo.insert('Comment', {
@@ -193,6 +198,22 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
         userId: users.iris,
         emoji: '👍',
       });
+    }
+    // PLAN-011 S6: every issue has its IssueContent (version 1, `EMPTY_DOC` here) and its search
+    // text, written right after it like `issue.create` does; `issue.updateDescription`'s example
+    // edits ENG-2's.
+    for (const issueId of [...issueIds, eng4Id]) {
+      await repo.insert('IssueContent', {
+        id: issueId,
+        issueId,
+        teamId: teams.eng,
+        description: EMPTY_DOC,
+        version: 1,
+      });
+      await client.query(
+        'INSERT INTO issue_search_text (issue_id, description_text) VALUES ($1, $2)',
+        [issueId, ''],
+      );
     }
     // PLAN-013 S3: comments on ENG-1. The repo gives them one `createdAt`, so `comment.list`
     // orders them by id, their creation order.

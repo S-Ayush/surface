@@ -6,6 +6,7 @@ import { Issue, Label, Team, WorkflowStatus } from '@surface/domain/model';
 import { expect } from 'vitest';
 import {
   isCommentServer,
+  isDescriptionServer,
   isIssueServer,
   isLifecycleServer,
   isWorkflowServer,
@@ -242,6 +243,64 @@ export const issueConvergence: Property = {
       if (refusedAll || creates.every((d) => d.outcome?.status === 'rejected')) {
         expect(issues[id], `${id} should have been refused`).toBeUndefined();
       }
+    }
+  },
+};
+
+/**
+ * Descriptions and history (SPEC-011 AC-5, AC-6, AC-7; PLAN-011 S6): the issue property, then,
+ * with every issue open in every tab (PLAN-011 S5b), every tab holds exactly the server's
+ * descriptions and history entries; every stored issue has one description and one `created`
+ * entry; a description's version counts its committed saves: at least the confirmed ones, at most
+ * those not refused (a crashed tab's queued saves commit with no outcome recorded, and a stale
+ * base never commits, E10); and a stored description is the empty one or one a save sent.
+ */
+export const descriptionConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    await issueConvergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isDescriptionServer(server)) {
+      throw new Error('The description property needs the real server.');
+    }
+    const contents = await server.issueContents();
+    const histories = await server.issueHistories();
+    const issues = await server.issues();
+    await world.showEverywhere(world.issueIds);
+    for (const tab of world.live) {
+      expect(world.descriptionView(tab), `${tab.name} descriptions`).toEqual(contents);
+      expect(world.historyView(tab), `${tab.name} history`).toEqual(histories);
+    }
+    const saves = world.dispatched.filter(
+      (d) => d.op === 'issue.updateDescription' && d.outcome?.status !== 'rejected',
+    );
+    const field = (input: unknown, name: string): unknown =>
+      typeof input === 'object' && input !== null ? Reflect.get(input, name) : undefined;
+    for (const id of Object.keys(issues)) {
+      const content = contents[id];
+      expect(content, `${id} has no description`).toBeDefined();
+      const mine = saves.filter((d) => field(d.input, 'issue') === id);
+      const confirmed = mine.filter((d) => d.outcome?.status === 'confirmed').length;
+      const version = Number(content?.version);
+      expect(version - 1, `${id}: fewer saves than confirmed`).toBeGreaterThanOrEqual(confirmed);
+      expect(version - 1, `${id}: more saves than sent`).toBeLessThanOrEqual(mine.length);
+      const sent = mine.map((d) => field(d.input, 'description'));
+      const empty = { type: 'doc', content: [{ type: 'paragraph' }] };
+      expect([empty, ...sent], `${id}: a description nobody sent`).toContainEqual(
+        content?.description,
+      );
+      const created = Object.values(histories).filter(
+        (h) => h.issueId === id && h.kind === 'created',
+      );
+      expect(created, `${id}: created entries`).toHaveLength(1);
+    }
+    for (const [id, entry] of Object.entries(histories)) {
+      expect(issues[String(entry.issueId)], `history ${id} outlived its issue`).toBeDefined();
+      expect([entry.actorKind, world.users.some((u) => u.id === entry.actorId)], id).toEqual([
+        'user',
+        true,
+      ]);
     }
   },
 };

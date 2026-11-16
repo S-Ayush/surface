@@ -10,7 +10,7 @@
 // Issue children (IssueContent, IssueHistory) are in `team:<teamId>` only: one of Ana's own SEC
 // issue never reaches her, and neither does one of her OPS issue, which `user:<ana>` carries.
 import { randomUUID } from 'node:crypto';
-import type { Actor } from '@surface/domain';
+import { EMPTY_DOC, type Actor } from '@surface/domain';
 import {
   decodeBootstrapFrame,
   decodeServerMessage,
@@ -508,7 +508,17 @@ describe('an API key limited to ENG (SPEC-011 §5.6)', () => {
     const listed = await executor.execute('issue.list', { limit: 100 }, anaKeyActor);
     expect(listed.ok).toBe(true);
     expect(JSON.stringify(listed)).not.toContain(opsForAna);
-    // The control: without the key, Ana gets it.
+    // The control: without the key, Ana gets it. Since PLAN-011 S6 `issue.get` reads the
+    // description, which `issue.create` writes and this file's repo-inserted issues lack.
+    await transaction((repo) =>
+      repo.insert('IssueContent', {
+        id: opsForAna,
+        issueId: opsForAna,
+        teamId: ops,
+        description: EMPTY_DOC,
+        version: 1,
+      }),
+    );
     expect(await executor.execute('issue.get', { issue: opsForAna }, anaActor)).toMatchObject({
       ok: true,
       result: { id: opsForAna },

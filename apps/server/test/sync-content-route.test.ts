@@ -19,6 +19,7 @@ import { buildApp } from '../src/app.js';
 import { Lifecycle } from '../src/lifecycle.js';
 import { createLogger } from '../src/logger.js';
 import type { BootstrapClient, BootstrapPool } from '../src/sync/bootstrap.js';
+import { contentFrames, CONTENT_ANSWER_BUDGET_BYTES } from '../src/sync/content.js';
 import { syncRegistry } from '../src/sync/registry.js';
 import { actorFor, captureLogs, headerActor, testConfig } from './helpers.js';
 
@@ -150,16 +151,26 @@ function fakePool({ failOn }: { failOn?: string } = {}) {
             .filter((r) => Array.isArray(ids) && ids.includes(r['id']) && overlaps(r, groups))
             .filter((r) => !(r['__archived'] === true && /archived_at IS NULL/i.test(text)))
             .filter((r) => !(r['__deleted'] === true && /deleted_at IS NULL/i.test(text)))
-            .map((r) => ({ id: r['id'] })),
+            .map((r) => ({ id: String(r['id']) }))
+            // `ORDER BY id`, as Postgres answers it (uuid order is the lowercase text order).
+            .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
         );
       }
       if (table !== undefined && table in data) {
         const [groups, parents] = values;
-        return answer(
-          (data[table] ?? []).filter(
-            (r) => overlaps(r, groups) && Array.isArray(parents) && parents.includes(r['issueId']),
-          ),
+        const rows = (data[table] ?? []).filter(
+          (r) => overlaps(r, groups) && Array.isArray(parents) && parents.includes(r['issueId']),
         );
+        // The budget's size query (D16): bytes per parent, here each row's JSON length.
+        if (text.includes('GROUP BY')) {
+          const sizes = new Map<string, number>();
+          for (const r of rows) {
+            const parent = String(r['issueId']);
+            sizes.set(parent, (sizes.get(parent) ?? 0) + JSON.stringify(r).length);
+          }
+          return answer([...sizes].map(([parent, bytes]) => ({ parent, bytes: String(bytes) })));
+        }
+        return answer(rows);
       }
       return answer([]);
     },
@@ -480,5 +491,78 @@ describe('GET /sync/content answers', () => {
     expect(res.body).not.toContain('connection lost');
     expect(pool.statements.at(-1)?.text).toBe('ROLLBACK');
     expect(pool.releases).toEqual([false]);
+  });
+});
+
+describe('a content answer’s byte budget (SPEC-011 §5.2, D16; PLAN-011 S6)', () => {
+  /** Ana's visible parents with content, in id order, and the size the fake gives each. */
+  async function sizes() {
+    const pool = fakePool();
+    await contentFrames({
+      pool: pool.pool,
+      registry,
+      actor: ana,
+      parents: [engIssue, archivedIssue, trashedIssue].map(issueParent),
+    });
+    return pool.statements.filter((s) => s.text.includes('GROUP BY'));
+  }
+
+  async function answer(parents: readonly string[], budgetBytes: number) {
+    const frames = await contentFrames({
+      pool: fakePool().pool,
+      registry,
+      actor: ana,
+      parents: parents.map(issueParent),
+      budgetBytes,
+    });
+    const meta = frames[0];
+    if (meta?.t !== 'meta') throw new Error('no meta frame');
+    return { meta, rows: rowsOf(frames) };
+  }
+
+  const sorted = [engIssue, archivedIssue, trashedIssue].sort();
+
+  it('is 4 MiB', () => {
+    expect(CONTENT_ANSWER_BUDGET_BYTES).toBe(4 * 1024 * 1024);
+  });
+
+  it('measures each parent’s rows in SQL, with the groups and the visible parents only', async () => {
+    const measured = await sizes();
+    // One size query per content model, filtered like the rows it measures.
+    expect(measured).toHaveLength(registry.content.length);
+    for (const statement of measured) {
+      expect(statement.text).toMatch(/sync_groups && \$1::text\[\]/);
+      expect(statement.values[1]).toEqual(sorted);
+    }
+  });
+
+  it('takes whole parents in id order while they fit, and lists only those', async () => {
+    const all = await answer(sorted, CONTENT_ANSWER_BUDGET_BYTES);
+    expect(all.meta.parents).toEqual(sorted.map(issueParent));
+    // A 1-byte budget: the first parent comes whole, and nothing after it fits.
+    const one = await answer(sorted, 1);
+    expect(one.meta.parents).toEqual([issueParent(sorted[0] ?? '')]);
+    expect(one.rows.every(([, id]) => id !== sorted[1] && id !== sorted[2])).toBe(true);
+    expect(one.meta.rows).toBe(one.rows.length);
+  });
+
+  it('always sends the first parent whole, even over the budget; one parent is never cut', async () => {
+    const alone = await answer([engIssue], 1);
+    expect(alone.meta.parents).toEqual([issueParent(engIssue)]);
+    expect(alone.rows).toEqual([
+      ['IssueContent', engIssue],
+      ...engHistory.map((id) => ['IssueHistory', id]),
+    ]);
+  });
+
+  it('measures nothing for a single parent', async () => {
+    const pool = fakePool();
+    await contentFrames({
+      pool: pool.pool,
+      registry,
+      actor: ana,
+      parents: [issueParent(engIssue)],
+    });
+    expect(pool.statements.some((s) => s.text.includes('GROUP BY'))).toBe(false);
   });
 });

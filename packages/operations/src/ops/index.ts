@@ -47,6 +47,7 @@ import {
   issueGroupBy,
   issueList,
   issueUpdate,
+  issueUpdateDescription,
 } from './issue.js';
 import {
   issueAutoArchive,
@@ -176,6 +177,8 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   reactionSet,
   // A read of every label's issue count (SPEC-010 §6; PLAN-010 S5).
   labelUsage,
+  // ENG-2's description, still at version 1 (SPEC-011 §6.1; PLAN-011 S6).
+  issueUpdateDescription,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

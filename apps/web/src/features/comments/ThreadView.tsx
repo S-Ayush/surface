@@ -18,7 +18,6 @@ import {
   withChecked,
 } from './model.js';
 import type { CommentRow, ReactionRow, Thread } from './model.js';
-import { composerAvailable } from './new-issue.js';
 import { ResolvedThreadLine } from './ResolvedThreadLine.js';
 import styles from './comments.module.css';
 
@@ -165,7 +164,6 @@ function CommentItem({
         deleted,
         mine,
         canDelete: mine || env.isAdmin,
-        composerAvailable: composerAvailable(),
         onToggleResolved: () => {
           void (thread.resolved ? actions.reopen(comment.id) : actions.resolve(comment.id));
         },
@@ -175,7 +173,9 @@ function CommentItem({
         onCopyMarkdown: () => {
           env.copyMarkdown(comment.body);
         },
-        onNewIssue: () => undefined,
+        onNewIssue: () => {
+          env.newIssue(comment.body);
+        },
         onEdit: startEdit,
         onDelete: () => {
           setConfirmDelete(true);

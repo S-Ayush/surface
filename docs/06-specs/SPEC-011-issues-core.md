@@ -156,7 +156,7 @@ SPEC-012 words the other fields in the same style. When the actor kind is `api` 
 
 **Folding** (FR-ISS-05). Folding happens in the updating transaction, after the issue row lock (§4.8), so two concurrent edits can't lose a fold. The folded row gets a `U` delta.
 
-1. **Creator fold.** A change by the issue's **creator** within 3 minutes of creation is merged into the `created` entry. The field's `to` becomes the new value, and the field is dropped if the new value is its default. Changes by anyone else, or later, get their own entry. Linear folds the same way (Q10).
+1. **Creator fold.** A change by the issue's **creator** within 3 minutes of creation is merged into the `created` entry. The field's `to` becomes the new value, and the field is dropped if the new value is its default. Changes by anyone else, or later, get their own entry. Linear folds the same way (Q10). "The creator" is the actor of the `created` entry, matched by kind, user and key: the same person through the API or MCP is someone else. The fold applies only while the `created` entry is still the issue's latest entry (D15).
 2. **Description fold.** A `description`-only change by an actor is merged into the issue's latest history entry when that entry is the same actor's `description`-only `updated` entry and is at most 10 minutes old (counted from its `updatedAt`). Otherwise it gets its own entry. This applies to every actor, so autosave (SPEC-013) doesn't flood history.
 
 ### 4.5 Numbering and order
@@ -304,6 +304,7 @@ First use of sync-protocol §4.2. This is the full contract; it replaces §4.2's
 - Rows are IssueContent, IssueHistory, and SPEC-013's Comment and Reaction. The client store checks each `d` against its model, as for bootstrap.
 - All of it is read in one `REPEATABLE READ` snapshot that includes `max(sync_id)`. That is `lastSyncId`, called `C` below.
 - `meta.rows` and `end.rows` count the row frames, as for bootstrap, so a truncated stream is detected.
+- **Size budget (D16).** One answer holds at most about 4 MiB of row JSON. The server measures each visible parent's rows and takes whole parents in request order while they fit; the first is always taken, however large. A parent it leaves out is absent from `parents`, exactly like an invisible one, so the client doesn't mark it hydrated and asks for it again (alone, or in a later batch). A single-parent request is never cut.
 
 **Errors before the first frame** (SPEC-003 body):
 
@@ -454,7 +455,7 @@ The server accepts a subscription to a public team, or to a private team the use
 |---|---|---|
 | `issue.create` | m | `{id?, team, title, description?, status?, priority?, assignee?, labels?: LabelRef[], estimate?, dueDate?}` → `IssueOutput`. `status` is a `StatusRef` in `team`; `assignee` a `UserRef` (`me` works); `labels` resolve in `team` (SPEC-010). `ui`: **Create issue…** (opens the composer, SPEC-012). |
 | `issue.update` | m | `{issue, title?, status?, priority?, assignee?: UserRef \| null, estimate?: int \| null, dueDate?: date \| null, addLabels?: LabelRef[], removeLabels?: LabelRef[]}` → `IssueOutput`. A label in both lists is `INVALID_INPUT`. `ui`: none. A registry entry has one `ui`, so each command ("Change status…", "Assign to me", …) is a SPEC-012 **property command** that dispatches `issue.update` with a partial input (a new SPEC-005 §4 command kind, listed in SPEC-012 §12). |
-| `issue.updateDescription` | m | `{issue, baseVersion, description}` → `{issue, version}`. `CONFLICT` when `baseVersion` ≠ the stored version. The error carries no extra fields (SPEC-003 §9, D3); the client reads the current version from its replica. |
+| `issue.updateDescription` | m | `{issue, baseVersion, description}` → `{issue: {id, identifier}, version}`. `CONFLICT` when `baseVersion` ≠ the stored version. The error carries no extra fields (SPEC-003 §9, D3); the client reads the current version from its replica. Every accepted save raises `version` by one; a save that doesn't change the text moves nothing else (D17). |
 | `issue.get` | q | `{issue, fields?}` → `IssueOutput`, with `description` as Markdown and as JSON (Q12). |
 | `issue.list` | q | `listInput` (SPEC-003 §7.1: filter, orderBy, limit, cursor, includeArchived, withTotal) plus `team?` → connection of `IssueSummary`. Filters on every M1 field: status and label **names** within `team`, `status.category`, `assignee` (`me`), `creator`, `priority`, `estimate`, `dueDate`, `labels` (has any, has all, has none), and created, updated, completed and archived dates (`archivedAt` is set, for the archive page, §5.7). `orderBy` accepts `archivedAt` too (the archive page sorts by it). |
 | `issue.count` | q | `countInput` (filter, `team?`, includeArchived) → `{count}`. |
@@ -481,7 +482,7 @@ Each mutation's `optimistic` predicts the rows the server commits, except server
   - The optimistic `sortOrder` takes its jitter from the issue id, never from `Math.random`, so every rebuild of the overlay gives the same key (SPEC-003 §8). The server computes the real key (§4.5); `sortOrder` is a server-computed field like the number.
   - It predicts no history and doesn't touch hydration (§5.3 step 5).
 - `issue.update` patches the given fields, `labelIds` (adds, removes and the group rule), the category timestamps on a category change, and `updatedAt`.
-- `issue.updateDescription` patches the IssueContent's `description` and `version`.
+- `issue.updateDescription` patches the IssueContent's `description`, `version` (+1) and `updatedAt`, and the Issue's `updatedAt` when the text changes (D17). It predicts nothing for Markdown, for a stale `baseVersion` (the server's `CONFLICT`), or for an archived or deleted issue.
 - The web client always sends the description as editor JSON. Markdown input is for API and MCP callers, and the server converts it.
 
 ### 6.3 `OptimisticStore` additions
@@ -508,6 +509,7 @@ SPEC-003 shape, naming the field:
 - "That status was deleted. Choose another status." / "That label was deleted. Choose another label." (`CONFLICT`, §4.8)
 - "ENG-42 is archived. Restore it to edit it." / "ENG-42 was deleted. Restore it to edit it." (`CONFLICT`)
 - "Someone changed this description since you opened it. Your text is kept: copy it, then reload." (`CONFLICT`)
+- "Description is too long. Attach the long parts as a file." (`INVALID_INPUT` on `description`: over 200 KB of editor JSON, Q9)
 
 ## 7. UI
 
@@ -626,6 +628,9 @@ None. Every question has been decided; see the Decisions table below.
 | D12 | PLAN-011 S4c as built (§5.7): the pool applies a partial answer by an in-memory "changed above `C`" guard instead of reloading the rows from storage, because storage writes queue behind live packets; the team lock is named per replica (`<replica>:team:<id>`); eager issue children are a fixed list (`ISSUE_CHILDREN`) rather than a runtime registration. A row's `groups` in a shared replica is cut to the connection of the tab that wrote it last, so its public `team:` groups can differ between tabs; the client decides on followed `teamId`s and the `user:` group, which every tab's connection has. | 2026-11-13 |
 | D13 | PLAN-011 S5b as built (§5.3 step 6): a content mutation whose `contentParent` names a content row the store doesn't hold is sent online without waiting for hydration (there is no issue to hydrate; the server resolves and checks the row), and refused offline with "Available when online". | 2026-11-16 |
 | D14 | PLAN-011 S5b review (§5.3 step 6, E11): a content mutation whose parent fails to load while the connection is up (a server or network error) is refused with "Couldn't load ENG-42. Try again." (`ContentLoadFailedError`). "Available when online" stays for offline, never-hydrated parents, where waiting for the connection is the fix. | 2026-11-16 |
+| D15 | PLAN-011 S6 as built (§4.4): both folds merge only into the issue's **latest** entry, so an entry never changes after a later one exists. The creator fold also needs the same actor identity as the `created` entry (kind, user and key): an API or MCP change by the creator is its own entry, so its "via API" line stays. | 2026-11-16 |
+| D16 | PLAN-011 S6 as built (§5.2): a content answer is capped at about 4 MiB of row JSON (`CONTENT_ANSWER_BUDGET_BYTES`), by whole parents in request order, the first always taken. A left-out parent is absent from `meta.parents`, as an invisible one is, and the client asks again. No wire change: S5b's client fetches one parent per request, and S7's prefetch retries the parents left out. | 2026-11-16 |
+| D17 | PLAN-011 S6 as built (§4.1, §6.1): a description save whose text equals the stored one (compared as JSON, key order ignored) raises `version` only. The issue's `updatedAt`, the history and the `issue.updated` event stay, as an `issue.update` that changes nothing writes nothing (E12). The version still moves, so queued saves from one editor keep chaining. | 2026-11-16 |
 | Q13 | The filter conformance run for Issue (Postgres) is allowed under the testing hold, as an exception the user granted at the M1 gate. | 2026-11-12 |
 | Q15 | Copy Linear: partial issue loading (§5.7, ADR-0020) instead of raising the budget. The 35 MB eager budget stays, per replica. VISION §6 changes with it (§12). | 2026-11-12 |
 | Q18 | Description history stays v2 (PRD FR-ISS-14); M1 shows only the "updated the description" activity line. | 2026-11-12 |

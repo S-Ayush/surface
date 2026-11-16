@@ -1,14 +1,21 @@
 /**
  * The in-memory workspace of `memory-issues.ts` run through `autoArchiveIssue` and
  * `autoCloseIssue` (PLAN-015 S3): the access reads the team's settings and statuses from `m`, the
- * repo gains the `archive` the base fake lacks, and the two history seams record their calls.
+ * repo gains the `archive` the base fake lacks, and the two history seams record their calls and
+ * write their entries through PLAN-011 S6's history writer as the system actor, as
+ * `writeLifecycleHistory` and `writeAutoCloseHistory` do (`m.historyRows`).
  */
 import { randomUUID } from 'node:crypto';
-import { issueIdentifier, type IssueChangeSet } from '@surface/domain';
+import { issueIdentifier, systemActor, type IssueChangeSet } from '@surface/domain';
 import { createIssue } from '../../src/handlers/issues/core.js';
 import type { AutoContext, AutomationSettings } from '../../src/handlers/issues/auto-core.js';
 import type { Repo } from '../../src/sync/repo.js';
 import { SurfaceError } from '../../src/executor/errors.js';
+import {
+  writeLifecycleEntry,
+  writeUpdatedHistory,
+  type HistoryWriteContext,
+} from '../../src/issues/history.js';
 import { ADA_ID, NOW, type MemoryIssues } from './memory-issues.js';
 import type { IssueRow } from '../../src/handlers/issues/core.js';
 
@@ -63,6 +70,13 @@ export function memoryAuto(
     },
   };
 
+  const writer = (): HistoryWriteContext => ({
+    access: m.ctx.access,
+    repo,
+    actor: systemActor(),
+    now: options.now ?? NOW,
+  });
+
   return {
     archivedHistory,
     closeHistory,
@@ -87,14 +101,14 @@ export function memoryAuto(
       repo,
       now: options.now ?? NOW,
       emit: (event) => void m.events.push(event),
-      history(kind, issue) {
+      async history(kind, issue) {
         if (kind === 'archived') archivedHistory.push(issue.id);
         m.history.push({ kind, issueId: issue.id });
-        return Promise.resolve();
+        await writeLifecycleEntry(writer(), kind, issue);
       },
-      closeHistory(issue, changes) {
+      async closeHistory(issue, changes) {
         closeHistory.push({ issueId: issue.id, changes });
-        return Promise.resolve();
+        await writeUpdatedHistory(writer(), issue, changes);
       },
     },
   };

@@ -42,6 +42,9 @@ import { addRealEvents, trackRealWork } from './clock.js';
 import type {
   CommentServer,
   CommentState,
+  DescriptionServer,
+  IssueContentState,
+  IssueHistoryState,
   ReactionState,
   StoredDraft,
   IssueFixtures,
@@ -156,7 +159,9 @@ interface RealSocket {
   resynced: boolean;
 }
 
-export class RealServer implements CommentServer, WorkflowServer, LifecycleServer {
+export class RealServer
+  implements CommentServer, WorkflowServer, LifecycleServer, DescriptionServer
+{
   readonly users: readonly string[];
   readonly models = REAL_MODELS;
   /** What went wrong on the server side; each is a failure of the case. */
@@ -475,6 +480,43 @@ export class RealServer implements CommentServer, WorkflowServer, LifecycleServe
 
   workflow(): Promise<WorkflowState> {
     return this.#serially('read the workflow', () => this.#entry.workflow());
+  }
+
+  /** PLAN-011 S6: the stored descriptions. */
+  issueContents(): Promise<Record<string, IssueContentState>> {
+    return this.#serially('read the descriptions', async () =>
+      Object.fromEntries(
+        (await this.#entry.issueContents()).map((row): [string, IssueContentState] => [
+          row.id,
+          {
+            issueId: row.issueId,
+            teamId: row.teamId,
+            description: row.description,
+            version: row.version,
+          },
+        ]),
+      ),
+    );
+  }
+
+  /** PLAN-011 S6: the stored history entries. */
+  issueHistories(): Promise<Record<string, IssueHistoryState>> {
+    return this.#serially('read the issue history', async () =>
+      Object.fromEntries(
+        (await this.#entry.issueHistories()).map((row): [string, IssueHistoryState] => [
+          row.id,
+          {
+            issueId: row.issueId,
+            teamId: row.teamId,
+            actorKind: row.actorKind,
+            actorId: row.actorId,
+            apiKeyId: row.apiKeyId,
+            kind: row.kind,
+            changes: row.changes,
+          },
+        ]),
+      ),
+    );
   }
 
   /** PLAN-015 S2: each stored issue's `archivedAt` and `deletedAt`. */

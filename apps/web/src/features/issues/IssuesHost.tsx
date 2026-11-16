@@ -17,6 +17,7 @@ import { useCommand } from '../../shortcuts/ShortcutProvider.js';
 import { announce } from './announcer.js';
 import { Composer, TITLE_REQUIRED } from './Composer.js';
 import {
+  composerDescription,
   createPayload,
   createProblem,
   draftData,
@@ -180,6 +181,18 @@ export function IssuesHost() {
       }
       const adapter = draftAdapterFor(store);
       const routeKey = routeTeamKey(pathname);
+      if (request?.kind === 'comment') {
+        // SPEC-013 §3.3: the route's team (the comment's issue), the body as the description, the
+        // title focused. Not the team's draft: the user asked for this text.
+        const team = prefillTeam(w, routeKey);
+        if (team === undefined) return noTeam();
+        const state = {
+          ...freshState(w, team.id),
+          description: composerDescription(request.description),
+        };
+        show(sessionOf({ state, dropped: [] }));
+        return;
+      }
       if (request?.kind === 'draft') {
         // E7: a draft for a team the user can no longer see opens in the default team, with a note.
         const own = w.teams.find((t) => t.id === request.teamId);

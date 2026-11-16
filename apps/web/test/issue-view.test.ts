@@ -74,6 +74,8 @@ describe('issueViewFromOutput', () => {
     startedAt: null,
     canceledAt: null,
     reactions: [],
+    description: { markdown: '', json: { type: 'doc', content: [{ type: 'paragraph' }] } },
+    version: 1,
   };
 
   it('reads the number and lifecycle, and falls back for values it does not know', () => {

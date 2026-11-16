@@ -412,6 +412,8 @@ describe('two people on one issue at once (E3, E15)', () => {
     gate.resolve();
     await Promise.all([editing, deleting]);
     expect(m.issues.get(issue.id)).toMatchObject({ title: 'Fix login again', deletedAt: NOW });
-    expect(m.writes.map((w) => w.fields)).toEqual([['title'], ['deletedAt', 'deletedById']]);
+    // The Issue's own writes; the edit's history entry (PLAN-011 S6) is IssueHistory's.
+    const issueWrites = m.writes.filter((w) => w.model === undefined);
+    expect(issueWrites.map((w) => w.fields)).toEqual([['title'], ['deletedAt', 'deletedById']]);
   });
 });

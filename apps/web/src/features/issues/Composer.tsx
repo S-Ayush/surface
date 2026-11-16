@@ -1,8 +1,15 @@
-// The composer dialog (SPEC-012 §3.1): team chip, title, the description seam, the property pills
+// The composer dialog (SPEC-012 §3.1): team chip, title, the description editor, the property pills
 // and the footer. Controlled: `IssuesHost` owns the state, the drafts and what creating does. Pills
 // are reached with `Tab` and opened with `Enter` or `Space`; there are no single-letter keys here,
 // so typing never triggers one (D13). An open picker takes `Esc` before the dialog does.
-import { PRIORITIES, parseDueDate, type Priority } from '@surface/domain';
+import {
+  EMPTY_DOC,
+  PRIORITIES,
+  parseDueDate,
+  type DocNodeJSON,
+  type Priority,
+} from '@surface/domain';
+import type { RichTextEditorHandle } from '@surface/editor';
 import {
   Avatar,
   Button,
@@ -17,13 +24,16 @@ import {
   PropertyPill,
   StatusIcon,
   Switch,
+  toast,
   Tooltip,
   VisuallyHidden,
   type PropertyPickerOption,
 } from '@surface/ui';
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { CommentEditor as LazyEditor } from '../comments/editor-host.js';
 import {
   changeTeam,
+  composerDescription,
   droppedNote,
   type ComposerState,
   type ComposerWorld,
@@ -136,6 +146,13 @@ function ComposerForm({
 }: ComposerProps & { readonly formId: string }) {
   const titleRef = useRef<HTMLInputElement>(null);
   const pillsRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<RichTextEditorHandle>(null);
+  // The editor's own document. The state keeps null for an empty one (`composerDescription`), so
+  // the editor shows this while the state is null and the document is empty: blank lines the user
+  // typed stay, and a reset from outside (Create more, a restore) still replaces the text.
+  const [typed, setTyped] = useState<DocNodeJSON>(state.description ?? EMPTY_DOC);
+  const description =
+    state.description ?? (composerDescription(typed) === null ? typed : EMPTY_DOC);
   // Focus starts in the title (§3.1 item 1). The child's effect runs before the dialog's focus
   // scope, which then leaves focus where it is.
   useEffect(() => {
@@ -151,9 +168,11 @@ function ComposerForm({
     if (event.key !== 'Enter' || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing) {
       return;
     }
-    // `Enter` moves on, never submits (§3.1 item 5). TODO(PLAN-011 S6): to the description.
+    // `Enter` moves on to the description, never submits (§3.1 item 5). The editor loads on
+    // demand: until it has, the pills are next.
     event.preventDefault();
-    pillsRef.current?.querySelector('button')?.focus();
+    if (editorRef.current !== null) editorRef.current.focus();
+    else pillsRef.current?.querySelector('button')?.focus();
   };
 
   return (
@@ -216,8 +235,22 @@ function ComposerForm({
           set({ title: event.target.value });
         }}
       />
-      {/* TODO(PLAN-011 S6): issue.create description. The SPEC-013 editor goes here, a
-          RichTextEditor spreading `webEditorOptions`; the composer owns and normalizes `value`. */}
+      <div className={styles.description}>
+        <LazyEditor
+          ref={editorRef}
+          mode="description"
+          value={description}
+          onChange={(doc) => {
+            setTyped(doc);
+            set({ description: composerDescription(doc) });
+          }}
+          placeholder="Add description…"
+          ariaLabel="Description"
+          onError={(message) => {
+            toast({ tone: 'danger', message });
+          }}
+        />
+      </div>
       <div className={styles.pills} ref={pillsRef}>
         <Pills world={world} state={state} set={set} />
       </div>

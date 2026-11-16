@@ -28,6 +28,7 @@ import { refNotFound } from '../executor/refs/resolve.js';
 import { SurfaceError } from '../executor/errors.js';
 import { visibleTo } from '../executor/list.js';
 import type { ModelName, ModelRow } from '../sync/models.js';
+import { historyWriteContext, writeLifecycleEntry, writeUpdatedHistory } from './history.js';
 
 /**
  * - `edit`: a direct edit by a user, API or MCP actor. Archived or deleted is `CONFLICT`
@@ -124,35 +125,37 @@ export function relogByIssueId(
 // ---------------------------------------------------------------------------------------------
 // History of lifecycle transitions (SPEC-015 §4.8)
 
-/** The history kinds of a lifecycle transition (SPEC-015 §4.8); never folded, `changes` empty. */
+/**
+ * The history kinds of a lifecycle transition (SPEC-015 §4.8); never folded, `changes` empty.
+ * `archived` is the auto-archive job's (actor `system`, PLAN-015 S3).
+ */
 export type LifecycleHistoryKind = 'deleted' | 'restored' | 'archived';
 
 /**
- * Writes the `deleted`, `restored` or `archived` history entry of `issue`'s transition, in `ctx`'s
- * transaction, as `ctx.actor` (its kind and key). Nothing writes IssueHistory content until
- * PLAN-011 S6: its history writer (`issues/history.ts`) replaces this body with one insert through
- * `ctx.repo`, never folded, with empty `changes`. The handlers already call it with every argument.
+ * Writes the history entry of `issue`'s transition, in `ctx`'s transaction, as `ctx.actor` (its
+ * kind and key): one IssueHistory insert through `ctx.repo` with empty `changes`, never folded
+ * (`writeLifecycleEntry`, `issues/history.ts`). The handlers call it once per transition, never
+ * for a no-op.
  */
-export function writeLifecycleHistory(
-  _ctx: HandlerContext,
-  _kind: LifecycleHistoryKind,
-  _issue: ModelRow<'Issue'>,
+export async function writeLifecycleHistory(
+  ctx: HandlerContext,
+  kind: LifecycleHistoryKind,
+  issue: ModelRow<'Issue'>,
 ): Promise<void> {
-  // TODO(PLAN-011 S6): insert the IssueHistory row through `ctx.repo`.
-  return Promise.resolve();
+  await writeLifecycleEntry(historyWriteContext(ctx), kind, issue);
 }
 
 /**
- * Writes the `updated` history entry of an auto-close (SPEC-015 §4.8): the status change, actor =
- * system, shown as "Issue was automatically closed". A seam like `writeLifecycleHistory`: PLAN-011
- * S6's history writer replaces this body. `changes` is the same change set the `issue.updated`
- * event carries (`statusId`, and no other field).
+ * Writes the `updated` history entry of an auto-close (SPEC-015 §4.8): the status change with the
+ * statuses' names snapshotted, actor = system (`ctx.actor`), shown as "Issue was automatically
+ * closed". Never folded: the system actor created no issue, and the change isn't description-only
+ * (`historyWrite`, SPEC-011 §4.4). `changes` is the change set the `issue.updated` event carries
+ * (`statusId`, and no other field). Called after the issue lock, as the writer requires.
  */
-export function writeAutoCloseHistory(
-  _ctx: HandlerContext,
-  _issue: ModelRow<'Issue'>,
-  _changes: IssueChangeSet,
+export async function writeAutoCloseHistory(
+  ctx: HandlerContext,
+  issue: ModelRow<'Issue'>,
+  changes: IssueChangeSet,
 ): Promise<void> {
-  // TODO(PLAN-011 S6): insert the IssueHistory row through `ctx.repo`, never folded.
-  return Promise.resolve();
+  await writeUpdatedHistory(historyWriteContext(ctx), issue, changes);
 }

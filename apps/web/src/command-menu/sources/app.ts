@@ -44,6 +44,12 @@ const MENU_COMMANDS: readonly {
     keywords: ['clipboard', 'text'],
     comment: true,
   },
+  {
+    id: 'comment:new-issue',
+    section: 'settings',
+    keywords: ['create issue', 'turn into issue'],
+    comment: true,
+  },
 ];
 
 export function appSource(commands: CommandRegistry): CommandSource {

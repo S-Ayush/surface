@@ -21,8 +21,6 @@ export interface CommentMenuOptions {
   readonly mine: boolean;
   /** The author, or an Admin (§5.2). */
   readonly canDelete: boolean;
-  /** "New issue from comment…" is hidden until the composer can carry a description. */
-  readonly composerAvailable: boolean;
   readonly onToggleResolved: () => void;
   readonly onCopyLink: () => void;
   readonly onCopyMarkdown: () => void;
@@ -57,14 +55,12 @@ export function commentMenu(options: CommentMenuOptions): MenuEntry[] {
         onSelect: options.onCopyMarkdown,
       },
     );
-    if (options.composerAvailable) {
-      entries.push({
-        type: 'item',
-        label: 'New issue from comment…',
-        icon: icon(SquarePen),
-        onSelect: options.onNewIssue,
-      });
-    }
+    entries.push({
+      type: 'item',
+      label: 'New issue from comment…',
+      icon: icon(SquarePen),
+      onSelect: options.onNewIssue,
+    });
   }
   const writes: MenuEntry[] = [];
   if (options.mine && !options.deleted) {

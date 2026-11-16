@@ -18,6 +18,7 @@ import {
   type ComposerDraftData,
 } from '@surface/domain/model';
 import type { InputOf, issueCreate } from '@surface/operations';
+import { docInput, isEmptyDoc } from './draft-adapter.js';
 import type { AddTarget } from './list-model.js';
 
 export interface ComposerTeam {
@@ -78,7 +79,7 @@ export interface ComposerWorld {
 /** What the composer holds, apart from its team. `statusId` null shows the team's default. */
 export interface ComposerFields {
   readonly title: string;
-  /** TODO(PLAN-011 S6): issue.create description. Always null until the editor is turned on. */
+  /** The description editor's document; null while it holds nothing (`composerDescription`). */
   readonly description: DocNodeJSON | null;
   readonly statusId: string | null;
   readonly priority: number;
@@ -154,6 +155,14 @@ export function freshState(world: ComposerWorld, teamId: string, add?: AddTarget
     statusId,
     assigneeId: add?.assignToMe === true ? world.me : null,
   };
+}
+
+/**
+ * The composer's description for the editor's document: null when it holds nothing (only empty
+ * paragraphs), so an empty editor is no content to keep (§3.2) and creates no description.
+ */
+export function composerDescription(doc: DocNodeJSON): DocNodeJSON | null {
+  return isEmptyDoc(doc) ? null : doc;
 }
 
 /** Whether the composer holds anything worth keeping: a title or a description (§3.2). */
@@ -309,13 +318,14 @@ export function createProblem(state: ComposerFields): string | undefined {
 /**
  * The `issue.create` input (§3.1 item 6): ids for every reference, so nothing is resolved by name.
  * Empty properties are left out, so the server applies its defaults (the team's default status).
- * TODO(PLAN-011 S6): issue.create description. The payload carries none until S6.
+ * The description goes as editor JSON, so the client predicts its IssueContent (SPEC-011 §6.2).
  */
 export function createPayload(state: ComposerState, id: string): CreateInput {
   return {
     id,
     team: state.teamId,
     title: state.title,
+    ...(state.description === null ? {} : { description: docInput(state.description) }),
     ...(state.statusId === null ? {} : { status: state.statusId }),
     ...(state.priority === 0 ? {} : { priority: state.priority }),
     ...(state.assigneeId === null ? {} : { assignee: state.assigneeId }),
@@ -346,11 +356,12 @@ export function stateFromCreateInput(world: ComposerWorld, input: unknown): Adju
   const labels = record['labels'];
   const priority = record['priority'];
   const estimate = record['estimate'];
+  const description = record['description'];
   return fitToTeam(
     world,
     {
       title: str(record, 'title') ?? '',
-      description: null,
+      description: isDocJson(description) ? composerDescription(description) : null,
       statusId: str(record, 'status'),
       priority: typeof priority === 'number' ? priority : 0,
       assigneeId: str(record, 'assignee'),
@@ -361,6 +372,16 @@ export function stateFromCreateInput(world: ComposerWorld, input: unknown): Adju
       dueDate: str(record, 'dueDate'),
     },
     team,
+  );
+}
+
+/** The editor JSON the composer sent as a description (Markdown comes only from other callers). */
+function isDocJson(value: unknown): value is DocNodeJSON {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Reflect.get(value, 'type') === 'doc' &&
+    (Reflect.get(value, 'content') === undefined || Array.isArray(Reflect.get(value, 'content')))
   );
 }
 

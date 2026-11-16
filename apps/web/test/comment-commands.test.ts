@@ -12,7 +12,6 @@ import { appSource } from '../src/command-menu/sources/app.js';
 import { checkOperationCommands, operationSource } from '../src/command-menu/sources/operations.js';
 import { OPERATION_COMMANDS } from '../src/features/commands.js';
 import { COMMENT_COMMANDS } from '../src/features/comments/commands.js';
-import { composerAvailable } from '../src/features/comments/new-issue.js';
 import { commentMenu } from '../src/features/comments/CommentMenu.js';
 import { context, member, noBoost } from './command-fixtures.js';
 
@@ -28,6 +27,7 @@ const HANDLERS: readonly CommandId[] = [
   'comment:reopen',
   'comment:copy-link',
   'comment:copy-markdown',
+  'comment:new-issue',
 ];
 
 function titles(target: CommandTarget, registered: readonly CommandId[] = HANDLERS): string[] {
@@ -68,6 +68,7 @@ describe('comment commands in the command menu (SPEC-013 §7)', () => {
       'Reopen thread',
       'Copy link to comment',
       'Copy content as Markdown',
+      'New issue from comment…',
     ]) {
       expect(offered).toContain(title);
     }
@@ -101,7 +102,6 @@ describe("a comment's options menu (SPEC-013 §3.3)", () => {
     deleted: false,
     mine: false,
     canDelete: false,
-    composerAvailable: false,
     onToggleResolved: noop,
     onCopyLink: noop,
     onCopyMarkdown: noop,
@@ -119,11 +119,13 @@ describe("a comment's options menu (SPEC-013 §3.3)", () => {
       'Resolve thread',
       'Copy link to comment',
       'Copy content as Markdown',
+      'New issue from comment…',
     ]);
     expect(labels({ mine: true, canDelete: true })).toEqual([
       'Resolve thread',
       'Copy link to comment',
       'Copy content as Markdown',
+      'New issue from comment…',
       'Edit',
       'Delete',
     ]);
@@ -142,9 +144,15 @@ describe("a comment's options menu (SPEC-013 §3.3)", () => {
     expect(labels({ deleted: true, mine: true, canDelete: true })).toEqual(['Resolve thread']);
   });
 
-  it('hides "New issue from comment…" until the composer can carry a description', () => {
-    expect(composerAvailable()).toBe(false);
-    expect(labels({})).not.toContain('New issue from comment…');
-    expect(labels({ composerAvailable: true })).toContain('New issue from comment…');
+  it('offers "New issue from comment…" since the composer carries a description (PLAN-011 S6)', () => {
+    let opened = 0;
+    const entry = commentMenu({
+      ...options,
+      onNewIssue: () => {
+        opened += 1;
+      },
+    }).find((e) => e.type === 'item' && e.label === 'New issue from comment…');
+    if (entry?.type === 'item') entry.onSelect();
+    expect(opened).toBe(1);
   });
 });

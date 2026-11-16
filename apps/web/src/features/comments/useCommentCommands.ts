@@ -21,6 +21,8 @@ export interface CommentCommandDeps {
   readonly ask: (kind: CommentRequest['kind'], id: string) => void;
   readonly copyLink: (commentId: string) => void;
   readonly copyMarkdown: (doc: DocNodeJSON) => void;
+  /** **New issue from comment…** (SPEC-013 §3.3). */
+  readonly newIssue: (doc: DocNodeJSON) => void;
 }
 
 export function useCommentCommands(deps: CommentCommandDeps): void {
@@ -119,6 +121,14 @@ export function useCommentCommands(deps: CommentCommandDeps): void {
     () => {
       const comment = text();
       if (comment !== undefined) deps.copyMarkdown(comment.body);
+    },
+    { when: () => text() !== undefined },
+  );
+  useCommand(
+    'comment:new-issue',
+    () => {
+      const comment = text();
+      if (comment !== undefined) deps.newIssue(comment.body);
     },
     { when: () => text() !== undefined },
   );

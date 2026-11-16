@@ -8,7 +8,15 @@
  */
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { Comment, DebugItem, Draft, Issue, Reaction } from '@surface/domain/model';
+import {
+  Comment,
+  DebugItem,
+  Draft,
+  Issue,
+  IssueContent,
+  IssueHistory,
+  Reaction,
+} from '@surface/domain/model';
 import type { AnyOperation, InputOf } from '@surface/operations';
 import type { MutationOutcome, StorageConnector } from '@surface/sync-client';
 import { ContentUnavailableError, SyncStore } from '@surface/sync-client';
@@ -23,6 +31,8 @@ import { seededRandom, uuidFrom } from './random.js';
 import type {
   CommentState,
   DraftState,
+  IssueContentState,
+  IssueHistoryState,
   IssueState,
   ItemState,
   ReactionState,
@@ -457,6 +467,34 @@ export class World {
         deletedAt: c.deletedAt,
         resolvedAt: c.resolvedAt,
         resolvedById: c.resolvedById,
+      },
+    ]);
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /** The descriptions a live tab holds, by id: base plus overlay (PLAN-011 S6). */
+  descriptionView(tab: Tab): Record<string, IssueContentState> {
+    const entries = tab.store.pool
+      .all(IssueContent)
+      .map((c): [string, IssueContentState] => [
+        c.id,
+        { issueId: c.issueId, teamId: c.teamId, description: c.description, version: c.version },
+      ]);
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /** The history entries a live tab holds, by id (PLAN-011 S6). */
+  historyView(tab: Tab): Record<string, IssueHistoryState> {
+    const entries = tab.store.pool.all(IssueHistory).map((h): [string, IssueHistoryState] => [
+      h.id,
+      {
+        issueId: h.issueId,
+        teamId: h.teamId,
+        actorKind: h.actorKind,
+        actorId: h.actorId,
+        apiKeyId: h.apiKeyId,
+        kind: h.kind,
+        changes: h.changes,
       },
     ]);
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));

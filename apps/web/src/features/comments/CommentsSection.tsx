@@ -14,6 +14,7 @@ import { useLocation } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
 import { copyText } from '../members/reset-link.js';
 import { docToMarkdown } from '@surface/editor/schema';
+import { useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
 import { CommentBox } from './CommentBox.js';
 import { CommentTarget } from './CommentTarget.js';
 import { CommentsEnvContext, type CommentRequest, type CommentsEnv } from './env.js';
@@ -26,6 +27,7 @@ import {
   reactionRows,
   reactionsOf,
 } from './model.js';
+import { newIssueFromComment } from './new-issue.js';
 import { ThreadView } from './ThreadView.js';
 import { useCommentCommands } from './useCommentCommands.js';
 import { commentActionsFor, useCommentWorld, useNow } from './useComments.js';
@@ -129,6 +131,13 @@ export function CommentsSection({ issueId }: SlotProps) {
       );
     });
   }, []);
+  const commands = useCommandRegistry();
+  const newIssue = useCallback(
+    (doc: DocNodeJSON) => {
+      newIssueFromComment(doc, (id) => commands.run(id));
+    },
+    [commands],
+  );
 
   useCommentCommands({
     comments,
@@ -140,6 +149,7 @@ export function CommentsSection({ issueId }: SlotProps) {
     ask,
     copyLink,
     copyMarkdown,
+    newIssue,
   });
 
   if (store === null || actions === null) return null;
@@ -161,6 +171,7 @@ export function CommentsSection({ issueId }: SlotProps) {
     },
     copyLink,
     copyMarkdown,
+    newIssue,
   };
 
   return (

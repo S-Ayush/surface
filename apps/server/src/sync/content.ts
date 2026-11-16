@@ -10,9 +10,13 @@
  * (permissions.md §5). Content of an archived or deleted issue the actor can see is returned too
  * (its read-only page, SPEC-015 §3.4).
  *
- * The answer is read whole before the first frame goes out: with at most 50 parents it is small
- * (a description is at most 200 KB), and the snapshot's connection goes back to the pool before
- * the response is written, whatever the client's speed.
+ * The answer is read whole before the first frame goes out, so the snapshot's connection goes
+ * back to the pool before the response is written, whatever the client's speed. It is bounded by
+ * a **byte budget** (`CONTENT_ANSWER_BUDGET_BYTES`, SPEC-011 §5.2, D16): the size of each visible
+ * parent's rows is measured in SQL first, and parents are taken whole, in id order, while they fit;
+ * the first visible parent always comes, whatever its size, because a parent is hydrated only by
+ * all of its rows. A parent left out is absent from `meta.parents`, like one not found: the client
+ * marks it not hydrated and asks again (§5.3 step 3). A request for one parent is never cut.
  */
 import { visibleGroups, type Actor } from '@surface/domain';
 import {
@@ -21,14 +25,29 @@ import {
   type ContentFrame,
   type ContentParent,
 } from '@surface/sync-protocol';
-import { GROUPS_ALIAS, quote, selectRows, type BootstrapPool } from './bootstrap.js';
+import {
+  GROUPS_ALIAS,
+  quote,
+  selectRows,
+  type BootstrapClient,
+  type BootstrapPool,
+} from './bootstrap.js';
 import { clientRow, type SyncModel, type SyncRegistry } from './registry.js';
 
 /** The one parent model of v0.7 (`issue:<id>`). */
 const PARENT_MODEL = 'Issue';
 
+/**
+ * At most this many bytes of content rows per answer (SPEC-011 §5.2, D16), measured in SQL as the
+ * rows' text, beyond the first parent's (which always comes whole). 4 MiB holds 20 issues with a
+ * full 200 KB description, or one issue with about 80 comments of the 50 KB maximum.
+ */
+export const CONTENT_ANSWER_BUDGET_BYTES = 4 * 1024 * 1024;
+
 export interface ContentOptions {
   readonly pool: BootstrapPool;
+  /** Defaults to `CONTENT_ANSWER_BUDGET_BYTES`; tests pass a small one. */
+  readonly budgetBytes?: number;
   readonly registry: SyncRegistry;
   /** A signed-in user (the route refuses API keys before this runs). */
   readonly actor: Actor;
@@ -54,6 +73,7 @@ export async function contentFrames({
   registry,
   actor,
   parents,
+  budgetBytes = CONTENT_ANSWER_BUDGET_BYTES,
 }: ContentOptions): Promise<ContentFrame[]> {
   const parentModel = registry.models.find((m) => m.name === PARENT_MODEL);
   if (parentModel === undefined) throw new Error(`${PARENT_MODEL} is not a synced model`);
@@ -75,7 +95,13 @@ export async function contentFrames({
         WHERE id = ANY($1::uuid[]) AND sync_groups && $2::text[] ORDER BY id`,
       [parents.map(parentIssueId), groups],
     );
-    const visibleIds = found.rows.map((row) => row.id);
+    const visibleIds = await withinBudget(
+      client,
+      models,
+      groups,
+      found.rows.map((row) => row.id),
+      budgetBytes,
+    );
     const visible = new Set<string>(groups);
     const rows: ContentFrame[] = [];
     if (visibleIds.length > 0) {
@@ -114,6 +140,44 @@ export async function contentFrames({
     }
     client.release(!healthy);
   }
+}
+
+/**
+ * The parents of `ids` (ascending) whose rows fit `budget` together, taken whole, in order, while
+ * they fit (D16); the first always fits. Sizes are each parent's rows as text, summed per model in
+ * the snapshot, with the same group filter as the rows read after.
+ */
+async function withinBudget(
+  client: BootstrapClient,
+  models: readonly SyncModel[],
+  groups: readonly string[],
+  ids: readonly string[],
+  budget: number,
+): Promise<string[]> {
+  if (ids.length <= 1) return [...ids];
+  const sizes = new Map<string, number>();
+  for (const model of models) {
+    const parent = quote(parentColumn(model));
+    const measured = await client.query<{ parent: string; bytes: string }>(
+      `SELECT t.${parent}::text AS parent, sum(octet_length(t::text))::bigint AS bytes
+         FROM ${quote(model.table)} t
+        WHERE t.sync_groups && $1::text[] AND t.${parent} = ANY($2::uuid[])
+        GROUP BY t.${parent}`,
+      [groups, ids],
+    );
+    for (const row of measured.rows) {
+      sizes.set(row.parent, (sizes.get(row.parent) ?? 0) + Number(row.bytes));
+    }
+  }
+  const taken: string[] = [];
+  let total = 0;
+  for (const id of ids) {
+    const size = sizes.get(id) ?? 0;
+    if (taken.length > 0 && total + size > budget) break;
+    taken.push(id);
+    total += size;
+  }
+  return taken;
 }
 
 /** The SQL column of a content model's parent field (the registry checked it exists). */

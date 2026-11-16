@@ -206,6 +206,10 @@ describe('issue.create (AC-1, AC-3, AC-4)', () => {
       'shareStatus:Backlog',
       `shareLabels:${low?.name},${high?.name}`,
       'position',
+      // PLAN-011 S6: the content and history of the new row, after every lock.
+      'claimFiles',
+      'setSearchText',
+      'historyNames',
     ]);
   });
 
@@ -230,7 +234,12 @@ describe('issue.update (AC-3, AC-4, AC-23, E8, E12)', () => {
     m.writes.length = 0;
     const { changes } = await update(m, issue, { title: 'Fix login', priority: 2 });
     expect(changes).toEqual({ priority: { from: 0, to: 2 } });
-    expect(m.writes).toEqual([{ action: 'update', ids: [issue.id], fields: ['priority'] }]);
+    expect(m.writes).toEqual([
+      { action: 'update', ids: [issue.id], fields: ['priority'] },
+      // The creator's change a moment after creating folds into the `created` entry (PLAN-011
+      // S6; issue-history-writer.test.ts has the entries themselves).
+      expect.objectContaining({ action: 'update', model: 'IssueHistory', fields: ['changes'] }),
+    ]);
     expect(m.events.at(-1)).toEqual({
       type: 'issue.updated',
       subject: { type: 'issue', id: issue.id },
@@ -349,6 +358,9 @@ describe('issue.update (AC-3, AC-4, AC-23, E8, E12)', () => {
       `shareLabels:${byId.map((l) => l.name).join(',')}`,
       'lockIssue',
       'statusCategory',
+      // PLAN-011 S6: the history writer's plain reads, under the issue lock.
+      'historyNames',
+      'latestHistory',
     ]);
   });
 

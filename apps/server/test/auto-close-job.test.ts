@@ -237,11 +237,29 @@ describe('issue.autoClose on one issue (AC-8, E21)', () => {
     expect(row.canceledAt).toEqual(NOW_FOR(m));
     expect(row.completedAt).toBeNull();
     expect(row.startedAt).toEqual(startedAt);
-    expect(m.writes).toHaveLength(1);
+    // The issue's update, then the history entry's insert (PLAN-011 S6's writer).
+    expect(m.writes).toHaveLength(2);
     expect(m.writes[0]).toMatchObject({ action: 'update', fields: ['statusId', 'canceledAt'] });
+    expect(m.writes[1]).toMatchObject({ action: 'insert', model: 'IssueHistory' });
     const changes = { statusId: { from: issue.statusId, to: canceled.id } };
     // The history seam runs once with the status change; the event carries the same change set.
     expect(auto.closeHistory).toEqual([{ issueId: issue.id, changes }]);
+    // The entry: `updated`, actor system, the statuses' names snapshotted, not folded into the
+    // creator's `created` entry ("Issue was automatically closed", SPEC-015 §4.8).
+    expect(m.historyRows.filter((r) => r.issueId === issue.id).map((r) => r.kind)).toEqual([
+      'created',
+      'updated',
+    ]);
+    expect(m.historyRows.at(-1)).toMatchObject({
+      actorKind: 'system',
+      actorId: null,
+      changes: {
+        status: {
+          from: { id: issue.statusId, name: 'In Progress', category: 'started' },
+          to: { id: canceled.id, name: 'Canceled', category: 'canceled' },
+        },
+      },
+    });
     expect(m.events).toEqual([
       { type: 'issue.updated', subject: { type: 'issue', id: issue.id }, changes },
     ]);

@@ -69,6 +69,8 @@ export const COMMANDS = {
   // The rest of the `comment` context's menu (SPEC-013 §7): copies of the focused comment.
   'comment:copy-link': { title: 'Copy link to comment' },
   'comment:copy-markdown': { title: 'Copy content as Markdown' },
+  // SPEC-013 §3.3: the composer with the focused comment's body (PLAN-011 S6).
+  'comment:new-issue': { title: 'New issue from comment…' },
   // PLAN-013 S4: "Add reaction…" (contexts comment and issue); S5 registers the handler.
   'reaction:add': { title: 'Add reaction…' },
   'editor:bold': { title: 'Bold' },

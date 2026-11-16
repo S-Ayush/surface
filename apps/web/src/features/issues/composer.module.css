@@ -31,6 +31,12 @@
   line-height: var(--text-sm-line);
 }
 
+/* The description (§3.1): a few lines tall when empty, like Linear's, and it grows with the text. */
+.description {
+  min-height: calc(var(--control-lg) * 2);
+  color: var(--text-primary);
+}
+
 .pills {
   display: flex;
   flex-wrap: wrap;

@@ -316,7 +316,7 @@ const AUTO = {
  */
 export const ISSUE_LIFECYCLE_RULES: Readonly<Record<string, LifecycleRule>> = {
   'issue.update': { ...EDIT, spec: 'SPEC-011' },
-  'issue.updateDescription': { ...EDIT, spec: 'SPEC-011', pending: 'PLAN-011 S6' },
+  'issue.updateDescription': { ...EDIT, spec: 'SPEC-011' },
   'comment.create': { ...EDIT, spec: 'SPEC-013' },
   'comment.update': { ...EDIT, spec: 'SPEC-013' },
   'comment.delete': { ...EDIT, spec: 'SPEC-013' },

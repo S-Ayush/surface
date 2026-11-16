@@ -44,6 +44,8 @@ const OUTPUT: IssueOutput = {
   startedAt: null,
   canceledAt: null,
   reactions: [],
+  description: { markdown: '', json: { type: 'doc', content: [{ type: 'paragraph' }] } },
+  version: 1,
 };
 
 function deps(

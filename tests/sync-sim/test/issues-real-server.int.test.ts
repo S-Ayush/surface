@@ -7,12 +7,16 @@
  * The simulation hands the server one request at a time, so its creates commit one after
  * another; the last test sends creates over HTTP at once, so Postgres runs them concurrently and
  * the counter row's lock orders them.
+ *
+ * PLAN-011 S6 adds descriptions and history (AC-5, AC-6, AC-7, E10): `issueDescribe` steps save a
+ * description from the version the tab holds, and `descriptionConvergence` compares every tab's
+ * IssueContent and IssueHistory rows with the server's.
  */
 import fc from 'fast-check';
 import { createDatabaseFrom, startTestServer, type TestServer } from '@surface/server/testing';
 import { describe, expect, inject, it } from 'vitest';
 import { simParameters } from '../src/context.js';
-import { checkNumbering, issueConvergence } from '../src/properties.js';
+import { checkNumbering, descriptionConvergence, issueConvergence } from '../src/properties.js';
 import type { RealServer } from '../src/real-server.js';
 import { startRealServer } from '../src/real-server.js';
 import type { SimServer } from '../src/server.js';
@@ -213,6 +217,67 @@ describe('issues against the real server', () => {
     await fc.assert(
       fc.asyncProperty(issueCase({ bursts: true }), (simCase) =>
         simulate(simCase, { ...issueConvergence.options, server }, issueConvergence.check),
+      ),
+      simParameters(),
+    );
+  });
+});
+
+/**
+ * PLAN-011 S6, E10: both tabs open Alpha (a describe step before the description has loaded only
+ * opens the page), the first saves, then the second saves offline from that version while the
+ * first saves again: the offline save reaches the server with a passed base and is refused.
+ */
+const describeRace: Case = {
+  seed: 11,
+  users: 2,
+  lateUsers: 0,
+  webLocks: true,
+  steps: [
+    { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueDescribe', tab: 0, issue: 0, text: 'Steps', stale: false },
+    { t: 'issueDescribe', tab: 1, issue: 0, text: 'Steps', stale: false },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueDescribe', tab: 0, issue: 0, text: 'Steps', stale: false },
+    { t: 'wait', ms: 2_000 },
+    { t: 'offline', tab: 1, ms: 4_000 },
+    { t: 'issueDescribe', tab: 1, issue: 0, text: 'Repro on **Safari**', stale: false },
+    { t: 'issueDescribe', tab: 0, issue: 0, text: '日本語', stale: false },
+    { t: 'wait', ms: 8_000 },
+  ],
+};
+
+describe('descriptions against the real server (PLAN-011 S6)', () => {
+  it('refuses a save from a version another tab passed, and every tab shows the stored description (E10, AC-6)', async () => {
+    const servers = issueServers();
+    const result = await simulate(
+      describeRace,
+      { ...descriptionConvergence.options, server: servers.server },
+      async (outcome) => {
+        await descriptionConvergence.check(outcome);
+        const contents = (await servers.last()?.issueContents()) ?? {};
+        return {
+          saves: outcome.world.dispatched
+            .filter((d) => d.op === 'issue.updateDescription')
+            .map((d) => d.outcome?.status),
+          stored: Object.values(contents).map((c) => [c.version, JSON.stringify(c.description)]),
+        };
+      },
+    );
+    expect(result.saves).toEqual(['confirmed', 'rejected', 'confirmed']);
+    expect(result.stored).toEqual([[3, expect.stringContaining('日本語')]]);
+  });
+
+  it('every tab converges on the descriptions and history after any faults (AC-5, AC-7)', async () => {
+    const { server } = issueServers();
+    await fc.assert(
+      fc.asyncProperty(issueCase({ descriptions: true }), (simCase) =>
+        simulate(
+          simCase,
+          { ...descriptionConvergence.options, server },
+          descriptionConvergence.check,
+        ),
       ),
       simParameters(),
     );

@@ -53,6 +53,7 @@ import issueUpdate from './issues/update.js';
 import issueDelete from './issues/delete.js';
 import issueRestore from './issues/restore.js';
 import issuePurge from './issues/purge.js';
+import issueUpdateDescription from './issues/update-description.js';
 import {
   countHandler as issueCount,
   groupByHandler as issueGroupBy,
@@ -140,4 +141,5 @@ export const HANDLERS: readonly Handler[] = [
   commentDelete,
   reactionSet,
   labelUsage,
+  issueUpdateDescription,
 ];

@@ -3,6 +3,10 @@
  * and lock through, a repo that records its writes, and the events they emit. Every read and lock
  * is logged in order, so a test can read the lock order (SPEC-011 §4.8). Two public teams, ENG
  * and DES, each with the default workflow; labels are added per test.
+ *
+ * PLAN-011 S6: the repo also keeps IssueContent and IssueHistory rows (`content`, `historyRows`)
+ * and the server-only search text (`searchText`); the access reads them back for the history
+ * writer. Its clock is `m.now` (settable with `at`), so a test can step past the fold windows.
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -16,6 +20,9 @@ import {
   type StatusCategory,
 } from '@surface/domain';
 import type { DomainEvent } from '../../src/executor/context.js';
+import { claimInlineFiles } from '../../src/files/claim.js';
+import type { IssueHistoryRow } from '../../src/issues/history.js';
+import type { ModelRow } from '../../src/sync/models.js';
 import { SurfaceError } from '../../src/executor/errors.js';
 import { refNotFound } from '../../src/executor/refs/sources.js';
 import type {
@@ -66,8 +73,22 @@ export interface IssueWrite {
   readonly log?: boolean;
 }
 
+export type IssueContentRow = ModelRow<'IssueContent'>;
+
 export interface MemoryIssues {
   readonly eng: IssueTeam;
+  /** IssueContent rows by issue id (PLAN-011 S6). */
+  readonly content: Map<string, IssueContentRow>;
+  /** IssueHistory rows, in insertion order. */
+  readonly historyRows: IssueHistoryRow[];
+  /** The server-only `issue_search_text` rows, by issue id. */
+  readonly searchText: Map<string, string>;
+  /** The clock of the repo and of `ctx` (default `NOW`). */
+  readonly now: Date;
+  /** Moves the clock: later writes and `ctx.now` read it. */
+  at(now: Date): void;
+  /** The actor `ctx` writes as (default Ada); set with `as`. */
+  as(actor: Actor): void;
   readonly des: IssueTeam;
   readonly statuses: Map<string, MemoryStatus>;
   readonly labels: Map<string, LabelRow>;
@@ -119,6 +140,11 @@ export function memoryIssues(): MemoryIssues {
   const writes: IssueWrite[] = [];
   const events: DomainEvent[] = [];
   const audits: AuditLine[] = [];
+  const content = new Map<string, IssueContentRow>();
+  const historyRows: IssueHistoryRow[] = [];
+  const searchText = new Map<string, string>();
+  let clock = NOW;
+  let actor: Actor = ADA_ACTOR;
 
   function team(key: string): IssueTeam {
     const id = randomUUID();
@@ -201,10 +227,99 @@ export function memoryIssues(): MemoryIssues {
       }
       return Promise.resolve({ ...issue, state });
     },
+    readContent(issueId) {
+      calls.push('readContent');
+      return Promise.resolve(content.get(issueId));
+    },
+    claimFiles(doc, issue) {
+      calls.push('claimFiles');
+      // The real seam (its stub body needs no database).
+      return claimInlineFiles(recordingDb().db, doc, issue, actor, 'description');
+    },
+    setSearchText(issueId, text) {
+      calls.push('setSearchText');
+      searchText.set(issueId, text);
+      return Promise.resolve();
+    },
+    latestHistory(issueId) {
+      calls.push('latestHistory');
+      const rows = historyRows
+        .filter((r) => r.issueId === issueId)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
+      return Promise.resolve(rows.at(-1));
+    },
+    historyNames({ statusIds, userIds, labelIds }) {
+      calls.push('historyNames');
+      const named = <T>(ids: readonly string[], get: (id: string) => T | undefined) =>
+        new Map(
+          ids.flatMap((id) => {
+            const found = get(id);
+            return found === undefined ? [] : [[id, found] as const];
+          }),
+        );
+      return Promise.resolve({
+        statuses: named(statusIds, (id) => {
+          const s = statuses.get(id);
+          return s && { id: s.id, name: s.name, category: s.category };
+        }),
+        // Users are workspace-wide and never purged: any id has a name here.
+        users: named(userIds, (id) => ({
+          id,
+          name: id === ADA_ID ? 'Ada' : `User ${id.slice(-4)}`,
+        })),
+        labels: named(labelIds, (id) => {
+          const l = labels.get(id);
+          return l && { id: l.id, name: l.name, color: l.color };
+        }),
+      });
+    },
   };
+
+  /** Content and history rows (PLAN-011 S6), recorded in `writes` with their model. */
+  function insertChild(model: 'IssueContent' | 'IssueHistory', values: Record<string, unknown>) {
+    const issueId = String(values['issueId']);
+    const teamId = issues.get(issueId)?.teamId ?? String(values['teamId']);
+    const id = String(values['id']);
+    writes.push({ action: 'insert', model, ids: [id], fields: Object.keys(values) });
+    const base = {
+      ...values,
+      teamId,
+      syncGroups: [`team:${teamId}`],
+      createdAt: clock,
+      updatedAt: clock,
+    };
+    if (model === 'IssueContent') {
+      const row = base as unknown as IssueContentRow;
+      content.set(issueId, row);
+      return row;
+    }
+    const row = base as unknown as IssueHistoryRow;
+    historyRows.push(row);
+    return row;
+  }
+
+  function updateChild(model: 'IssueContent' | 'IssueHistory', id: string, patch: object) {
+    writes.push({ action: 'update', model, ids: [id], fields: Object.keys(patch) });
+    if (model === 'IssueContent') {
+      const row = content.get(id);
+      if (!row) throw new SurfaceError('NOT_FOUND', 'not found');
+      const next = { ...row, ...patch, updatedAt: clock };
+      content.set(id, next);
+      return next;
+    }
+    const index = historyRows.findIndex((r) => r.id === id);
+    const row = historyRows[index];
+    if (!row) throw new SurfaceError('NOT_FOUND', 'not found');
+    const next = { ...row, ...patch, updatedAt: clock };
+    historyRows[index] = next;
+    return next;
+  }
 
   const repo: Repo = {
     insert(model, values) {
+      if (model === 'IssueContent' || model === 'IssueHistory') {
+        return Promise.resolve(insertChild(model, values) as never);
+      }
       if (model !== 'Issue') throw new Error(`unexpected insert into ${model}`);
       const row = {
         priority: 0,
@@ -220,8 +335,8 @@ export function memoryIssues(): MemoryIssues {
         deletedById: null,
         syncGroups: ['workspace'],
         ...values,
-        createdAt: NOW,
-        updatedAt: NOW,
+        createdAt: clock,
+        updatedAt: clock,
         // The generic insert type does not narrow on `model`; the handler under test passes a full row.
       } as unknown as IssueRow;
       issues.set(row.id, row);
@@ -229,9 +344,12 @@ export function memoryIssues(): MemoryIssues {
       return Promise.resolve(row as never);
     },
     update(model, id, patch) {
+      if (model === 'IssueContent' || model === 'IssueHistory') {
+        return Promise.resolve(updateChild(model, id, patch) as never);
+      }
       const row = issues.get(id);
       if (model !== 'Issue' || !row) throw new SurfaceError('NOT_FOUND', 'not found');
-      const next = { ...row, ...patch, updatedAt: NOW } as IssueRow;
+      const next = { ...row, ...patch, updatedAt: clock } as IssueRow;
       issues.set(id, next);
       writes.push({ action: 'update', ids: [id], fields: Object.keys(patch) });
       return Promise.resolve(next as never);
@@ -251,7 +369,7 @@ export function memoryIssues(): MemoryIssues {
     unarchive(model, id) {
       const row = issues.get(id);
       if (model !== 'Issue' || !row) throw new SurfaceError('NOT_FOUND', 'not found');
-      const next = { ...row, archivedAt: null, updatedAt: NOW };
+      const next = { ...row, archivedAt: null, updatedAt: clock };
       issues.set(id, next);
       writes.push({ action: 'unarchive', ids: [id], fields: ['archivedAt'] });
       return Promise.resolve(next as never);
@@ -294,6 +412,18 @@ export function memoryIssues(): MemoryIssues {
     statuses,
     labels,
     issues,
+    content,
+    historyRows,
+    searchText,
+    get now() {
+      return clock;
+    },
+    at(now) {
+      clock = now;
+    },
+    as(next) {
+      actor = next;
+    },
     calls,
     lockModes,
     writes,
@@ -339,7 +469,16 @@ export function memoryIssues(): MemoryIssues {
         },
       };
     },
-    ctx: { access, repo, emit: (event) => void events.push(event), now: NOW },
+    // A getter, so `at` and `as` reach the next operation.
+    get ctx() {
+      return {
+        access,
+        repo,
+        emit: (event: DomainEvent) => void events.push(event),
+        now: clock,
+        actor,
+      };
+    },
     status(t, name) {
       const found = [...statuses.values()].find((s) => s.teamId === t.id && s.name === name);
       if (!found) throw new Error(`no status ${name} in ${t.key}`);

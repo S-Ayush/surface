@@ -41,7 +41,7 @@ import {
   type WorkflowAccess,
 } from '../src/handlers/statuses/core.js';
 import type { Repo } from '../src/sync/repo.js';
-import { memoryIssues, NOW } from './support/memory-issues.js';
+import { ADA_ACTOR, memoryIssues, NOW } from './support/memory-issues.js';
 
 type Mode = 'keyShare' | 'update';
 
@@ -158,6 +158,8 @@ function world(step: () => Promise<void>) {
       await locks.acquire(tx, row, mode);
     };
     return {
+      // Content, history names and the latest entry (PLAN-011 S6) are plain reads: no lock.
+      ...m.ctx.access,
       shareTeam: async (teamId) => {
         await locked(`team:${teamId}`, 'keyShare');
         return teamId === m.eng.id ? m.eng : undefined;
@@ -205,9 +207,11 @@ function world(step: () => Promise<void>) {
           });
           return Promise.resolve({ ...m.issues.get(id), ...patch });
         },
+        // The `updated` history entry (PLAN-011 S6); not what these tests look at.
+        insert: (_model: string, row: object) => Promise.resolve(row),
       } as unknown as Repo;
       return updateIssue(
-        { access: issueAccess(tx), repo, emit: () => undefined, now: NOW },
+        { access: issueAccess(tx), repo, emit: () => undefined, now: NOW, actor: ADA_ACTOR },
         { issueId, teamId: m.eng.id, addLabelIds, removeLabelIds: [] },
       );
     });
@@ -419,6 +423,7 @@ function statusWorld(step: () => Promise<void>) {
         await locks.acquire(tx, row, mode);
       };
       const access: IssueAccess = {
+        ...m.ctx.access,
         shareTeam: () => Promise.reject(new Error('no creates here')),
         readTeam: async (teamId) => {
           await step();
@@ -452,9 +457,11 @@ function statusWorld(step: () => Promise<void>) {
           });
           return Promise.resolve({ ...m.issues.get(id), ...patch });
         },
+        // The `updated` history entry (PLAN-011 S6); not what these tests look at.
+        insert: (_model: string, row: object) => Promise.resolve(row),
       } as unknown as Repo;
       return updateIssue(
-        { access, repo, emit: () => undefined, now: NOW },
+        { access, repo, emit: () => undefined, now: NOW, actor: ADA_ACTOR },
         {
           issueId: issue.id,
           teamId: m.eng.id,

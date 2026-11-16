@@ -357,10 +357,26 @@ describe('issue.autoArchive on one issue (AC-7, E20)', () => {
     const auto = memoryAuto(m);
     const row = await autoArchiveIssue(auto.ctx, { issueId: issue.id, teamId: issue.teamId });
     expect(row.archivedAt).not.toBeNull();
-    expect(m.writes.map((w) => w.action)).toEqual(['archive']);
+    // The archive, then the history entry's insert (PLAN-011 S6's writer).
+    expect(m.writes.map((w) => [w.action, w.model ?? 'Issue'])).toEqual([
+      ['archive', 'Issue'],
+      ['insert', 'IssueHistory'],
+    ]);
     // The history seam runs exactly once, with the `archived` kind (§4.8).
     expect(auto.archivedHistory).toEqual([issue.id]);
     expect(m.history).toEqual([{ kind: 'archived', issueId: issue.id }]);
+    // The entry it writes: actor system, empty changes, never folded into `created` (SPEC-011 §4.4).
+    expect(m.historyRows.filter((r) => r.issueId === issue.id).map((r) => r.kind)).toEqual([
+      'created',
+      'archived',
+    ]);
+    expect(m.historyRows.at(-1)).toMatchObject({
+      kind: 'archived',
+      actorKind: 'system',
+      actorId: null,
+      apiKeyId: null,
+      changes: {},
+    });
     expect(m.events).toEqual([
       {
         type: 'issue.archived',

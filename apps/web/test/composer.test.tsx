@@ -5,7 +5,10 @@
 // records what is dispatched. AC-1 (prefill, create, "Create more", no team), AC-3 (the "Save as
 // draft?" prompt, restore, discard), E6 (`C` while open), E8 (a team without estimates), E20 (the
 // replace prompt), E25 (Discard leaves the saved draft alone), AC-18 (creation announced).
-import { afterEach, describe, expect, it } from 'vitest';
+// PLAN-011 S6: the description editor (a textarea fake of the lazy TipTap editor, as in the
+// comment flow tests; the editor's own keys are `editor-keys.test.tsx`) and "New issue from
+// comment…".
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { runInAction } from 'mobx';
 import { inAct, keydown, setValue } from './issue-fixtures.js';
@@ -32,6 +35,10 @@ import {
 import { announcer } from '../src/features/issues/announcer.js';
 import { openComposerWith } from '../src/features/issues/composer-request.js';
 import { overlayManager } from '@surface/ui';
+import { docOfText } from './comment-editor-fake.js';
+import { newIssueFromComment } from '../src/features/comments/new-issue.js';
+
+vi.mock('../src/features/comments/editor-host.js', () => import('./comment-editor-fake.js'));
 
 let mounted: Mounted | undefined;
 afterEach(() => {
@@ -431,5 +438,107 @@ describe('changing team (AC-2, E8)', () => {
     expect(pill('Estimate')).toBeUndefined();
     expect(composer()?.textContent).toContain('Dropped: estimate 3.');
     expect(titleInput().value).toBe('Sized');
+  });
+});
+
+describe('the description (PLAN-011 S6, SPEC-012 §3.1)', () => {
+  const descriptionBox = (): HTMLTextAreaElement => {
+    const box = composer()?.querySelector('textarea[aria-label="Description"]');
+    if (!(box instanceof HTMLTextAreaElement)) throw new Error('no description editor');
+    return box;
+  };
+  const type = (box: HTMLTextAreaElement, text: string) =>
+    inAct(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(box, text);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+  it('Enter in the title moves to the description, never submits (§3.1 item 5)', async () => {
+    const app = new ComposerApp();
+    await open(app);
+    await setValue(titleInput(), 'Fix the login loop');
+    await keydown(titleInput(), 'Enter');
+    expect(document.activeElement).toBe(descriptionBox());
+    expect(app.ops()).toEqual([]);
+  });
+
+  it('creates with the description as editor JSON, so the client predicts it (AC-7)', async () => {
+    const app = new ComposerApp();
+    await open(app);
+    await setValue(titleInput(), 'Fix the login loop');
+    await type(descriptionBox(), 'Steps\nMore');
+    await click(buttonNamed('Create issue'));
+    expect(app.dispatched[0]?.input).toMatchObject({
+      title: 'Fix the login loop',
+      description: docOfText('Steps\nMore'),
+    });
+  });
+
+  it('blank lines alone are no description: none is sent and closing asks nothing', async () => {
+    const app = new ComposerApp();
+    await open(app);
+    await type(descriptionBox(), '\n\n');
+    // The editor keeps what was typed even though the composer holds no description.
+    expect(descriptionBox().value).toBe('\n\n');
+    await keydown(titleInput(), 'Escape');
+    expect(dialogNamed('Save as draft?')).toBeUndefined();
+    expect(composer()).toBeUndefined();
+  });
+
+  it('a description alone is content: closing asks, and Save keeps it in the draft (§3.2)', async () => {
+    const app = new ComposerApp();
+    await open(app);
+    await type(descriptionBox(), 'Only a body');
+    await keydown(titleInput(), 'Escape');
+    await click(buttonNamed('Save', dialogNamed('Save as draft?')));
+    expect(app.dispatched[0]?.input).toMatchObject({
+      kind: 'composer',
+      data: { title: '', description: docOfText('Only a body') },
+    });
+  });
+
+  it('"Create more" clears the description with the title', async () => {
+    const app = new ComposerApp();
+    await open(app);
+    await click(document.querySelector('button[role="switch"]') ?? document.body);
+    await setValue(titleInput(), 'First');
+    await type(descriptionBox(), 'Body');
+    await click(buttonNamed('Create issue'));
+    expect(composer()).toBeDefined();
+    expect(descriptionBox().value).toBe('');
+  });
+
+  it('Restore in composer brings the description back', async () => {
+    const app = new ComposerApp();
+    mounted = await mountComposer(app, '/team/ENG/issues');
+    const m = mounted;
+    const input = { id: 'x', team: ENG, title: 'Lost one', description: docOfText('Kept body') };
+    await inAct(() => {
+      openComposerWith({ kind: 'rejected', input }, (c) => m.commands().run(c));
+    });
+    expect(descriptionBox().value).toBe('Kept body');
+  });
+
+  it('New issue from comment… opens with the body as the description and the title focused (SPEC-013 §3.3)', async () => {
+    const app = new ComposerApp({ drafts: [draftRow({ teamId: ENG, data: { title: 'Old' } })] });
+    mounted = await mountComposer(app, '/issue/ENG-7');
+    const m = mounted;
+    let ran = false;
+    await inAct(() => {
+      ran = newIssueFromComment(docOfText('From the comment'), (c) => m.commands().run(c));
+    });
+    expect(ran).toBe(true);
+    expect(pill('Team')?.textContent).toContain('ENG');
+    expect(descriptionBox().value).toBe('From the comment');
+    // The comment's body, not the team's draft.
+    expect(titleInput().value).toBe('');
+    expect(document.activeElement).toBe(titleInput());
+    await setValue(titleInput(), 'Follow-up');
+    await click(buttonNamed('Create issue'));
+    expect(app.dispatched[0]?.input).toMatchObject({
+      team: ENG,
+      title: 'Follow-up',
+      description: docOfText('From the comment'),
+    });
   });
 });

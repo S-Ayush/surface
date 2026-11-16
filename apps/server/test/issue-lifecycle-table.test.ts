@@ -32,7 +32,12 @@ import {
   type CommentTarget,
   type CommentWriteContext,
 } from '../src/handlers/comments/core.js';
-import { createIssue, updateIssue, type IssueRow } from '../src/handlers/issues/core.js';
+import {
+  createIssue,
+  updateDescription,
+  updateIssue,
+  type IssueRow,
+} from '../src/handlers/issues/core.js';
 import { setReaction } from '../src/handlers/reactions/core.js';
 import { deleteLabel, type LabelAccess } from '../src/handlers/labels/core.js';
 import type { Repo } from '../src/sync/repo.js';
@@ -209,6 +214,9 @@ const CASES: Readonly<Record<string, Case>> = {
       addLabelIds: [],
       removeLabelIds: [],
     }),
+  // PLAN-011 S6: a save from the version the issue was created with.
+  'issue.updateDescription': (m, issue) =>
+    updateDescription(m.ctx, { issueId: issue.id, baseVersion: 1, description: commentBody }),
   'issue.delete': (m, issue, now) => deleteIssue(m.lifecycle({ now }), issue.id),
   'issue.restore': (m, issue, now) => restoreIssue(m.lifecycle({ now }), issue.id),
   // PLAN-015 S2. The purge steps are `purge-steps.test.ts`'s; here, the issue's own rule.
@@ -296,7 +304,6 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
       rows.flatMap(([name, rule]) => (rule.pending === undefined ? [] : [[name, rule.pending]])),
     );
     expect(pending).toEqual({
-      'issue.updateDescription': 'PLAN-011 S6',
       'attachment.createFile': 'PLAN-014 S4a',
       'attachment.createLink': 'PLAN-014 S4a',
       'attachment.update': 'PLAN-014 S4a',
@@ -380,6 +387,7 @@ const LABEL_ID = '0190f0c0-0000-7000-8000-0000000000b1';
 /** The input each built operation's registered handler runs with on ENG-1. */
 const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
   'issue.update': { issue: 'ENG-1', title: 'Fix the login' },
+  'issue.updateDescription': { issue: 'ENG-1', baseVersion: 1, description: 'Steps to reproduce' },
   'issue.delete': { issue: 'ENG-1' },
   'issue.restore': { issue: 'ENG-1' },
   'issue.purge': { issue: 'ENG-1' },
@@ -446,6 +454,7 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
       }),
       workflow_statuses: { id: issue.statusId, name: 'Backlog', category: 'backlog' },
       users: { id: ADA_ID, name: 'Ada' },
+      issue_content: { description: { type: 'doc', content: [{ type: 'paragraph' }] }, version: 1 },
       comments: snakeRow({
         id: COMMENT_ID,
         issueId: issue.id,

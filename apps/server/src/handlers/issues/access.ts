@@ -4,12 +4,29 @@
  * each for a whole page. Every one of them is visible to whoever sees the issue: its team's status
  * and labels or workspace labels (INV-06), and users, who are workspace-wide.
  */
-import { issueIdentifier, issueUrl, isStatusCategory, summariseReactions } from '@surface/domain';
+import {
+  issueIdentifier,
+  issueUrl,
+  isStatusCategory,
+  summariseReactions,
+  type DocNodeJSON,
+} from '@surface/domain';
+import { docToMarkdown } from '@surface/editor/schema';
 import type { IssueOutputSchema } from '@surface/operations';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
-import { labels, reactions, teams, users, workflowStatuses } from '../../db/schema/index.js';
+import {
+  issueContent,
+  issueSearchText,
+  labels,
+  reactions,
+  teams,
+  users,
+  workflowStatuses,
+} from '../../db/schema/index.js';
 import type { HandlerContext } from '../../executor/context.js';
+import { claimInlineFiles } from '../../files/claim.js';
+import { historyAccess } from '../../issues/history.js';
 import { lockIssueForWrite } from '../../issues/lifecycle.js';
 import { newIssuePosition } from '../../issues/numbering.js';
 import type { IssueAccess, IssueRow, IssueTeam, IssueWriteContext } from './core.js';
@@ -73,6 +90,22 @@ export function issueAccess(ctx: HandlerContext): IssueAccess {
     },
     position: (teamId) => newIssuePosition(tx, teamId),
     lockIssue: (issueId, mode) => lockIssueForWrite(tx, issueId, { actor: ctx.actor }, mode),
+    async readContent(issueId) {
+      const [row] = await tx
+        .select({ description: issueContent.description, version: issueContent.version })
+        .from(issueContent)
+        .where(eq(issueContent.issueId, issueId));
+      return row;
+    },
+    claimFiles: (doc, issue) => claimInlineFiles(tx, doc, issue, ctx.actor, 'description'),
+    async setSearchText(issueId, text) {
+      // Server-only (§4.3): plain SQL in the content's transaction.
+      await tx
+        .insert(issueSearchText)
+        .values({ issueId, descriptionText: text })
+        .onConflictDoUpdate({ target: issueSearchText.issueId, set: { descriptionText: text } });
+    },
+    ...historyAccess(tx),
   };
 }
 
@@ -83,13 +116,17 @@ export function issueWriteContext(ctx: HandlerContext): IssueWriteContext {
     repo: ctx.repo,
     emit: (event) => ctx.emit(event),
     now: ctx.now(),
+    actor: ctx.actor,
   };
 }
 
 const iso = (value: Date | null): string | null => (value === null ? null : value.toISOString());
 
 /** An issue's output without its reactions: everything `issue.list`'s summaries carry and more. */
-export type IssueOutputWithoutReactions = Omit<IssueOutput, 'reactions'>;
+export type IssueOutputWithoutReactions = Omit<
+  IssueOutput,
+  'reactions' | 'description' | 'version'
+>;
 
 /**
  * Each row's output without its reactions, in the rows' order (§6.1), for callers whose schema has
@@ -184,7 +221,15 @@ export async function issueOutputsWithoutReactions(
   });
 }
 
-/** The full output of each row, in the rows' order (§6.1), with the issue's own reactions. */
+/** Stored descriptions passed `validateDoc` on write (§4.3); this only narrows the `jsonb` type. */
+function isDoc(value: unknown): value is DocNodeJSON {
+  return typeof value === 'object' && value !== null && 'type' in value && value.type === 'doc';
+}
+
+/**
+ * The full output of each row, in the rows' order (§6.1), with the issue's own reactions and its
+ * description, as Markdown and as editor JSON (Q12), with its version.
+ */
 export async function issueOutputs(
   ctx: Pick<HandlerContext, 'tx' | 'publicUrl' | 'actor'>,
   rows: readonly IssueRow[],
@@ -210,14 +255,42 @@ export async function issueOutputs(
         isNull(reactions.commentId),
       ),
     );
+  const contentRows = await ctx.tx
+    .select({
+      issueId: issueContent.issueId,
+      description: issueContent.description,
+      version: issueContent.version,
+    })
+    .from(issueContent)
+    .where(
+      inArray(
+        issueContent.issueId,
+        rows.map((r) => r.id),
+      ),
+    );
+  const contents = new Map(contentRows.map((c) => [c.issueId, c]));
   const viewerId = ctx.actor.userId ?? null;
-  return outputs.map((output) => ({
-    ...output,
-    reactions: summariseReactions(
-      reactionRows.filter((r) => r.issueId === output.id),
-      viewerId,
-    ),
-  }));
+  return outputs.map((output) => {
+    const content = contents.get(output.id);
+    if (content === undefined || !isDoc(content.description)) {
+      // Every issue gets its content row in its creating transaction (PLAN-011 S6).
+      throw new Error(
+        `Issue ${output.id} has no IssueContent row (created before PLAN-011 S6). Recreate the development database.`,
+      );
+    }
+    return {
+      ...output,
+      description: {
+        markdown: docToMarkdown(content.description),
+        json: { ...content.description },
+      },
+      version: content.version,
+      reactions: summariseReactions(
+        reactionRows.filter((r) => r.issueId === output.id),
+        viewerId,
+      ),
+    };
+  });
 }
 
 /** One row's full output. */

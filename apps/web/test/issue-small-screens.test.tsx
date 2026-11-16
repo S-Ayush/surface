@@ -106,6 +106,8 @@ describe('the issue page layout (AC-20)', () => {
     startedAt: null,
     canceledAt: null,
     reactions: [],
+    description: { markdown: '', json: { type: 'doc', content: [{ type: 'paragraph' }] } },
+    version: 1,
   } satisfies IssueOutput);
   const now = new Date('2026-11-13T10:00:00.000Z');
 

@@ -55,7 +55,6 @@ const menu = commentMenu({
   deleted: false,
   mine: true,
   canDelete: true,
-  composerAvailable: false,
   onToggleResolved: noop,
   onCopyLink: noop,
   onCopyMarkdown: noop,

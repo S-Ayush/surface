@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   changeTeam,
+  composerDescription,
   createPayload,
   createProblem,
   draftData,
@@ -272,7 +273,7 @@ describe('the payload and the draft (§3.1 item 6, §4.3)', () => {
     dueDate: '2026-12-01',
   };
 
-  it('issue.create takes ids for every reference and no description until PLAN-011 S6', () => {
+  it('issue.create takes ids for every reference, and no description when there is none', () => {
     expect(createPayload(state, 'new-id')).toEqual({
       id: 'new-id',
       team: 'eng',
@@ -284,6 +285,29 @@ describe('the payload and the draft (§3.1 item 6, §4.3)', () => {
       estimate: 3,
       dueDate: '2026-12-01',
     });
+  });
+
+  it('sends the description as editor JSON, and a rejected input brings it back (PLAN-011 S6)', () => {
+    const description = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Steps' }] }],
+    };
+    const payload = createPayload({ ...state, description }, 'id');
+    expect(payload.description).toEqual(description);
+    expect(stateFromCreateInput(world(), payload)?.state.description).toEqual(description);
+    // Markdown is not what the composer sends: a restore leaves it out rather than show it raw.
+    expect(
+      stateFromCreateInput(world(), { team: 'eng', title: 'x', description: '**md**' })?.state
+        .description,
+    ).toBeNull();
+  });
+
+  it('an editor holding only empty paragraphs is no description, so nothing to keep', () => {
+    const blank = { type: 'doc', content: [{ type: 'paragraph' }, { type: 'paragraph' }] };
+    expect(composerDescription(blank)).toBeNull();
+    expect(hasContent({ title: '', description: composerDescription(blank) })).toBe(false);
+    const rule = { type: 'doc', content: [{ type: 'horizontalRule' }] };
+    expect(composerDescription(rule)).toEqual(rule);
   });
 
   it('leaves out empty properties, so the server applies the team’s defaults', () => {
