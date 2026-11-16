@@ -6,3 +6,5 @@ coverage/
 docs/
 # Agent permissions/hooks: reviewed and applied by hand; tooling must not rewrite it.
 .claude/settings.json
+# Agent worktrees (parallel sessions) are separate checkouts, checked in their own runs.
+.claude/worktrees/
