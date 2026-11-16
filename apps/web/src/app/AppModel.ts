@@ -61,6 +61,22 @@ export class AppModel {
     return snapshot.status === 'ready' ? snapshot.session : null;
   }
 
+  /** Changes made here that the server hasn't confirmed (SPEC-012 §3.12 item 2). */
+  unsentChanges = (): number => this.store?.pending.length ?? 0;
+
+  /**
+   * Explicit sign-out (SPEC-012 §3.12): end the session on the server, then delete this user's
+   * replica; the guards then send the user to sign-in. Offline it still signs out here. A session
+   * expiry or revoke never comes through here, so it deletes nothing (item 4).
+   */
+  async signOut(): Promise<void> {
+    const store = this.store;
+    await this.auth.logout(
+      store !== null && store.connection !== 'online' ? { whenOffline: 'end-locally' } : {},
+    );
+    await store?.destroy();
+  }
+
   /** The store, once its replica is ready: what saving a preference needs. */
   get readyStore(): SyncStore | null {
     return this.#ready();

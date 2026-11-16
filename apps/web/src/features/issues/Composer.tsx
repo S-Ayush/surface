@@ -80,6 +80,7 @@ export function Composer(props: ComposerProps) {
       }}
       title="New issue"
       size="lg"
+      fullScreenOnSmall
       onClosed={props.onClosed}
       footer={
         <div className={styles.footer}>

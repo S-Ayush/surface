@@ -113,3 +113,30 @@
   max-width: var(--content-max-width);
   margin: var(--space-48) auto;
 }
+
+/* Below 768 px (SPEC-012 §7.3, NFR-20): one column; the properties wrap as pills under the title.
+   Nothing here has a fixed width, so 375 px never scrolls sideways. */
+.stacked .properties {
+  flex-flow: row wrap;
+  gap: var(--space-8) var(--space-12);
+}
+
+.stacked .property {
+  justify-content: flex-start;
+}
+
+@media (max-width: 767.98px) {
+  .layout {
+    padding: var(--space-16);
+  }
+
+  .column {
+    max-width: 100%;
+  }
+
+  .drawer,
+  .aside {
+    width: auto;
+    max-width: 100%;
+  }
+}

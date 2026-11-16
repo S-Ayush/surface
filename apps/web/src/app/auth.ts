@@ -291,7 +291,11 @@ export class AuthState {
     return this.#reopens < 2 ? undefined : this.#reopens - 2;
   }
 
-  async logout(): Promise<void> {
+  /**
+   * `whenOffline: 'end-locally'`: with no way to reach the server, still end the session here
+   * (the server's session ends at its next contact or expiry; SPEC-012 §3.12 item 2).
+   */
+  async logout(options: { readonly whenOffline?: 'end-locally' } = {}): Promise<void> {
     this.#loggingOut += 1;
     try {
       await this.#client.logout();
@@ -299,7 +303,13 @@ export class AuthState {
     } catch (error) {
       // The answer may be lost after the server acted (its 4001 is ignored meanwhile): if the
       // session is gone, the logout happened.
-      const session = await this.#client.session().catch(() => undefined);
+      const session = await this.#client
+        .session()
+        .catch((reason: unknown) =>
+          reason instanceof UnreachableError && options.whenOffline === 'end-locally'
+            ? null
+            : undefined,
+        );
       if (session !== null) throw error;
       this.#end(true);
     } finally {

@@ -18,11 +18,14 @@ export function PropertiesPanel({
   view,
   now,
   onPick,
+  stacked = false,
 }: {
   view: IssueView;
   now: Date;
   /** Opens the picker for a property, anchored to its pill. Absent: the pills are read-only. */
   onPick?: (kind: PickerKind, anchor: HTMLElement) => void;
+  /** Below 768 px (SPEC-012 §7.3): the properties wrap as a row of pills under the title. */
+  stacked?: boolean;
 }) {
   /** The pill's props: a button that opens its picker, or read-only text. */
   const pill = (kind: PickerKind) =>
@@ -43,7 +46,10 @@ export function PropertiesPanel({
       : null;
   const labelNames = view.labels.map((label) => label.name);
   return (
-    <section className={styles.panel} aria-label="Properties">
+    <section
+      className={stacked ? `${styles.panel} ${styles.stacked}` : styles.panel}
+      aria-label="Properties"
+    >
       <dl className={styles.properties}>
         <div className={styles.property}>
           <dt>Status</dt>

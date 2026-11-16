@@ -71,3 +71,15 @@
   outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: calc(var(--focus-ring-width) * -1);
 }
+
+/* Small screens (SPEC-012 §7.3): the tabs scroll inside their own row, never the page. */
+@media (max-width: 767.98px) {
+  .tabs {
+    overflow-x: auto;
+    padding: 0 var(--space-8);
+  }
+
+  .empty {
+    padding: var(--space-16) var(--space-12);
+  }
+}

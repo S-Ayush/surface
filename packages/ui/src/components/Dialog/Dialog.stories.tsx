@@ -86,6 +86,22 @@ export const MenuInDialog: Story = {
   render: () => <CreateIssue open onOpenChange={() => {}} withMenu menuOpen />,
 };
 
+/** `fullScreenOnSmall` fills the screen below 768 px (the composer, SPEC-012 §7.3). */
+export const FullScreenOnSmall: Story = {
+  name: 'Full screen on small screens',
+  render: () => (
+    <Dialog
+      open
+      onOpenChange={() => {}}
+      title="New issue"
+      fullScreenOnSmall
+      footer={<Button variant="primary">Create issue</Button>}
+    >
+      <Input label="Title" />
+    </Dialog>
+  ),
+};
+
 export const Small: Story = {
   render: () => (
     <Dialog

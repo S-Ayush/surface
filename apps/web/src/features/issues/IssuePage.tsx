@@ -414,6 +414,21 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
         ? 'Recently deleted issues'
         : null;
 
+  const panel = (
+    <PropertiesPanel
+      view={view}
+      now={now}
+      stacked={mode === 'stacked'}
+      {...(editable
+        ? {
+            onPick: (kind: PickerKind, anchor: HTMLElement) => {
+              openPicker({ kind, issueId: view.id, anchor });
+            },
+          }
+        : {})}
+    />
+  );
+
   return (
     <>
       <PageHeader
@@ -489,6 +504,7 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
             />
             {badge !== null && <Badge>{badge}</Badge>}
           </div>
+          {mode === 'stacked' && panel}
           {/* TODO(PLAN-012 S4 follow-up, PLAN-011 S6): the description editor and its save
               controller. Until `issue.updateDescription` exists the page has no description to
               show: the row doesn't carry one (IssueContent arrives with S5a/S6). */}
@@ -502,19 +518,9 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
             <Slots view={view} teamId={view.teamId} part="comments" />
           )}
         </article>
-        {(mode === 'inline' || drawerOpen) && (
+        {mode !== 'stacked' && (mode === 'inline' || drawerOpen) && (
           <aside className={mode === 'drawer' ? pageStyles.drawer : pageStyles.aside}>
-            <PropertiesPanel
-              view={view}
-              now={now}
-              {...(editable
-                ? {
-                    onPick: (kind: PickerKind, anchor: HTMLElement) => {
-                      openPicker({ kind, issueId: view.id, anchor });
-                    },
-                  }
-                : {})}
-            />
+            {panel}
           </aside>
         )}
       </div>

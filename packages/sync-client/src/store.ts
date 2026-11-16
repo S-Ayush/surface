@@ -65,7 +65,7 @@ import type { DispatchOptions, MutationOutcome, PendingView, Rejection } from '.
 import { InvalidInputError, MutationQueue } from './queue.js';
 import { createClientRefResolver, poolRefSource } from './refs.js';
 import type { StorageConnector } from './storage/open.js';
-import { openStorage, replicaName } from './storage/open.js';
+import { deleteReplicaDatabase, openStorage, replicaName } from './storage/open.js';
 import { QueueFencedError } from './storage/types.js';
 import type { ConnectionState, OnlineSource, SocketFactory, Timers, Verdict } from './socket.js';
 import { SyncSocket, globalTimers, socketUrl, webSocketFactory, windowOnline } from './socket.js';
@@ -97,6 +97,8 @@ export interface SyncStoreOptions {
   readonly connectStorage?: StorageConnector;
   /** Models whose `D` deltas `seenDeleted` remembers; defaults to `REMEMBERED_DELETES`. */
   readonly rememberDeletes?: readonly string[];
+  /** How `destroy` deletes the replica database by name; defaults to `indexedDB.deleteDatabase`. */
+  readonly deleteStorage?: (name: string) => Promise<void>;
   /**
    * Cross-tab locks; defaults to `navigator.locks` where available (see
    * `locks.ts`). `null`: none, as on a plain-HTTP origin.
@@ -617,6 +619,18 @@ export class SyncStore {
     });
     this.#queue = run.catch(() => undefined);
     return run;
+  }
+
+  /**
+   * Explicit sign-out (SPEC-002 §3.7, SPEC-012 §3.12): close the socket and the storage worker,
+   * then delete the replica database as a whole (rows, hydration marks, subscriptions, the
+   * mutation queue and any store added later). The memory fallback holds nothing outside the
+   * store, so it just drops. The store is finished afterwards: sign-in opens a new one. A session
+   * expiry never calls this.
+   */
+  async destroy(): Promise<void> {
+    await this.close();
+    await (this.#options.deleteStorage ?? deleteReplicaDatabase)(this.#replica);
   }
 
   async #start(signal: AbortSignal): Promise<'warm' | 'cold'> {

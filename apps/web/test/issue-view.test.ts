@@ -100,9 +100,12 @@ describe('agoText', () => {
 });
 
 describe('panelMode', () => {
-  it('is inline from 1280 px and a drawer below', () => {
+  it('is inline from 1280 px, a drawer to 768 px and stacked below (SPEC-012 §7.3)', () => {
     expect(panelMode(1280)).toBe('inline');
     expect(panelMode(1279)).toBe('drawer');
     expect(panelMode(1024)).toBe('drawer');
+    expect(panelMode(768)).toBe('drawer');
+    expect(panelMode(767)).toBe('stacked');
+    expect(panelMode(375)).toBe('stacked');
   });
 });

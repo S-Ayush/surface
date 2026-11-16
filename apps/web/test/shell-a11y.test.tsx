@@ -60,6 +60,14 @@ describe('the avatar menu button', () => {
   });
 });
 
+describe('the sign-out warning (PLAN-012 S7a)', () => {
+  it('is not in the page until Log out finds unsent changes, so the menu stays one tab stop', async () => {
+    const html = await render(() => <AvatarMenu />);
+    expect(html).not.toContain('role="dialog"');
+    expect(html.match(/<button/g)).toHaveLength(1);
+  });
+});
+
 describe('the page header', () => {
   it('makes the current page, the last breadcrumb, the page’s one level-one heading', async () => {
     const html = await render(() => (

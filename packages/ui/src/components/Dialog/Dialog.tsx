@@ -31,6 +31,8 @@ export type DialogProps = {
    * padding: the title is only announced, and the content lays itself out. `Esc` still closes it.
    */
   variant?: 'default' | 'command';
+  /** Below 768 px the dialog fills the screen (the composer, SPEC-012 §7.3). */
+  fullScreenOnSmall?: boolean;
   /**
    * Called once the dialog has closed and focus has been restored, after Radix's own deferred
    * focus handling. Work that moves focus or opens another overlay belongs here, not in the
@@ -51,6 +53,7 @@ export function Dialog({
   trigger,
   footer,
   variant = 'default',
+  fullScreenOnSmall = false,
   onClosed,
   children,
 }: DialogProps) {
@@ -90,7 +93,7 @@ export function Dialog({
           </RadixDialog.Content>
         ) : (
           <RadixDialog.Content
-            className={cx(styles.content, styles[size])}
+            className={cx(styles.content, styles[size], fullScreenOnSmall && styles.fullSmall)}
             onCloseAutoFocus={onCloseAutoFocus}
             // Without a description, opt out explicitly so Radix does not point at a missing element.
             {...(description === undefined ? { 'aria-describedby': undefined } : {})}

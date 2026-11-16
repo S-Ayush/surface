@@ -89,3 +89,26 @@ export async function openStorage(
     return { storage: new MemoryStorage(models, content), fallbackReason: reason };
   }
 }
+
+/**
+ * Delete the whole replica database, whatever stores it holds (SPEC-002 §3.7: sign-out deletes
+ * the replica as a unit, so stores other slices add are covered). Resolves when it is deleted, or
+ * when another tab still holds a connection: the delete then runs as soon as that tab closes its
+ * own (it does on the session-end signal), and sign-out must not wait for it. No-op without
+ * IndexedDB (the memory fallback holds nothing outside the store).
+ */
+export function deleteReplicaDatabase(name: string): Promise<void> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(name);
+    request.onsuccess = () => {
+      resolve();
+    };
+    request.onblocked = () => {
+      resolve();
+    };
+    request.onerror = () => {
+      reject(request.error ?? new Error(`Could not delete ${name}`));
+    };
+  });
+}

@@ -367,7 +367,7 @@ Routes join the shell router (`apps/web/src/app/router.tsx`) under the session g
 
 ### 7.3 Small screens (NFR-20)
 
-- **1024–1279 px:** the properties panel collapses into a header button that opens it as a drawer.
+- **768–1279 px:** the properties panel collapses into a header button that opens it as a drawer (*clarified 2026-11-16, PLAN-012 S7a: the sidebar is a drawer below 1024 px, and the panel follows the same rule down to 768 px*).
 - **< 768 px:** one column. The issue page shows the title, the properties as a wrapping row of pills under it (still editable), the description, then activity and the comment box. Lists show compact rows: priority, identifier, title, status, assignee. The composer is a full-screen dialog. Reading, commenting and changing properties work at 375 px without horizontal scrolling.
 
 ### 7.4 Accessibility (NFR-19)
