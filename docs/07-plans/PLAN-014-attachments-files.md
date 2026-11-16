@@ -212,7 +212,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **R
   - `apps/web/test/attachments-shortcuts.test.ts` (engine with a platform flag): `Ctrl+L` on macOS only, `Mod+Shift+U` everywhere, inline insert when an editor has focus and an attachment otherwise; a fake network that fails on any request proves a link is never fetched or unfurled: AC-23, D9, D10.
   - `apps/web/test/command-operations.test.ts` extended: the `attachment` target and entries pass `checkOperationCommands`: AC-22.
   - `apps/web/test/image-viewer.test.tsx` (jsdom): Esc, arrows, focus trap and restore: AC-19 (unit part).
-  - E2E (pick, paste, drop, preview, open, download, rename, remove, undo, by keyboard) ⏸ held: checked by hand at the end of the slice and at the M1 demo (PLAN-012 S7).
+  - E2E (pick, paste, drop, preview, open, download, rename, remove, undo, by keyboard) ⏸ held: checked by hand at the end of the slice and at the M1 demo (PLAN-012 S7b).
 
 ---
 

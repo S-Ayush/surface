@@ -108,7 +108,7 @@ Exit (METHODOLOGY M1): **start dogfooding.** Surface's own backlog lives in Surf
   - testing-hold exceptions granted: the Issue filter conformance test (SPEC-011 Q13) and the Postgres byte-lock test (SPEC-014 Q15);
   - description history stays v2 (SPEC-011 Q18);
   - the eager size budget: copy Linear with partial issue loading, 35 MB per replica (SPEC-011 Q15, ADR-0020);
-  - explicit sign-out deletes the local replica, in M1 (SPEC-012 Q3, PLAN-012 S7);
+  - explicit sign-out deletes the local replica, in M1 (SPEC-012 Q3, PLAN-012 S7a);
   - purge logs no `D` per content row; the ADR is written at the gate (SPEC-015 Q2);
   - the avatar and logo foreign keys are added with no clean-up step, since there are no existing rows (SPEC-014 D13);
 - fixes the spec gaps found while planning (listed in the PR);
@@ -181,13 +181,14 @@ flowchart LR
   P15S1 --> P12S6[012·S6 pickers + delete]
   P12S5 --> P12S6
   P12S6 --> P15S4
-  P13S5 & P14S5 & P15S4 & P12S6 & P11S7 --> P12S7[012·S7 M1 demo]
+  P12S6 --> P12S7a[012·S7a a11y + sign-out]
+  P13S5 & P14S5 & P15S4 & P12S7a & P11S7 --> P12S7b[012·S7b M1 demo]
   P15S2 & P15S3 & P15S4 --> P15S5[015·S5 leak + edges]
 ```
 
 Each plan's header and slices list the exact dependencies; this graph shows the main ones.
 
-**Critical path:** 010·S1 → 011·S1–S4 → 011·S5a → S5b → S6 → 012·S4 → 012·S6 → 015·S4 → 012·S7, about 44 ideal days (011·S4b–S4c run beside S5a–S5b and are done before 012·S3 and 012·S4 need them; 012·S5 runs beside 012·S4).
+**Critical path:** 010·S1 → 011·S1–S4 → 011·S5a → S5b → S6 → 012·S4 → 012·S6 → 015·S4 → 012·S7b, about 44 ideal days (011·S4b–S4c run beside S5a–S5b and are done before 012·S3 and 012·S4 need them; 012·S5 runs beside 012·S4).
 **Start at once after the gate:** 010·S1–S4, 012·S1–S2, 013·S1–S2, 014·S1–S3.
 
 ### 7.4 Suggested sequence (two engineers)
@@ -206,7 +207,7 @@ Engineer 1 takes issues, sync (partial loading included), lifecycle and the serv
 | 12 | 013·S4 · 014·S4a | 012·S6 |
 | 13 | 014·S4b · 011·S7 | 013·S5 · 015·S4 |
 | 14 | 011·S8 · 015·S3 | 014·S5 |
-| 15 | 015·S5 | 012·S7 (M1 demo) |
+| 15 | 015·S5 | 012·S7b (M1 demo) |
 
 ### 7.5 Conventions
 
@@ -218,7 +219,7 @@ As §4. Branches are `p0NN-sN-topic` (e.g. `p011-s5-content`). The testing hold 
 - [ ] All ACs of SPEC-010 to SPEC-015 have passing tests, except those held under §6.
 - [ ] Sync property suite green on main with issues, content models, archive and restore in the generator.
 - [ ] Private-team leak suite covers every new model, `/sync/content`, `GET /files/:id` and every new read operation.
-- [ ] **Dogfood demo (by hand while e2e is held):** create, triage, edit, comment on, attach to, delete and restore issues by keyboard only, across two tabs and offline. PLAN-012 S7.
+- [ ] **Dogfood demo (by hand while e2e is held):** create, triage, edit, comment on, attach to, delete and restore issues by keyboard only, across two tabs and offline. PLAN-012 S7b.
 - [ ] Surface's own backlog moved into Surface, and the team uses it daily.
 - [ ] Release `v0.2.0` image published.
 - [ ] Retro held. PRD and METHODOLOGY updated with what we learned.

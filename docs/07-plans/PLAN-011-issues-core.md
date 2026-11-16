@@ -373,7 +373,7 @@ Implements: [SPEC-011](../06-specs/SPEC-011-issues-core.md) · Status: **Ready**
 | AC-10 | Leak tests (not held): `server/test/archive-wire-leak.int.test.ts` (S2), `server/test/resolvers.int.test.ts` (`IssueRef` resolution, S3), `server/test/issue-leak.int.test.ts` (S4), `server/test/content-leak.int.test.ts` (S5a, S6), completed against permissions.md §5 in S8 |
 | AC-11 | `domain/src/issue-filter.test.ts` (client evaluator, S8) + `server/test/issue-filter-conformance.int.test.ts` (Postgres, not held: Q13 exception granted 2026-11-12, S8) |
 | AC-12 | `operations/test/spec-011.test.ts` + `operations/test/lint.test.ts` (S4, S6) + the existing `server/test/registry-contract.int.test.ts` (examples against the seed; existing, run) |
-| AC-13 | ⏸ held (e2e perf) `e2e/issue-realtime.perf.spec.ts` (checked by hand in PLAN-012 S7's demo) |
+| AC-13 | ⏸ held (e2e perf) `e2e/issue-realtime.perf.spec.ts` (checked by hand in PLAN-012 S7b's demo) |
 | AC-14 | `domain/src/issue-size.test.ts` (row size and the worst-case replica total, S8) + ⏸ held (perf) the measured per-replica total at the reference scale |
 | AC-15 | `server/test/issue-handlers.test.ts` (re-read `CONFLICT`, E19) (S4) + ⏸ held (integration) `server/test/issue-status-fk.int.test.ts` (`ON DELETE RESTRICT`) |
 | AC-16 | `domain/src/issue.test.ts` (a label moved into an exclusive group: the next add removes the others) (S4, with PLAN-010 S1's rule tests) |
