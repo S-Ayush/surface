@@ -112,26 +112,34 @@ describe('reactions against the real server', () => {
   });
 
   it('every tab converges on the comments and reactions, which keep §4.2’s rules, after any faults (AC-5, AC-22)', async () => {
-    const { server } = reactionServers();
-    // What the runs did, so a generator that stops reaching the server fails here, not silently.
-    const confirmed = { comment: 0, issue: 0, cleared: 0 };
+    const servers = reactionServers();
+    // What the runs changed on the server, so a generator that stops reaching it fails here, not
+    // silently. Counted from the outbox: `reaction.added`/`removed` are emitted only when a call
+    // inserted or removed a row, so a confirmed no-op (a repeat, or a clear of an emoji the tab
+    // didn't hold) counts for nothing.
+    const changed = { comment: 0, issue: 0, cleared: 0 };
     await fc.assert(
       fc.asyncProperty(reactionCase(), (simCase) =>
-        simulate(simCase, { ...reactionConvergence.options, server }, async (outcome) => {
-          await reactionConvergence.check(outcome);
-          for (const d of outcome.world.dispatched) {
-            if (d.op !== 'reaction.set' || d.outcome?.status !== 'confirmed') continue;
-            const input = typeof d.input === 'object' && d.input !== null ? d.input : {};
-            if (Reflect.get(input, 'reacted') === false) confirmed.cleared += 1;
-            else if ('comment' in input) confirmed.comment += 1;
-            else confirmed.issue += 1;
-          }
-        }),
+        simulate(
+          simCase,
+          { ...reactionConvergence.options, server: servers.server },
+          async (outcome) => {
+            await reactionConvergence.check(outcome);
+            const server = servers.last();
+            if (server === undefined) throw new Error('no server for this run');
+            for (const event of await server.events('reaction.added')) {
+              const data = typeof event.data === 'object' && event.data !== null ? event.data : {};
+              if (Reflect.get(data, 'commentId') === null) changed.issue += 1;
+              else changed.comment += 1;
+            }
+            changed.cleared += (await server.events('reaction.removed')).length;
+          },
+        ),
       ),
       simParameters(),
     );
-    expect(confirmed.comment, 'confirmed comment reactions').toBeGreaterThan(0);
-    expect(confirmed.issue, 'confirmed issue reactions').toBeGreaterThan(0);
-    expect(confirmed.cleared, 'confirmed clears').toBeGreaterThan(0);
+    expect(changed.comment, 'reactions added to comments').toBeGreaterThan(0);
+    expect(changed.issue, 'reactions added to issues').toBeGreaterThan(0);
+    expect(changed.cleared, 'reactions cleared').toBeGreaterThan(0);
   });
 });

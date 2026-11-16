@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../Tooltip/Tooltip.js';
 import {
   ReactionChips,
-  ReactionRow,
+  ReactionBar,
   reactionChipLabel,
   reactionTooltip,
   type ReactionChipData,
@@ -89,27 +89,41 @@ describe('ReactionChips', () => {
     ]);
   });
 
-  it('renders nothing without reactions, and disabled chips when read-only', async () => {
-    const onReact = vi.fn();
-    const empty = await mount(<ReactionChips reactions={[]} onReact={onReact} />);
+  it('renders nothing without reactions', async () => {
+    const empty = await mount(<ReactionChips reactions={[]} onReact={vi.fn()} />);
     expect(empty.innerHTML).toBe('');
-    act(() => root?.unmount());
+  });
+
+  it('keeps read-only chips focusable, with their tooltip, but toggles nothing (D10)', async () => {
+    const onReact = vi.fn();
     const c = await mount(<ReactionChips reactions={CHIPS} onReact={onReact} readOnly />);
     const first = c.querySelector('button');
-    expect(first?.disabled).toBe(true);
+    if (first === null) throw new Error('no chip');
+    expect(first.disabled).toBe(false);
+    expect(first.getAttribute('aria-disabled')).toBe('true');
+    act(() => first.focus());
+    expect(document.activeElement).toBe(first);
+    // The keyboard reaches who reacted: focus opens the tooltip.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain('You, Ada and Iris reacted with thumbs up');
     click(first);
+    act(() => {
+      first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
     expect(onReact).not.toHaveBeenCalled();
   });
 });
 
-describe('ReactionRow', () => {
+describe('ReactionBar', () => {
   const loadEmoji = () =>
     Promise.resolve([{ unicode: '🚀', label: 'rocket', shortcodes: ['rocket'], group: 5 }]);
 
   it('opens the EmojiPicker from Add reaction; choosing an emoji sets it and closes', async () => {
     const onReact = vi.fn();
     const c = await mount(
-      <ReactionRow reactions={CHIPS} onReact={onReact} loadEmoji={loadEmoji} />,
+      <ReactionBar reactions={CHIPS} onReact={onReact} loadEmoji={loadEmoji} />,
     );
     const add = c.querySelector('button[aria-label="Add reaction"]');
     expect(add).not.toBeNull();
@@ -127,7 +141,7 @@ describe('ReactionRow', () => {
   it('opens when the host asks (the Add reaction… command), and has no button when read-only', async () => {
     const onOpenChange = vi.fn();
     await mount(
-      <ReactionRow
+      <ReactionBar
         reactions={CHIPS}
         onReact={vi.fn()}
         loadEmoji={loadEmoji}
@@ -138,7 +152,7 @@ describe('ReactionRow', () => {
     expect(document.querySelector('[role="dialog"][aria-label="Add reaction"]')).not.toBeNull();
     act(() => root?.unmount());
     const c = await mount(
-      <ReactionRow reactions={CHIPS} onReact={vi.fn()} loadEmoji={loadEmoji} readOnly />,
+      <ReactionBar reactions={CHIPS} onReact={vi.fn()} loadEmoji={loadEmoji} readOnly />,
     );
     expect(c.querySelector('button[aria-label="Add reaction"]')).toBeNull();
     expect(c.querySelectorAll('button')).toHaveLength(2);

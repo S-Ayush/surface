@@ -28,3 +28,4 @@ export * from './issue.js';
 export * from './issue-lifecycle.js';
 export * from './comment.js';
 export * from './reaction.js';
+export * from './emoji.js';

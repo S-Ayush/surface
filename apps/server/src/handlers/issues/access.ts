@@ -88,15 +88,17 @@ export function issueWriteContext(ctx: HandlerContext): IssueWriteContext {
 
 const iso = (value: Date | null): string | null => (value === null ? null : value.toISOString());
 
+/** An issue's output without its reactions: everything `issue.list`'s summaries carry and more. */
+export type IssueOutputWithoutReactions = Omit<IssueOutput, 'reactions'>;
+
 /**
- * The full output of each row, in the rows' order (§6.1). `reactions: false` leaves the issue's
- * reactions out (an empty list) for callers whose schema drops them, like `issue.list`'s summaries.
+ * Each row's output without its reactions, in the rows' order (§6.1), for callers whose schema has
+ * none, like `issue.list`'s summaries (the executor strips the other full-only fields).
  */
-export async function issueOutputs(
-  ctx: Pick<HandlerContext, 'tx' | 'publicUrl' | 'actor'>,
+export async function issueOutputsWithoutReactions(
+  ctx: Pick<HandlerContext, 'tx' | 'publicUrl'>,
   rows: readonly IssueRow[],
-  options: { readonly reactions?: boolean } = {},
-): Promise<IssueOutput[]> {
+): Promise<IssueOutputWithoutReactions[]> {
   if (rows.length === 0) return [];
   const { tx, publicUrl } = ctx;
   if (publicUrl === undefined) throw new Error('Issue outputs need the executor’s publicUrl');
@@ -131,29 +133,6 @@ export async function issueOutputs(
           .from(labels)
           .where(inArray(labels.id, labelIds)),
   ];
-  // The issue's own reactions (commentId null, SPEC-013 §4.2, D8): rows of the issue, so whoever
-  // sees it sees them. At most 20 emoji per issue (D15).
-  const reactionRows =
-    options.reactions === false
-      ? []
-      : await tx
-          .select({
-            issueId: reactions.issueId,
-            userId: reactions.userId,
-            emoji: reactions.emoji,
-            createdAt: reactions.createdAt,
-          })
-          .from(reactions)
-          .where(
-            and(
-              inArray(
-                reactions.issueId,
-                rows.map((r) => r.id),
-              ),
-              isNull(reactions.commentId),
-            ),
-          );
-  const viewerId = ctx.actor.userId ?? null;
   const keys = new Map(teamRows.map((t) => [t.id, t.key]));
   const statuses = new Map(statusRows.map((s) => [s.id, s]));
   const names = new Map(userRows.map((u) => [u.id, u.name]));
@@ -201,12 +180,44 @@ export async function issueOutputs(
       creator,
       startedAt: iso(row.startedAt),
       canceledAt: iso(row.canceledAt),
-      reactions: summariseReactions(
-        reactionRows.filter((r) => r.issueId === row.id),
-        viewerId,
-      ),
     };
   });
+}
+
+/** The full output of each row, in the rows' order (§6.1), with the issue's own reactions. */
+export async function issueOutputs(
+  ctx: Pick<HandlerContext, 'tx' | 'publicUrl' | 'actor'>,
+  rows: readonly IssueRow[],
+): Promise<IssueOutput[]> {
+  if (rows.length === 0) return [];
+  const outputs = await issueOutputsWithoutReactions(ctx, rows);
+  // The issue's own reactions (commentId null, SPEC-013 §4.2, D8): rows of the issue, so whoever
+  // sees it sees them. At most 20 emoji per issue (D15).
+  const reactionRows = await ctx.tx
+    .select({
+      issueId: reactions.issueId,
+      userId: reactions.userId,
+      emoji: reactions.emoji,
+      createdAt: reactions.createdAt,
+    })
+    .from(reactions)
+    .where(
+      and(
+        inArray(
+          reactions.issueId,
+          rows.map((r) => r.id),
+        ),
+        isNull(reactions.commentId),
+      ),
+    );
+  const viewerId = ctx.actor.userId ?? null;
+  return outputs.map((output) => ({
+    ...output,
+    reactions: summariseReactions(
+      reactionRows.filter((r) => r.issueId === output.id),
+      viewerId,
+    ),
+  }));
 }
 
 /** One row's full output. */

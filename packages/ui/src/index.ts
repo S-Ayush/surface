@@ -124,12 +124,12 @@ export type { EmojiPickerProps, PickerEmoji } from './components/EmojiPicker/Emo
 export { FREQUENT_STORAGE_KEY } from './components/EmojiPicker/model.js';
 export {
   ReactionChips,
-  ReactionRow,
+  ReactionBar,
   reactionChipLabel,
   reactionTooltip,
 } from './components/ReactionChips/ReactionChips.js';
 export type {
   ReactionChipData,
   ReactionChipsProps,
-  ReactionRowProps,
+  ReactionBarProps,
 } from './components/ReactionChips/ReactionChips.js';

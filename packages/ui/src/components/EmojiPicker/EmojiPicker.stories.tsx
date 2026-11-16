@@ -77,7 +77,8 @@ export const Keyboard: Story = {
     const canvas = within(canvasElement);
     const field = await canvas.findByRole('combobox', { name: 'Add reaction' });
     await expect(field).toHaveFocus();
-    await canvas.findByRole('option', { name: 'thumbs up' });
+    // Frequently used and its category both list it.
+    await canvas.findAllByRole('option', { name: 'thumbs up' });
     await userEvent.keyboard('{ArrowRight}');
     await expect(field).toHaveAttribute(
       'aria-activedescendant',

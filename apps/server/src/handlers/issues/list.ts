@@ -6,7 +6,7 @@ import type { Filter, RefEntity } from '@surface/domain';
 import { issueCount, issueGroupBy, issueList, ISSUE_GROUP_LIMIT } from '@surface/operations';
 import { handler, type HandlerContext } from '../../executor/context.js';
 import { resolved } from '../teams/shared.js';
-import { issueOutputs } from './access.js';
+import { issueOutputsWithoutReactions } from './access.js';
 import { issueListModel } from './list-model.js';
 
 interface Scoped {
@@ -35,8 +35,8 @@ export const listHandler = handler(issueList, async (ctx, input) => {
     withTotal: input.withTotal ?? false,
   });
   // Summaries are the full output minus the fields only `IssueOutput` has; the executor's output
-  // schema strips those, so one builder serves both. Reactions are not read for them.
-  return { ...page, nodes: await issueOutputs(ctx, page.nodes, { reactions: false }) };
+  // schema strips those, so one builder serves both. Summaries have no reactions, so none are read.
+  return { ...page, nodes: await issueOutputsWithoutReactions(ctx, page.nodes) };
 });
 
 export const countHandler = handler(issueCount, async (ctx, input) => ({

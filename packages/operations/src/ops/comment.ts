@@ -23,13 +23,13 @@ import {
   EMPTY_DOC,
   IssueRef,
   isSet,
-  lifecycleOf,
   replyParentProblem,
 } from '@surface/domain';
 import { z } from 'zod';
 import { defineOperation } from '../define.js';
 import { connectionOf, listInput } from '../list.js';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
+import { liveIssue, text } from './content-store.js';
 import { ReactionSummariesSchema } from './reaction.js';
 import { Timestamp } from './shared.js';
 
@@ -87,20 +87,6 @@ const SEED_RESOLVED_THREAD = '01930000-0000-7000-8000-000000000703';
 
 // ---------------------------------------------------------------------------------------------
 // Optimistic helpers
-
-function text(row: StoreRow | undefined, field: string): string | undefined {
-  const value = row?.[field];
-  return typeof value === 'string' ? value : undefined;
-}
-
-/** The issue a comment is on, when the store holds it and it is live (D10: else CONFLICT). */
-function liveIssue(store: OptimisticStore, ref: string | undefined): StoreRow | undefined {
-  if (ref === undefined) return undefined;
-  const issue = store.get('Issue', ref);
-  if (issue === undefined) return undefined;
-  const state = lifecycleOf({ archivedAt: issue['archivedAt'], deletedAt: issue['deletedAt'] });
-  return state === 'live' ? issue : undefined;
-}
 
 /** A live comment the store holds and its live issue, or undefined (the server answers). */
 function liveComment(

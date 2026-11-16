@@ -4,7 +4,7 @@
 // the examples run against the seed in the server's registry-contract test). Rows are parsed with
 // the shared client model, as the client store does. That the predictions equal what the handler
 // commits is checked in apps/server/test/reaction-set.test.ts ("optimistic equals the server").
-import { isUuid, REACTION_EMOJI_LIMIT, reactionId } from '@surface/domain';
+import { isUuid, REACTION_EMOJI_LIMIT, REACTION_MESSAGES, reactionId } from '@surface/domain';
 import { PRODUCTION_MODELS } from '@surface/domain/model';
 import { describe, expect, it } from 'vitest';
 import { lintOperations } from '../lint.js';
@@ -150,6 +150,23 @@ describe('reaction.set optimistic (AC-11)', () => {
     reactionSet.optimistic?.(store, { issue: ISSUE, emoji: '😀', reacted: true });
     reactionSet.optimistic?.(store, { comment: COMMENT, emoji: '🚀', reacted: true });
     expect(reactions(store)).toHaveLength(REACTION_EMOJI_LIMIT + 2);
+  });
+
+  // §4.4 "The client checks the same": dispatch parses the input before it queues or predicts, so a
+  // value the server's `isSingleEmoji` refuses never reaches the optimistic update.
+  it.each(['+1', 'ok', '👍👍', ':thumbsup:', '', ' 👍'])(
+    'refuses %j as the emoji before predicting anything, with the server’s message',
+    (emoji) => {
+      const parsed = reactionSet.input.safeParse({ comment: COMMENT, emoji, reacted: true });
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues).toContainEqual(
+        expect.objectContaining({ path: ['emoji'], message: REACTION_MESSAGES.notOneEmoji }),
+      );
+    },
+  );
+
+  it.each(['👍', '👍🏽', '🏳️‍🌈', '👨‍👩‍👧', '1️⃣', '🇯🇵'])('takes %s, one RGI emoji', (emoji) => {
+    expect(reactionSet.input.safeParse({ issue: ISSUE, emoji, reacted: true }).success).toBe(true);
   });
 
   it.each([

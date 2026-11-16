@@ -6,7 +6,7 @@
 // picker alone, with fake data, is `packages/ui/test/emoji-picker-no-network.test.tsx`.
 import type { DocNodeJSON } from '@surface/domain';
 import { loadEmoji, RichTextEditor } from '@surface/editor';
-import { ReactionRow, TooltipProvider } from '@surface/ui';
+import { ReactionBar, TooltipProvider } from '@surface/ui';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -111,7 +111,7 @@ describe('the editor and the EmojiPicker on the real emoji data make no request 
       root?.render(
         <TooltipProvider>
           <RichTextEditor mode="comment" value={DOC} autofocus="end" />
-          <ReactionRow
+          <ReactionBar
             reactions={[{ emoji: '👍', count: 1, mine: false, label: 'thumbs up' }]}
             onReact={onReact}
             loadEmoji={loadEmoji}

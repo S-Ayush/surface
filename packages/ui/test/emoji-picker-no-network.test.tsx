@@ -9,7 +9,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmojiPicker } from '../src/components/EmojiPicker/EmojiPicker.js';
 import type { PickerEmoji } from '../src/components/EmojiPicker/model.js';
-import { ReactionRow } from '../src/components/ReactionChips/ReactionChips.js';
+import { ReactionBar } from '../src/components/ReactionChips/ReactionChips.js';
 import { TooltipProvider } from '../src/components/Tooltip/Tooltip.js';
 
 Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true);
@@ -123,7 +123,7 @@ describe('the EmojiPicker makes no request (AC-16)', () => {
 
   it('renders the reaction row with its picker open without one', async () => {
     await mount(
-      <ReactionRow
+      <ReactionBar
         reactions={[
           { emoji: '👍', count: 2, mine: true, label: 'thumbs up', people: ['You', 'Ada'] },
         ]}

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { expect, userEvent, within } from 'storybook/test';
 import { Row, Stack } from '../../stories/helpers.js';
 import type { PickerEmoji } from '../EmojiPicker/model.js';
-import { ReactionChips, ReactionRow, type ReactionChipData } from './ReactionChips.js';
+import { ReactionChips, ReactionBar, type ReactionChipData } from './ReactionChips.js';
 
 const meta = { title: 'Domain/ReactionChips' } satisfies Meta;
 export default meta;
@@ -32,7 +32,7 @@ export const Chips: Story = {
         <ReactionChips reactions={CHIPS} onReact={() => {}} readOnly />
       </Row>
       <Row label="With Add reaction">
-        <ReactionRow reactions={CHIPS} onReact={() => {}} loadEmoji={loadSample} />
+        <ReactionBar reactions={CHIPS} onReact={() => {}} loadEmoji={loadSample} />
       </Row>
     </Stack>
   ),
@@ -53,7 +53,7 @@ function LiveRow() {
         ? list.filter((c) => c !== found)
         : list.map((c) => (c === found ? { ...c, count, mine: reacted } : c));
     });
-  return <ReactionRow reactions={chips} onReact={onReact} loadEmoji={loadSample} />;
+  return <ReactionBar reactions={chips} onReact={onReact} loadEmoji={loadSample} />;
 }
 
 /** Toggling a chip from the keyboard, then adding one through the picker. */
@@ -70,7 +70,8 @@ export const Keyboard: Story = {
     );
     await userEvent.click(canvas.getByRole('button', { name: 'Add reaction' }));
     const body = within(canvasElement.ownerDocument.body);
-    await body.findByRole('option', { name: 'rocket' });
+    // Frequently used and its category both list it.
+    await body.findAllByRole('option', { name: 'rocket' });
     await userEvent.keyboard('rock{Enter}');
     await expect(
       canvas.getByRole('button', { name: '🚀, 1 reaction, including you' }),

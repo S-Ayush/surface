@@ -5,9 +5,8 @@
  * subject (D15). Anyone who can see the issue may react (§5.2); visibility is the executor's
  * check on each reference, so a comment or issue the caller can't see is `NOT_FOUND`.
  *
- * The input checks shape only. Whether `emoji` is one RGI emoji is the server's check
- * (`isSingleEmoji` from `@surface/editor/schema`, which this package can't import); the web app
- * only offers emoji from the bundled data, which all pass it.
+ * The input checks that `emoji` is one RGI emoji (`isSingleEmoji`, §4.4 "The client checks the
+ * same"), so the optimistic update never predicts a row the server refuses.
  *
  * `contentParent` (SPEC-011 §5.3 step 6): `{ model: 'Comment', id }` for a comment's reaction, as
  * the comment operations declare (the client reads the comment's issue), and the issue otherwise.
@@ -16,14 +15,15 @@ import {
   CommentRef,
   IssueRef,
   isSet,
-  lifecycleOf,
+  isSingleEmoji,
   REACTION_MESSAGES,
   reactionCapProblem,
   reactionId,
 } from '@surface/domain';
 import { z } from 'zod';
 import { defineOperation } from '../define.js';
-import type { OptimisticStore, StoreRow } from '../optimistic.js';
+import type { OptimisticStore } from '../optimistic.js';
+import { liveIssue, text } from './content-store.js';
 
 // A fixed id of the seed fixture's first thread on ENG-1 (`apps/server/test/seed.ts`).
 const SEED_THREAD = '01930000-0000-7000-8000-000000000701';
@@ -50,19 +50,6 @@ export const ReactionSetOutputSchema = z.object({
   count: z.int().min(0),
   mine: z.boolean(),
 });
-
-function text(row: StoreRow | undefined, field: string): string | undefined {
-  const value = row?.[field];
-  return typeof value === 'string' ? value : undefined;
-}
-
-/** The issue, when the store holds it and it is live (archived and deleted are CONFLICT, D10). */
-function liveIssue(store: OptimisticStore, ref: string): StoreRow | undefined {
-  const issue = store.get('Issue', ref);
-  if (issue === undefined) return undefined;
-  const state = lifecycleOf({ archivedAt: issue['archivedAt'], deletedAt: issue['deletedAt'] });
-  return state === 'live' ? issue : undefined;
-}
 
 /** The subject's fields a reaction row copies, or undefined when the server would refuse. */
 function subjectOf(
@@ -109,9 +96,10 @@ export const reactionSet = defineOperation({
       comment: CommentRef.optional(),
       issue: IssueRef.optional(),
       emoji: z
-        .string('Use a single emoji, like 👍.')
+        .string(REACTION_MESSAGES.notOneEmoji)
         .min(1, REACTION_MESSAGES.notOneEmoji)
-        .max(64, REACTION_MESSAGES.notOneEmoji),
+        .max(64, REACTION_MESSAGES.notOneEmoji)
+        .refine(isSingleEmoji, REACTION_MESSAGES.notOneEmoji),
       reacted: z.boolean('reacted must be true (set) or false (clear)'),
     })
     .superRefine((input, ctx) => {
@@ -135,7 +123,8 @@ export const reactionSet = defineOperation({
   contentParent: (input) =>
     input.comment !== undefined
       ? { model: 'Comment', id: input.comment }
-      : { model: 'Issue', id: input.issue ?? '' },
+      : // The refine above makes `issue` present here; the type can't say so.
+        { model: 'Issue', id: input.issue ?? '' },
   optimistic: (store, input) => {
     const subject = subjectOf(store, input);
     const userId = text(store.get('User', 'me'), 'id');

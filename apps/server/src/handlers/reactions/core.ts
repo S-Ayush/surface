@@ -12,12 +12,12 @@
  */
 import {
   isSet,
+  isSingleEmoji,
   issueLockModeOf,
   REACTION_MESSAGES,
   reactionCapProblem,
   reactionId,
 } from '@surface/domain';
-import { isSingleEmoji } from '@surface/editor/schema';
 import { SurfaceError } from '../../executor/errors.js';
 import { refNotFound } from '../../executor/refs/sources.js';
 import {
@@ -56,6 +56,7 @@ export async function setReaction(
   input: SetReactionInput,
 ): Promise<SetReactionResult> {
   // §4.4 "Emoji": exactly one RGI emoji, the same rule the web app's emoji data passes (AC-15).
+  // The operation's input schema checks it first; this keeps the rule for direct callers.
   if (!isSingleEmoji(input.emoji)) throw invalid('emoji', REACTION_MESSAGES.notOneEmoji);
   const mode = issueLockModeOf('reaction.set');
   let issueId: string;

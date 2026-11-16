@@ -169,6 +169,11 @@ export interface TestServer {
   /** Every `reactions` row, by id (PLAN-013 S4). */
   reactions(): Promise<ReactionRow[]>;
   /**
+   * The `event_outbox` events of `type`, oldest first, with their `data` (PLAN-013 S4: the sync
+   * suite counts `reaction.removed`, emitted only when a clear removed a row).
+   */
+  events(type: string): Promise<OutboxEventRow[]>;
+  /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
    */
@@ -241,6 +246,11 @@ const ReactionDbRow = z.object({
   created_at: z.date().transform((value) => value.toISOString()),
   sync_groups: z.array(z.string()),
 });
+
+const OutboxEventDbRow = z.object({ type: z.string(), data: z.unknown() });
+
+/** One `event_outbox` row's name and data. */
+export type OutboxEventRow = z.infer<typeof OutboxEventDbRow>;
 
 const ItemRow = z.object({
   id: z.string(),
@@ -423,6 +433,13 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             syncGroups: r.sync_groups,
           };
         });
+      },
+      events: async (type) => {
+        const { rows } = await db.query(
+          'SELECT type, data FROM event_outbox WHERE type = $1 ORDER BY id',
+          [type],
+        );
+        return rows.map((row) => OutboxEventDbRow.parse(row));
       },
       compactLog: async () => {
         // Every row older than year 9999: all but the newest (`pruneSyncLog` keeps it).

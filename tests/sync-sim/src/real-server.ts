@@ -462,6 +462,11 @@ export class RealServer implements CommentServer {
     });
   }
 
+  /** The server's `event_outbox` events of `type`, oldest first, with their data (PLAN-013 S4). */
+  events(type: string): Promise<readonly { readonly type: string; readonly data: unknown }[]> {
+    return this.#serially(`read the ${type} events`, () => this.#entry.events(type));
+  }
+
   compactLog(): void {
     void this.#serially('compact the log', () => this.#entry.compactLog()).catch(() => undefined);
   }

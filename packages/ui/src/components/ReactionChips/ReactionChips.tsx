@@ -45,7 +45,11 @@ export type ReactionChipsProps = {
   reactions: readonly ReactionChipData[];
   /** Sets (`true`) or clears (`false`) the viewer's reaction: `reaction.set`. */
   onReact: (emoji: string, reacted: boolean) => void;
-  /** Archived or deleted issues are read-only (SPEC-013 D10): the chips show but don't toggle. */
+  /**
+   * Archived or deleted issues are read-only (SPEC-013 D10): the chips show but don't toggle. They
+   * stay focusable (`aria-disabled`, not `disabled`), so the keyboard still reaches the tooltip
+   * naming who reacted.
+   */
   readOnly?: boolean;
   className?: string;
 };
@@ -70,8 +74,8 @@ export function ReactionChips({
             className={styles.chip}
             aria-pressed={chip.mine}
             aria-label={reactionChipLabel(chip)}
-            disabled={readOnly}
-            onClick={() => onReact(chip.emoji, !chip.mine)}
+            aria-disabled={readOnly ? true : undefined}
+            onClick={readOnly ? undefined : () => onReact(chip.emoji, !chip.mine)}
           >
             <span aria-hidden="true" className={styles.emoji}>
               {chip.emoji}
@@ -92,7 +96,7 @@ export function ReactionChips({
   );
 }
 
-export type ReactionRowProps = ReactionChipsProps & {
+export type ReactionBarProps = ReactionChipsProps & {
   /** The emoji data for the picker: `apps/web` passes the editor's lazy `loadEmoji` (AC-16). */
   loadEmoji: () => Promise<readonly PickerEmoji[]>;
   /** The picker's open state, when the host opens it too (the "Add reaction…" command). */
@@ -104,13 +108,13 @@ export type ReactionRowProps = ReactionChipsProps & {
  * The chips and an **Add reaction** button that opens the EmojiPicker (SPEC-013 §3.4, §7): under a
  * comment, and under the issue's description. Read-only rows have no button (D10).
  */
-export function ReactionRow({
+export function ReactionBar({
   loadEmoji,
   pickerOpen,
   onPickerOpenChange,
   className,
   ...chips
-}: ReactionRowProps): ReactElement {
+}: ReactionBarProps): ReactElement {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = pickerOpen ?? ownOpen;
   const setOpen = (next: boolean) => {

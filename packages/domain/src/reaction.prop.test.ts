@@ -38,10 +38,14 @@ describe('summariseReactions (properties)', () => {
   it('counts every row once, marks mine exactly, and ignores the rows’ order', () => {
     fc.assert(
       fc.property(
-        fc.array(row, { maxLength: 30 }),
+        // The rows, and the same rows in any other arrival order.
+        fc
+          .array(row, { maxLength: 30 })
+          .chain((rows) =>
+            fc.tuple(fc.constant(rows), fc.shuffledSubarray(rows, { minLength: rows.length })),
+          ),
         fc.constantFrom(...USERS),
-        fc.integer(),
-        (rows, viewer, seed) => {
+        ([rows, shuffled], viewer) => {
           const chips = summariseReactions(rows, viewer);
           expect(chips.reduce((n, c) => n + c.count, 0)).toBe(rows.length);
           expect(new Set(chips.map((c) => c.emoji)).size).toBe(chips.length);
@@ -50,9 +54,6 @@ describe('summariseReactions (properties)', () => {
             expect(chip.mine, chip.emoji).toBe(mine);
           }
           // Any other arrival order gives the same chips.
-          const shuffled = [...rows].sort(
-            (a, b) => ((a.createdAt.getTime() ^ seed) % 7) - ((b.createdAt.getTime() ^ seed) % 7),
-          );
           expect(summariseReactions(shuffled, viewer)).toEqual(chips);
         },
       ),
