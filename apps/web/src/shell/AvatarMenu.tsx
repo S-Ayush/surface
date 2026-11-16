@@ -2,6 +2,7 @@
 import { Avatar, Menu, THEME_PREFERENCES, toast, type ThemePreference } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
 import { useCallback, useState } from 'react';
+import { ReplicaDeleteError } from '../app/AppModel.js';
 import { useApp, useObserved } from '../app/context.js';
 import { chooseTheme } from '../preferences/save.js';
 import { useCommandRegistry } from '../shortcuts/ShortcutProvider.js';
@@ -32,8 +33,18 @@ export function AvatarMenu() {
   const [unsent, setUnsent] = useState<number | undefined>(undefined);
   const signOut = () => {
     setUnsent(undefined);
-    app.signOut().catch(() => {
-      toast({ tone: 'danger', message: "Couldn't log out. Check your connection and try again." });
+    app.signOut().catch((error: unknown) => {
+      // A failed delete after the logout: the user is signed out, and only this device's offline
+      // copy is left (retried at the next load).
+      toast(
+        error instanceof ReplicaDeleteError
+          ? {
+              tone: 'danger',
+              message:
+                "You're logged out, but this device's offline data couldn't be deleted. Surface will try again the next time it opens.",
+            }
+          : { tone: 'danger', message: "Couldn't log out. Check your connection and try again." },
+      );
     });
   };
 
@@ -98,11 +109,17 @@ export function AvatarMenu() {
             type: 'item',
             label: 'Log out',
             onSelect: () => {
-              // Unsent changes are discarded with the replica: ask first (SPEC-012 §3.12 item 2).
+              // Unsent changes, in every tab, are discarded with the replica: ask first (SPEC-012
+              // §3.12 item 2). A count that can't be read means storage is lost: nothing to keep.
               // The guards then send the user to /login (followAuth).
-              const count = app.unsentChanges();
-              if (count > 0) setUnsent(count);
-              else signOut();
+              app
+                .countUnsent()
+                .catch(() => 0)
+                .then((count) => {
+                  if (count > 0) setUnsent(count);
+                  else signOut();
+                })
+                .catch(() => undefined);
             },
           },
         ]}

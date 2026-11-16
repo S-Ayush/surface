@@ -9,13 +9,22 @@ import {
   type Preferences,
   type ThemePreferenceValue,
 } from '@surface/operations';
-import type { SyncStore } from '@surface/sync-client';
+import { deleteReplicaDatabase, replicaName, type SyncStore } from '@surface/sync-client';
 import { observable, runInAction } from 'mobx';
 import type { TeamSummary } from '../command-menu/model.js';
 import { fileUrl } from '../features/files/url.js';
 import type { AuthState, Session } from './auth.js';
+import type { ReplicaDeleteMarks } from './replica-deletes.js';
 import { StoreSequence } from './stores.js';
 import { actorOf, homePath, homeTeamOf, myTeams, teamByKey } from './workspace.js';
+
+/** The user is signed out, but this device's replica couldn't be deleted yet (retried at load). */
+export class ReplicaDeleteError extends Error {
+  override readonly name = 'ReplicaDeleteError';
+  constructor(options: { readonly cause: unknown }) {
+    super('The replica could not be deleted', options);
+  }
+}
 
 export class AppModel {
   readonly auth: AuthState;
@@ -27,8 +36,21 @@ export class AppModel {
   /** One store at a time: the next session's starts after the previous one has closed. */
   readonly stores = new StoreSequence();
 
-  constructor(auth: AuthState) {
+  readonly #deletes: ReplicaDeleteMarks | undefined;
+  readonly #deleteReplica: (name: string) => Promise<void>;
+
+  constructor(
+    auth: AuthState,
+    options: {
+      /** Where a replica delete that failed is remembered (default: nowhere). */
+      readonly deletes?: ReplicaDeleteMarks;
+      /** Deletes a replica by name when no store is open (default: IndexedDB). */
+      readonly deleteReplica?: (name: string) => Promise<void>;
+    } = {},
+  ) {
     this.auth = auth;
+    this.#deletes = options.deletes;
+    this.#deleteReplica = options.deleteReplica ?? deleteReplicaDatabase;
   }
 
   /**
@@ -61,20 +83,33 @@ export class AppModel {
     return snapshot.status === 'ready' ? snapshot.session : null;
   }
 
-  /** Changes made here that the server hasn't confirmed (SPEC-012 §3.12 item 2). */
-  unsentChanges = (): number => this.store?.pending.length ?? 0;
+  /**
+   * Changes not yet sent, in every tab's queue of this replica, because signing out deletes the
+   * whole database (SPEC-012 §3.12 item 2). 0 without a store.
+   */
+  countUnsent = async (): Promise<number> => (await this.store?.countPending()) ?? 0;
 
   /**
-   * Explicit sign-out (SPEC-012 §3.12): end the session on the server, then delete this user's
-   * replica; the guards then send the user to sign-in. Offline it still signs out here. A session
-   * expiry or revoke never comes through here, so it deletes nothing (item 4).
+   * Explicit sign-out (SPEC-012 §3.12): end the session (on the server, or here with a flag the
+   * next contact sends when it can't be reached, `AuthState.logout`), then delete this user's
+   * replica by name, with or without an open store; the guards then send the user to sign-in. A
+   * session expiry or revoke never comes through here, so it deletes nothing (item 4). A delete
+   * that fails after the logout is remembered and retried at the next load (`ReplicaDeleteError`:
+   * the user is signed out).
    */
   async signOut(): Promise<void> {
+    const session = this.session;
+    if (session === null) return;
     const store = this.store;
-    await this.auth.logout(
-      store !== null && store.connection !== 'online' ? { whenOffline: 'end-locally' } : {},
-    );
-    await store?.destroy();
+    const name = replicaName(session.workspaceId, session.userId);
+    await this.auth.logout();
+    try {
+      if (store === null) await this.#deleteReplica(name);
+      else await store.destroy();
+    } catch (error) {
+      this.#deletes?.add(name);
+      throw new ReplicaDeleteError({ cause: error });
+    }
   }
 
   /** The store, once its replica is ready: what saving a preference needs. */

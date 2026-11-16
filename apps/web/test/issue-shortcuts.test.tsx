@@ -3,7 +3,7 @@
  */
 // PLAN-012 S6 (SPEC-012 §3.6, AC-8, AC-10, E22): the real shortcut engine with the registry's M1
 // bindings drives the `issue` scope. On a list the keys act on the focused row; on the page they act
-// on the open issue. (The provider drops M1 bindings until PLAN-012 S7 raises `BUILD_MILESTONE`,
+// on the open issue. (The provider drops M1 bindings until PLAN-012 S7b raises `BUILD_MILESTONE`,
 // so the tests build the engine themselves over the command registry the screens register into.)
 import { overlayManager } from '@surface/ui';
 import { act } from 'react';

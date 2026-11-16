@@ -24,9 +24,11 @@ it('exports only the store, read helpers, UI bindings and errors', () => {
     // Framework-free bindings and selectors (ADR-0017).
     'bootstrapOf',
     'connectionOf',
+    'deleteReplicaDatabase',
     'inspect',
     'observe',
     'pendingCountOf',
+    'replicaName',
     'rowOf',
     // SPEC-010 E1: the message for a rejection naming a status the replica saw deleted.
     'statusGoneMessage',

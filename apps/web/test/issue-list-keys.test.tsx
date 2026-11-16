@@ -154,7 +154,7 @@ describe('navigation keys (G E, G M, Ctrl+Shift+n)', () => {
   });
 });
 
-describe('the M1 build (BUILD_MILESTONE is raised by PLAN-012 S7)', () => {
+describe('the M1 build (BUILD_MILESTONE is raised by PLAN-012 S7b)', () => {
   const m1 = inBuild(SHORTCUTS, 'M1');
 
   it('maps the list and navigation keys to commands this slice registers', async () => {

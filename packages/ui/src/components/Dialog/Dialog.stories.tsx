@@ -86,9 +86,18 @@ export const MenuInDialog: Story = {
   render: () => <CreateIssue open onOpenChange={() => {}} withMenu menuOpen />,
 };
 
-/** `fullScreenOnSmall` fills the screen below 768 px (the composer, SPEC-012 §7.3). */
+/**
+ * `fullScreenOnSmall` fills the screen below 768 px (the composer, SPEC-012 §7.3, AC-20): this
+ * story runs at 375 px, so axe checks the full-screen layout itself.
+ */
 export const FullScreenOnSmall: Story = {
   name: 'Full screen on small screens',
+  parameters: {
+    viewport: {
+      options: { phone: { name: 'Phone', styles: { width: '375px', height: '667px' } } },
+    },
+  },
+  globals: { viewport: { value: 'phone', isRotated: false } },
   render: () => (
     <Dialog
       open
@@ -100,6 +109,21 @@ export const FullScreenOnSmall: Story = {
       <Input label="Title" />
     </Dialog>
   ),
+  play: async () => {
+    const dialog = await screen.findByRole('dialog', { name: 'New issue' });
+    // The viewport is applied, and the dialog fills it with no sideways scroll.
+    await expect(window.innerWidth).toBeLessThan(768);
+    const page = document.documentElement;
+    // Once the opening animation (a small scale) has finished.
+    await waitFor(async () => {
+      const box = dialog.getBoundingClientRect();
+      await expect(Math.round(box.left)).toBe(0);
+      await expect(Math.round(box.top)).toBe(0);
+      await expect(Math.round(box.width)).toBeGreaterThanOrEqual(page.clientWidth);
+      await expect(Math.round(box.height)).toBeGreaterThanOrEqual(page.clientHeight);
+    });
+    await expect(page.scrollWidth).toBeLessThanOrEqual(page.clientWidth);
+  },
 };
 
 export const Small: Story = {

@@ -1,6 +1,7 @@
 import { openDB } from 'idb';
 import { describe, expect, it } from 'vitest';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
+import { deleteReplicaDatabase } from '../src/storage/open.js';
 import { StorageClosedError } from '../src/storage/types.js';
 import { debugRow, id } from './support/models.js';
 import { uniqueName } from './support/storage.js';
@@ -78,6 +79,15 @@ describe('IndexedDB replica', () => {
     await expect(oldTab.readMeta()).rejects.toThrow(/updated in another tab\. Reload this tab/);
     expect(await newTab.readMeta()).toBeUndefined();
     await newTab.close();
+  });
+
+  it('says "You logged out in another tab." when another tab deletes the database', async () => {
+    const name = uniqueName();
+    const tab = await IndexedDbStorage.open(name, ['DebugItem']);
+    await deleteReplicaDatabase(name);
+    await expect(tab.readMeta()).rejects.toBeInstanceOf(StorageClosedError);
+    await expect(tab.readMeta()).rejects.toThrow('You logged out in another tab.');
+    expect(await indexedDB.databases()).not.toContainEqual(expect.objectContaining({ name }));
   });
 
   it('pages past a stored record it cannot read instead of stopping early', async () => {

@@ -626,11 +626,31 @@ export class SyncStore {
    * then delete the replica database as a whole (rows, hydration marks, subscriptions, the
    * mutation queue and any store added later). The memory fallback holds nothing outside the
    * store, so it just drops. The store is finished afterwards: sign-in opens a new one. A session
-   * expiry never calls this.
+   * expiry never calls this. The dead store's rows leave memory too. If the delete fails, the
+   * rows are gone from memory and the caller retries the delete by name.
    */
   async destroy(): Promise<void> {
     await this.close();
+    this.#pool.sweepBase(() => false);
     await (this.#options.deleteStorage ?? deleteReplicaDatabase)(this.#replica);
+  }
+
+  /**
+   * Changes not yet sent, in every tab's queue of this replica: signing out deletes the whole
+   * database, so it discards them all (SPEC-012 §3.12 item 2). This tab's own queue is counted
+   * from memory, because its newest changes may not be stored yet; the others come from storage.
+   */
+  async countPending(): Promise<number> {
+    const own = this.pending.length;
+    const queue = this.#mutations.get();
+    const persistence = this.#persistence.get();
+    if (queue === undefined || persistence === undefined) return own;
+    const snapshot = await persistence.write((storage) => storage.readQueue());
+    const others =
+      snapshot?.pending.filter(
+        (record) => record.clientId !== queue.clientId && record.lastSyncId === undefined,
+      ).length ?? 0;
+    return own + others;
   }
 
   async #start(signal: AbortSignal): Promise<'warm' | 'cold'> {

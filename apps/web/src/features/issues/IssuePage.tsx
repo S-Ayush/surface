@@ -262,6 +262,9 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   const routerState = useLocation({ select: (location) => location.state });
   const mode = usePanelMode();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Narrowing to one column drops an open drawer: the panel is on the page then, and widening
+  // again must not bring a stale drawer back (SPEC-012 §7.3).
+  if (mode === 'stacked' && drawerOpen) setDrawerOpen(false);
   // `Shift+R` on a list row opens the page with the title in edit mode (SPEC-012 §3.6).
   const [editing, setEditing] = useState(() => !readOnly && wantsTitleEdit(routerState));
   const now = new Date();

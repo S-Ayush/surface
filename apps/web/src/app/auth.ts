@@ -61,6 +61,16 @@ export interface StartMemory {
   read(): RememberedStart | undefined;
   write(start: RememberedStart): void;
   clear(): void;
+  /**
+   * A logout the server hasn't heard of yet: the user logged out with no way to reach it, so the
+   * HttpOnly session cookie still lives. A flag, no secret. While set, nothing signs the user back
+   * in: the next contact sends `POST /auth/logout` first (SPEC-012 §3.12 item 2). Without these
+   * three, the flag lives in this page only.
+   */
+  logoutPending?(): boolean;
+  setLogoutPending?(pending: boolean): void;
+  /** Calls `listener` when another tab changes the flag (the `storage` event). */
+  watchLogoutPending?(listener: () => void): () => void;
 }
 
 const forgetful: StartMemory = {
@@ -70,6 +80,7 @@ const forgetful: StartMemory = {
 };
 
 const START_KEY = 'surface.last-session';
+const LOGOUT_KEY = 'surface.logout-pending';
 const RememberedStartSchema = z.object({
   session: z.object({ userId: z.string(), workspaceId: z.string() }),
   smtp: z.boolean(),
@@ -81,8 +92,39 @@ const RememberedStartSchema = z.object({
  */
 export function browserStartMemory(
   storage: () => Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
+  events:
+    Pick<EventTarget, 'addEventListener' | 'removeEventListener'> | undefined = typeof window ===
+  'undefined'
+    ? undefined
+    : window,
 ): StartMemory {
   return {
+    logoutPending: () => {
+      try {
+        return storage().getItem(LOGOUT_KEY) !== null;
+      } catch {
+        return false;
+      }
+    },
+    setLogoutPending: (pending) => {
+      try {
+        if (pending) storage().setItem(LOGOUT_KEY, '1');
+        else storage().removeItem(LOGOUT_KEY);
+      } catch {
+        // Not kept: this page still knows, and a reload then relies on the session's expiry.
+      }
+    },
+    watchLogoutPending: (listener) => {
+      const onStorage = (event: Event) => {
+        // `key` is null when the whole storage was cleared.
+        const key = event instanceof StorageEvent ? event.key : null;
+        if (key === LOGOUT_KEY || key === null) listener();
+      };
+      events?.addEventListener('storage', onStorage);
+      return () => {
+        events?.removeEventListener('storage', onStorage);
+      };
+    },
     read: () => {
       try {
         const raw = storage().getItem(START_KEY);
@@ -166,6 +208,10 @@ export class AuthState {
   #reopens = 0;
   /** The epoch whose store a check is already reopening: a store is reopened once. */
   #reopening: number | undefined;
+  /** The logout flag when the memory can't keep it (see `StartMemory.logoutPending`). */
+  #logoutPending = false;
+  /** The `POST /auth/logout` that is flushing a pending logout, so there is only one. */
+  #flushing: Promise<boolean> | undefined;
 
   constructor(
     client: AuthClient,
@@ -180,6 +226,8 @@ export class AuthState {
       readonly retry?: (attempt: number) => Promise<void>;
       /** The clock for `REOPEN_WINDOW_MS` (default: `Date.now`). */
       readonly now?: () => number;
+      /** Where `online` fires, to send a pending logout (default: the window). */
+      readonly network?: Pick<EventTarget, 'addEventListener'>;
     } = {},
   ) {
     this.#client = client;
@@ -188,6 +236,47 @@ export class AuthState {
     this.#memory = options.memory ?? forgetful;
     this.#retry = options.retry ?? waitToRetry;
     this.#now = options.now ?? Date.now;
+    const network = options.network ?? (typeof window === 'undefined' ? undefined : window);
+    network?.addEventListener('online', () => {
+      void this.#flushLogout();
+    });
+    // Another tab logged out with no way to reach the server: this tab's session is over too,
+    // and the delete of the replica there must not wait for this tab (SPEC-012 §3.12 item 3).
+    this.#memory.watchLogoutPending?.(() => {
+      if (!this.#pending()) return;
+      void this.#flushLogout();
+      if (this.#loggingOut === 0 && this.#epoch() !== undefined) this.#end(true);
+    });
+  }
+
+  #pending(): boolean {
+    return this.#memory.logoutPending?.() ?? this.#logoutPending;
+  }
+
+  #setPending(pending: boolean): void {
+    this.#logoutPending = pending;
+    this.#memory.setLogoutPending?.(pending);
+  }
+
+  /**
+   * Sends a logout the server hasn't heard of. True once none is pending. The flag clears only
+   * when the server answers, and `/auth/logout` answers 200 whether or not the session is still
+   * there, so a failure here only means "no contact yet".
+   */
+  #flushLogout(): Promise<boolean> {
+    if (!this.#pending()) return Promise.resolve(true);
+    this.#flushing ??= this.#client.logout().then(
+      () => {
+        this.#setPending(false);
+        return true;
+      },
+      () => false,
+    );
+    const flushing = this.#flushing;
+    void flushing.then(() => {
+      if (this.#flushing === flushing) this.#flushing = undefined;
+    });
+    return flushing;
   }
 
   get snapshot(): AuthSnapshot {
@@ -206,6 +295,8 @@ export class AuthState {
 
   /** Signs in, then reads the session back (the guards send the user on to `next`). */
   async login(email: string, password: string): Promise<LoginResult> {
+    // The old user's session must be over on the server before anyone signs in (§3.12 item 2).
+    if (!(await this.#flushLogout())) return { ok: false, message: LOGIN_FAILED };
     const result = await this.#client.login(email, password);
     if (!result.ok) return result;
     const session = await this.#client.session().catch(() => null);
@@ -292,10 +383,12 @@ export class AuthState {
   }
 
   /**
-   * `whenOffline: 'end-locally'`: with no way to reach the server, still end the session here
-   * (the server's session ends at its next contact or expiry; SPEC-012 §3.12 item 2).
+   * A logout the server can't be told about (no answer to it or to the session check) still ends
+   * the session here, and leaves a flag: the next contact sends `POST /auth/logout` before
+   * anything else, because the session cookie is HttpOnly and would sign the user back in
+   * (SPEC-012 §3.12 item 2). A server that answers with a refusal keeps the session.
    */
-  async logout(options: { readonly whenOffline?: 'end-locally' } = {}): Promise<void> {
+  async logout(): Promise<void> {
     this.#loggingOut += 1;
     try {
       await this.#client.logout();
@@ -303,14 +396,13 @@ export class AuthState {
     } catch (error) {
       // The answer may be lost after the server acted (its 4001 is ignored meanwhile): if the
       // session is gone, the logout happened.
-      const session = await this.#client
-        .session()
-        .catch((reason: unknown) =>
-          reason instanceof UnreachableError && options.whenOffline === 'end-locally'
-            ? null
-            : undefined,
-        );
-      if (session !== null) throw error;
+      let unreachable = false;
+      const session = await this.#client.session().catch((reason: unknown) => {
+        unreachable = reason instanceof UnreachableError;
+        return undefined;
+      });
+      if (session !== null && !unreachable) throw error;
+      if (session !== null) this.#setPending(true);
       this.#end(true);
     } finally {
       this.#loggingOut -= 1;
@@ -348,12 +440,29 @@ export class AuthState {
 
   async #load(): Promise<AuthSnapshot> {
     let next: AuthSnapshot;
+    // A logout that never reached the server: the session is still there, but the user left.
+    const left = this.#pending();
+    if (left && !(await this.#flushLogout())) {
+      const capabilities = await this.#client
+        .capabilities()
+        .catch(() => ({ setupComplete: true, smtp: false }));
+      next = { status: 'ready', capabilities, session: null, loggedOut: true, epoch: 0 };
+      runInAction(() => this.#snapshot.set(next));
+      return next;
+    }
     try {
       const [capabilities, session] = await Promise.all([
         this.#client.capabilities(),
         this.#client.session(),
       ]);
-      next = { status: 'ready', capabilities, session, epoch: 0 };
+      next = {
+        status: 'ready',
+        capabilities,
+        session,
+        epoch: 0,
+        // The logout just sent: the next sign-in starts at home (it may be someone else).
+        ...(left && session === null ? { loggedOut: true } : {}),
+      };
       this.#openedAt = this.#now();
       if (session === null) this.#memory.clear();
       else this.#memory.write({ session, smtp: capabilities.smtp });
@@ -392,6 +501,11 @@ export class AuthState {
     for (let attempt = 0; ; attempt += 1) {
       await this.#retry(attempt);
       if (!stillOffline()) return;
+      if (this.#pending()) {
+        if (!(await this.#flushLogout())) continue;
+        this.#end(true);
+        return;
+      }
       let answer: [Capabilities, Session | null];
       try {
         answer = await Promise.all([this.#client.capabilities(), this.#client.session()]);

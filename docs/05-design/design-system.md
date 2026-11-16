@@ -145,7 +145,7 @@ Rules: animation **never delays input**. Exit animations are shorter than enter 
 - **Header (48 px):** breadcrumb, view tabs (e.g. All / Active / Backlog), and right-side actions (filter, display options, view ⋯). It stays sticky.
 - **Main pane:** max content width is *unbounded* for lists and boards. Long-form pages (issue, project, document) use a centred column, max 760 px of text, plus a right-hand properties panel (280 px).
 - **Peek:** a right-side panel with an issue preview (`Space`), 480 px, resizable. `Esc` closes it.
-- **Breakpoints:** ≥ 1280 full · 1024–1279 properties panel collapses into a header drawer · 768–1023 sidebar overlays · < 768 a single column for read, comment, and triage only (NFR-20).
+- **Breakpoints:** ≥ 1280 full · 768–1279 properties panel collapses into a header drawer (the sidebar overlays below 1024) · < 768 a single column for read, comment, and triage only, with the properties as a wrapping row of pills under the title (NFR-20; *changed 2026-11-16, SPEC-012 D30*).
 
 ---
 

@@ -93,8 +93,9 @@ export async function openStorage(
 /**
  * Delete the whole replica database, whatever stores it holds (SPEC-002 §3.7: sign-out deletes
  * the replica as a unit, so stores other slices add are covered). Resolves when it is deleted, or
- * when another tab still holds a connection: the delete then runs as soon as that tab closes its
- * own (it does on the session-end signal), and sign-out must not wait for it. No-op without
+ * when another tab still holds a connection. That is safe: IndexedDB queues the delete and runs
+ * it as soon as the other connections close, and the other tab's `versionchange` handler
+ * (`blocking` in `indexeddb.ts`) closes them at once, so sign-out need not wait for it. No-op without
  * IndexedDB (the memory fallback holds nothing outside the store).
  */
 export function deleteReplicaDatabase(name: string): Promise<void> {

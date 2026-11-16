@@ -156,11 +156,15 @@ export class IndexedDbStorage implements SyncStorage {
           }
         }
       },
-      // Another tab is upgrading or deleting the database: let it, and stop writing.
-      blocking() {
+      // Another tab is upgrading or deleting the database: let it, and stop writing. A delete
+      // (`blockedVersion` null) is the user logging out there (SPEC-012 §3.12 item 3): this is
+      // what closes this tab's connection, offline too, before any 4001 arrives.
+      blocking(_currentVersion: number, blockedVersion: number | null) {
         if (opened.storage)
           opened.storage.#stop(
-            'Surface was updated in another tab. Reload this tab to keep saving offline.',
+            blockedVersion === null
+              ? 'You logged out in another tab.'
+              : 'Surface was updated in another tab. Reload this tab to keep saving offline.',
           );
       },
       terminated() {
