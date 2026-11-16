@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { parseIssueRef } from '@surface/domain';
+import { SyncStoreProvider } from '@surface/sync-react';
 import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
 import { useCommandContext } from '../../command-menu/context.js';
@@ -548,13 +549,20 @@ function Slots({
   teamId: string;
   part: 'under-description' | 'comments';
 }) {
+  const app = useApp();
+  const store = app.readyStore;
   const { reactions: Reactions, attachments: Attachments, comments: Comments } = ISSUE_PAGE_SLOTS;
   const props = { issueId: view.id, teamId };
-  if (part === 'comments') return Comments === null ? null : <Comments {...props} />;
-  return (
-    <>
-      {Reactions !== null && <Reactions {...props} />}
-      {Attachments !== null && <Attachments {...props} />}
-    </>
-  );
+  const slots =
+    part === 'comments' ? (
+      Comments !== null && <Comments {...props} />
+    ) : (
+      <>
+        {Reactions !== null && <Reactions {...props} />}
+        {Attachments !== null && <Attachments {...props} />}
+      </>
+    );
+  // The comment slots read the issue's content through sync-react (PLAN-013 S5). The shell already
+  // provides the store; providing it here makes the page's slots work wherever the page mounts.
+  return store === null ? null : <SyncStoreProvider store={store}>{slots}</SyncStoreProvider>;
 }

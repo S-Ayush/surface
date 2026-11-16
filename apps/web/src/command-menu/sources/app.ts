@@ -12,6 +12,8 @@ const MENU_COMMANDS: readonly {
   keywords: readonly string[];
   /** Acts on the focused or open issue: offered only with an issue as the target (SPEC-012 §3.8). */
   issue?: true;
+  /** Acts on the focused comment (SPEC-013 §7): offered only with a comment as the target. */
+  comment?: true;
 }[] = [
   { id: 'toggle:theme', section: 'settings', keywords: ['dark mode', 'light mode', 'appearance'] },
   { id: 'toggle:sidebar', section: 'settings', keywords: ['hide sidebar', 'show sidebar'] },
@@ -34,20 +36,33 @@ const MENU_COMMANDS: readonly {
     keywords: ['git', 'branch name', 'clipboard'],
     issue: true,
   },
+  // The comment context (SPEC-013 §7, PLAN-013 S5). Their handlers come from the comment timeline.
+  { id: 'comment:copy-link', section: 'settings', keywords: ['url', 'clipboard'], comment: true },
+  {
+    id: 'comment:copy-markdown',
+    section: 'settings',
+    keywords: ['clipboard', 'text'],
+    comment: true,
+  },
 ];
 
 export function appSource(commands: CommandRegistry): CommandSource {
   return () =>
-    MENU_COMMANDS.map(({ id, section, keywords, issue }) => ({
+    MENU_COMMANDS.map(({ id, section, keywords, issue, comment }) => ({
       id,
       title: commandTitle(id),
       section,
       keywords,
       shortcuts: shortcutsFor(id),
-      when: (ctx) => commands.isAvailable(id) && (issue !== true || ctx.target.kind === 'issue'),
+      when: (ctx) =>
+        commands.isAvailable(id) &&
+        (issue !== true || ctx.target.kind === 'issue') &&
+        (comment !== true || ctx.target.kind === 'comment'),
       ...(issue === true
         ? { appliesTo: (ctx: CommandContext) => ctx.target.kind === 'issue' }
-        : {}),
+        : comment === true
+          ? { appliesTo: (ctx: CommandContext) => ctx.target.kind === 'comment' }
+          : {}),
       run: () => commands.invoke(id),
     }));
 }

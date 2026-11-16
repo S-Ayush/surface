@@ -178,7 +178,7 @@ Branch `p013-s4-reactions`. After S3 (tables and models exist) and S2 (emoji dat
 >   - Register the `reaction:add` command (with `available`) to open the focused comment's or the issue's picker through `pickerOpen`/`onPickerOpenChange`.
 >   - **`apps/web` mounts no `TooltipProvider` yet**, and Radix's tooltip needs one: mount it once near the app root before rendering `ReactionBar` (the tests wrap one).
 
-### S5: Comments UI on the issue page · M
+### S5: Comments UI on the issue page · M · ✅ Done 2026-11-16
 Branch `p013-s5-comments-ui`. **Needs PLAN-012 S4** (issue page, activity area, `comment` scope) and S2, S3, S4. The synced-`Draft` parts need **PLAN-012 S5**; until it merges the box keeps the text in component state only (a `useCommentDraft` seam) and the AC-20 draft tests use a fake.
 
 - **Where:** `apps/web/src/features/comments/` (new): `ActivityTimeline` pieces (`CommentCard.tsx`, `ThreadView.tsx`, `ResolvedThreadLine.tsx`, `CommentBox.tsx`, `ReplyBox.tsx`, `CommentMenu.tsx`, `IssueReactions.tsx`), `useComments(issueId)` (reads the replica, pairs with `useContent` from PLAN-011; for an archived or deleted issue it reads PLAN-012 S4's server-backed view instead, read-only), `commentActions.ts`. Plugs into PLAN-012 S4's activity area; the timeline interleaves history and top-level comments by time.
@@ -197,10 +197,26 @@ Branch `p013-s5-comments-ui`. **Needs PLAN-012 S4** (issue page, activity area, 
   - Attach button and `Mod+Shift+U`: wired to PLAN-014 S5's upload hook when present; until then the stub from S2 shows a toast "Attachments are not available yet." (remove the stub in PLAN-014 S5).
   - Performance: read-only comments use `DocView`; no virtualisation below 500 comments; lazy chunks for the editor and the emoji data (check the issue list chunk has neither).
 - **Tests:**
-  - `apps/web/src/features/comments/comment-flow.test.tsx` (jsdom, fake server and in-memory store): AC-20 (send discards draft, rejection saves draft or offers Copy text, E21), E1, E15 and E17 client side (rollback and text restored), E3 (conflict keeps text), E20, E26, resolve and collapse (AC-21 UI), reply box send and edit save keys (AC-19 last sentence).
-  - `apps/web/src/features/comments/commands.test.ts`: command-menu entries and contexts, `checkOperationCommands` refs.
+  - `apps/web/test/comment-flow.test.tsx` (jsdom, fake server and in-memory store): AC-20 (send discards draft, rejection saves draft or offers Copy text, E21), E1, E15 and E17 client side (rollback and text restored), E3 (conflict keeps text), E20, E26, resolve and collapse (AC-21 UI), reply box send and edit save keys (AC-19 last sentence).
+  - `apps/web/test/comment-commands.test.ts` (and `comment-model.test.ts` for the pure model): command-menu entries and contexts, `checkOperationCommands` refs.
   - Storybook stories with axe: comment card, reaction chip, editor, resolved thread (AC-17 axe half).
   - AC-17 keyboard run and AC-18 timing: checked by hand (⏸, §4).
+
+> **As built:** branch `p013-s5-comments-ui`. No migration, no new dependency, no server change.
+>
+> - **Where:** `apps/web/src/features/comments/`: `model.ts` (pure: threads, reaction chips, links, times, checklist toggle), `actions.ts` (`CommentActions`: create, update, delete, resolve, reopen, react), `useComments.ts`, `CommentsSection.tsx` (the `comments` slot), `IssueReactions.tsx` (the `reactions` slot), `ThreadView.tsx` (thread, edit, delete, reply box), `CommentCard.tsx`, `ResolvedThreadLine.tsx`, `CommentBox.tsx`, `ComposerBox.tsx` (shared by comment, reply and edit), `CommentMenu.ts`, `useCommentCommands.ts`, `CommentTarget.tsx`, `editor-host.tsx` (lazy editor, `DocView`, emoji), `env.ts`, `new-issue.ts`. Names differ from the plan where one component did two jobs.
+> - **Slots:** `slots.ts` now maps `reactions` and `comments`. `IssuePage`'s `Slots` wraps them in `SyncStoreProvider`. The slot components don't import `slots.ts` (circular).
+> - **E20 and D10:** `useIssueContent` states give a skeleton, the offline message, or the timeline and box. An issue the replica holds as not live hides every write control.
+> - **No `queuedRejection` hook exists** in `sync-client`. The actions use the outcome promise of `dispatch` (it settles for queued mutations too). It is lost on reload; the shell toast then reports the refusal and the text is not restored. Calls pass `reportRejection: () => false` and the actions show one toast. Restore: `drafts.restoreRejectedComment` (box) or a caller callback (reply box), else the toast offers **Copy text**. The pending marker is per tab, in memory.
+> - **Drafts:** `draftAdapterFor(store)`; write 500 ms after the last change and on blur; flush on unmount and `pagehide`; `expireOld` from an effect.
+> - **`comment.sendEnter` is now `quiet`** (`shortcuts/registry.ts`, PLAN-012 S1's file), or `Enter` on a link, checkbox or button inside a comment would be swallowed. `comment:send` applies only while focus is in the text field. See SPEC-013 D28.
+> - **Commands:** `reaction:add` has two handlers (issue target, comment target). New catalog ids `comment:copy-link` and `comment:copy-markdown`, listed only for a `comment` target (`command-menu/sources/app.ts`). `CommentTarget` sets the focused comment as target.
+> - **Attachments:** the attach button and `Mod+Shift+U` show "Attachments are not available yet." Remove in PLAN-014 S5.
+> - **"New issue from comment…" is hidden:** `composerAvailable()` in `new-issue.ts` returns false because `issue.create` takes no description until PLAN-011 S6. Switch it on then, and add a `comment` kind to the composer request.
+> - **TooltipProvider:** S4's note above was wrong. `OverlayProvider` already mounts one, so none was added.
+> - **Performance:** `editor-host.tsx` loads `@surface/editor` with `React.lazy` and dynamic imports. `docToMarkdown` comes from `@surface/editor/schema`, already imported statically by `copy-actions.ts`. Not measured: the built chunk split.
+> - **Tests:** in `apps/web/test/`, not under `features/comments/`: `comment-flow.test.tsx` (46 tests, fake timers, the editor is a textarea fake in `comment-editor-fake.tsx` over `comment-harness.tsx`, so real editor keys are covered only by `editor-keys.test.tsx`), `comment-commands.test.ts` (was `commands.test.ts`), `comment-model.test.ts`. `content-stub.ts` gives issue-page fakes a never-loading `content`. Stories `Domain/CommentCard` (Comment, States, Thread, ResolvedThread) pass axe in light and dark; `packages/ui/.storybook/main.ts` now lists `apps/web/src/**/*.stories.tsx`. The checklist toggle is covered only by the pure `withChecked` test.
+> - **Owed:** PLAN-012 S4b: the history interleave and "N earlier" (seam: `buildThreads` and `ThreadView` in `CommentsSection`), and the server-backed read-only comments of archived and deleted issues (this section never fetches from the server). By hand (⏸): AC-17 keyboard run and AC-18 timing. Not done: visual snapshots of the new stories (held), the edit-mode composer story, a persistent rejection hook.
 
 ---
 
@@ -251,7 +267,7 @@ Held rows are marked ⏸ per [README §6](README.md#6-testing-hold-e2e-smoke-and
 | AC-17 keyboard only, screen reader names | ⏸ e2e; checked by hand in S5 "As built". Axe in Storybook for card, chip, editor | S5 |
 | AC-18 cross-tab < 150 ms | ⏸ e2e perf; checked by hand | S5 |
 | AC-19 `Mod+Enter` and `Shift+Enter` | `test/enter-modes.test.tsx` (editor + engine); reply and edit keys in `comment-flow.test.tsx` | S2, S5 |
-| AC-20 drafts, rejection, queued edits | `apps/web/src/features/comments/comment-flow.test.tsx` (fake server, in-memory store); E22 in `comment.test.ts` | S3, S5 |
+| AC-20 drafts, rejection, queued edits | `apps/web/test/comment-flow.test.tsx` (fake server, in-memory store); E22 in `comment.test.ts` | S3, S5 |
 | AC-21 resolve and reopen | `comment-ops.test.ts`; UI collapse in `comment-flow.test.tsx` | S3, S5 |
 | AC-22 issue reactions | `reaction-set.test.ts`, `reactions-real-server.int.test.ts` | S4 |
 | AC-23 keys and input rules | `packages/editor/test/keys.test.tsx` | S2 |

@@ -4,6 +4,7 @@
 import { userActor, type Actor } from '@surface/domain';
 import { Issue, Label, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
 import type { SyncStore } from '@surface/sync-client';
+import { NO_CONTENT } from './content-stub.js';
 import {
   createMemoryHistory,
   createRootRoute,
@@ -114,6 +115,7 @@ export class FakeApp extends AppModel {
       status: 'ready',
       connection: 'online',
       rejections: [],
+      content: NO_CONTENT,
       dispatch: (op: { name: string }, input: unknown) => {
         this.dispatched.push({ op: op.name, input });
         return Promise.resolve({ status: 'confirmed' });

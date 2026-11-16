@@ -572,6 +572,9 @@ export const SHORTCUTS: readonly Shortcut[] = [
     group: 'Comments',
     milestone: 'M1',
     whileTyping: true,
+    // `Enter` on a link, a checklist box or a button inside a comment keeps its own action
+    // (PLAN-013 S5); only a text field sends.
+    quiet: true,
   }),
   shortcut({
     id: 'comment.sendMod',

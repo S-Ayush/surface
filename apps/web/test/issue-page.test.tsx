@@ -6,6 +6,7 @@
 import { userActor, type Actor } from '@surface/domain';
 import { Issue, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
 import type { SyncStore } from '@surface/sync-client';
+import { NO_CONTENT } from './content-stub.js';
 import {
   createMemoryHistory,
   createRootRoute,
@@ -85,6 +86,7 @@ class FakeApp extends AppModel {
       status: 'ready',
       connection: 'online',
       rejections: rows.rejections ?? [],
+      content: NO_CONTENT,
       pool: {
         all: (model: unknown) => byModel.get(model) ?? [],
         get: (model: unknown, id: string) =>

@@ -64,6 +64,9 @@ export const COMMANDS = {
   'comment:delete': { title: 'Delete comment' },
   'comment:resolve': { title: 'Resolve thread' },
   'comment:reopen': { title: 'Reopen thread' },
+  // The rest of the `comment` context's menu (SPEC-013 §7): copies of the focused comment.
+  'comment:copy-link': { title: 'Copy link to comment' },
+  'comment:copy-markdown': { title: 'Copy content as Markdown' },
   // PLAN-013 S4: "Add reaction…" (contexts comment and issue); S5 registers the handler.
   'reaction:add': { title: 'Add reaction…' },
   'editor:bold': { title: 'Bold' },
