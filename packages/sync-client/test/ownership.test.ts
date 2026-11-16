@@ -4,7 +4,7 @@
  * origins without Web Locks a crashed tab's queue is adopted once its lease
  * runs out, after which the old tab can no longer write it.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { MUTATE_PATH } from '@surface/sync-protocol';
 import type { SocketFactory } from '../src/socket.js';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
@@ -52,6 +52,40 @@ async function persistedQueue(workspaceId: string) {
 }
 
 describe('reload (AC-6)', () => {
+  it('reports a refusal of a change sent again after a reload with its operation and input, though its first dispatch kept quiet (PLAN-013 S5)', async () => {
+    const workspaceId = uniqueName('ws');
+    const hub = seededHub();
+    const { network, socket } = switchable(hub);
+    const onRejected = vi.fn();
+    const tab = { workspaceId, connectStorage: connectViaRpc, connection: { socket } };
+
+    const before = liveStore(hub, { ...tab, clientId: TAB_A, onRejected });
+    await before.store.start();
+    // The page that sent it would show the refusal itself; that promise dies with the page.
+    void before.store.dispatch(
+      debugRename,
+      { id: id(1), title: 'Offline edit' },
+      { reportRejection: () => false },
+    );
+    await before.store.close();
+    hub.remove(1);
+
+    const after = liveStore(hub, { ...tab, clientId: TAB_B, onRejected });
+    await after.store.start();
+    network.up = true;
+    after.timers.runNext();
+    await until(() => after.store.pending.length === 0);
+    expect(onRejected).toHaveBeenCalledOnce();
+    expect(onRejected).toHaveBeenCalledWith(
+      expect.objectContaining({
+        op: 'debug.rename',
+        input: { id: id(1), title: 'Offline edit' },
+        code: 'NOT_FOUND',
+      }),
+    );
+    await after.store.close();
+  });
+
   it('shows a change made offline after a reload, and sends it once back online', async () => {
     const workspaceId = uniqueName('ws');
     const hub = seededHub();

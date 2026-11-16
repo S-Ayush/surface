@@ -7,7 +7,9 @@ const config: StorybookConfig = {
   stories: [
     '../src/**/*.stories.tsx',
     '../../editor/stories/**/*.stories.tsx',
-    // Feature stories that need the editor, which `ui` may not import (PLAN-013 S5).
+    // Feature stories that need the editor, which `ui` may not import (PLAN-013 S5). A story glob
+    // is Storybook tooling, not an import of `apps/` by a package (`packages-not-to-apps` in
+    // `.dependency-cruiser.cjs` is unchanged); the stories import `ui` and `editor` themselves.
     '../../../apps/web/src/**/*.stories.tsx',
   ],
   addons: ['@storybook/addon-a11y', '@storybook/addon-vitest', 'storybook-addon-pseudo-states'],

@@ -5,8 +5,8 @@
 //
 // "queuedRejection" hook of the plan: the sync client has none. `dispatch` resolves to an outcome
 // (`confirmed` or `rejected`), also for a mutation queued offline, and that promise is what these
-// actions wait on. It is lost on a reload; the queue then reports the rejection through the
-// shell's toast (`DispatchOptions.reportRejection`), but the text isn't restored.
+// actions wait on. It is lost on a reload; the queue then reports the rejection to the shell's
+// `onRejected`, which hands it to `reportQueuedRejection` so the text still comes back (§3.1).
 import { uuidv7, type DocNodeJSON } from '@surface/domain';
 import {
   commentCreate,
@@ -20,6 +20,7 @@ import type { MutationOutcome, SyncStore } from '@surface/sync-client';
 import type { ToastOptions } from '@surface/ui';
 import { observable, runInAction } from 'mobx';
 import { docInput } from '../issues/draft-adapter.js';
+import { isDoc } from './model.js';
 
 /** The part of the store these actions use. */
 export type CommentStore = Pick<SyncStore, 'dispatch'>;
@@ -80,6 +81,53 @@ export class CommentActions {
     this.#deps.toast({ tone: 'danger', message });
   }
 
+  /** The refusal, with the text the user wrote one click from the clipboard (E21). */
+  #failWithCopy(message: string, doc: DocNodeJSON): void {
+    this.#deps.toast({
+      tone: 'danger',
+      message,
+      action: {
+        label: 'Copy text',
+        onAction: () => {
+          void this.#deps.copy(this.#deps.markdownOf(doc));
+        },
+      },
+    });
+  }
+
+  /**
+   * A refusal that reached the shell because no live `dispatch` promise was waiting: the mutation
+   * was sent again from storage after a reload. A comment goes back into the issue's draft when
+   * that is empty, else the toast offers **Copy text**; an edit always offers it. Returns false for
+   * any other operation, which the shell reports as usual.
+   */
+  reportQueuedRejection(rejection: {
+    readonly op: string;
+    readonly input: unknown;
+    readonly message: string;
+  }): boolean {
+    const { op, input, message } = rejection;
+    if (op !== 'comment.create' && op !== 'comment.update') return false;
+    if (typeof input !== 'object' || input === null || !('body' in input) || !isDoc(input.body)) {
+      return false;
+    }
+    const doc = input.body;
+    if (op === 'comment.update') {
+      this.#failWithCopy(message, doc);
+      return true;
+    }
+    const issueId = 'issue' in input && typeof input.issue === 'string' ? input.issue : undefined;
+    if (
+      issueId !== undefined &&
+      this.#deps.drafts.restoreRejectedComment(issueId, doc) === 'restored'
+    ) {
+      this.#fail(message);
+    } else {
+      this.#failWithCopy(message, doc);
+    }
+    return true;
+  }
+
   /**
    * Sends a comment or a reply (§3.1, §3.2). The box has already emptied. On a refusal the pending
    * comment is gone (the queue rolled it back) and `restore` puts the text back where it came from:
@@ -112,32 +160,21 @@ export class CommentActions {
     if (message === undefined) return true;
     const restore: RestoreText =
       options.restore ?? ((text) => this.#deps.drafts.restoreRejectedComment(issueId, text));
-    if (restore(doc) === 'restored') {
-      this.#fail(message);
-    } else {
-      this.#deps.toast({
-        tone: 'danger',
-        message,
-        action: {
-          label: 'Copy text',
-          onAction: () => {
-            void this.#deps.copy(this.#deps.markdownOf(doc));
-          },
-        },
-      });
-    }
+    if (restore(doc) === 'restored') this.#fail(message);
+    else this.#failWithCopy(message, doc);
     return false;
   }
 
   /**
    * Saves an edit (§3.3). `onRejected` gets the message so the card can open the editor again with
-   * the text (E3: a `CONFLICT` keeps it).
+   * the text (E3: a `CONFLICT` keeps it) and answers whether it did. When it didn't (the card is
+   * gone or collapsed), the toast offers **Copy text**; when it did, the card shows the message.
    */
   async update(options: {
     commentId: string;
     baseVersion: number;
     doc: DocNodeJSON;
-    onRejected?: (message: string) => void;
+    onRejected?: (message: string) => boolean;
   }): Promise<boolean> {
     const message = await this.#settled(() =>
       this.#deps.store.dispatch(
@@ -151,8 +188,7 @@ export class CommentActions {
       ),
     );
     if (message === undefined) return true;
-    options.onRejected?.(message);
-    this.#fail(message);
+    if (options.onRejected?.(message) !== true) this.#failWithCopy(message, options.doc);
     return false;
   }
 

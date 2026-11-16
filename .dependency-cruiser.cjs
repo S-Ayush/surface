@@ -30,6 +30,8 @@ module.exports = {
     },
     {
       name: 'packages-not-to-apps',
+      // `packages/ui/.storybook/main.ts` lists `apps/web/src/**/*.stories.tsx` in its story glob
+      // (PLAN-013 S5). A glob is tooling configuration, not an import, so the rule is unchanged.
       comment: 'Packages are libraries; they must never import from apps/.',
       severity: 'error',
       from: { path: '^packages/' },

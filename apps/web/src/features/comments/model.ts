@@ -35,7 +35,7 @@ function docOf(value: unknown): DocNodeJSON {
   return isDoc(value) ? value : EMPTY_DOC;
 }
 
-function isDoc(value: unknown): value is DocNodeJSON {
+export function isDoc(value: unknown): value is DocNodeJSON {
   return typeof value === 'object' && value !== null && 'type' in value && value.type === 'doc';
 }
 

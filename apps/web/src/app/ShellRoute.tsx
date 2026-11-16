@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { followPreferences } from '../preferences/apply.js';
 import { savePreferences } from '../preferences/save.js';
 import { Shell } from '../shell/Shell.js';
+import { commentActionsFor } from '../features/comments/useComments.js';
 import { SystemBanners } from '../shell/SystemBanners.js';
 import { browserThemeEnvironment } from '../theme/toggleTheme.js';
 import styles from '../shell/Shell.module.css';
@@ -132,7 +133,15 @@ function useSyncStore(app: AppModel, { userId, workspaceId }: Session, epoch: nu
       onSessionRevoked: auth.onSessionRevoked,
       // SPEC-002 §3.5: the optimistic change is gone; say why. A change naming a status this
       // replica saw deleted says so instead of "not found" (SPEC-010 E1).
+      // A comment or an edit sent again after a reload has no waiting `dispatch`: its text goes back
+      // to the draft or to **Copy text** (SPEC-013 §3.1 item 2, E21).
       onRejected: (rejection) => {
+        const text = commentActionsFor(store).reportQueuedRejection({
+          op: rejection.op,
+          input: rejection.input,
+          message: rejection.message,
+        });
+        if (text) return;
         toast({ tone: 'danger', message: statusGoneMessage(rejection, seenDeletes) });
       },
       // SPEC-002 E7, SPEC-005 §8: persistent, and above any dismissible warning.

@@ -25,6 +25,7 @@ import {
   uuidOf,
   type World,
 } from './comment-harness.js';
+import { commentActionsFor } from '../src/features/comments/useComments.js';
 import { ISSUE_A, inAct, issueRow, keydown } from './issue-fixtures.js';
 
 vi.mock('../src/features/comments/editor-host.js', () => import('./comment-editor-fake.js'));
@@ -211,6 +212,28 @@ describe('sending a comment (AC-20, §3.1)', () => {
     expect(card(String(sent?.['id']))?.textContent).not.toContain('Sending…');
   });
 
+  it('discards the draft when the click on Send blurred the editor first and saved it', async () => {
+    await mount();
+    const box = field('Comment');
+    await typeInto(box, 'Clicked away');
+    // A mousedown on the button moves focus out of the editor: its blur saves the waiting text.
+    await inAct(() => {
+      box?.blur();
+    });
+    expect(server().of('draft.save')).toMatchObject([
+      { data: { text: docOfText('Clicked away') } },
+    ]);
+    await inAct(() => button('Send')?.click());
+
+    expect(server().of('comment.create')).toMatchObject([{ body: docOfText('Clicked away') }]);
+    expect(server().drafts).toHaveLength(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(server().of('draft.save')).toHaveLength(1);
+    expect(server().drafts).toHaveLength(0);
+  });
+
   it('sends with the Send button too', async () => {
     await mount();
     await typeInto(field('Comment'), 'Clicked');
@@ -269,6 +292,84 @@ describe('a refused comment (E1, E15, E17, E21)', () => {
       await Promise.resolve();
     });
     expect(writeText).toHaveBeenCalledWith('First');
+  });
+});
+
+describe('a refusal that arrives after a reload (SPEC-013 §3.1 item 2; PLAN-013 S5 review)', () => {
+  // The shell hands such a rejection to the store's actions (`ShellRoute`): no dispatch promise
+  // is waiting for it, because the page that sent the comment is gone.
+  const message = 'ENG-42 is archived. Restore it to edit it.';
+  const queued = (op: string, text: string) => ({
+    op,
+    input: { id: uuidOf(900), issue: ISSUE_A, body: docOfText(text) },
+    message,
+  });
+  const actions = () => commentActionsFor(server().asStore());
+
+  it('puts the text of a comment into the issue draft when the draft is empty', async () => {
+    await mount();
+    expect(actions().reportQueuedRejection(queued('comment.create', 'Sent offline'))).toBe(true);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(server().of('draft.save')).toMatchObject([
+      { kind: 'comment', issueId: ISSUE_A, data: { text: docOfText('Sent offline') } },
+    ]);
+    expect(field('Comment')?.value).toBe('Sent offline');
+    expect(toasts()).toContain(message);
+  });
+
+  it('offers Copy text when the draft holds something else, and leaves the draft alone', async () => {
+    await mount();
+    await typeInto(field('Comment'), 'Newer text');
+    expect(actions().reportQueuedRejection(queued('comment.create', 'Sent offline'))).toBe(true);
+    expect(server().of('draft.save')).toEqual([]);
+    expect(field('Comment')?.value).toBe('Newer text');
+    const toast = overlayManager.getSnapshot().visibleToasts.find((t) => t.message === message);
+    expect(toast?.action?.label).toBe('Copy text');
+    await act(async () => {
+      toast?.action?.onAction();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith('Sent offline');
+  });
+
+  it('treats a refused reply like a comment: its text goes to the issue draft', async () => {
+    await mount();
+    const reply = {
+      ...queued('comment.create', 'A reply'),
+      input: { ...queued('comment.create', 'A reply').input, parent: THREAD },
+    };
+    expect(actions().reportQueuedRejection(reply)).toBe(true);
+    expect(server().of('draft.save')).toMatchObject([{ data: { text: docOfText('A reply') } }]);
+  });
+
+  it('offers Copy text for a refused edit', async () => {
+    await mount();
+    const edit = {
+      op: 'comment.update',
+      input: { comment: MINE, baseVersion: 3, body: docOfText('Edited offline') },
+      message,
+    };
+    expect(actions().reportQueuedRejection(edit)).toBe(true);
+    const toast = overlayManager.getSnapshot().visibleToasts.find((t) => t.message === message);
+    expect(toast?.action?.label).toBe('Copy text');
+    await act(async () => {
+      toast?.action?.onAction();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith('Edited offline');
+  });
+
+  it('leaves every other refusal to the shell', async () => {
+    await mount();
+    expect(
+      actions().reportQueuedRejection({ op: 'comment.resolve', input: { comment: MINE }, message }),
+    ).toBe(false);
+    expect(
+      actions().reportQueuedRejection({ op: 'comment.create', input: { issue: ISSUE_A }, message }),
+    ).toBe(false);
+    expect(toasts()).not.toContain(message);
   });
 });
 
@@ -382,6 +483,19 @@ describe('reply (AC-19, §3.2)', () => {
   });
 });
 
+const CHECKLIST = {
+  type: 'doc',
+  content: [
+    {
+      type: 'taskList',
+      content: [
+        { type: 'taskItem', attrs: { checked: false }, content: [{ type: 'paragraph' }] },
+        { type: 'taskItem', attrs: { checked: false }, content: [{ type: 'paragraph' }] },
+      ],
+    },
+  ],
+};
+
 describe('edit (AC-19, E3, E22)', () => {
   it('edits in place, disables Save while unchanged and saves with Mod+Enter from the version it started from', async () => {
     await mount();
@@ -413,7 +527,79 @@ describe('edit (AC-19, E3, E22)', () => {
 
     expect(field('Edit comment')?.value).toBe('My text');
     expect(card(MINE)?.querySelector('[role="alert"]')?.textContent).toBe(message);
-    expect(toasts()).toContain(message);
+    // Once: the card shows it, so there is no toast as well.
+    expect(toasts()).not.toContain(message);
+  });
+
+  it('offers Copy text in a toast when the card is gone by the time the edit is refused', async () => {
+    await mount();
+    const message = 'ENG-42 is archived. Restore it to edit it.';
+    server().refusals.set('comment.update', message);
+    await focusCard(MINE);
+    await invoke('comment:edit');
+    await typeInto(field('Edit comment'), 'Text I must not lose');
+    server().holding = true;
+    await modEnter(field('Edit comment') as Element);
+    // The thread is resolved while the edit is on its way: the card collapses.
+    await focusCard(MINE);
+    await invoke('comment:resolve');
+    expect(card(MINE)).toBeNull();
+    await act(async () => {
+      server().release();
+      await Promise.resolve();
+    });
+
+    expect(field('Edit comment')).toBeNull();
+    const toast = overlayManager.getSnapshot().visibleToasts.find((t) => t.message === message);
+    expect(toast?.action?.label).toBe('Copy text');
+    await act(async () => {
+      toast?.action?.onAction();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledWith('Text I must not lose');
+  });
+
+  it('returns focus to the comment when the edit is saved or cancelled', async () => {
+    await mount();
+    await focusCard(MINE);
+    await invoke('comment:edit');
+    await typeInto(field('Edit comment'), 'Changed');
+    await modEnter(field('Edit comment') as Element);
+    expect(document.activeElement).toBe(card(MINE));
+
+    await invoke('comment:edit');
+    expect(field('Edit comment')).not.toBeNull();
+    await inAct(() => button('Cancel', card(MINE) as HTMLElement)?.click());
+    expect(field('Edit comment')).toBeNull();
+    expect(document.activeElement).toBe(card(MINE));
+  });
+
+  it("leaves somebody else's checklist unticked (§4.4: the author's rule)", async () => {
+    await mount({ comments: [commentRow(THREAD, { userId: IRIS, body: CHECKLIST })] });
+    expect(
+      host().querySelector<HTMLInputElement>('input[aria-label="Checklist item 0.0"]')?.disabled,
+    ).toBe(true);
+  });
+
+  it('saves a checklist toggle of the author as an edit from the version it showed', async () => {
+    const list = CHECKLIST;
+    await mount({ comments: [commentRow(MINE, { userId: ME, body: list, version: 3 })] });
+    const second = host().querySelector<HTMLInputElement>('input[aria-label="Checklist item 0.1"]');
+    await inAct(() => second?.click());
+    expect(server().of('comment.update')).toMatchObject([
+      {
+        comment: MINE,
+        baseVersion: 3,
+        body: {
+          content: [
+            {
+              type: 'taskList',
+              content: [{ attrs: { checked: false } }, { attrs: { checked: true } }],
+            },
+          ],
+        },
+      },
+    ]);
   });
 
   it('cancels an unchanged edit with Esc, and asks before throwing a change away', async () => {

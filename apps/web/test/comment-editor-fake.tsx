@@ -55,8 +55,35 @@ export function CommentEditor({
   );
 }
 
-export function CommentDoc({ doc }: DocViewProps) {
-  return <div data-testid="doc">{textOf(doc)}</div>;
+/** The checklist items of a document with their paths, as `DocView` reports them to `onToggle`. */
+function taskItems(doc: DocNodeJSON): { path: number[]; checked: boolean }[] {
+  const found: { path: number[]; checked: boolean }[] = [];
+  const walk = (node: DocNodeJSON, path: number[]) => {
+    if (node.type === 'taskItem') found.push({ path, checked: node.attrs?.['checked'] === true });
+    (node.content ?? []).forEach((child, index) => {
+      walk(child, [...path, index]);
+    });
+  };
+  walk(doc, []);
+  return found;
+}
+
+export function CommentDoc({ doc, onToggle }: DocViewProps) {
+  return (
+    <div data-testid="doc">
+      {textOf(doc)}
+      {taskItems(doc).map(({ path, checked }) => (
+        <input
+          key={path.join('.')}
+          type="checkbox"
+          aria-label={`Checklist item ${path.join('.')}`}
+          checked={checked}
+          disabled={onToggle === undefined}
+          onChange={(event) => onToggle?.(path, event.currentTarget.checked)}
+        />
+      ))}
+    </div>
+  );
 }
 
 export const EMOJI: readonly PickerEmoji[] = [

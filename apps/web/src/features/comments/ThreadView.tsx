@@ -9,7 +9,14 @@ import { commentMenu } from './CommentMenu.js';
 import { ComposerBox } from './ComposerBox.js';
 import { loadEmojiLazy, useEmojiNames } from './editor-host.js';
 import { useCommentsEnv } from './env.js';
-import { firstLineOf, hasContent, reactionChips, sameDoc, withChecked } from './model.js';
+import {
+  commentDomId,
+  firstLineOf,
+  hasContent,
+  reactionChips,
+  sameDoc,
+  withChecked,
+} from './model.js';
 import type { CommentRow, ReactionRow, Thread } from './model.js';
 import { composerAvailable } from './new-issue.js';
 import { ResolvedThreadLine } from './ResolvedThreadLine.js';
@@ -98,13 +105,34 @@ function CommentItem({
   // A command acts on this card's own state (SPEC-013 §7: the `comment` context). `n` counts
   // requests, so each is taken once. State adjusted while rendering, not in an effect.
   const request = env.request;
-  const [takenN, setTakenN] = useState(0);
+  // A card that mounts later (the thread was collapsed, then opened) must not replay a request
+  // from before it existed.
+  const [takenN, setTakenN] = useState(() => request?.n ?? 0);
   if (request?.id === comment.id && request.n > takenN) {
     setTakenN(request.n);
     if (request.kind === 'edit') startEdit();
     else if (request.kind === 'delete') setConfirmDelete(true);
     else if (request.kind === 'react') setPickerOpen(true);
   }
+
+  // A refusal that comes after the card is gone, or after a new edit began, can't reopen it.
+  const mounted = useRef(true);
+  const editingNow = useRef(false);
+  const isEditing = editing !== null;
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    editingNow.current = isEditing;
+    // Closing the editor (Save or Cancel) puts focus back on the comment, not on the page.
+    if (wasEditing.current && !isEditing)
+      document.getElementById(commentDomId(comment.id))?.focus();
+    wasEditing.current = isEditing;
+  }, [isEditing, comment.id]);
 
   const save = () => {
     if (editing === null) return;
@@ -115,8 +143,11 @@ function CommentItem({
       baseVersion: base,
       doc,
       // E3: the text stays in the editor, with the message.
+      // Answers whether the card took it; if not, the toast carries Copy text.
       onRejected: (error) => {
+        if (!mounted.current || editingNow.current) return false;
         setEditing({ doc, initial, base, error });
+        return true;
       },
     });
   };
