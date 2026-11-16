@@ -17,6 +17,8 @@
  *
  * PLAN-011 S4: issues ENG-1 to ENG-3; the issue examples read them and `issue.update` edits ENG-1.
  *
+ * PLAN-015 S2: ENG-4, deleted, with a comment and a reaction: `issue.purge`'s example purges it.
+ *
  * PLAN-013 S3: on ENG-1, a thread of the actor's with a reply by Iris (`SEED_COMMENTS.thread`), a
  * thread of Iris's the actor resolved, and a comment of the actor's with no replies. The comment
  * examples run in registry order: edit and resolve the first thread, reopen the second, delete the
@@ -149,6 +151,48 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
           })
         ).id,
       );
+    }
+    // PLAN-015 S2: ENG-4, deleted by the actor, with a comment and Iris's reaction on it, which
+    // `issue.purge`'s example purges with its content rows.
+    {
+      const { number, sortOrder } = await newIssuePosition(tx, teams.eng);
+      const eng4 = await repo.insert('Issue', {
+        id: randomUUID(),
+        teamId: teams.eng,
+        number,
+        title: 'Remove the old billing page',
+        statusId: statusNamed('Backlog'),
+        sortOrder,
+        creatorId: users.me,
+        deletedAt: new Date(),
+        deletedById: users.me,
+      });
+      const body = markdownToDoc('Superseded by the new page.');
+      const commentId = randomUUID();
+      await repo.insert('Comment', {
+        id: commentId,
+        issueId: eng4.id,
+        teamId: teams.eng,
+        parentCommentId: null,
+        userId: users.me,
+        actorKind: 'user',
+        body,
+        version: 1,
+        resolvedAt: null,
+        resolvedById: null,
+      });
+      await client.query('INSERT INTO comment_search_text (comment_id, text) VALUES ($1, $2)', [
+        commentId,
+        docToText(body),
+      ]);
+      await repo.insert('Reaction', {
+        id: reactionId(commentId, users.iris, '👍'),
+        issueId: eng4.id,
+        teamId: teams.eng,
+        commentId,
+        userId: users.iris,
+        emoji: '👍',
+      });
     }
     // PLAN-013 S3: comments on ENG-1. The repo gives them one `createdAt`, so `comment.list`
     // orders them by id, their creation order.

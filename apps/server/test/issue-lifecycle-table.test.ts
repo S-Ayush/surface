@@ -13,6 +13,7 @@ import {
   ISSUE_LIFECYCLE_RULES,
   ISSUE_LIFECYCLES,
   purgeAfter,
+  systemActor,
   type Actor,
   type IssueLifecycle,
   type LifecycleOutcome,
@@ -36,6 +37,7 @@ import { setReaction } from '../src/handlers/reactions/core.js';
 import { deleteLabel, type LabelAccess } from '../src/handlers/labels/core.js';
 import type { Repo } from '../src/sync/repo.js';
 import { deleteIssue, restoreIssue } from '../src/handlers/issues/lifecycle-core.js';
+import { purgeIssue } from '../src/issues/purge.js';
 import { memoryComments } from './support/memory-comments.js';
 import { ADA_ID, memoryIssues, NOW, type MemoryIssues } from './support/memory-issues.js';
 import { recordingDb, scriptedDb, type Statement } from './support/scripted-db.js';
@@ -65,10 +67,20 @@ async function issueIn(state: IssueLifecycle): Promise<{ m: MemoryIssues; issue:
     updatedAt: EARLIER,
   };
   m.issues.set(issue.id, issue);
-  for (const list of [m.writes, m.events, m.calls, m.lockModes, m.history]) list.length = 0;
+  for (const list of [m.writes, m.events, m.calls, m.lockModes, m.history, m.audits]) {
+    list.length = 0;
+  }
   // Every write lands in `calls` too, so a test can see that the lock came first.
   const repo = m.repo as unknown as Record<string, (...args: unknown[]) => unknown>;
-  for (const name of ['insert', 'update', 'archive', 'unarchive', 'updateWhere', 'purge']) {
+  for (const name of [
+    'insert',
+    'update',
+    'archive',
+    'unarchive',
+    'updateWhere',
+    'purge',
+    'deleteWhere',
+  ]) {
     const original = repo[name];
     if (typeof original !== 'function') continue;
     repo[name] = (...args: unknown[]) => {
@@ -197,6 +209,10 @@ const CASES: Readonly<Record<string, Case>> = {
     }),
   'issue.delete': (m, issue, now) => deleteIssue(m.lifecycle({ now }), issue.id),
   'issue.restore': (m, issue, now) => restoreIssue(m.lifecycle({ now }), issue.id),
+  // PLAN-015 S2. The purge steps are `purge-steps.test.ts`'s; here, the issue's own rule.
+  'issue.purge': (m, issue, now) => purgeIssue(m.purge({ now }), issue.id),
+  // The job runs `issue.purge` for each issue it selects, as the system actor (§6.3).
+  'trash-purge': (m, issue, now) => purgeIssue(m.purge({ actor: systemActor(), now }), issue.id),
   'comment.create': commentCase((ctx, t) =>
     createComment(ctx, { id: randomUUID(), issueId: t.issueId, body: commentBody }),
   ),
@@ -262,10 +278,8 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
       'attachment.createLink': 'PLAN-014 S4a',
       'attachment.update': 'PLAN-014 S4a',
       'attachment.delete': 'PLAN-014 S4a',
-      'issue.purge': 'PLAN-015 S2',
       'attachment.setPreview': 'PLAN-014 S4b',
       'files-cleanup': 'PLAN-014 S4a',
-      'trash-purge': 'PLAN-015 S2',
       'issue.autoArchive': 'PLAN-015 S3',
       'issue.autoClose': 'PLAN-015 S3',
     });
@@ -303,6 +317,7 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
           expect(m.writes).toEqual([]);
           expect(m.events).toEqual([]);
           expect(m.history).toEqual([]);
+          expect(m.audits).toEqual([]);
         }
       },
     );
@@ -336,6 +351,7 @@ const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
   'issue.update': { issue: 'ENG-1', title: 'Fix the login' },
   'issue.delete': { issue: 'ENG-1' },
   'issue.restore': { issue: 'ENG-1' },
+  'issue.purge': { issue: 'ENG-1' },
   'comment.create': { issue: 'ENG-1', body: 'Looks good' },
   'comment.update': { comment: COMMENT_ID, baseVersion: 1, body: 'Looks good' },
   'comment.delete': { comment: COMMENT_ID },
@@ -445,6 +461,7 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
     },
     now: () => NOW,
     emit: () => undefined,
+    audit: () => undefined,
     publicUrl: 'https://surface.test',
   } as unknown as HandlerContext;
   const input = found.op.input.parse(HANDLER_INPUTS[name]);

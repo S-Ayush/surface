@@ -20,6 +20,9 @@ import {
   draftDiscard,
   draftSave,
   issueCreate,
+  issueDelete,
+  issuePurge,
+  issueRestore,
   issueUpdate,
   reactionSet,
   labelDelete,
@@ -158,6 +161,7 @@ export type Step =
   | { readonly t: 'statusDelete'; readonly tab: number; readonly status: WorkflowPick }
   | { readonly t: 'setDefaultStatus'; readonly tab: number; readonly status: WorkflowPick }
   | { readonly t: 'labelDelete'; readonly tab: number; readonly label: LabelPick }
+  | LifecycleStep
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -751,6 +755,11 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       }
       return;
     }
+    case 'issueDelete':
+    case 'issueRestore':
+    case 'issuePurge':
+      applyLifecycle(world, step);
+      return;
     case 'wait':
       await world.run(step.ms);
       return;
@@ -800,4 +809,104 @@ export function reopenClosedUsers(world: World): void {
   for (const user of world.users) {
     if (!world.live.some((t) => t.user === user)) world.open(user);
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The issue lifecycle (PLAN-015 S2, SPEC-015 AC-13): delete, restore and purge
+
+/**
+ * `issue.delete`, `issue.restore` and `issue.purge` of an issue an earlier step created (wrapped
+ * around them). Delete names one the tab shows, as a user deletes what is on screen; restore and
+ * purge name any, since the replica holds no deleted issue (the archive page reads the server).
+ * A purge comes from a tab of the Admin (user 0) when `admin`, else from any tab: a Member's is
+ * FORBIDDEN.
+ */
+export type LifecycleStep =
+  | { readonly t: 'issueDelete'; readonly tab: number; readonly issue: number }
+  | { readonly t: 'issueRestore'; readonly tab: number; readonly issue: number }
+  | {
+      readonly t: 'issuePurge';
+      readonly tab: number;
+      readonly issue: number;
+      readonly admin: boolean;
+    };
+
+/**
+ * Lifecycle interleavings: issues created, commented on and reacted to, deleted, restored and
+ * purged from every tab, with the faults a tab that keeps its replica survives (as in
+ * `commentCase`: content is not bootstrapped until PLAN-011 S5b, so no compaction, crash or late
+ * user).
+ */
+export function lifecycleCase(): fc.Arbitrary<Case> {
+  const kept = new Set(['wait', 'faults', 'disconnect', 'offline', 'restart', 'reload']);
+  const step = fc.oneof(
+    {
+      weight: 3,
+      arbitrary: fc.record({
+        t: fc.constant('issueCreate'),
+        tab,
+        title,
+        status: fc.constant('default'),
+        labels: fc.constant([]),
+      }),
+    },
+    {
+      weight: 4,
+      arbitrary: fc.record({
+        t: fc.constant('commentCreate'),
+        tab,
+        issue: index,
+        parent: fc.option(index, { nil: undefined, freq: 3 }),
+        text: commentText,
+      }),
+    },
+    {
+      weight: 2,
+      arbitrary: fc.record({
+        t: fc.constant('reactionSet'),
+        tab,
+        on: fc.constantFrom('comment', 'issue'),
+        target: index,
+        emoji: fc.nat(REACTION_EMOJI.length - 1),
+        reacted: fc.constant(true),
+      }),
+    },
+    { weight: 4, arbitrary: fc.record({ t: fc.constant('issueDelete'), tab, issue: index }) },
+    { weight: 3, arbitrary: fc.record({ t: fc.constant('issueRestore'), tab, issue: index }) },
+    {
+      weight: 3,
+      arbitrary: fc.record({
+        t: fc.constant('issuePurge'),
+        tab,
+        issue: index,
+        admin: fc.oneof(
+          { weight: 4, arbitrary: fc.constant(true) },
+          { weight: 1, arbitrary: fc.constant(false) },
+        ),
+      }),
+    },
+    ...faultSteps.map((arbitrary) => ({
+      weight: 1,
+      arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
+    })),
+  );
+  return caseOf(step).map((c) => ({ ...c, lateUsers: 0, steps: [...COMMENT_ISSUES, ...c.steps] }));
+}
+
+function applyLifecycle(world: World, step: LifecycleStep): void {
+  const ready = readyTabs(world.live);
+  const admin = world.users[0];
+  const from =
+    step.t === 'issuePurge' && step.admin ? ready.filter((t) => t.user === admin) : ready;
+  const target = pick(from, step.tab);
+  if (target === undefined) return;
+  if (step.t === 'issueDelete') {
+    const shown = world.issueIds.filter((id) => target.store.pool.get(Issue, id) !== undefined);
+    const issue = pick(shown, step.issue);
+    if (issue !== undefined) world.dispatch(target, issueDelete, { issue });
+    return;
+  }
+  const issue = pick(world.issueIds, step.issue);
+  if (issue === undefined) return;
+  world.dispatch(target, step.t === 'issueRestore' ? issueRestore : issuePurge, { issue });
 }

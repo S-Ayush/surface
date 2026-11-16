@@ -7,6 +7,7 @@ import { expect } from 'vitest';
 import {
   isCommentServer,
   isIssueServer,
+  isLifecycleServer,
   isWorkflowServer,
   type WorkflowState,
   type CommentState,
@@ -475,6 +476,110 @@ export const workflowConvergence: Property = {
     for (const tab of [...streamed, ...fresh]) {
       expect(workflowView(tab, teamId), tab.name).toEqual(expected);
       checkNoDanglingRefs(tab);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// The issue lifecycle (PLAN-015 S2, SPEC-015 AC-13, §5.1)
+
+/** Comments or reactions, by id: each names its issue. */
+type ContentRows = Readonly<Record<string, { readonly issueId: unknown }>>;
+
+/** The ids of the issues a dispatched `op` named, whatever its outcome. */
+function namedBy(outcome: Outcome, op: string): Set<string> {
+  const ids = new Set<string>();
+  for (const d of outcome.world.dispatched) {
+    if (d.op !== op) continue;
+    const issue: unknown =
+      typeof d.input === 'object' && d.input !== null ? Reflect.get(d.input, 'issue') : undefined;
+    if (typeof issue === 'string') ids.add(issue);
+  }
+  return ids;
+}
+
+/**
+ * Delete, restore and purge (SPEC-015 AC-13, §5.1): property 1 for the debug items, then
+ * - every tab holds exactly the server's **live** issues: no archived, deleted or purged one;
+ * - every tab holds content (comments, reactions) of live issues only, each as stored; for an
+ *   issue nobody deleted, exactly what is stored (a restored issue's content is read when it is
+ *   opened, SPEC-011 §5.3, so a tab may lack it);
+ * - nothing stored names a purged issue, a confirmed purge left no row, and the numbers left stay
+ *   rising in commit order;
+ * - every user's freshly bootstrapped tab holds the same issues as the streamed ones.
+ */
+export const lifecycleConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    convergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isLifecycleServer(server))
+      throw new Error('The lifecycle property needs the real server.');
+    const lifecycles = await server.issueLifecycles();
+    const issues = await server.issues();
+    const live = Object.fromEntries(
+      Object.entries(issues).filter(([id]) => {
+        const state = lifecycles[id];
+        return state !== undefined && state.archivedAt === null && state.deletedAt === null;
+      }),
+    );
+    const comments = await server.comments();
+    const reactions = await server.reactions();
+    const deleted = namedBy(outcome, 'issue.delete');
+    for (const tab of world.live) {
+      expect(world.issueView(tab), tab.name).toEqual(asSeenBy(live, tab.user.id));
+      const content: [string, ContentRows, ContentRows][] = [
+        ['comment', world.commentView(tab), comments],
+        ['reaction', world.reactionView(tab), reactions],
+      ];
+      for (const [kind, held, stored] of content) {
+        for (const [id, row] of Object.entries(held)) {
+          expect(
+            live[String(row.issueId)],
+            `${tab.name} holds ${kind} ${id} of a gone issue`,
+          ).toBeDefined();
+          expect(row, `${tab.name} ${kind} ${id}`).toEqual(stored[id]);
+        }
+        const kept = (rows: ContentRows) =>
+          Object.keys(rows)
+            .filter((id) => !deleted.has(String(rows[id]?.issueId)))
+            .sort();
+        expect(kept(held), `${tab.name} ${kind}s of issues nobody deleted`).toEqual(kept(stored));
+      }
+    }
+    const stored: [string, ContentRows][] = [
+      ['comment', comments],
+      ['reaction', reactions],
+    ];
+    for (const [kind, rows] of stored) {
+      for (const [id, row] of Object.entries(rows)) {
+        expect(issues[String(row.issueId)], `${kind} ${id} outlived its issue`).toBeDefined();
+      }
+    }
+    for (const d of world.dispatched.filter((x) => x.op === 'issue.purge')) {
+      const issue: unknown =
+        typeof d.input === 'object' && d.input !== null ? Reflect.get(d.input, 'issue') : undefined;
+      if (d.outcome?.status === 'confirmed' && typeof issue === 'string') {
+        expect(issues[issue], `${issue} was purged but is stored`).toBeUndefined();
+      }
+    }
+    const inCommitOrder = [...(await server.issueRows())].sort(
+      (a, b) => (a.insertedAt ?? 0) - (b.insertedAt ?? 0),
+    );
+    inCommitOrder.forEach((issue, n) => {
+      const earlier = inCommitOrder[n - 1];
+      if (earlier !== undefined) expect(issue.number, issue.id).toBeGreaterThan(earlier.number);
+    });
+    const streamed = world.live;
+    const fresh = world.users.map((user) => world.open(user, { fresh: true }));
+    await world.quiesce();
+    expect(world.problems).toEqual([]);
+    for (const tab of fresh) {
+      expect(world.issueView(tab), tab.name).toEqual(asSeenBy(live, tab.user.id));
+      for (const other of streamed.filter((t) => t.user === tab.user)) {
+        expect(world.issueView(other), other.name).toEqual(world.issueView(tab));
+      }
     }
   },
 };

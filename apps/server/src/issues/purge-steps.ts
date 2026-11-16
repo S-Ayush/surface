@@ -1,9 +1,14 @@
 /**
  * The purge-step registry (SPEC-015 §4.5): what purging an issue deletes besides the issue row,
- * in order. PLAN-015 S2 owns the registry and the purge that runs it; PLAN-013 S3 created this
- * file with the type and registered the comment steps, because it merged first.
+ * in order. PLAN-015 S2 owns the registry and the purge that runs it (`issues/purge.ts`);
+ * PLAN-013 S3 created this file with the type and registered the comment steps, because it
+ * merged first.
  *
- * Content rows (Comment, Reaction: parent `Issue`) are deleted with
+ * Every table with a foreign key to `issues` needs a step here, in the change that adds the table
+ * (`purge-steps.test.ts` reads the Drizzle schema and fails otherwise). The one exception is the
+ * server-only `issue_search_text`, whose key cascades (D19).
+ *
+ * Content rows (IssueContent, IssueHistory, Comment, Reaction: parent `Issue`) are deleted with
  * `repo.deleteWhere(…, { log: LOG_CONTENT_DELETES })` (ADR-0022): the purge logs the issue's own
  * `D`, which drops its content on every client, so the content rows log nothing. The repo refuses
  * an unlogged delete on any field but the parent's (`issueId`), and `flush` refuses one whose
@@ -61,5 +66,33 @@ export const COMMENT_PURGE_STEPS: readonly PurgeStep[] = [
   },
 ];
 
-/** Every registered step, in the order the purge runs them (SPEC-015 §4.5). */
-export const PURGE_STEPS: readonly PurgeStep[] = [...COMMENT_PURGE_STEPS];
+/**
+ * SPEC-011's content children (PLAN-015 S2): the activity, then the description. Nothing else
+ * references either, so their order is free; §4.5 lists them last, after the attachments.
+ */
+export const ISSUE_CONTENT_PURGE_STEPS: readonly PurgeStep[] = [
+  {
+    model: 'IssueHistory',
+    step: async (_tx, repo, issueId) => {
+      await repo.deleteWhere('IssueHistory', 'issueId', [issueId], { log: LOG_CONTENT_DELETES });
+    },
+  },
+  {
+    model: 'IssueContent',
+    step: async (_tx, repo, issueId) => {
+      await repo.deleteWhere('IssueContent', 'issueId', [issueId], { log: LOG_CONTENT_DELETES });
+    },
+  },
+];
+
+/**
+ * Every registered step, in the order the purge runs them (SPEC-015 §4.5): reactions and comments,
+ * then attachments and the issue's `files` rows, then history and content. A step runs before the
+ * step of any table it references (`purge-steps.test.ts`).
+ */
+export const PURGE_STEPS: readonly PurgeStep[] = [
+  ...COMMENT_PURGE_STEPS,
+  // PLAN-014 S4a: the Attachment step (logged, one `D` each) and the issue's `files` rows
+  // (`deleteFiles`, keys into `blob_release`) go here, in the change that adds them.
+  ...ISSUE_CONTENT_PURGE_STEPS,
+];

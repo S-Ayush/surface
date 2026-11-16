@@ -176,6 +176,11 @@ export interface TestServer {
   /** Every team's default status, and every `workflow_statuses` and `labels` row (PLAN-010 S5). */
   workflow(): Promise<WorkflowRows>;
   /**
+   * Every issue's lifecycle, by id (PLAN-015 S2): `archivedAt` and `deletedAt` as ISO strings or
+   * null, so the lifecycle property tells live issues from archived and deleted ones.
+   */
+  issueLifecycles(): Promise<IssueLifecycleRow[]>;
+  /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
    */
@@ -216,6 +221,19 @@ const WorkflowLabelRow = z.object({
   id: z.string(),
   team_id: z.string().nullable(),
   name: z.string(),
+});
+
+/** An issue's lifecycle fields (PLAN-015 S2). */
+export interface IssueLifecycleRow {
+  readonly id: string;
+  readonly archivedAt: string | null;
+  readonly deletedAt: string | null;
+}
+
+const IssueLifecycleDbRow = z.object({
+  id: z.string(),
+  archived_at: z.string().nullable(),
+  deleted_at: z.string().nullable(),
 });
 
 const IssueDbRow = z.object({
@@ -458,6 +476,18 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             createdAt: r.created_at,
             syncGroups: r.sync_groups,
           };
+        });
+      },
+      issueLifecycles: async () => {
+        const { rows } = await db.query(
+          `SELECT id,
+                  to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS archived_at,
+                  to_char(deleted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS deleted_at
+             FROM issues ORDER BY id`,
+        );
+        return rows.map((row) => {
+          const issue = IssueLifecycleDbRow.parse(row);
+          return { id: issue.id, archivedAt: issue.archived_at, deletedAt: issue.deleted_at };
         });
       },
       events: async (type) => {

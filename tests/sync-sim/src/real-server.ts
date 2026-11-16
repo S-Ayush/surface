@@ -45,7 +45,9 @@ import type {
   ReactionState,
   StoredDraft,
   IssueFixtures,
+  IssueLifecycleState,
   IssueRecord,
+  LifecycleServer,
   IssueState,
   ItemState,
   WorkflowServer,
@@ -154,7 +156,7 @@ interface RealSocket {
   resynced: boolean;
 }
 
-export class RealServer implements CommentServer, WorkflowServer {
+export class RealServer implements CommentServer, WorkflowServer, LifecycleServer {
   readonly users: readonly string[];
   readonly models = REAL_MODELS;
   /** What went wrong on the server side; each is a failure of the case. */
@@ -471,6 +473,18 @@ export class RealServer implements CommentServer, WorkflowServer {
 
   workflow(): Promise<WorkflowState> {
     return this.#serially('read the workflow', () => this.#entry.workflow());
+  }
+
+  /** PLAN-015 S2: each stored issue's `archivedAt` and `deletedAt`. */
+  issueLifecycles(): Promise<Record<string, IssueLifecycleState>> {
+    return this.#serially('read the issue lifecycles', async () =>
+      Object.fromEntries(
+        (await this.#entry.issueLifecycles()).map((row): [string, IssueLifecycleState] => [
+          row.id,
+          { archivedAt: row.archivedAt, deletedAt: row.deletedAt },
+        ]),
+      ),
+    );
   }
 
   compactLog(): void {

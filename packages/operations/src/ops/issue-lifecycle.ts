@@ -1,7 +1,7 @@
 /**
- * Issue lifecycle operations (SPEC-015 §6.1; PLAN-015 S1): delete and restore. `issue.purge`
- * (S2), `issue.listDeleted` (S4) and the system-only `issue.autoArchive`/`issue.autoClose` (S3)
- * join this file later. Anyone who can see an issue may delete and restore it (permissions §3.3,
+ * Issue lifecycle operations (SPEC-015 §6.1; PLAN-015 S1): delete and restore, and purge (S2).
+ * `issue.listDeleted` (S4) and the system-only `issue.autoArchive`/`issue.autoClose` (S3) join
+ * this file later. Anyone who can see an issue may delete and restore it (permissions §3.3,
  * D7), so the permission is `p.any()`: a private team's issue is `NOT_FOUND` before any
  * permission check. Delete is destructive, so an API key needs `allowDestructive`.
  *
@@ -115,5 +115,37 @@ export const issueRestore = defineOperation({
   },
   // Nothing to predict (§6.2, D17): the replica holds no archived or deleted issue, so there is
   // no row to patch; the row returns with the server's `V` or `U` when the team is subscribed.
+  optimistic: () => undefined,
+});
+
+export const issuePurge = defineOperation({
+  name: 'issue.purge',
+  kind: 'mutation',
+  domain: 'issue',
+  summary: 'Permanently delete a deleted issue',
+  description:
+    'Deletes a recently deleted issue for good, with its description, activity, comments, reactions and attachments. It cannot be undone. Only Admins can do this; the issue must be deleted first. Its number is never reused. Name the issue by identifier, like ENG-42, or id.',
+  keywords: ['permanently delete issue', 'purge issue', 'empty recently deleted', 'erase ENG-42'],
+  input: z.object({ issue: IssueRef }),
+  output: z.object({ purged: z.literal(true) }),
+  // SPEC-015 §5.3: Admin only. A private team's issue is NOT_FOUND for an Admin outside it before
+  // this runs (step 7), never FORBIDDEN (E12).
+  permission: (p) => p.admin(),
+  destructive: true,
+  // ENG-4 is the seed's deleted issue.
+  examples: [{ issue: 'ENG-4' }],
+  ui: {
+    // D14: a plain confirm dialog (PLAN-015 S4), no shortcut.
+    title: 'Permanently delete…',
+    icon: 'trash',
+    contexts: ['issue'],
+    shortcut: null,
+    // Only on a deleted issue (§6.1). The replica holds live issues only, so an issue it holds is
+    // never one; the deleted issue's page is fed by the server and S4 refines this from its row.
+    available: (target, store) =>
+      heldIssues(target, store).every((issue) => !issue || lifecycleOf(issue) === 'deleted'),
+  },
+  // Nothing to predict (§6.2): the replica holds no deleted issue. Once the server's batch arrives
+  // the Issue stays absent, so any content the client held goes too (SPEC-011 §5.3).
   optimistic: () => undefined,
 });

@@ -305,7 +305,6 @@ export const ISSUE_LIFECYCLE_RULES: Readonly<Record<string, LifecycleRule>> = {
     archived: 'conflict',
     deleted: 'toPurged',
     spec: 'SPEC-015',
-    pending: 'PLAN-015 S2',
   },
   // Through `removeLabelFromIssues` (`repo.updateWhere`, `touchUpdatedAt: false`), which locks
   // the issues in ascending id after the scope and label rows (PLAN-010 S5).
@@ -317,7 +316,18 @@ export const ISSUE_LIFECYCLE_RULES: Readonly<Record<string, LifecycleRule>> = {
     pending: 'PLAN-014 S4b',
   },
   'files-cleanup': { ...CASCADE, kind: 'job', spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
-  'trash-purge': { ...CASCADE, kind: 'job', spec: 'SPEC-015', pending: 'PLAN-015 S2' },
+  // The job runs `issue.purge` as the system actor for each issue it selects (SPEC-015 §6.3), so
+  // its row is that operation's: it selects only deleted issues past `purgeAfter`, and one
+  // restored meanwhile is a CONFLICT the job counts as skipped (D20).
+  'trash-purge': {
+    kind: 'job',
+    mode: 'lifecycle',
+    action: 'purge',
+    live: 'conflict',
+    archived: 'conflict',
+    deleted: 'toPurged',
+    spec: 'SPEC-015',
+  },
   'issue.autoArchive': { ...AUTO },
   'issue.autoClose': { ...AUTO },
 };

@@ -49,6 +49,7 @@ import issueGet from './issues/get.js';
 import issueUpdate from './issues/update.js';
 import issueDelete from './issues/delete.js';
 import issueRestore from './issues/restore.js';
+import issuePurge from './issues/purge.js';
 import {
   countHandler as issueCount,
   groupByHandler as issueGroupBy,
@@ -122,6 +123,7 @@ export const HANDLERS: readonly Handler[] = [
   issueUpdate,
   issueDelete,
   issueRestore,
+  issuePurge,
   draftSave,
   draftDiscard,
   commentList,

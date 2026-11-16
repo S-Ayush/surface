@@ -6,6 +6,7 @@
 // "Delete issue" and "Restore issue" (SPEC-015 §6.1) open the app commands `issue:delete` (the
 // confirm dialog, PLAN-012 S6) and `issue:restore` (the restore flow, PLAN-015 S4), the ones
 // `Mod+Backspace` and `#` trigger; until those slices register them, the menu doesn't offer them.
+// "Permanently delete…" (`issue.purge`, PLAN-015 S2) opens `issue:purge`, PLAN-015 S4's dialog.
 import { Team } from '@surface/domain/model';
 import type { SyncStore } from '@surface/sync-client';
 import type { CommandContext, CommandPage, PageItem } from '../../command-menu/model.js';
@@ -40,6 +41,8 @@ export const ISSUE_COMMANDS: Readonly<Record<string, OperationCommand>> = {
   'issue.create': { opens: 'issue:create', refs: targetTeamRefs },
   'issue.delete': { opens: 'issue:delete', refs: targetIssueRefs },
   'issue.restore': { opens: 'issue:restore', refs: targetIssueRefs },
+  // Admin only (the pre-check hides it from Members); the dialog is PLAN-015 S4's.
+  'issue.purge': { opens: 'issue:purge', refs: targetIssueRefs },
 };
 
 // ---- Property commands (SPEC-012 §3.8, PLAN-012 S6) ----

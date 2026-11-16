@@ -185,6 +185,22 @@ export function isWorkflowServer(server: SimServer): server is WorkflowServer {
   return isIssueServer(server) && 'workflow' in server;
 }
 
+/** An issue's lifecycle as stored (PLAN-015 S2): ISO strings or null. */
+export interface IssueLifecycleState {
+  readonly archivedAt: string | null;
+  readonly deletedAt: string | null;
+}
+
+/** A server the lifecycle steps run against (PLAN-015 S2): the real one, with comments. */
+export interface LifecycleServer extends CommentServer {
+  /** Every stored issue's lifecycle, by id. A purged issue has no row, so no entry. */
+  issueLifecycles(): Promise<Record<string, IssueLifecycleState>>;
+}
+
+export function isLifecycleServer(server: SimServer): server is LifecycleServer {
+  return isCommentServer(server) && 'issueLifecycles' in server;
+}
+
 /** The hub's ping interval (sync-protocol §4.2; PLAN-002 S4: every 25 s). */
 export const PING_INTERVAL_MS = 25_000;
 

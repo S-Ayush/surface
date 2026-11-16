@@ -7,15 +7,19 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgBoss } from 'pg-boss';
 import type { Logger } from 'pino';
+import type { Registry } from 'prom-client';
 import type { Pool } from '../db/pool.js';
 import { pruneIdempotency } from '../executor/idempotency.js';
 import { loggableError } from '../executor/log-error.js';
+import type { Executor } from '../executor/execute.js';
 import type { BlobStore } from '../files/blob-store.js';
 import { pgFileDb } from '../files/bytes.js';
 import { createEmailQueue, startEmailWorker } from '../mail/job.js';
 import type { SmtpSettings } from '../mail/smtp.js';
 import { pruneSyncLog, SYNC_LOG_RETENTION_DAYS } from '../sync/repo.js';
+import { registerDailyJob } from './daily-batch.js';
 import { fileJobs } from './files.js';
+import { pgTrashDb, trashPurgeJob, trashPurgeMetrics } from './trash-purge.js';
 
 export const JOB_SCHEMA = 'pgboss';
 
@@ -31,6 +35,8 @@ export const QUEUES = {
   // It reads every key on the volume: on a large one that takes a while. A run still going after
   // two hours is stuck; pg-boss expires it so the exclusive queue takes the next one.
   filesSweep: { name: 'files-sweep', cron: '53 4 * * *', expireInSeconds: 2 * 60 * 60 },
+  /** Purges issues deleted 720 hours ago (SPEC-015 §6.3, D10): daily, with catch-up. */
+  trashPurge: { name: 'trash-purge', cron: '53 3 * * *' },
 } as const;
 
 export interface Jobs {
@@ -47,6 +53,15 @@ export interface JobOptions {
    * replica mounts the same volume as the web process.
    */
   readonly blobs: BlobStore;
+  /**
+   * The app's executor: jobs that change synced state run operations through it as the system
+   * actor (ADR-0024, CLAUDE.md rule 1), like `trash-purge`.
+   */
+  readonly executor: Pick<Executor, 'execute'>;
+  /** The `/metrics` registry, when metrics are on: the jobs' counters and gauges go there. */
+  readonly metrics?: Registry;
+  /** The jobs' clock (tests pass a fake). */
+  readonly clock?: () => Date;
   readonly log: Logger;
   /** Seconds between polls when a queue is idle (tests make it short). */
   readonly pollingIntervalSeconds?: number;
@@ -65,7 +80,10 @@ export interface JobOptions {
 export type JobSetup = Omit<JobOptions, 'databaseUrl'>;
 
 /** The part of pg-boss that `registerJobs` uses. */
-export type JobQueue = Pick<PgBoss, 'createQueue' | 'schedule' | 'work' | 'offWork'>;
+export type JobQueue = Pick<
+  PgBoss,
+  'createQueue' | 'schedule' | 'work' | 'offWork' | 'send' | 'findJobs'
+>;
 
 export async function startJobs(options: JobOptions): Promise<Jobs> {
   const work = options.work ?? true;
@@ -103,6 +121,9 @@ export async function registerJobs(
   {
     pool,
     blobs,
+    executor,
+    metrics,
+    clock = () => new Date(),
     log,
     pollingIntervalSeconds = 30,
     work = true,
@@ -160,4 +181,18 @@ export async function registerJobs(
     await boss.schedule(queue.name, queue.cron, null, { singletonKey: queue.name });
     await boss.work(queue.name, { pollingIntervalSeconds }, () => run(queue.name));
   }
+
+  // SPEC-015 §6.3: the daily issue jobs, one run at a time across replicas, caught up on start.
+  const trashDb = pgTrashDb(pool);
+  await registerDailyJob(
+    boss,
+    trashPurgeJob(QUEUES.trashPurge, {
+      db: trashDb,
+      executor,
+      clock,
+      log: jobLog,
+      ...(metrics ? { metrics: trashPurgeMetrics(metrics, trashDb, clock) } : {}),
+    }),
+    { clock, log: jobLog, pollingIntervalSeconds },
+  );
 }

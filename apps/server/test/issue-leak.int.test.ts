@@ -1,9 +1,11 @@
 // PLAN-011 S4 leak test (SPEC-011 AC-10, E13; permissions.md §5; CLAUDE.md rule 4; not held,
 // plans README §6). For private team SEC and a user outside it (a Member and an Admin):
 // - bootstrap, catch-up and live deltas carry no SEC issue, and not SEC's id;
-// - `issue.get`, `issue.update`, `issue.delete` and `issue.restore` (PLAN-015 S1), and every
-//   `IssueRef`, answer for a SEC issue exactly like for an issue that doesn't exist, by
-//   identifier and by id, and write nothing;
+// - `issue.get`, `issue.update`, `issue.delete` and `issue.restore` (PLAN-015 S1), `issue.purge`
+//   (PLAN-015 S2), and every `IssueRef`, answer for a SEC issue exactly like for an issue that
+//   doesn't exist, by identifier and by id, and write nothing;
+// - an Admin outside SEC can't purge a deleted SEC issue (NOT_FOUND, E12), its delete and purge
+//   never reach an outsider's connection, and the job (the system actor) purges it;
 // - a SEC status or label named by id in an ENG issue's edit is as unknown as one that never
 //   existed;
 // - `issue.list`, `issue.count` and `issue.groupBy` never count SEC's issues or name its labels,
@@ -11,7 +13,7 @@
 // - an API key limited to ENG gets the same for public team OPS (E13).
 // A SEC member gets everything, so the answers come from visibility, not from broken operations.
 import { randomUUID } from 'node:crypto';
-import type { Actor } from '@surface/domain';
+import { systemActor, type Actor } from '@surface/domain';
 import {
   decodeBootstrapFrame,
   decodeServerMessage,
@@ -394,6 +396,7 @@ for (const [who, actor] of [
           ['issue.update', (issue: string) => ({ issue, status: 'Done', addLabels: ['Bug'] })],
           ['issue.delete', (issue: string) => ({ issue })],
           ['issue.restore', (issue: string) => ({ issue })],
+          ['issue.purge', (issue: string) => ({ issue })],
         ] as const) {
           const real = await failure(operation, input(secRef), actor(), [secRef]);
           const none = await failure(operation, input(unknown), actor(), [unknown]);
@@ -512,6 +515,7 @@ describe('an API key limited to ENG (E13)', () => {
         ['issue.update', (issue: string) => ({ issue, priority: 2 }), engKeyActor],
         ['issue.delete', (issue: string) => ({ issue }), engDestructiveKeyActor],
         ['issue.restore', (issue: string) => ({ issue }), engKeyActor],
+        ['issue.purge', (issue: string) => ({ issue }), engDestructiveKeyActor],
       ] as const) {
         const real = await failure(operation, input(opsRef), key, [opsRef]);
         const none = await failure(operation, input(unknown), key, [unknown]);
@@ -597,5 +601,79 @@ describe('a member of SEC', () => {
     expect(
       await ok('issue.update', { issue: engIssue, status: 'In Progress' }, samActor),
     ).toMatchObject({ status: { name: 'In Progress' } });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Purge (PLAN-015 S2, SPEC-015 §5.3, E12)
+
+describe('purging a deleted SEC issue', () => {
+  it('is NOT_FOUND for an Admin outside SEC, like an issue that doesn’t exist, and writes nothing (E12)', async () => {
+    const doomed = uuidv7();
+    await ok('issue.create', { id: doomed, team: 'SEC', title: 'Old secret' }, samActor);
+    await ok('issue.delete', { issue: doomed }, samActor);
+    const before = await logLength();
+    const unknown = uuidv7();
+    const real = await failure('issue.purge', { issue: doomed }, zoeActor, [doomed]);
+    const none = await failure('issue.purge', { issue: unknown }, zoeActor, [unknown]);
+    expect(real).toMatchObject({ code: 'NOT_FOUND' });
+    expect(real).toEqual(none);
+    // SEC's member sees it, but isn't an Admin: the refusal is FORBIDDEN, so the NOT_FOUND above
+    // comes from visibility.
+    expect(await failure('issue.purge', { issue: doomed }, samActor, [])).toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(await logLength()).toBe(before);
+    const { rowCount } = await h.pool.query('SELECT 1 FROM issues WHERE id = $1', [doomed]);
+    expect(rowCount).toBe(1);
+  });
+
+  it('never reaches an outsider’s connection, deleted or purged; the job purges it', async () => {
+    const at = await head();
+    const outsider = connect('outsider', at);
+    const member = connect('member', at);
+    try {
+      const doomed = uuidv7();
+      await ok('issue.create', { id: doomed, team: 'SEC', title: 'Doomed secret' }, samActor);
+      await ok('issue.delete', { issue: doomed }, samActor);
+      // The `trash-purge` job runs it as the system actor, which sees every team.
+      expect(await ok('issue.purge', { issue: doomed }, systemActor())).toEqual({ purged: true });
+      const marker = uuidv7();
+      const secMarker = uuidv7();
+      await ok('issue.create', { id: marker, team: 'ENG', title: 'Marker' }, anaActor);
+      await ok('issue.create', { id: secMarker, team: 'SEC', title: 'Marker' }, samActor);
+      await eventually(() => outsider.text().includes(marker) && member.text().includes(secMarker));
+      expect(outsider.text()).not.toContain(doomed);
+      expect(outsider.text()).not.toContain('Doomed secret');
+      // The member got the Issue's D, in SEC's group only.
+      expect(member.packets().some((p) => p.a === 'D' && p.m === 'Issue' && p.mid === doomed)).toBe(
+        true,
+      );
+      const { rows } = await h.pool.query<{ groups: string[] }>(
+        `SELECT groups FROM sync_log WHERE model = 'Issue' AND model_id = $1 AND action = 'D'`,
+        [doomed],
+      );
+      expect(rows).toEqual([{ groups: [secGroup] }]);
+    } finally {
+      outsider.close();
+      member.close();
+    }
+  });
+
+  it('is NOT_FOUND for an API key limited to ENG on a deleted OPS issue (E13)', async () => {
+    const doomed = uuidv7();
+    await ok('issue.create', { id: doomed, team: 'OPS', title: 'Old cert' }, anaActor);
+    await ok('issue.delete', { issue: doomed }, anaActor);
+    const before = await logLength();
+    const unknown = uuidv7();
+    const real = await failure('issue.purge', { issue: doomed }, engDestructiveKeyActor, [doomed]);
+    const none = await failure('issue.purge', { issue: unknown }, engDestructiveKeyActor, [
+      unknown,
+    ]);
+    expect(real).toMatchObject({ code: 'NOT_FOUND' });
+    expect(real).toEqual(none);
+    expect(await logLength()).toBe(before);
+    // Zoe herself, an Admin of the workspace, may purge it: the key's teams are what hid it.
+    expect(await ok('issue.purge', { issue: doomed }, zoeActor)).toEqual({ purged: true });
   });
 });

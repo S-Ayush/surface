@@ -17,7 +17,9 @@ export type AuditEvent =
   | 'auth.password_reset_failed'
   | 'user.invited'
   | 'user.joined'
-  | 'user.role_changed';
+  | 'user.role_changed'
+  // SPEC-015 §4.5 step 5: an issue purged for good, by an Admin or the `trash-purge` job.
+  | 'issue.purged';
 
 export interface AuditFields {
   /** The user the event is about: who signed in or failed to, who joined, whose role changed. */
@@ -38,6 +40,10 @@ export interface AuditFields {
   /** For `user.role_changed`. */
   readonly from?: string;
   readonly to?: string;
+  /** For `issue.purged` (SPEC-015 §4.5): the issue, its team and number. Never the title. */
+  readonly issueId?: string;
+  readonly teamId?: string;
+  readonly number?: number;
 }
 
 /** One line, as an operation's handler records it for after the commit (`ctx.audit`). */

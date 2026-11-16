@@ -6,6 +6,7 @@
 import { registry } from '@surface/operations';
 import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
+import type { Registry } from 'prom-client';
 import { buildApp } from './app.js';
 import { buildInfo, type BuildInfo } from './build-info.js';
 import { checkDataDir, uploadsDir } from './data-dir.js';
@@ -13,7 +14,7 @@ import type { Config } from './config.js';
 import { loadMigrations, migrationStatus, type Migration } from './db/migrate.js';
 import { createPool, waitForDatabase, type Pool } from './db/pool.js';
 import { prepareDatabase } from './db/prepare.js';
-import { createExecutor, missingHandlers } from './executor/execute.js';
+import { createExecutor, missingHandlers, type Executor } from './executor/execute.js';
 import { tokenBucket } from './executor/rate-limit.js';
 import { transactionRunner } from './executor/transaction.js';
 import { localBlobStore } from './files/blob-store.js';
@@ -138,6 +139,10 @@ export async function startServer(
   const setupGate = new SetupGate(setupStore);
   // Before HTTP stops: clients reconnect elsewhere, or here once we are back (1012).
   if (hub) lifecycle.onShutdown('connections', 'sync hub', () => hub.stop());
+  // The app builds the one executor (and the `/metrics` registry); the jobs run operations
+  // through the same one (SPEC-015 §6.3), so they share its rate limiter and metrics.
+  let appExecutor: Executor | undefined;
+  let appMetrics: Registry | undefined;
   const app = await buildApp({
     config,
     lifecycle,
@@ -166,8 +171,9 @@ export async function startServer(
     ops: {
       registry,
       resolveActor,
-      createExecutor: (metrics) =>
-        createExecutor({
+      createExecutor: (metrics) => {
+        appMetrics = metrics;
+        appExecutor = createExecutor({
           pool,
           registry,
           handlers: HANDLERS,
@@ -184,7 +190,9 @@ export async function startServer(
             ? { connectionGroups: (userId, clientId) => hub.connectionGroups(userId, clientId) }
             : {}),
           ...(metrics ? { metrics } : {}),
-        }),
+        });
+        return appExecutor;
+      },
     },
   });
   await app.listen({ port: config.port, host: config.host });
@@ -219,10 +227,13 @@ export async function startServer(
     // `all` and `worker` run the jobs; `web` starts the queue only to queue email (PLAN-001 S4).
     const work = config.role !== 'web';
     if (work || config.smtp !== null) {
+      if (appExecutor === undefined) throw new Error('The app built no executor for the jobs');
       jobs = await startJobs({
         databaseUrl: config.databaseUrl,
         pool,
         blobs: localBlobStore(uploadsDir(config.dataDir)),
+        executor: appExecutor,
+        ...(appMetrics ? { metrics: appMetrics } : {}),
         log: logger,
         work,
         ...(config.smtp === null

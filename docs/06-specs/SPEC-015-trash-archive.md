@@ -151,9 +151,9 @@ This table is the one place that says how each operation treats an issue's lifec
 | `attachment.createFile`, `attachment.createLink`, `attachment.update`, `attachment.delete` (SPEC-014) | applies | `CONFLICT` | `CONFLICT` |
 | `issue.delete` | → Deleted | → Deleted | no-op |
 | `issue.restore` | no-op | → Live | → Live (before `purgeAfter`), else `CONFLICT` |
-| `issue.purge` | `CONFLICT` | `CONFLICT` | → Purged |
+| `issue.purge`, and the `trash-purge` job, which runs it as the system actor for each issue it selects (§6.3, D20) | `CONFLICT` | `CONFLICT` | → Purged |
 | `label.delete` removing the label from `labelIds` (SPEC-010) | applies | applies, stays archived | applies, stays deleted |
-| `attachment.setPreview` (system, SPEC-014), `files-cleanup`, `trash-purge` | applies | applies, stays archived | applies, stays deleted |
+| `attachment.setPreview` (system, SPEC-014), `files-cleanup` | applies | applies, stays archived | applies, stays deleted |
 | `issue.autoArchive`, `issue.autoClose` (system, §6.3) | applies (live issues only) | skipped | skipped |
 | Reads (`issue.get`, `IssueRef`, `/sync/content`, `GET /files/:id`) | yes | yes | yes (so the page and restore work) |
 
@@ -333,10 +333,10 @@ All three run as the system actor through the executor, one issue per transactio
 
 - **Catch-up:** when a worker starts and the last completed run is older than 24 h, it sends one job with `singletonKey: 'trash-purge'`, so several worker replicas never run it twice. The scheduled run uses the same key.
 - **Selection:** issues with `deleted_at + interval '720 hours' <= now()`, oldest first, in batches of 100. Each is purged with `issue.purge`.
-- **Idempotent:** keyed by issue id. An issue already gone is skipped (`NOT_FOUND` counts as done). A crash mid-run resumes on the next run.
+- **Idempotent:** keyed by issue id. An issue already gone is skipped (`NOT_FOUND` counts as done); one restored after it was selected is `CONFLICT` and left alone (D20). A crash mid-run resumes on the next run.
 - **Bounded:** at most 5,000 issues per run; the rest wait for the next run. So "permanently deleted after 12 Dec" can mean a little later, never earlier.
 - **Bytes:** not removed by this job. `files-cleanup` drains the keys the purges recorded (§4.5).
-- **Metrics:** `surface_trash_purged_total`, `surface_trash_purge_failures_total`, and the age of the oldest deleted issue (NFR-24).
+- **Metrics:** `surface_trash_purged_total`, `surface_trash_purge_failures_total`, and the age of the oldest deleted issue, `surface_trash_oldest_deleted_age_seconds` (0 when none; NFR-24).
 
 **`auto-archive`**, cron `'29 3 * * *'`, same catch-up and `singletonKey` rule
 
@@ -481,6 +481,7 @@ None. Q3 was accepted as proposed at the M1 gate on 2026-11-12 and moved to the 
 | D17 | Copy Linear, through partial issue loading (SPEC-011 §5.7, ADR-0020): archived and deleted issues are never stored on the client. An `A` or a delete's `U` removes the issue; restore's `V` or `U` inserts it again, and `issue.restore` re-logs the issue's attachments. The archive page, the Recently deleted tab and their issue pages read from the server, online only, read-only, refreshed on focus, on the user's own confirmations and (debounced, subscribed teams only) on packets; the restore toast ends on the mutation's confirmation. Delete's optimistic removes the row; restore's and purge's predict nothing. Replaces D1. | 2026-11-12 |
 | D18 (was Q3) | Comments and reactions don't count as activity for auto-close: staleness follows the issue's `updatedAt` (SPEC-011), which comments and reactions don't change. Linear's behaviour is not observable. Accepted as proposed at the M1 gate. | 2026-11-12 |
 | D19 | `issue_search_text` keeps SPEC-011 §4.3's `ON DELETE CASCADE` and is the one foreign key to `issues` that isn't `RESTRICT` (§4.5). It is server-only, so rule 2 (no unlogged write to a synced table) doesn't apply, and the purge needs no step for it. Found in the PLAN-011 S3 review: §4.5 said every such key is `RESTRICT`. | 2026-11-13 |
+| D20 | `trash-purge` is not a cascade row of §4.3: it runs `issue.purge` for each issue it selects (§6.3), so it takes the issue lock in `lifecycle` mode and its row is `issue.purge`'s. It selects only deleted issues past `purgeAfter`; one restored after it was selected is `CONFLICT`, which the job counts as skipped (not a failure). §4.3 listed it with `files-cleanup` ("applies, stays deleted"), which described no state it can reach. A correction, found building PLAN-015 S2. | 2026-11-16 |
 
 ## 12. Changes to accepted docs on acceptance
 

@@ -41,17 +41,27 @@ function recordingQueue() {
       return Promise.resolve(`worker-${name}`);
     }),
     offWork: vi.fn(() => Promise.resolve()),
+    send: vi.fn(() => Promise.resolve('job-1')),
+    // No completed runs: the daily jobs catch up (PLAN-015 S2).
+    findJobs: vi.fn(() => Promise.resolve([])),
   };
   return { queue, created, scheduled, workers };
 }
 
-const base = { pool: {} as Pool, blobs: memoryBlobStore(), log: pino({ level: 'silent' }) };
-// The scheduled jobs every working role runs: the prunes and the file jobs (PLAN-014 S3).
+const base = {
+  pool: {} as Pool,
+  blobs: memoryBlobStore(),
+  executor: { execute: () => Promise.reject(new Error('no operation runs here')) },
+  log: pino({ level: 'silent' }),
+};
+// The scheduled jobs every working role runs: the prunes, the file jobs (PLAN-014 S3) and the
+// trash purge (PLAN-015 S2).
 const PRUNES = [
   QUEUES.idempotencyPrune.name,
   QUEUES.syncLogPrune.name,
   QUEUES.filesCleanup.name,
   QUEUES.filesSweep.name,
+  QUEUES.trashPurge.name,
 ];
 
 describe('registerJobs', () => {

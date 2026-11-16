@@ -30,6 +30,10 @@ import type { Repo, RowChange } from '../../src/sync/repo.js';
 import type { ModelName } from '../../src/sync/models.js';
 import type { LifecycleContext } from '../../src/handlers/issues/lifecycle-core.js';
 import type { LifecycleHistoryKind } from '../../src/issues/lifecycle.js';
+import type { PurgeContext } from '../../src/issues/purge.js';
+import type { PurgeStep } from '../../src/issues/purge-steps.js';
+import type { AuditLine } from '../../src/auth/audit.js';
+import { recordingDb } from './scripted-db.js';
 
 export const NOW = new Date('2026-11-13T10:00:00.000Z');
 
@@ -48,7 +52,8 @@ export interface MemoryStatus extends StatusFacts {
 }
 
 export interface IssueWrite {
-  readonly action: 'insert' | 'update' | 'updateWhere' | 'archive' | 'unarchive';
+  readonly action:
+    'insert' | 'update' | 'updateWhere' | 'archive' | 'unarchive' | 'purge' | 'deleteWhere';
   /** Set only for a model other than Issue (a restore's re-logged Attachment rows). */
   readonly model?: string;
   readonly ids: readonly string[];
@@ -57,6 +62,8 @@ export interface IssueWrite {
   readonly touchUpdatedAt?: boolean;
   /** An `updateWhere`'s patch as given, so a test can render its SQL values. */
   readonly patch?: Readonly<Record<string, unknown>>;
+  /** A `deleteWhere`'s `log` option (false: the unlogged content delete of ADR-0022). */
+  readonly log?: boolean;
 }
 
 export interface MemoryIssues {
@@ -82,6 +89,17 @@ export interface MemoryIssues {
   readonly attachments: Map<string, string[]>;
   /** The context `deleteIssue` and `restoreIssue` run with, as `actor` at `now`. */
   lifecycle(options?: { readonly actor?: Actor; readonly now?: Date }): LifecycleContext;
+  /**
+   * The context `purgeIssue` runs with (PLAN-015 S2): the same lock and repo, `steps` (default
+   * none, so the test sees the issue's own writes), and audit lines recorded in `audits`.
+   */
+  purge(options?: {
+    readonly actor?: Actor;
+    readonly now?: Date;
+    readonly steps?: readonly PurgeStep[];
+  }): PurgeContext;
+  /** Audit lines a purge recorded, in order. */
+  readonly audits: AuditLine[];
   status(team: IssueTeam, name: string): MemoryStatus;
   addLabel(fields: Partial<LabelRow> & { name: string }): LabelRow;
   /** Sets a team's estimate settings; `eng` and `des` read them afterwards. */
@@ -100,6 +118,7 @@ export function memoryIssues(): MemoryIssues {
   const attachments = new Map<string, string[]>();
   const writes: IssueWrite[] = [];
   const events: DomainEvent[] = [];
+  const audits: AuditLine[] = [];
 
   function team(key: string): IssueTeam {
     const id = randomUUID();
@@ -237,8 +256,24 @@ export function memoryIssues(): MemoryIssues {
       writes.push({ action: 'unarchive', ids: [id], fields: ['archivedAt'] });
       return Promise.resolve(next as never);
     },
-    purge: () => Promise.reject(new Error('issue purge is PLAN-015')),
-    deleteWhere: () => Promise.reject(new Error('issues are not bulk-deleted here')),
+    purge(model, id) {
+      if (model !== 'Issue' || !issues.delete(id)) {
+        return Promise.reject(new SurfaceError('NOT_FOUND', `${model} ${id} not found.`));
+      }
+      writes.push({ action: 'purge', ids: [id], fields: [] });
+      return Promise.resolve();
+    },
+    // A purge step's delete (PLAN-015 S2): recorded, with the model, field and `log` option.
+    deleteWhere(model, field, ids, options) {
+      writes.push({
+        action: 'deleteWhere',
+        model,
+        ids: [...ids],
+        fields: [field],
+        log: options?.log ?? true,
+      });
+      return Promise.resolve([]);
+    },
     changes: (): readonly RowChange[] => [],
   };
 
@@ -266,6 +301,22 @@ export function memoryIssues(): MemoryIssues {
     repo,
     history,
     attachments,
+    audits,
+    purge({ actor = ADA_ACTOR, now = NOW, steps = [] } = {}) {
+      return {
+        access: {
+          lockIssue: (issueId, mode) => access.lockIssue(issueId, mode),
+          identifier: (issue) => Promise.resolve(identifierOf(issue)),
+        },
+        tx: recordingDb().db,
+        repo,
+        actor,
+        now,
+        steps,
+        emit: (event) => void events.push(event),
+        audit: (event, fields, message) => void audits.push({ event, fields, message }),
+      };
+    },
     lifecycle({ actor = ADA_ACTOR, now = NOW } = {}) {
       return {
         access: {

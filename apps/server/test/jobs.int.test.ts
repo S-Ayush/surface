@@ -2,7 +2,10 @@
 // and the prune job deletes only expired `clientMutationId` results.
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { registry } from '@surface/operations';
+import { createExecutor } from '../src/executor/execute.js';
 import { memoryBlobStore } from '../src/files/blob-store.js';
+import { HANDLERS } from '../src/handlers/index.js';
 import { JOB_SCHEMA, QUEUES, startJobs, type Jobs } from '../src/jobs/index.js';
 import { createTestDatabase, silentLog, type TestDatabase } from './db.js';
 
@@ -14,6 +17,13 @@ beforeAll(async () => {
     databaseUrl: db.url,
     pool: db.pool,
     blobs: memoryBlobStore(),
+    executor: createExecutor({
+      pool: db.pool,
+      registry,
+      handlers: HANDLERS,
+      log: silentLog,
+      allowInternal: false,
+    }),
     log: silentLog,
     pollingIntervalSeconds: 0.5,
   });

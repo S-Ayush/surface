@@ -3,10 +3,13 @@
 // `issue.restore` predicts nothing, since the replica holds no archived or deleted issue), the
 // operation shapes, and `ui.available` (§7: Delete hidden on a deleted issue, Restore only on an
 // archived one or a deleted one before its purgeAfter). The registry lint runs registry-wide in `test/lint.test.ts`.
+// PLAN-015 S2: `issue.purge` (Admin only, AC-10; predicts nothing, AC-13; Permanently delete only
+// on a deleted issue).
+import { bindPredicates, systemActor, userActor } from '@surface/domain';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lintOperations } from '../lint.js';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
-import { issueDelete, issueRestore } from './issue-lifecycle.js';
+import { issueDelete, issuePurge, issueRestore } from './issue-lifecycle.js';
 
 const ISSUE = '0192f0c1-7e5a-7b3c-9d4e-0000000000b1';
 const NOW = new Date('2026-11-13T10:00:00.000Z');
@@ -98,6 +101,38 @@ describe('issue.restore (§6.1, §6.2)', () => {
   });
 });
 
+describe('issue.purge (§6.1, §6.2; PLAN-015 S2)', () => {
+  it('is a destructive mutation on an IssueRef that answers { purged: true }', () => {
+    expect(issuePurge).toMatchObject({ kind: 'mutation', domain: 'issue', destructive: true });
+    expect(issuePurge.input.safeParse({ issue: 'ENG-42' }).success).toBe(true);
+    expect(issuePurge.output.safeParse({ purged: true }).success).toBe(true);
+    expect(issuePurge.output.safeParse({ purged: false }).success).toBe(false);
+    // D14: a plain confirm dialog, no shortcut.
+    expect(issuePurge.ui).toMatchObject({
+      title: 'Permanently delete…',
+      contexts: ['issue'],
+      shortcut: null,
+    });
+  });
+
+  it('is for Admins only, and for the system actor the job runs as (§5.3, AC-10)', () => {
+    const allowed = (actor: Parameters<typeof bindPredicates>[0]) =>
+      issuePurge.permission(bindPredicates(actor).p, {}, { issue: ISSUE });
+    const member = userActor({ userId: 'u-1', role: 'member', memberships: [] });
+    const admin = userActor({ userId: 'u-2', role: 'admin', memberships: [] });
+    expect(allowed(member)).toBe(false);
+    expect(allowed(admin)).toBe(true);
+    expect(allowed(systemActor())).toBe(true);
+  });
+
+  it('predicts nothing: the replica holds no deleted issue (AC-13, D17)', () => {
+    const { store, writes } = fakeStore([issueRow({ deletedAt: '2026-11-12T10:00:00.000Z' })]);
+    issuePurge.optimistic?.(store, { issue: ISSUE });
+    expect(writes).toEqual([]);
+    expect('optimistic' in issuePurge).toBe(true);
+  });
+});
+
 describe('ui.available (§7)', () => {
   /** The client `SyncStore` as the predicate sees it: a `pool` with `get`. */
   const syncStore = (rows: StoreRow[]) => ({
@@ -109,6 +144,7 @@ describe('ui.available (§7)', () => {
   const target = { kind: 'issue' as const, ids: [ISSUE] };
   const deleteAvailable = (store: unknown) => issueDelete.ui?.available?.(target, store);
   const restoreAvailable = (store: unknown) => issueRestore.ui?.available?.(target, store);
+  const purgeAvailable = (store: unknown) => issuePurge.ui?.available?.(target, store);
   /** `hours` before NOW, the predicates' clock. */
   const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000).toISOString();
 
@@ -155,16 +191,25 @@ describe('ui.available (§7)', () => {
     ).toBe(false);
   });
 
+  it('offers Permanently delete only on a deleted issue', () => {
+    expect(purgeAvailable(syncStore([issueRow()]))).toBe(false);
+    expect(purgeAvailable(syncStore([issueRow({ archivedAt: '2026-10-01T00:00:00Z' })]))).toBe(
+      false,
+    );
+    expect(purgeAvailable(syncStore([issueRow({ deletedAt: hoursAgo(1) })]))).toBe(true);
+  });
+
   it('leaves an issue the replica doesn’t hold to the server (it is shown from the server)', () => {
     for (const store of [syncStore([]), null, {}]) {
       expect(deleteAvailable(store)).toBe(true);
       expect(restoreAvailable(store)).toBe(true);
+      expect(purgeAvailable(store)).toBe(true);
     }
   });
 });
 
 describe('registry lint', () => {
-  it('passes for both operations', () => {
-    expect(lintOperations([issueDelete, issueRestore])).toEqual([]);
+  it('passes for the lifecycle operations', () => {
+    expect(lintOperations([issueDelete, issueRestore, issuePurge])).toEqual([]);
   });
 });

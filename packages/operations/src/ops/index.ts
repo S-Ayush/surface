@@ -47,7 +47,7 @@ import {
   issueList,
   issueUpdate,
 } from './issue.js';
-import { issueDelete, issueRestore } from './issue-lifecycle.js';
+import { issueDelete, issuePurge, issueRestore } from './issue-lifecycle.js';
 import { draftDiscard, draftSave } from './draft.js';
 import {
   commentCreate,
@@ -148,6 +148,8 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   // Delete, then restore, the same issue (ENG-3): the seed ends as it started (SPEC-015 §6.1).
   issueDelete,
   issueRestore,
+  // The seed's deleted ENG-4 (PLAN-015 S2), purged for good.
+  issuePurge,
   // The actor's own drafts (SPEC-012 §4.3): save, then discard what was saved.
   draftSave,
   draftDiscard,
