@@ -4,6 +4,8 @@ Status: **Draft v0.1** · Date: 2026-11-06 · Related: [domain-model](domain-mod
 
 *Changed 2026-11-12 (M1 acceptance gate, SPEC-010, SPEC-013 and SPEC-015 §12): purge writes no history; `issue.archived` comes from the system job only and `issue.unarchived` is removed; comments write no history; new `comment.resolved` and `comment.reopened`; reactions come from `reaction.set`; settings cascades emit no `issue.updated`.*
 
+*Changed 2026-11-16 (PLAN-011 S6, SPEC-011 D17): a description save emits `issue.updated` with `data: { description: true, version }` and no `changes`.*
+
 Every committed operation emits one or more **domain events**, inside the same DB transaction (an outbox table). One event stream feeds every consumer, so history, notifications, webhooks, and audit can never disagree.
 
 ```
@@ -35,6 +37,7 @@ Consumer legend: **H** History · **S** Subscriptions · **N** Notifications · 
 | ↳ assignee changed | `changes.assigneeId` | ✓ | new assignee | new assignee | ✓ | — |
 | ↳ status → Completed / Canceled | category change | ✓ | — | subscribers | ✓ | — |
 | ↳ priority → Urgent | priority change | ✓ | — | assignee | ✓ | — |
+| ↳ description saved | `issue.updateDescription` that changes the text: `data: { description: true, version }`, no `changes` (the document is never in the payload). A save with the same text emits nothing (SPEC-011 D17). | ✓ | — | — | ✓ | — |
 | ↳ description mentions added | new @mention | ✓ | mentioned users | mentioned users | — | — |
 | `issue.moved_team` | Team move | ✓ | — | subscribers | ✓ | — |
 | `issue.deleted` / `issue.restored` | Delete (to Recently deleted) / restore from archived or deleted | ✓ | — | — | ✓ | — |

@@ -30,6 +30,7 @@ import {
   issueStatusProblem,
   mergeLabels,
   normalizeTitle,
+  sameDocJson,
   statusSideEffects,
   type Actor,
   type DocNodeJSON,
@@ -265,14 +266,6 @@ export function isEmptyDescription(doc: DocNodeJSON): boolean {
   return docToText(doc).trim() === '' && docFileIds(doc).length === 0;
 }
 
-/** JSON with sorted keys: `jsonb` stores keys in its own order, so compare by content. */
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) => {
-    if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
-    return Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  });
-}
-
 // ---------------------------------------------------------------------------------------------
 
 export interface CreateIssueInput {
@@ -495,7 +488,7 @@ export async function updateDescription(
     throw new SurfaceError('CONFLICT', DESCRIPTION_MESSAGES.stale);
   }
   const description = await access.claimFiles(input.description, issue);
-  const changed = canonical(description) !== canonical(content.description);
+  const changed = !sameDocJson(description, content.description);
   const version = content.version + 1;
   let row: IssueRow = issue;
   if (changed) row = await repo.update('Issue', issue.id, {});

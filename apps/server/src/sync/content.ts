@@ -13,9 +13,9 @@
  * The answer is read whole before the first frame goes out, so the snapshot's connection goes
  * back to the pool before the response is written, whatever the client's speed. It is bounded by
  * a **byte budget** (`CONTENT_ANSWER_BUDGET_BYTES`, SPEC-011 §5.2, D16): the size of each visible
- * parent's rows is measured in SQL first, and parents are taken whole, in id order, while they fit;
- * the first visible parent always comes, whatever its size, because a parent is hydrated only by
- * all of its rows. A parent left out is absent from `meta.parents`, like one not found: the client
+ * parent's rows is measured in SQL first, and parents are taken whole, in request order, while they
+ * fit; the first visible parent requested always comes, whatever its size, because a parent is
+ * hydrated only by all of its rows. A parent left out is absent from `meta.parents`, like one not found: the client
  * marks it not hydrated and asks again (§5.3 step 3). A request for one parent is never cut.
  */
 import { visibleGroups, type Actor } from '@surface/domain';
@@ -92,7 +92,8 @@ export async function contentFrames({
     const groups = syncGroupSchema.array().parse(contentGroups(actor));
     const found = await client.query<{ id: string }>(
       `SELECT id::text AS id FROM ${quote(parentModel.table)}
-        WHERE id = ANY($1::uuid[]) AND sync_groups && $2::text[] ORDER BY id`,
+        WHERE id = ANY($1::uuid[]) AND sync_groups && $2::text[]
+        ORDER BY array_position($1::uuid[], id)`,
       [parents.map(parentIssueId), groups],
     );
     const visibleIds = await withinBudget(
@@ -143,8 +144,8 @@ export async function contentFrames({
 }
 
 /**
- * The parents of `ids` (ascending) whose rows fit `budget` together, taken whole, in order, while
- * they fit (D16); the first always fits. Sizes are each parent's rows as text, summed per model in
+ * The parents of `ids` (in request order) whose rows fit `budget` together, taken whole, in that
+ * order, while they fit (D16); the first always fits. Sizes are each parent's rows as text, summed per model in
  * the snapshot, with the same group filter as the rows read after.
  */
 async function withinBudget(

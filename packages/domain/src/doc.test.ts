@@ -2,7 +2,15 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { DOC_MAX_BYTES, DOC_SCHEMA_VERSION, docJsonBytes, EMPTY_DOC, reactionId } from './doc.js';
+import {
+  DOC_MAX_BYTES,
+  DOC_SCHEMA_VERSION,
+  docJsonBytes,
+  EMPTY_DOC,
+  isDocJson,
+  reactionId,
+  sameDocJson,
+} from './doc.js';
 import { sha1, utf8Bytes, utf8Length } from './sha1.js';
 import { uuidv5 } from './uuid.js';
 
@@ -35,6 +43,101 @@ describe('document limits', () => {
     // "é" is 2 bytes and "👍" 4 in UTF-8; the JSON adds two quotes.
     expect(docJsonBytes('é👍')).toBe(8);
     expect(docJsonBytes(undefined)).toBe(0);
+  });
+});
+
+describe('isDocJson', () => {
+  it('accepts a document root, with or without content', () => {
+    expect(isDocJson(EMPTY_DOC)).toBe(true);
+    expect(isDocJson({ type: 'doc' })).toBe(true);
+  });
+
+  it('refuses anything that is not a document root', () => {
+    for (const value of [
+      null,
+      undefined,
+      '# Markdown',
+      [],
+      { type: 'paragraph' },
+      { type: 'doc', content: 'text' },
+      [{ type: 'doc' }],
+    ]) {
+      expect(isDocJson(value)).toBe(false);
+    }
+  });
+});
+
+describe('sameDocJson (SPEC-011 D17)', () => {
+  const doc = {
+    type: 'doc',
+    content: [
+      { type: 'paragraph', attrs: { a: 1, b: 2 }, content: [{ type: 'text', text: 'Hi' }] },
+    ],
+  };
+
+  it('is true for the same document with keys in another order, as jsonb gives them back', () => {
+    const reordered = {
+      content: [
+        { content: [{ text: 'Hi', type: 'text' }], attrs: { b: 2, a: 1 }, type: 'paragraph' },
+      ],
+      type: 'doc',
+    };
+    expect(sameDocJson(doc, reordered)).toBe(true);
+    expect(sameDocJson(reordered, doc)).toBe(true);
+  });
+
+  it('is false when the text, an attribute, a key or the node order differs', () => {
+    const paragraph = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
+    expect(
+      sameDocJson(doc, { ...doc, content: [{ ...doc.content[0], attrs: { a: 1, b: 3 } }] }),
+    ).toBe(false);
+    expect(sameDocJson(doc, { ...doc, content: [{ ...doc.content[0], marks: [] }] })).toBe(false);
+    expect(
+      sameDocJson(
+        { type: 'doc', content: [paragraph('a'), paragraph('b')] },
+        { type: 'doc', content: [paragraph('b'), paragraph('a')] },
+      ),
+    ).toBe(false);
+    expect(sameDocJson(paragraph('a'), paragraph('A'))).toBe(false);
+  });
+
+  it('treats a key holding undefined as absent, as JSON does', () => {
+    expect(sameDocJson({ type: 'doc', attrs: undefined }, { type: 'doc' })).toBe(true);
+  });
+
+  it('tells arrays, objects, null and missing values apart', () => {
+    expect(sameDocJson([], {})).toBe(false);
+    expect(sameDocJson(null, {})).toBe(false);
+    expect(sameDocJson(undefined, EMPTY_DOC)).toBe(false);
+    expect(sameDocJson(null, null)).toBe(true);
+    expect(sameDocJson([1, 2], [1, 2, 3])).toBe(false);
+  });
+
+  it('agrees with comparing key-sorted JSON, for any JSON value', () => {
+    const sorted = (value: unknown): string =>
+      JSON.stringify(value, (_key, v: unknown) =>
+        v === null || typeof v !== 'object' || Array.isArray(v)
+          ? v
+          : Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))),
+      );
+    // Shuffling the keys of a value keeps it equal; JSON values from one generator may differ.
+    const shuffle = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(shuffle)
+        : typeof value === 'object' && value !== null
+          ? Object.fromEntries(
+              Object.entries(value)
+                .reverse()
+                .map(([k, v]) => [k, shuffle(v)]),
+            )
+          : value;
+    fc.assert(
+      fc.property(fc.jsonValue(), fc.jsonValue(), (a, b) => {
+        expect(sameDocJson(a, shuffle(a))).toBe(true);
+        expect(sameDocJson(a, b)).toBe(sorted(a) === sorted(b));
+      }),
+      PROPERTY_OPTIONS,
+    );
   });
 });
 

@@ -7,6 +7,8 @@ import {
   isValidEstimate,
   issueStatusProblem,
   issueTitleProblem,
+  isDocJson,
+  sameDocJson,
   type DocNodeJSON,
   type EstimateConfig,
   type StatusCategory,
@@ -375,36 +377,6 @@ export function stateFromCreateInput(world: ComposerWorld, input: unknown): Adju
   );
 }
 
-/** The editor JSON the composer sent as a description (Markdown comes only from other callers). */
-function isDocJson(value: unknown): value is DocNodeJSON {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Reflect.get(value, 'type') === 'doc' &&
-    (Reflect.get(value, 'content') === undefined || Array.isArray(Reflect.get(value, 'content')))
-  );
-}
-
-/** Deep equality of JSON-like values, whatever the order of an object's keys. */
-function sameJson(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return (
-      Array.isArray(a) &&
-      Array.isArray(b) &&
-      a.length === b.length &&
-      a.every((item, i) => sameJson(item, b[i]))
-    );
-  }
-  const keysA = Object.keys(a).filter((k) => Reflect.get(a, k) !== undefined);
-  const keysB = Object.keys(b).filter((k) => Reflect.get(b, k) !== undefined);
-  return (
-    keysA.length === keysB.length &&
-    keysA.every((k) => keysB.includes(k) && sameJson(Reflect.get(a, k), Reflect.get(b, k)))
-  );
-}
-
 /**
  * Whether two states hold the same issue (the replace prompt is skipped when they do, E20): field
  * by field, labels as a set, the description by its content (not by how its keys were ordered).
@@ -421,6 +393,6 @@ export function sameContent(a: ComposerState, b: ComposerState): boolean {
     a.dueDate === b.dueDate &&
     a.labelIds.length === b.labelIds.length &&
     b.labelIds.every((id) => labels.has(id)) &&
-    sameJson(a.description, b.description)
+    sameDocJson(a.description, b.description)
   );
 }

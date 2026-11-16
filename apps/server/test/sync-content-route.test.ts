@@ -152,8 +152,8 @@ function fakePool({ failOn }: { failOn?: string } = {}) {
             .filter((r) => !(r['__archived'] === true && /archived_at IS NULL/i.test(text)))
             .filter((r) => !(r['__deleted'] === true && /deleted_at IS NULL/i.test(text)))
             .map((r) => ({ id: String(r['id']) }))
-            // `ORDER BY id`, as Postgres answers it (uuid order is the lowercase text order).
-            .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+            // `ORDER BY array_position($1, id)`: the order the client asked in.
+            .sort((a, b) => (Array.isArray(ids) ? ids.indexOf(a.id) - ids.indexOf(b.id) : 0)),
         );
       }
       if (table !== undefined && table in data) {
@@ -495,14 +495,14 @@ describe('GET /sync/content answers', () => {
 });
 
 describe('a content answer’s byte budget (SPEC-011 §5.2, D16; PLAN-011 S6)', () => {
-  /** Ana's visible parents with content, in id order, and the size the fake gives each. */
+  /** The size queries of an answer to Ana's visible parents with content, in `requested` order. */
   async function sizes() {
     const pool = fakePool();
     await contentFrames({
       pool: pool.pool,
       registry,
       actor: ana,
-      parents: [engIssue, archivedIssue, trashedIssue].map(issueParent),
+      parents: requested.map(issueParent),
     });
     return pool.statements.filter((s) => s.text.includes('GROUP BY'));
   }
@@ -520,7 +520,8 @@ describe('a content answer’s byte budget (SPEC-011 §5.2, D16; PLAN-011 S6)', 
     return { meta, rows: rowsOf(frames) };
   }
 
-  const sorted = [engIssue, archivedIssue, trashedIssue].sort();
+  // Not id order, so an answer in id order would fail these tests.
+  const requested = [engIssue, archivedIssue, trashedIssue].sort().reverse();
 
   it('is 4 MiB', () => {
     expect(CONTENT_ANSWER_BUDGET_BYTES).toBe(4 * 1024 * 1024);
@@ -532,17 +533,17 @@ describe('a content answer’s byte budget (SPEC-011 §5.2, D16; PLAN-011 S6)', 
     expect(measured).toHaveLength(registry.content.length);
     for (const statement of measured) {
       expect(statement.text).toMatch(/sync_groups && \$1::text\[\]/);
-      expect(statement.values[1]).toEqual(sorted);
+      expect(statement.values[1]).toEqual(requested);
     }
   });
 
-  it('takes whole parents in id order while they fit, and lists only those', async () => {
-    const all = await answer(sorted, CONTENT_ANSWER_BUDGET_BYTES);
-    expect(all.meta.parents).toEqual(sorted.map(issueParent));
-    // A 1-byte budget: the first parent comes whole, and nothing after it fits.
-    const one = await answer(sorted, 1);
-    expect(one.meta.parents).toEqual([issueParent(sorted[0] ?? '')]);
-    expect(one.rows.every(([, id]) => id !== sorted[1] && id !== sorted[2])).toBe(true);
+  it('takes whole parents in request order while they fit, and lists only those', async () => {
+    const all = await answer(requested, CONTENT_ANSWER_BUDGET_BYTES);
+    expect(all.meta.parents).toEqual(requested.map(issueParent));
+    // A 1-byte budget: the first parent requested comes whole, and nothing after it fits.
+    const one = await answer(requested, 1);
+    expect(one.meta.parents).toEqual([issueParent(requested[0] ?? '')]);
+    expect(one.rows.every(([, id]) => id !== requested[1] && id !== requested[2])).toBe(true);
     expect(one.meta.rows).toBe(one.rows.length);
   });
 

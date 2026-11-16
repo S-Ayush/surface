@@ -20,6 +20,7 @@ import {
   isSet,
   issueLockModeOf,
   replyParentProblem,
+  sameDocJson,
   type CommentActorKind,
   type DocNodeJSON,
   type IssueLockMode,
@@ -108,14 +109,6 @@ export function commentDoc(body: string | Readonly<Record<string, unknown>>): Do
     throw invalid('body', COMMENT_MESSAGES.empty);
   }
   return doc;
-}
-
-/** JSON with sorted keys: `jsonb` stores keys in its own order, so compare by content. */
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) => {
-    if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
-    return Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  });
 }
 
 /**
@@ -209,7 +202,7 @@ export async function updateComment(
     throw new SurfaceError('CONFLICT', COMMENT_MESSAGES.staleVersion);
   }
   const body = await ctx.access.claimFiles(doc, issue);
-  const changed = canonical(body) !== canonical(comment.body);
+  const changed = !sameDocJson(body, comment.body);
   const row = await ctx.repo.update('Comment', comment.id, {
     body,
     version: comment.version + 1,

@@ -47,6 +47,42 @@ export function docJsonBytes(value: unknown): number {
   return json === undefined ? 0 : utf8Length(json);
 }
 
+/**
+ * Whether `value` has a document's root shape (`type: 'doc'`, `content` an array when present).
+ * Only the root is checked: the editor's schema validates the rest (`@surface/editor/schema`).
+ */
+export function isDocJson(value: unknown): value is DocNodeJSON {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const content: unknown = Reflect.get(value, 'content');
+  return Reflect.get(value, 'type') === 'doc' && (content === undefined || Array.isArray(content));
+}
+
+/**
+ * Deep equality of two JSON values, whatever the order of an object's keys. Postgres `jsonb` and
+ * IndexedDB give a stored document's keys back in their own order, so the server's "did the text
+ * change" (SPEC-011 §4.1, D17), the optimistic copy of it and the composer's E20 check all compare
+ * documents by content with this one function. A key whose value is `undefined` counts as absent,
+ * as `JSON.stringify` drops it.
+ */
+export function sameDocJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => sameDocJson(item, b[i]))
+    );
+  }
+  const keysA = Object.keys(a).filter((k) => Reflect.get(a, k) !== undefined);
+  const keysB = new Set(Object.keys(b).filter((k) => Reflect.get(b, k) !== undefined));
+  return (
+    keysA.length === keysB.size &&
+    keysA.every((k) => keysB.has(k) && sameDocJson(Reflect.get(a, k), Reflect.get(b, k)))
+  );
+}
+
 /** Namespace of `reactionId`'s UUIDv5 names. Never change it: stored reaction ids depend on it. */
 const REACTION_NAMESPACE = '43457bcc-57ec-45b6-a3db-1393e0782480';
 

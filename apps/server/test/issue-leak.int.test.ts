@@ -390,7 +390,7 @@ for (const [who, actor] of [
   ['an Admin', () => zoeActor],
 ] as const) {
   describe(`${who} outside private team SEC`, () => {
-    it('gets NOT_FOUND for a SEC issue from get and update, like an issue that doesn’t exist', async () => {
+    it('gets NOT_FOUND for a SEC issue from get, update and updateDescription, like an issue that doesn’t exist', async () => {
       const before = await logLength();
       for (const [secRef, unknown] of SEC_REFS()) {
         for (const [operation, input] of [
@@ -400,6 +400,23 @@ for (const [who, actor] of [
           ['issue.delete', (issue: string) => ({ issue })],
           ['issue.restore', (issue: string) => ({ issue })],
           ['issue.purge', (issue: string) => ({ issue })],
+          // PLAN-011 S6: a valid save, a stale base and an invalid document all read as unknown.
+          [
+            'issue.updateDescription',
+            (issue: string) => ({ issue, baseVersion: 1, description: 'Leaked' }),
+          ],
+          [
+            'issue.updateDescription',
+            (issue: string) => ({ issue, baseVersion: 99, description: 'Leaked' }),
+          ],
+          [
+            'issue.updateDescription',
+            (issue: string) => ({
+              issue,
+              baseVersion: 1,
+              description: { type: 'doc', content: [{ type: 'nope' }] },
+            }),
+          ],
         ] as const) {
           const real = await failure(operation, input(secRef), actor(), [secRef]);
           const none = await failure(operation, input(unknown), actor(), [unknown]);

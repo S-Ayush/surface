@@ -32,6 +32,7 @@ import {
   mergeLabels,
   normalizeTitle,
   parseLabelRef,
+  sameDocJson,
   scopedTo,
   STATUS_CATEGORIES,
   StatusRef,
@@ -304,14 +305,6 @@ function withGroups(
     }
   }
   return usable;
-}
-
-/** JSON with sorted keys: a stored document's keys can come back in another order. */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) => {
-    if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
-    return Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -608,14 +601,15 @@ export const issueUpdateDescription = defineOperation({
     // A stale base is the server's CONFLICT: predict nothing, so the overlay equals what it keeps.
     if (typeof version !== 'number' || version !== input.baseVersion) return;
     const at = store.now.toISOString();
-    // Every save raises the version, so a queued follow-up save carries the predicted base.
+    // Every save raises the version, as the server's does (SPEC-011 D17). The editor still keeps
+    // one save in flight and never chains on this predicted version (PLAN-012 S4b).
     store.patch('IssueContent', id, {
       description: input.description,
       version: version + 1,
       updatedAt: at,
     });
     // The issue's `updatedAt` moves only when the text changes (§4.1), as on the server.
-    if (canonicalJson(content?.['description']) !== canonicalJson(input.description)) {
+    if (!sameDocJson(content?.['description'], input.description)) {
       store.patch('Issue', id, { updatedAt: at });
     }
   },
