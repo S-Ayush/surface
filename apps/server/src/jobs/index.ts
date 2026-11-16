@@ -36,7 +36,10 @@ export const QUEUES = {
   // two hours is stuck; pg-boss expires it so the exclusive queue takes the next one.
   filesSweep: { name: 'files-sweep', cron: '53 4 * * *', expireInSeconds: 2 * 60 * 60 },
   /** Purges issues deleted 720 hours ago (SPEC-015 §6.3, D10): daily, with catch-up. */
-  trashPurge: { name: 'trash-purge', cron: '53 3 * * *' },
+  // pg-boss's default 15 minutes is too short: a full run is 5,000 purges, each its own
+  // transaction of a few deletes (about 0.1 to 0.3 s), so 10 to 25 minutes. Two hours is several
+  // full runs; a run still active then is stuck, and expiring it aborts its loop.
+  trashPurge: { name: 'trash-purge', cron: '53 3 * * *', expireInSeconds: 2 * 60 * 60 },
 } as const;
 
 export interface Jobs {
@@ -191,7 +194,7 @@ export async function registerJobs(
       executor,
       clock,
       log: jobLog,
-      ...(metrics ? { metrics: trashPurgeMetrics(metrics, trashDb, clock) } : {}),
+      ...(metrics ? { metrics: trashPurgeMetrics(metrics, trashDb, jobLog, clock) } : {}),
     }),
     { clock, log: jobLog, pollingIntervalSeconds },
   );

@@ -1,7 +1,8 @@
 // PLAN-015 S2, SPEC-015 §4.5 (AC-4, guarding later plans): every table with a foreign key to
 // `issues`, read from the Drizzle schema, has a purge step, except `issue_search_text`, whose key
 // cascades (D19); every other such key is RESTRICT, so a missing step would fail the purge
-// loudly. Steps run children first: no step deletes rows another table's later step still
+// loudly. The same holds a level down and further: a table keyed to `comments` (or to any other
+// table the purge empties) without ON DELETE CASCADE needs its own step, or purges fail. Steps run children first: no step deletes rows another table's later step still
 // references. A table with an `issue_id` column and no foreign key is listed, so a new child
 // can't slip past the guard by leaving its key out. The comment steps' own SQL and chunking are
 // `comment-purge-step.test.ts`'s; the content steps' calls are here.
@@ -35,6 +36,27 @@ const foreignKeys = tables.flatMap((table) =>
   })),
 );
 
+/**
+ * The tables a purge empties rows of, from `issues` down every foreign key, and of those, the
+ * ones whose key doesn't cascade: each needs a step.
+ */
+function purgedFrom(root: string): { reached: Set<string>; needSteps: Set<string> } {
+  const reached = new Set([root]);
+  const needSteps = new Set<string>();
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const fk of foreignKeys) {
+      if (fk.from === fk.to || !reached.has(fk.to)) continue;
+      if (fk.onDelete !== 'cascade') needSteps.add(fk.from);
+      if (!reached.has(fk.from)) {
+        reached.add(fk.from);
+        grew = true;
+      }
+    }
+  }
+  return { reached, needSteps };
+}
+
 /** The table a step deletes from. */
 function tableOf(step: PurgeStep): string {
   if (step.model.startsWith('table:')) return step.model.slice('table:'.length);
@@ -66,6 +88,15 @@ describe('the purge-step registry (SPEC-015 §4.5)', () => {
     expect(missing, 'tables with a key to issues and no purge step').toEqual([]);
   });
 
+  it('has a step for every table under those whose key doesn’t cascade (grandchildren too)', () => {
+    const { reached, needSteps } = purgedFrom('issues');
+    // Reactions sit under comments: the walk goes past the first level.
+    expect(reached.has('reactions')).toBe(true);
+    const stepped = new Set(PURGE_STEPS.map(tableOf));
+    const missing = [...needSteps].filter((table) => !stepped.has(table)).sort();
+    expect(missing, 'tables under issues with a non-cascading key and no purge step').toEqual([]);
+  });
+
   it('has RESTRICT keys to issues, except the server-only issue_search_text (D19)', () => {
     const toIssues = foreignKeys.filter((fk) => fk.to === 'issues');
     for (const fk of toIssues) {
@@ -77,10 +108,9 @@ describe('the purge-step registry (SPEC-015 §4.5)', () => {
     const keyed = new Set(foreignKeys.filter((fk) => fk.to === 'issues').map((fk) => fk.from));
     const unkeyed = tables
       .filter((table) =>
-        // The schema leaves names to the `snake_case` casing, so a column may be named either way.
-        getTableConfig(table).columns.some((column: PgColumn) =>
-          ['issue_id', 'issueId'].includes(column.name),
-        ),
+        // The schema leaves names to the `snake_case` casing, so a column may be named either way;
+        // `parent_issue_id` and the like count too.
+        getTableConfig(table).columns.some((column: PgColumn) => /issue_?id$/i.test(column.name)),
       )
       .map(nameOf)
       .filter((name) => !keyed.has(name));

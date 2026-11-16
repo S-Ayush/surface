@@ -2,7 +2,8 @@
  * Purging an issue (SPEC-015 §4.5), in the operation's one transaction, through the repo layer:
  *
  * 1. `lockIssueForWrite` in `lifecycle` mode. A missing or invisible issue is `NOT_FOUND`; a live
- *    or archived one is `CONFLICT` "Delete ENG-42 first." (§4.2), with nothing written.
+ *    or archived one is `CONFLICT` "Delete ENG-42 first." (§4.2), with nothing written. For the
+ *    system actor (the job), a deleted issue not yet past `purgeAfter` is `CONFLICT` too (D20).
  * 2. Every registered purge step (`purge-steps.ts`), children before parents. Content rows log no
  *    `D` (ADR-0022); `flush` checks that the Issue's own `D` sits next to them.
  * 3. The Issue row, with a logged `D`.
@@ -20,6 +21,7 @@ import {
   issueLockModeOf,
   lifecycleRefusal,
   lifecycleStep,
+  purgeAfter,
   type Actor,
   type IssueLockMode,
 } from '@surface/domain';
@@ -70,6 +72,18 @@ export async function purgeIssue(ctx: PurgeContext, issueId: string): Promise<Pu
     );
   }
   if (step.kind !== 'purged') throw new Error(`issue.purge cannot ${step.kind}`);
+  // SPEC-015 §6.3, D20: the job purges only what is due, checked again under the lock on the
+  // operation's clock, so an issue deleted again after the job selected it waits its 720 h. An
+  // Admin's purge has no time limit.
+  if (ctx.actor.kind === 'system' && issue.deletedAt !== null) {
+    const due = purgeAfter(issue.deletedAt);
+    if (ctx.now.getTime() < due.getTime()) {
+      throw new SurfaceError(
+        'CONFLICT',
+        `${await access.identifier(issue)} is not due to be purged until ${due.toISOString()}.`,
+      );
+    }
+  }
 
   for (const purge of ctx.steps ?? PURGE_STEPS) await purge.step(ctx.tx, repo, issue.id);
   await repo.purge('Issue', issue.id);

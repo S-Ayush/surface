@@ -4,10 +4,12 @@
  * transaction (`daily-batch.ts` has the batches, the cap and the catch-up).
  *
  * - **Selection:** `deleted_at + 720 h <= now`, the same boundary as `purgeAfter` (§4.2): at
- *   exactly `purgeAfter` an issue can't be restored and may be purged.
- * - **Idempotent:** an issue already gone is `NOT_FOUND`, which counts as done; one restored after
- *   it was selected is `CONFLICT`, which the job leaves alone (skipped). Anything else is a
- *   failure, counted and logged, and the next run tries the issue again.
+ *   exactly `purgeAfter` an issue can't be restored and may be purged. `now` is the app clock at
+ *   the start of the run, the clock that stamps `deletedAt` and checks `canRestore` (D20).
+ * - **Idempotent:** an issue already gone is `NOT_FOUND`, which counts as done; one restored, or
+ *   deleted again, after it was selected is `CONFLICT` (`purgeIssue` checks the boundary again
+ *   under the lock), which the job leaves alone (skipped). Anything else is a failure, counted
+ *   and logged, and the next run tries the issue again.
  * - **Bytes** are not removed here: `files-cleanup` drains the keys a purge records (§4.5).
  */
 import { RETENTION_HOURS, systemActor } from '@surface/domain';
@@ -29,8 +31,8 @@ export interface TrashItem {
 export interface TrashDb {
   /** Issues with `deleted_at + 720 h <= now`, by `deleted_at` then id, after `after`. */
   due(now: Date, after: TrashItem | undefined, limit: number): Promise<readonly TrashItem[]>;
-  /** The oldest `deleted_at` of any issue, for the age gauge; undefined when none is deleted. */
-  oldestDeletedAt(): Promise<Date | undefined>;
+  /** Seconds from the oldest `deleted_at` to `now`, for the age gauge; undefined when none. */
+  oldestDeletedAge(now: Date): Promise<number | undefined>;
 }
 
 /** The selection on Postgres; the partial index `issues_deleted_at_idx` serves it (§4.9). */
@@ -52,12 +54,13 @@ export function pgTrashDb(pool: Pool): TrashDb {
          LIMIT ${limit}`);
       return rows.map((row) => ({ id: row.id, deletedAt: row.deleted_at }));
     },
-    async oldestDeletedAt() {
-      const { rows } = await db.execute<{ oldest: string | null }>(
-        sql`SELECT min(deleted_at)::text AS oldest FROM issues WHERE deleted_at IS NOT NULL`,
-      );
-      const oldest = rows[0]?.oldest;
-      return oldest === null || oldest === undefined ? undefined : new Date(oldest);
+    async oldestDeletedAge(now) {
+      // The age in SQL, so no timestamp text is parsed back (`float8`: pg returns it as a number).
+      const { rows } = await db.execute<{ age: number | null }>(sql`
+        SELECT extract(epoch FROM ${now.toISOString()}::timestamptz - min(deleted_at))::float8 AS age
+          FROM issues WHERE deleted_at IS NOT NULL`);
+      const age = rows[0]?.age;
+      return age === null || age === undefined ? undefined : age;
     },
   };
 }
@@ -75,11 +78,13 @@ export const noTrashPurgeMetrics: TrashPurgeMetrics = {
 
 /**
  * The two counters, and the age of the oldest deleted issue, read on each scrape. A job that
- * stopped running shows as an age past 30 days.
+ * stopped running shows as an age past 30 days. A failed read keeps the last value and logs a
+ * warning, as the file gauges do (`http/metrics.ts`): a scrape never fails because of it.
  */
 export function trashPurgeMetrics(
   registry: Registry,
-  db: Pick<TrashDb, 'oldestDeletedAt'>,
+  db: Pick<TrashDb, 'oldestDeletedAge'>,
+  log: { warn(object: object, message: string): void },
   clock: () => Date = () => new Date(),
 ): TrashPurgeMetrics {
   const purged = new Counter({
@@ -97,8 +102,11 @@ export function trashPurgeMetrics(
     help: 'Age of the oldest deleted issue in seconds, 0 when none is deleted',
     registers: [registry],
     async collect() {
-      const oldest = await db.oldestDeletedAt();
-      this.set(oldest === undefined ? 0 : (clock().getTime() - oldest.getTime()) / 1000);
+      try {
+        this.set((await db.oldestDeletedAge(clock())) ?? 0);
+      } catch (error) {
+        log.warn({ err: loggableError(error) }, 'trash metrics unavailable');
+      }
     },
   });
   return { purged: () => purged.inc(), failed: () => failures.inc() };
@@ -108,8 +116,13 @@ export interface TrashPurgeDeps {
   readonly db: TrashDb;
   readonly executor: Pick<Executor, 'execute'>;
   readonly clock: () => Date;
-  readonly log: { warn(object: object, message: string): void };
+  readonly log: {
+    warn(object: object, message: string): void;
+    debug(object: object, message: string): void;
+  };
   readonly metrics?: TrashPurgeMetrics;
+  /** The job's abort signal: the run stops before its next issue (`runDailyBatch`). */
+  readonly signal?: AbortSignal;
   /** Test seams; production uses `DAILY_BATCH`. */
   readonly size?: number;
   readonly cap?: number;
@@ -124,6 +137,7 @@ export function purgeTrash({
   metrics = noTrashPurgeMetrics,
   size,
   cap,
+  signal,
 }: TrashPurgeDeps): Promise<BatchCounts> {
   const now = clock();
   return runDailyBatch<TrashItem>(
@@ -149,19 +163,26 @@ export function purgeTrash({
         }
         // Purged meanwhile (by an Admin, or a run that crashed after its commit).
         if (code === 'NOT_FOUND') return 'done';
-        // Restored after it was selected: no longer due.
-        if (code === 'CONFLICT') return 'skipped';
+        // Restored (or restored and deleted again) after it was selected: no longer due (D20).
+        if (code === 'CONFLICT') {
+          log.debug({ issueId: item.id }, 'trash-purge skipped an issue no longer due');
+          return 'skipped';
+        }
         metrics.failed();
         // The executor logged the cause with its correlation id; the issue id is enough here.
         log.warn({ issueId: item.id, code }, 'trash-purge could not purge an issue');
         return 'failed';
       },
     },
-    { ...(size === undefined ? {} : { size }), ...(cap === undefined ? {} : { cap }) },
+    {
+      ...(size === undefined ? {} : { size }),
+      ...(cap === undefined ? {} : { cap }),
+      ...(signal === undefined ? {} : { signal }),
+    },
   );
 }
 
 /** The `trash-purge` job for `registerDailyJob`. */
 export function trashPurgeJob(schedule: DailyJob['schedule'], deps: TrashPurgeDeps): DailyJob {
-  return { schedule, run: () => purgeTrash(deps) };
+  return { schedule, run: (signal) => purgeTrash({ ...deps, ...(signal ? { signal } : {}) }) };
 }

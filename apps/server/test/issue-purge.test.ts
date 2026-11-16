@@ -26,6 +26,8 @@ import { recordingDb, scriptedDb } from './support/scripted-db.js';
 
 const EARLIER = new Date('2026-10-01T00:00:00.000Z');
 const DELETED_AT = new Date('2026-11-01T00:00:00.000Z');
+/** `purgeAfter(DELETED_AT)`: from here on the job may purge it. */
+const DUE = new Date('2026-12-01T00:00:00.000Z');
 
 /** ENG-1, in `state`, and a fresh record of writes. */
 async function issueIn(state: 'live' | 'archived' | 'deleted' | 'archivedAndDeleted'): Promise<{
@@ -129,8 +131,14 @@ describe('issue.purge on a deleted issue (AC-4)', () => {
 
   it('names no actor in the audit line when the job purges (the system actor)', async () => {
     const { m, issue } = await issueIn('deleted');
-    await purgeIssue(m.purge({ actor: systemActor() }), issue.id);
+    await purgeIssue(m.purge({ actor: systemActor(), now: DUE }), issue.id);
     expect(m.audits[0]?.fields).toEqual({ issueId: issue.id, teamId: m.eng.id, number: 1 });
+  });
+
+  it('lets an Admin purge before the 720 h are up: an Admin’s purge has no time limit', async () => {
+    const { m, issue } = await issueIn('deleted');
+    await purgeIssue(m.purge({ now: new Date(DELETED_AT.getTime() + 1000) }), issue.id);
+    expect(m.issues.has(issue.id)).toBe(false);
   });
 
   it('keeps the team counter, so the number is never reused (INV-08)', async () => {
@@ -175,18 +183,54 @@ describe('issue.purge refuses', () => {
     expect(m.writes).toEqual([]);
   });
 
-  it('leaves the issue when a step fails, so the transaction rolls back and the next run retries (E6)', async () => {
+  it('for the job, a deleted issue not yet due with CONFLICT, re-checked under the lock (D20)', async () => {
+    const { m, issue } = await issueIn('deleted');
+    const steps = recordingSteps(m, ['comments']);
+    const justBefore = new Date(DUE.getTime() - 1);
+    const error = await purgeIssue(
+      m.purge({ actor: systemActor(), now: justBefore, steps }),
+      issue.id,
+    ).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'CONFLICT' });
+    expect(m.calls).toEqual(['lockIssue']);
+    expect(m.writes).toEqual([]);
+    expect(m.audits).toEqual([]);
+    expect(m.issues.has(issue.id)).toBe(true);
+    // At exactly `purgeAfter` it is due (§4.2).
+    await purgeIssue(m.purge({ actor: systemActor(), now: DUE, steps }), issue.id);
+    expect(m.issues.has(issue.id)).toBe(false);
+  });
+
+  it('stops at a failing step: no Issue delete, audit line or event follows it (E6)', async () => {
+    // Undoing the steps that ran is the executor's job: the whole operation is one transaction,
+    // which rolls back when purgeIssue throws, so the next run finds the issue as it was.
     const { m, issue } = await issueIn('deleted');
     const failing: PurgeStep = {
       model: 'table:broken',
       step: () => Promise.reject(new Error('connection lost')),
     };
-    await expect(purgeIssue(m.purge({ steps: [failing] }), issue.id)).rejects.toThrow(
+    const writing: PurgeStep = {
+      model: 'IssueHistory',
+      step: async (_tx, repo, issueId) => {
+        await repo.deleteWhere('IssueHistory', 'issueId', [issueId], { log: false });
+      },
+    };
+    await expect(purgeIssue(m.purge({ steps: [writing, failing] }), issue.id)).rejects.toThrow(
       'connection lost',
     );
-    expect(m.writes).toEqual([]);
+    // The first step's write, and nothing after the failure: no `purge Issue`.
+    expect(m.writes).toEqual([
+      {
+        action: 'deleteWhere',
+        model: 'IssueHistory',
+        ids: [issue.id],
+        fields: ['issueId'],
+        log: false,
+      },
+    ]);
     expect(m.events).toEqual([]);
     expect(m.audits).toEqual([]);
+    expect(m.issues.has(issue.id)).toBe(true);
   });
 });
 

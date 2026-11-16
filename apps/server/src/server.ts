@@ -140,7 +140,7 @@ export async function startServer(
   // Before HTTP stops: clients reconnect elsewhere, or here once we are back (1012).
   if (hub) lifecycle.onShutdown('connections', 'sync hub', () => hub.stop());
   // The app builds the one executor (and the `/metrics` registry); the jobs run operations
-  // through the same one (SPEC-015 §6.3), so they share its rate limiter and metrics.
+  // through the same one (SPEC-015 §6.3), so they share its handlers and metrics.
   let appExecutor: Executor | undefined;
   let appMetrics: Registry | undefined;
   const app = await buildApp({

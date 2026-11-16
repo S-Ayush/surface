@@ -26,10 +26,15 @@ export const CATCH_UP_AFTER_MS = 24 * 60 * 60 * 1000;
 /** What a daily job needs of pg-boss. */
 export type DailyQueue = Pick<PgBoss, 'createQueue' | 'schedule' | 'work' | 'send' | 'findJobs'>;
 
-/** A queue name and its cron (UTC). */
+/** A queue name, its cron (UTC) and, when a run may outlast pg-boss's 15 minutes, its expiry. */
 export interface DailySchedule {
   readonly name: string;
   readonly cron: string;
+  /**
+   * Seconds an active run may take before pg-boss expires it, aborts its signal (the batch loop
+   * stops) and lets the exclusive queue take the next. Default: pg-boss's 15 minutes.
+   */
+  readonly expireInSeconds?: number;
 }
 
 /** What happened to one item: done (or already gone), left alone, or failed (tried next run). */
@@ -48,18 +53,29 @@ export interface DailyBatch<T> {
   handle(item: T): Promise<ItemOutcome>;
 }
 
-/** Runs one batch job: batches of `size`, at most `cap` items, until nothing more is due. */
+/**
+ * Runs one batch job: batches of `size`, at most `cap` items, until nothing more is due. When
+ * `signal` aborts (pg-boss expired the job, or the worker is stopping) it stops before the next
+ * item: items already handled stay done, and the next run selects the rest.
+ */
 export async function runDailyBatch<T>(
   batch: DailyBatch<T>,
-  { size = DAILY_BATCH.size, cap = DAILY_BATCH.cap }: { size?: number; cap?: number } = {},
+  {
+    size = DAILY_BATCH.size,
+    cap = DAILY_BATCH.cap,
+    signal,
+  }: { size?: number; cap?: number; signal?: AbortSignal } = {},
 ): Promise<BatchCounts> {
   const counts = { done: 0, skipped: 0, failed: 0 };
   let handled = 0;
   let after: T | undefined;
-  while (handled < cap) {
+  // A function, so the check reads the signal anew each time (TypeScript would narrow a field).
+  const stopped = () => signal?.aborted === true;
+  while (handled < cap && !stopped()) {
     const limit = Math.min(size, cap - handled);
     const items = await batch.select(after, limit);
     for (const item of items) {
+      if (stopped()) return counts;
       counts[await batch.handle(item)] += 1;
       handled += 1;
     }
@@ -91,8 +107,11 @@ export async function catchUp(
 
 export interface DailyJob {
   readonly schedule: DailySchedule;
-  /** One run. Its counts are logged; a throw fails the job (pg-boss retries it). */
-  run(): Promise<BatchCounts>;
+  /**
+   * One run, which stops when `signal` aborts. Its counts are logged; a throw fails the job
+   * (pg-boss retries it).
+   */
+  run(signal?: AbortSignal): Promise<BatchCounts>;
 }
 
 /**
@@ -112,12 +131,20 @@ export async function registerDailyJob(
     readonly pollingIntervalSeconds: number;
   },
 ): Promise<void> {
-  const { name, cron } = job.schedule;
-  await queue.createQueue(name, { policy: 'exclusive' });
+  const { name, cron, expireInSeconds } = job.schedule;
+  await queue.createQueue(name, {
+    policy: 'exclusive',
+    ...(expireInSeconds === undefined ? {} : { expireInSeconds }),
+  });
   await queue.schedule(name, cron, null, { singletonKey: name });
-  await queue.work(name, { pollingIntervalSeconds }, async () => {
-    const counts = await job.run();
-    log.info({ queue: name, ...counts }, 'daily job finished');
+  // One job per call (pg-boss's default batch size).
+  await queue.work(name, { pollingIntervalSeconds }, async ([run]) => {
+    const signal = run?.signal;
+    const counts = await job.run(signal);
+    log.info(
+      { queue: name, ...counts, ...(signal?.aborted === true ? { stopped: true } : {}) },
+      'daily job finished',
+    );
   });
   if (await catchUp(queue, name, clock())) {
     log.info({ queue: name }, 'daily job queued to catch up');

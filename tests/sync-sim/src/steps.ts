@@ -833,9 +833,9 @@ export type LifecycleStep =
 
 /**
  * Lifecycle interleavings: issues created, commented on and reacted to, deleted, restored and
- * purged from every tab, with the faults a tab that keeps its replica survives (as in
- * `commentCase`: content is not bootstrapped until PLAN-011 S5b, so no compaction, crash or late
- * user).
+ * purged from every tab. The content steps open the issues first, as in `commentCase` (PLAN-011
+ * S5b). Faults: those a tab that keeps its replica survives (no compaction, crash or late user);
+ * widening them to `commentCase`'s is left to a later slice.
  */
 export function lifecycleCase(): fc.Arbitrary<Case> {
   const kept = new Set(['wait', 'faults', 'disconnect', 'offline', 'restart', 'reload']);

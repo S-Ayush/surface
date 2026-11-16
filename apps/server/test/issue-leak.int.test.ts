@@ -636,6 +636,12 @@ describe('purging a deleted SEC issue', () => {
       const doomed = uuidv7();
       await ok('issue.create', { id: doomed, team: 'SEC', title: 'Doomed secret' }, samActor);
       await ok('issue.delete', { issue: doomed }, samActor);
+      // Due for the job (D20): deleted 721 h ago. Test setup, so the unlogged write is harmless:
+      // no connection holds the deleted issue.
+      await h.pool.query(
+        `UPDATE issues SET deleted_at = deleted_at - interval '721 hours' WHERE id = $1`,
+        [doomed],
+      );
       // The `trash-purge` job runs it as the system actor, which sees every team.
       expect(await ok('issue.purge', { issue: doomed }, systemActor())).toEqual({ purged: true });
       const marker = uuidv7();

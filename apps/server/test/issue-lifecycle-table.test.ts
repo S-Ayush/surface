@@ -211,8 +211,13 @@ const CASES: Readonly<Record<string, Case>> = {
   'issue.restore': (m, issue, now) => restoreIssue(m.lifecycle({ now }), issue.id),
   // PLAN-015 S2. The purge steps are `purge-steps.test.ts`'s; here, the issue's own rule.
   'issue.purge': (m, issue, now) => purgeIssue(m.purge({ now }), issue.id),
-  // The job runs `issue.purge` for each issue it selects, as the system actor (§6.3).
-  'trash-purge': (m, issue, now) => purgeIssue(m.purge({ actor: systemActor(), now }), issue.id),
+  // The job runs `issue.purge` for each issue it selects, as the system actor (§6.3); it selects
+  // a deleted issue only once it is due, so it runs then (D20).
+  'trash-purge': (m, issue, now) => {
+    const due = issue.deletedAt === null ? now : purgeAfter(issue.deletedAt);
+    const at = due.getTime() > now.getTime() ? due : now;
+    return purgeIssue(m.purge({ actor: systemActor(), now: at }), issue.id);
+  },
   'comment.create': commentCase((ctx, t) =>
     createComment(ctx, { id: randomUUID(), issueId: t.issueId, body: commentBody }),
   ),

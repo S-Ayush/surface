@@ -2,8 +2,9 @@
 // `deleted_at + 720 h <= now`, exact boundary included; purges in batches of 100, through
 // `issue.purge` as the system actor; resumes after a crash without purging anything twice; stops
 // at 5,000 a run; a second start with the same `singletonKey` doesn't run it twice), E4's job
-// half (an issue past `purgeAfter` is purged on the next run), and the job's metrics. A fake
-// clock, executor, queue and selection; the selection's SQL is checked as text.
+// half (an issue past `purgeAfter` is purged on the next run), the job's metrics (a failed read
+// never fails a scrape), its expiry and its abort signal. A fake clock, executor, queue and
+// selection; the selection's SQL is checked as text.
 import { purgeAfter, RETENTION_HOURS, type Actor } from '@surface/domain';
 import { Registry } from 'prom-client';
 import { describe, expect, it, vi } from 'vitest';
@@ -40,6 +41,7 @@ const idOf = (n: number) => `0190f0c0-0000-7000-8000-${String(n).padStart(12, '0
 function fakeTrash(deleted: Map<string, Date>) {
   const selects: { after?: string; limit: number }[] = [];
   let failSelectAt: number | undefined;
+  let failAge = false;
   const db: TrashDb = {
     due(now, after, limit) {
       selects.push({ ...(after ? { after: after.id } : {}), limit });
@@ -54,14 +56,20 @@ function fakeTrash(deleted: Map<string, Date>) {
         .filter((item) => after === undefined || key(item) > key(after));
       return Promise.resolve(due.slice(0, limit));
     },
-    oldestDeletedAt() {
+    oldestDeletedAge(now) {
+      if (failAge) return Promise.reject(new Error('connection lost'));
       const times = [...deleted.values()].map((d) => d.getTime());
-      return Promise.resolve(times.length === 0 ? undefined : new Date(Math.min(...times)));
+      return Promise.resolve(
+        times.length === 0 ? undefined : (now.getTime() - Math.min(...times)) / 1000,
+      );
     },
   };
   return {
     db,
     selects,
+    failAgeReads: (fail: boolean) => {
+      failAge = fail;
+    },
     crashOnSelect: (n: number | undefined) => {
       failSelectAt = n;
     },
@@ -92,7 +100,7 @@ function failure(code: 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL'): ExecuteResult {
   return { ok: false, error: { code, message: code, correlationId: 'c-1' } };
 }
 
-const silent = { warn: vi.fn(), info: vi.fn() };
+const silent = { warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
 
 /** `count` issues deleted long enough ago, one minute apart, oldest first. */
 function deletedIssues(count: number, base = new Date(NOW.getTime() - RETENTION_MS - HOUR)) {
@@ -216,14 +224,16 @@ describe('the trash-purge run (AC-6)', () => {
       [idOf(3), failure('INTERNAL')],
     ]);
     const { executor, purged } = fakeExecutor(deleted, (id) => answers.get(id));
-    const log = { warn: vi.fn() };
+    const log = { warn: vi.fn(), debug: vi.fn() };
     const registry = new Registry();
-    const metrics = trashPurgeMetrics(registry, trash.db, () => NOW);
+    const metrics = trashPurgeMetrics(registry, trash.db, log, () => NOW);
     const counts = await purgeTrash({ db: trash.db, executor, clock: () => NOW, log, metrics });
     expect(counts).toEqual({ done: 2, skipped: 1, failed: 1 });
     expect(purged).toEqual([idOf(4)]);
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.warn.mock.calls[0]?.[0]).toEqual({ issueId: idOf(3), code: 'INTERNAL' });
+    expect(log.debug).toHaveBeenCalledTimes(1);
+    expect(log.debug.mock.calls[0]?.[0]).toEqual({ issueId: idOf(2) });
     // A failed issue isn't selected again in the same run (the cursor moved past it).
     expect(execCount(executor)).toBe(4);
     const text = await registry.metrics();
@@ -248,12 +258,66 @@ describe('the trash-purge run (AC-6)', () => {
   it('reports the age of the oldest deleted issue, 0 when none is deleted', async () => {
     const deleted = new Map([[idOf(1), new Date(NOW.getTime() - 40 * 24 * HOUR)]]);
     const registry = new Registry();
-    trashPurgeMetrics(registry, fakeTrash(deleted).db, () => NOW);
+    trashPurgeMetrics(registry, fakeTrash(deleted).db, silent, () => NOW);
     expect(await registry.metrics()).toContain(
       `surface_trash_oldest_deleted_age_seconds ${String(40 * 24 * 3600)}`,
     );
     deleted.clear();
     expect(await registry.metrics()).toContain('surface_trash_oldest_deleted_age_seconds 0');
+  });
+
+  it('keeps the last age and still answers the scrape when the read fails, with a warning', async () => {
+    const deleted = new Map([[idOf(1), new Date(NOW.getTime() - 40 * 24 * HOUR)]]);
+    const trash = fakeTrash(deleted);
+    const registry = new Registry();
+    const log = { warn: vi.fn() };
+    trashPurgeMetrics(registry, trash.db, log, () => NOW);
+    const age = `surface_trash_oldest_deleted_age_seconds ${String(40 * 24 * 3600)}`;
+    expect(await registry.metrics()).toContain(age);
+    trash.failAgeReads(true);
+    const text = await registry.metrics();
+    expect(text).toContain(age);
+    expect(text).toContain('surface_trash_purged_total 0');
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn.mock.calls[0]?.[1]).toBe('trash metrics unavailable');
+  });
+
+  it('asks Postgres for the age, so no timestamp text is parsed', async () => {
+    const statements: Statement[] = [];
+    const pool = {
+      query(config: { text: string }, params: unknown[] = []) {
+        statements.push({ text: config.text, params });
+        return Promise.resolve({ rows: [{ age: 12.5 }], rowCount: 1 });
+      },
+    };
+    expect(await pgTrashDb(pool as unknown as Pool).oldestDeletedAge(NOW)).toBe(12.5);
+    expect(statements[0]?.text.replace(/\s+/g, ' ')).toMatch(
+      /extract\(epoch FROM \$1::timestamptz - min\(deleted_at\)\)::float8 AS age FROM issues WHERE deleted_at IS NOT NULL/,
+    );
+    expect(statements[0]?.params).toEqual([NOW.toISOString()]);
+  });
+
+  it('stops before the next issue when its signal aborts; the next run takes the rest', async () => {
+    const deleted = deletedIssues(250);
+    const trash = fakeTrash(deleted);
+    const abort = new AbortController();
+    const { executor, purged } = fakeExecutor(deleted, () => {
+      // Expired (or the worker is stopping) while the 150th purge runs.
+      if (purged.length === 149) abort.abort();
+      return undefined;
+    });
+    const counts = await purgeTrash({
+      db: trash.db,
+      executor,
+      clock: () => NOW,
+      log: silent,
+      signal: abort.signal,
+    });
+    expect(counts).toEqual({ done: 150, skipped: 0, failed: 0 });
+    expect(execCount(executor)).toBe(150);
+    expect(trash.selects).toHaveLength(2);
+    await purgeTrash({ db: trash.db, executor, clock: () => NOW, log: silent });
+    expect(new Set(purged).size).toBe(250);
   });
 });
 
@@ -271,7 +335,8 @@ function fakeQueue(clock: () => Date) {
   const completed: { name: string; completedOn: Date }[] = [];
   const created: { name: string; options: unknown }[] = [];
   const scheduled: { name: string; cron: string; options: unknown }[] = [];
-  const workers = new Map<string, () => Promise<unknown>>();
+  type Worker = (jobs: { signal: AbortSignal }[]) => Promise<unknown>;
+  const workers = new Map<string, Worker>();
   const queue = {
     createQueue: vi.fn((name: string, options: unknown) => {
       created.push({ name, options });
@@ -281,7 +346,7 @@ function fakeQueue(clock: () => Date) {
       scheduled.push({ name, cron, options });
       return Promise.resolve();
     }),
-    work: vi.fn((name: string, _options: unknown, handler: () => Promise<unknown>) => {
+    work: vi.fn((name: string, _options: unknown, handler: Worker) => {
       workers.set(name, handler);
       return Promise.resolve(`worker-${name}`);
     }),
@@ -301,14 +366,14 @@ function fakeQueue(clock: () => Date) {
       ),
     ),
   };
-  async function complete(name: string): Promise<number> {
+  async function complete(name: string, signal = new AbortController().signal): Promise<number> {
     const runs = queued.filter((job) => job.name === name).length;
     for (let i = queued.length - 1; i >= 0; i--) {
       if (queued[i]?.name === name) queued.splice(i, 1);
     }
     const worker = workers.get(name);
     for (let n = 0; n < runs; n++) {
-      await worker?.();
+      await worker?.([{ signal }]);
       completed.push({ name, completedOn: clock() });
     }
     return runs;
@@ -339,8 +404,11 @@ describe('scheduling and catch-up (AC-6, §6.3)', () => {
       }),
       { clock: () => NOW, log: silent, pollingIntervalSeconds: 30 },
     );
-    expect(trash).toEqual({ name: 'trash-purge', cron: '53 3 * * *' });
-    expect(q.created).toEqual([{ name: 'trash-purge', options: { policy: 'exclusive' } }]);
+    expect(trash).toEqual({ name: 'trash-purge', cron: '53 3 * * *', expireInSeconds: 7200 });
+    // Above a full 5,000-purge run, so pg-boss's 15-minute default never expires a healthy one.
+    expect(q.created).toEqual([
+      { name: 'trash-purge', options: { policy: 'exclusive', expireInSeconds: 7200 } },
+    ]);
     expect(q.scheduled).toEqual([
       { name: 'trash-purge', cron: '53 3 * * *', options: { singletonKey: 'trash-purge' } },
     ]);
@@ -364,6 +432,28 @@ describe('scheduling and catch-up (AC-6, §6.3)', () => {
     now = new Date(NOW.getTime() + HOUR);
     await start();
     expect(q.queued).toEqual([]);
+  });
+
+  it('passes the job’s abort signal to the run: an aborted job purges nothing', async () => {
+    const q = fakeQueue(() => NOW);
+    const deleted = deletedIssues(3);
+    const { executor, purged } = fakeExecutor(deleted);
+    const job = trashPurgeJob(trash, {
+      db: fakeTrash(deleted).db,
+      executor,
+      clock: () => NOW,
+      log: silent,
+    });
+    await registerDailyJob(q.queue, job, {
+      clock: () => NOW,
+      log: silent,
+      pollingIntervalSeconds: 30,
+    });
+    const aborted = new AbortController();
+    aborted.abort();
+    await q.complete('trash-purge', aborted.signal);
+    expect(purged).toEqual([]);
+    expect(deleted.size).toBe(3);
   });
 
   it('catches up when the last completed run is more than 24 h old, or there is none', async () => {

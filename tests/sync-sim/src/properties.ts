@@ -501,9 +501,9 @@ function namedBy(outcome: Outcome, op: string): Set<string> {
 /**
  * Delete, restore and purge (SPEC-015 AC-13, §5.1): property 1 for the debug items, then
  * - every tab holds exactly the server's **live** issues: no archived, deleted or purged one;
- * - every tab holds content (comments, reactions) of live issues only, each as stored; for an
- *   issue nobody deleted, exactly what is stored (a restored issue's content is read when it is
- *   opened, SPEC-011 §5.3, so a tab may lack it);
+ * - with every live issue open in every tab (PLAN-011 S5b: a tab holds an issue's content only
+ *   while the issue is open), every tab holds content (comments, reactions) of live issues only,
+ *   each as stored; for an issue nobody deleted, exactly what is stored;
  * - nothing stored names a purged issue, a confirmed purge left no row, and the numbers left stay
  *   rising in commit order;
  * - every user's freshly bootstrapped tab holds the same issues as the streamed ones.
@@ -527,6 +527,16 @@ export const lifecycleConvergence: Property = {
     const comments = await server.comments();
     const reactions = await server.reactions();
     const deleted = namedBy(outcome, 'issue.delete');
+    // As `commentConvergence`: the live issues open in every tab first (PLAN-011 S5b).
+    const liveIds = world.issueIds.filter((id) => live[id] !== undefined);
+    // A page left open across its issue's delete and restore doesn't load the content again (the
+    // delete dropped it); a fresh look at the page does. Open again what didn't come back.
+    for (const tab of world.live) {
+      for (const id of liveIds) {
+        if (tab.store.content.state(id) !== 'ready') tab.store.content.open(id);
+      }
+    }
+    await world.showEverywhere(liveIds);
     for (const tab of world.live) {
       expect(world.issueView(tab), tab.name).toEqual(asSeenBy(live, tab.user.id));
       const content: [string, ContentRows, ContentRows][] = [

@@ -125,7 +125,7 @@ export const issuePurge = defineOperation({
   summary: 'Permanently delete a deleted issue',
   description:
     'Deletes a recently deleted issue for good, with its description, activity, comments, reactions and attachments. It cannot be undone. Only Admins can do this; the issue must be deleted first. Its number is never reused. Name the issue by identifier, like ENG-42, or id.',
-  keywords: ['permanently delete issue', 'purge issue', 'empty recently deleted', 'erase ENG-42'],
+  keywords: ['permanently delete issue', 'purge issue', 'delete forever', 'erase ENG-42'],
   input: z.object({ issue: IssueRef }),
   output: z.object({ purged: z.literal(true) }),
   // SPEC-015 §5.3: Admin only. A private team's issue is NOT_FOUND for an Admin outside it before
