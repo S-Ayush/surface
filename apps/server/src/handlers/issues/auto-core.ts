@@ -81,16 +81,17 @@ export async function autoArchiveIssue(
   const { access, repo, now } = ctx;
   const settings = await access.shareTeam(target.teamId);
   const issue = await access.lockIssue(target.issueId, issueLockModeOf('issue.autoArchive'));
-  const name = await access.identifier(issue);
   const step = lifecycleStep('autoArchive', issue, now, now);
-  if (step.kind !== 'moves') throw conflict(`${name} is no longer live, so it was not archived.`);
+  if (step.kind !== 'moves') {
+    throw conflict(`${await access.identifier(issue)} is no longer live, so it was not archived.`);
+  }
   const category = await access.statusCategory(issue.statusId);
   const due =
     settings !== undefined && category !== undefined && CLOSED_CATEGORIES.has(category)
       ? autoArchiveDueAt(issue, settings.autoArchiveMonths)
       : undefined;
   if (due === undefined || now.getTime() < due.getTime()) {
-    throw conflict(`${name} is not due to be archived.`);
+    throw conflict(`${await access.identifier(issue)} is not due to be archived.`);
   }
   const row = await repo.archive('Issue', issue.id);
   await ctx.history('archived', row);
@@ -123,16 +124,17 @@ export async function autoCloseIssue(
     );
   }
   const issue = await access.lockIssue(target.issueId, issueLockModeOf('issue.autoClose'));
-  const name = await access.identifier(issue);
   const step = lifecycleStep('autoArchive', issue, now, now);
-  if (step.kind !== 'moves') throw conflict(`${name} is no longer live, so it was not closed.`);
+  if (step.kind !== 'moves') {
+    throw conflict(`${await access.identifier(issue)} is no longer live, so it was not closed.`);
+  }
   const from = await access.statusCategory(issue.statusId);
   if (
     from === undefined ||
     !OPEN_CATEGORIES.includes(from) ||
     now.getTime() < autoCloseDueAt(issue, settings.autoCloseMonths).getTime()
   ) {
-    throw conflict(`${name} is not stale.`);
+    throw conflict(`${await access.identifier(issue)} is not stale.`);
   }
 
   // The category side effects of SPEC-011 §4.6: Canceled sets `canceledAt`, keeps `startedAt`.

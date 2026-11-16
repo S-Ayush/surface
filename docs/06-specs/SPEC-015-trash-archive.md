@@ -313,7 +313,7 @@ Private teams: an Admin who isn't a member can't see the team's issues, so `issu
 
 "Available when" uses a new registry `ui` predicate, `ui.available(target, store)`, so the command menu hides every edit command on an archived or deleted issue, hides "Delete issue" on a deleted one, and shows "Restore issue" only on an archived or deleted one (§12: SPEC-003 §3.1 and SPEC-005 §4 change).
 
-Every operation passes `pnpm registry:lint` with seed-fixture examples. The fixture gains one archived and one deleted issue. System-only operations carry the registry flag `systemOnly` (§12, the same row as in SPEC-014).
+Every operation passes `pnpm registry:lint` with seed-fixture examples. The fixture gains one deleted issue (ENG-4). It has no archived issue: system-only examples never run, so nothing needs one; PLAN-015 S4 adds an archived seed issue if its `includeArchived` lists need one. System-only operations carry the registry flag `systemOnly` (§12, the same row as in SPEC-014).
 
 ### 6.2 Optimistic updates
 
@@ -341,7 +341,7 @@ All three run as the system actor through the executor, one issue per transactio
 
 **`auto-archive`**, cron `'29 3 * * *'`, same catch-up and `singletonKey` rule
 
-- **Selection:** live issues whose status is in the Completed or Canceled category (Duplicate is a Canceled status) and where `greatest(completedAt, canceledAt, updatedAt) + autoArchiveMonths months <= now()`, using the issue's team setting. Including `updatedAt` means a restored issue (§4.2) or one that was edited after closing gets a fresh period.
+- **Selection:** live issues whose status is in the Completed or Canceled category (Duplicate is a Canceled status) and where `greatest(completedAt, canceledAt, updatedAt) + autoArchiveMonths months <= now`, where `now` is the app clock at the start of the run (D20, not Postgres `now()`), using the issue's team setting. Including `updatedAt` means a restored issue (§4.2) or one that was edited after closing gets a fresh period.
 - **Per issue:** `issue.autoArchive`. Batches of 100, at most 5,000 per run, oldest first.
 - **Changes apply within a day:** a new period takes effect at the next run.
 - **Metrics:** `surface_auto_archived_total`, `surface_auto_archive_failures_total`.
@@ -349,7 +349,7 @@ All three run as the system actor through the executor, one issue per transactio
 
 **`auto-close`**, cron `'17 3 * * *'`, same catch-up and `singletonKey` rule
 
-- **Selection:** live issues in the Backlog, Unstarted or Started category, in teams with `autoCloseMonths` set, where `updatedAt + autoCloseMonths months <= now()`. Comments, reactions and attachments don't move `updatedAt` (SPEC-011), so they don't count as activity (D18).
+- **Selection:** live issues in the Backlog, Unstarted or Started category, in teams with `autoCloseMonths` set, where `updatedAt + autoCloseMonths months <= now`, with the same `now` (the app clock at the start of the run, D20). Comments, reactions and attachments don't move `updatedAt` (SPEC-011), so they don't count as activity (D18).
 - **Per issue:** `issue.autoClose` moves the issue to the team's `autoCloseStatusId`, with the category side effects of SPEC-011 §4.6 and the history entry of §4.8. Same batch and cap as above.
 - **Metrics:** `surface_auto_closed_total`, `surface_auto_close_failures_total`.
 

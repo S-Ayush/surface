@@ -64,8 +64,8 @@ export interface RunningServer {
   /** Resolves when the server is ready; rejects with a StartupError otherwise. */
   ready: Promise<void>;
   /**
-   * The app's executor, for the process's own jobs and for tests that run a system operation the
-   * way a job does (PLAN-015 S3). Throws before the app has built it.
+   * The app's executor. Only tests use it: they run a system operation the way a job does
+   * (PLAN-015 S3). Throws before the app has built it.
    */
   executor: Pick<Executor, 'execute'>;
 }

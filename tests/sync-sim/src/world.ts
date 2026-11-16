@@ -98,8 +98,6 @@ export class World {
   readonly saved = new Map<string, Saved>();
   /** Ids of the issues `issueCreate` steps dispatched, accepted or not (PLAN-011 S4). */
   readonly issueIds: string[] = [];
-  /** Ids of the issues an `issueAutoArchive` step asked the server to archive (PLAN-015 S3). */
-  readonly autoArchived: string[] = [];
   /** Ids of every comment a step created (PLAN-013 S3), refused ones included. */
   readonly commentIds: string[] = [];
   readonly #problems: string[] = [];

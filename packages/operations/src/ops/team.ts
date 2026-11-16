@@ -10,7 +10,9 @@
  * (a private team's last member, SPEC-001 E12, D3).
  */
 import {
+  AUTOMATION_MONTHS,
   COLOR_HUES,
+  DEFAULT_AUTO_CLOSE_MONTHS,
   ESTIMATE_SCALES,
   NEW_TEAM_SETTINGS,
   canEndMembership,
@@ -479,13 +481,7 @@ export const teamSetEstimates = defineOperation({
 });
 
 /** 1, 3, 6, 9 or 12 months (SPEC-015 §3.2, D15): the page offers nothing else. */
-const AutomationMonthsSchema = z.union([
-  z.literal(1),
-  z.literal(3),
-  z.literal(6),
-  z.literal(9),
-  z.literal(12),
-]);
+const AutomationMonthsSchema = z.literal(AUTOMATION_MONTHS);
 
 export const teamUpdateAutomations = defineOperation({
   name: 'team.updateAutomations',
@@ -553,7 +549,7 @@ export const teamUpdateAutomations = defineOperation({
             );
       // The server refuses a status that is not a Canceled one of the team: predict nothing.
       if (lower !== undefined && named === undefined) return;
-      const months = input.autoCloseMonths ?? (wasOn ? undefined : 6);
+      const months = input.autoCloseMonths ?? (wasOn ? undefined : DEFAULT_AUTO_CLOSE_MONTHS);
       if (months !== undefined && team['autoCloseMonths'] !== months) {
         changes['autoCloseMonths'] = months;
       }

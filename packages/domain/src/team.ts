@@ -11,6 +11,9 @@ import type { ColorHue, EstimateScale } from './workspace.js';
 export const AUTOMATION_MONTHS = [1, 3, 6, 9, 12] as const;
 export type AutomationMonths = (typeof AUTOMATION_MONTHS)[number];
 
+/** Turning auto-close on with no value sets this many months (SPEC-015 §3.2). */
+export const DEFAULT_AUTO_CLOSE_MONTHS: AutomationMonths = 6;
+
 /** A new team's settings: the `teams` column defaults (PLAN-001 S1; a server test keeps them so). */
 export const NEW_TEAM_SETTINGS: {
   readonly color: ColorHue;

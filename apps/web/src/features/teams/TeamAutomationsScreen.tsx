@@ -4,7 +4,7 @@
 // 12 months (D15). Auto-close is off by default; turning it on sets 6 months and the team's first
 // Canceled status. "Auto-close parent issues" and "sub-issues" arrive with M3 and are not shown.
 // Readers of a public team see the page read-only.
-import { AUTOMATION_MONTHS } from '@surface/domain';
+import { AUTOMATION_MONTHS, DEFAULT_AUTO_CLOSE_MONTHS } from '@surface/domain';
 import { teamUpdateAutomations, type InputOf } from '@surface/operations';
 import { Switch } from '@surface/ui';
 import { useApp } from '../../app/context.js';
@@ -24,9 +24,6 @@ export function TeamAutomationsScreen({ params }: ScreenProps) {
 }
 
 type Change = Omit<InputOf<typeof teamUpdateAutomations>, 'team'>;
-
-/** The default period when auto-close is turned on (§3.2). */
-const DEFAULT_CLOSE_MONTHS = 6;
 
 const monthsLabel = (months: number) => (months === 1 ? '1 month' : `${months} months`);
 
@@ -96,7 +93,9 @@ function Automations({ details }: { readonly details: TeamDetails }) {
           label="Auto-close stale issues"
           checked={closeOn}
           disabled={readOnly || (!closeOn && settings.canceled.length === 0)}
-          onCheckedChange={(on) => void save({ autoCloseMonths: on ? DEFAULT_CLOSE_MONTHS : null })}
+          onCheckedChange={(on) =>
+            void save({ autoCloseMonths: on ? DEFAULT_AUTO_CLOSE_MONTHS : null })
+          }
         />
         {closeOn && settings.autoCloseMonths !== null && (
           <>

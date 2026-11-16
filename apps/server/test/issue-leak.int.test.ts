@@ -707,8 +707,13 @@ describe('the auto-archive and auto-close jobs in SEC', () => {
       await h.pool.query(
         `UPDATE issues SET completed_at = now() - interval '13 months',
                            updated_at = now() - interval '13 months'
-          WHERE id = ANY($1)`,
-        [[closed, stale]],
+          WHERE id = $1`,
+        [closed],
+      );
+      // An open issue has no `completed_at` (INV-20), so only its `updated_at` ages.
+      await h.pool.query(
+        `UPDATE issues SET updated_at = now() - interval '13 months' WHERE id = $1`,
+        [stale],
       );
       await ok('issue.autoArchive', { issue: closed }, systemActor());
       await ok('issue.autoClose', { issue: stale }, systemActor());

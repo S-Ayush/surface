@@ -171,6 +171,8 @@ export class RealServer implements CommentServer, WorkflowServer, LifecycleServe
   refusedMidBatch = 0;
   issueFixtures: IssueFixtures | undefined;
   readonly #entry: TestServer;
+  /** Ids `autoArchive` archived (PLAN-015 S3), not those it was merely asked about. */
+  readonly #archived = new Set<string>();
   readonly #database: TestDatabaseHandle;
   readonly #byId: ReadonlyMap<string, TestUser>;
   readonly #sockets: RealSocket[] = [];
@@ -489,8 +491,15 @@ export class RealServer implements CommentServer, WorkflowServer, LifecycleServe
 
   /** PLAN-015 S3: an aged issue archived by the system actor, like the `auto-archive` job. */
   autoArchive(issueId: string): void {
-    void this.#serially('auto-archive an issue', () => this.#entry.autoArchive(issueId)).catch(
-      () => undefined,
+    void this.#serially('auto-archive an issue', async () => {
+      if (await this.#entry.autoArchive(issueId)) this.#archived.add(issueId);
+    }).catch(() => undefined);
+  }
+
+  /** The issues `autoArchive` really archived, after every call queued before this one. */
+  autoArchivedIds(): Promise<string[]> {
+    return this.#serially('read the auto-archived issues', () =>
+      Promise.resolve([...this.#archived]),
     );
   }
 

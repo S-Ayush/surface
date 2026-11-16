@@ -10,6 +10,7 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TeamAutomationsScreen } from '../src/features/teams/TeamAutomationsScreen.js';
+import { clearToasts, toasts } from './comment-harness.js';
 import { ENG, EstimateApp, pageTree, status } from './estimate-fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -157,6 +158,8 @@ describe('Settings → Team → Automations (SPEC-015 §3.2)', () => {
     await choose(selectLabelled('Auto-archive closed items after'), '1');
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(app.dispatched).toEqual([]);
+    expect(toasts()).toContain('That change could not be saved. Try again.');
+    clearToasts();
   });
 
   it('cannot turn auto-close on in a team with no Canceled status, and says why', async () => {

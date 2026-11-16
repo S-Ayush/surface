@@ -833,8 +833,9 @@ export type LifecycleStep =
     }
   /**
    * `issue.autoArchive` of an issue a step created, run by the system actor on the server, not
-   * from a tab (PLAN-015 S3): the server ages the issue first, so it is due, and does nothing for
-   * one that is not live. Then a restore (`issueRestore`) brings it back, equal to a fresh
+   * from a tab (PLAN-015 S3): the server closes the issue first (a logged update) and runs the
+   * operation with its clock ahead, so it is due; nothing happens for one that is not live or that
+   * an edit reopened. Then a restore (`issueRestore`) brings it back, equal to a fresh
    * bootstrap.
    */
   | { readonly t: 'issueAutoArchive'; readonly issue: number };
@@ -906,7 +907,6 @@ function applyLifecycle(world: World, step: LifecycleStep): void {
   if (step.t === 'issueAutoArchive') {
     const issue = pick(world.issueIds, step.issue);
     if (issue === undefined || !isLifecycleServer(world.server)) return;
-    world.autoArchived.push(issue);
     world.server.autoArchive(issue);
     return;
   }

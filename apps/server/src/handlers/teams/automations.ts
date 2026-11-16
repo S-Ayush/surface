@@ -8,7 +8,7 @@
  *   against deletion by a feature that is off.
  * - Turning it on with no value sets 6 months and the team's first Canceled status.
  */
-import { comparePositions, type StatusCategory } from '@surface/domain';
+import { comparePositions, DEFAULT_AUTO_CLOSE_MONTHS, type StatusCategory } from '@surface/domain';
 import { SurfaceError } from '../../executor/errors.js';
 import { refNotFound } from '../../executor/refs/sources.js';
 import type { ModelPatch, ModelRow } from '../../sync/models.js';
@@ -37,8 +37,6 @@ export interface AutomationsInput {
   /** The resolved status id and the input's spelling of it, for messages. */
   readonly statusId?: string | undefined;
 }
-
-export const DEFAULT_AUTO_CLOSE_MONTHS = 6;
 
 function invalid(path: string, message: string): SurfaceError {
   return new SurfaceError('INVALID_INPUT', message, { issues: [{ path: [path], message }] });

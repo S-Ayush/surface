@@ -18,6 +18,7 @@
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { systemActor } from '@surface/domain';
+import { registry } from '@surface/operations';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
 import { pino, type Logger } from 'pino';
@@ -29,7 +30,9 @@ import { loadConfig, type Config } from '../../src/config.js';
 import { createPool } from '../../src/db/pool.js';
 import { createLogger } from '../../src/logger.js';
 import { uuidv7 } from '../../src/db/uuidv7.js';
+import { createExecutor, type Executor } from '../../src/executor/execute.js';
 import { transactionRunner } from '../../src/executor/transaction.js';
+import { HANDLERS } from '../../src/handlers/index.js';
 import { startServer, type RunningServer } from '../../src/server.js';
 import { gracefulShutdown } from '../../src/shutdown.js';
 import { setupInputSchema } from '../../src/setup/input.js';
@@ -182,11 +185,10 @@ export interface TestServer {
    */
   issueLifecycles(): Promise<IssueLifecycleRow[]>;
   /**
-   * Makes a live issue due for auto-archive and runs `issue.autoArchive` on it as the system
-   * actor, as the job does (PLAN-015 S3): its status becomes the team's first Completed one,
-   * closed and last updated 13 months ago (the default period is 6). A test-only raw write, so
-   * the issue's replicas are stale until the archive's `A` removes it. Returns false, doing
-   * nothing, for an issue that is not live or not there.
+   * Closes a live issue with a logged `issue.update` (to the team's first Completed status, by
+   * position) when it is open, then runs `issue.autoArchive` as the system actor through an
+   * executor whose clock is 13 months ahead, as the job would (PLAN-015 S3). Resolves true only
+   * when the issue was archived: false for one that is not live, or that an edit reopened first.
    */
   autoArchive(issueId: string): Promise<boolean>;
   /**
@@ -348,24 +350,40 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
   try {
     await start();
     const users = await signIn(db, config, setupToken, userCount);
+    const runOp = async (user: TestUser, name: string, input: unknown): Promise<OpResponse> => {
+      const response = await fetch(`${url}/api/ops/${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: {
+          cookie: user.cookie,
+          [CSRF_HEADER]: user.csrfToken,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ input }),
+      });
+      return OpResponseSchema.parse(await response.json());
+    };
+    // A second executor on the same database whose clock runs 13 months ahead: `issue.autoArchive`
+    // through it finds a just-closed issue due (the default period is 6), with no raw write. Its
+    // commits reach the hub through `NOTIFY` like any other (PLAN-015 S3).
+    let ahead: Executor | undefined;
+    const dueExecutor = (): Executor =>
+      (ahead ??= createExecutor({
+        pool: db,
+        registry,
+        handlers: HANDLERS,
+        log: logger,
+        allowInternal: true,
+        publicUrl: config.publicUrl,
+        syncedModels: serverSyncRegistry({ syncFixtures: true }).models.map((m) => m.name),
+        clock: () => new Date(Date.now() + 13 * 30 * 24 * 60 * 60 * 1000),
+      }));
     return {
       get url() {
         return url;
       },
       users,
       schemaHash: serverSyncRegistry({ syncFixtures: true }).schemaHash,
-      run: async (user, name, input) => {
-        const response = await fetch(`${url}/api/ops/${encodeURIComponent(name)}`, {
-          method: 'POST',
-          headers: {
-            cookie: user.cookie,
-            [CSRF_HEADER]: user.csrfToken,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ input }),
-        });
-        return OpResponseSchema.parse(await response.json());
-      },
+      run: runOp,
       head: async () => {
         const { rows } = await db.query<{ head: string | null }>(
           'SELECT max(sync_id)::text AS head FROM sync_log',
@@ -500,19 +518,26 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
         });
       },
       autoArchive: async (issueId) => {
-        const running = server;
-        if (running === undefined) throw new Error('The test server is stopped.');
-        const aged = await db.query(
-          `UPDATE issues i
-              SET status_id = s.id, completed_at = now() - interval '13 months',
-                  canceled_at = NULL, updated_at = now() - interval '13 months'
-             FROM (SELECT id, team_id FROM workflow_statuses WHERE category = 'completed') s
-            WHERE i.id = $1 AND i.archived_at IS NULL AND i.deleted_at IS NULL
-              AND s.team_id = i.team_id`,
+        const { rows } = await db.query<{ closed: boolean; status_id: string | null }>(
+          `SELECT s.category IN ('completed', 'canceled', 'duplicate') AS closed,
+                  (SELECT c.id FROM workflow_statuses c
+                    WHERE c.team_id = i.team_id AND c.category = 'completed'
+                    ORDER BY c.position COLLATE "C", c.id LIMIT 1) AS status_id
+             FROM issues i JOIN workflow_statuses s ON s.id = i.status_id
+            WHERE i.id = $1 AND i.archived_at IS NULL AND i.deleted_at IS NULL`,
           [issueId],
         );
-        if (aged.rowCount === 0) return false;
-        const result = await running.executor.execute(
+        const issue = rows[0];
+        const user = users[0];
+        if (issue === undefined || user === undefined) return false;
+        // Closing is a logged `issue.update`, as a person would do it: every replica learns it.
+        if (!issue.closed && issue.status_id !== null) {
+          await runOp(user, 'issue.update', { issue: issueId, status: issue.status_id });
+        }
+        // Due is the executor's clock 13 months ahead (the default period is 6), so no unlogged
+        // write is needed. The operation re-checks under the lock: an edit that reopened the
+        // issue meanwhile makes it CONFLICT, and nothing is archived.
+        const result = await dueExecutor().execute(
           'issue.autoArchive',
           { issue: issueId },
           systemActor(),
