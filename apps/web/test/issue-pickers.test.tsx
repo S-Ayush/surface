@@ -274,3 +274,13 @@ describe('closing', () => {
     expect(onClosed).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('an issue that leaves the replica while its picker is open (SPEC-012 E3)', () => {
+  it('closes the popover and tells the request instead of showing an empty one', async () => {
+    const onClosed = vi.fn();
+    await open(makeApp(), { kind: 'status', issueId: 'gone', onClosed });
+    expect(pickerRequests.snapshot()).toBeUndefined();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+});

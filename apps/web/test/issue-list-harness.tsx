@@ -191,7 +191,12 @@ function RegistryProbe({ sink }: { sink: (registry: CommandRegistry) => void }) 
 }
 
 /** Mounts the list routes at `path` under the providers; `/issue/…` shows the probe. */
-export async function mountLists(app: AppModel, path: string): Promise<Mounted> {
+export async function mountLists(
+  app: AppModel,
+  path: string,
+  /** Shell hosts a test wants beside the page, inside the shortcut provider. */
+  hosts?: ReactNode,
+): Promise<Mounted> {
   let registry: CommandRegistry | undefined;
   const root = createRootRoute({
     component: function Root(): ReactNode {
@@ -250,6 +255,7 @@ export async function mountLists(app: AppModel, path: string): Promise<Mounted> 
             <OverlayProvider>
               <TargetContext value={new TargetStore()}>
                 <ShortcutProvider>
+                  {hosts}
                   <RouterProvider router={router} />
                 </ShortcutProvider>
               </TargetContext>

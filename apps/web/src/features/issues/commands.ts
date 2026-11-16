@@ -127,7 +127,7 @@ function pickerPage(kind: Exclude<PickerKind, 'dueDate'>, title: string, placeho
               );
               return sendIssueUpdate(
                 store,
-                labelsInput(facts, applied ? kept : [...kept, option.id]),
+                labelsInput(facts, facts.labelIds, applied ? kept : [...kept, option.id]),
               );
             },
           };
@@ -147,13 +147,14 @@ function pickerPage(kind: Exclude<PickerKind, 'dueDate'>, title: string, placeho
 function menuAnchor(kind: PickerKind): Element | null {
   return (
     document.querySelector(`[data-property="${kind}"]`) ??
-    document.querySelector('[role="row"][data-focused]')
+    document.querySelector('[data-shortcut-scope="issue"] [role="row"][data-focused]')
   );
 }
 
 const common = {
   section: 'settings',
-  appliesTo: ['issue', 'issues'],
+  // PLAN-014: multi-issue targets. Until then an `issues` target would update only `ids[0]`.
+  appliesTo: ['issue'],
   refs: issueRefs,
 } as const satisfies Pick<PropertyCommand, 'section' | 'appliesTo' | 'refs'>;
 

@@ -11,7 +11,7 @@ import {
   StatusIcon,
   type PropertyPickerOption,
 } from '@surface/ui';
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useApp, useObserved } from '../../../app/context.js';
 import type { ComposerWorld } from '../composer-model.js';
 import { readComposerWorld } from '../composer-world.js';
@@ -85,12 +85,20 @@ function useBoundSpec(kind: PickerSpec['kind'], issueId: string) {
   return { current, send };
 }
 
+/** SPEC-012 E3: an open picker for an issue that left the replica closes instead of going empty. */
+function useCloseWhenGone(gone: boolean, onClose: () => void): void {
+  useEffect(() => {
+    if (gone) onClose();
+  }, [gone, onClose]);
+}
+
 function SingleBound({
   kind,
   issueId,
   onClose,
 }: BoundPickerProps & { readonly kind: 'status' | 'priority' | 'assignee' | 'estimate' }) {
   const { current, send } = useBoundSpec(kind, issueId);
+  useCloseWhenGone(current === undefined, onClose);
   if (current === undefined || current.spec.mode !== 'single') return null;
   const { world, spec } = current;
   return (
@@ -120,6 +128,10 @@ export const EstimatePicker = (props: BoundPickerProps) => (
 
 export function LabelsPicker({ issueId, onClose }: BoundPickerProps) {
   const { current, send } = useBoundSpec('labels', issueId);
+  useCloseWhenGone(current === undefined, onClose);
+  // What the picker opened with, kept: the toggles are measured against it, not against the issue
+  // as it is when the picker closes (a concurrent change by someone else must survive).
+  const [opened] = useState(() => (current?.spec.mode === 'multi' ? [...current.spec.values] : []));
   if (current === undefined || current.spec.mode !== 'multi') return null;
   const { spec } = current;
   return (
@@ -129,7 +141,7 @@ export function LabelsPicker({ issueId, onClose }: BoundPickerProps) {
       values={spec.values}
       options={spec.options}
       onApply={(ids) => {
-        send((facts) => labelsInput(facts, ids));
+        send((facts) => labelsInput(facts, opened, ids));
       }}
       onClose={onClose}
     />
@@ -141,6 +153,7 @@ export function DueDatePicker({ issueId, onClose }: BoundPickerProps) {
   const app = useApp();
   const store = app.readyStore;
   const facts = store === null ? undefined : readIssueFacts(store.pool, issueId);
+  useCloseWhenGone(current === undefined || facts === undefined, onClose);
   if (current === undefined || facts === undefined) return null;
   const today = localToday();
   return (

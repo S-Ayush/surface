@@ -52,6 +52,7 @@ export function useIssueCommands(
 ): void {
   const app = useApp();
   const editable = () => subject()?.editable === true;
+  const deletable = () => editable() || subject()?.lifecycle === 'archived';
   const reason = () => {
     const current = subject();
     return current === undefined
@@ -152,9 +153,10 @@ export function useIssueCommands(
         ...(options.onOverlayClosed === undefined ? {} : { onClosed: options.onOverlayClosed }),
       });
     },
-    // A pending issue has no number to name in the dialog.
+    // A pending issue has no number to name in the dialog. An archived issue can be deleted but
+    // not edited (SPEC-015 §3.4, SPEC-012 D29); a deleted one only restored.
     {
-      when: () => editable() && subject()?.identifier != null,
+      when: () => deletable() && subject()?.identifier != null,
       reason: () =>
         subject()?.identifier == null ? 'Wait a moment: ENG-… has no number yet.' : reason(),
     },

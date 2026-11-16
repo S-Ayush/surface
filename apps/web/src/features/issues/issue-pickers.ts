@@ -180,13 +180,28 @@ export function singleInput(
   }
 }
 
-/** One `issue.update` with the label difference; undefined when nothing changed. */
+/**
+ * One `issue.update` with the user's toggles: the difference between the labels the picker opened
+ * with and the ones it closed with, applied to the issue as it is now. A label another client
+ * added or removed while the picker was open is not the user's toggle, so it survives.
+ */
 export function labelsInput(
   facts: IssueFacts,
-  after: readonly string[],
+  opened: readonly string[],
+  chosen: readonly string[],
 ): IssueUpdateInput | undefined {
-  const change = labelChange(facts.labelIds, after);
-  return change === undefined ? undefined : { issue: facts.id, ...change };
+  const toggles = labelChange(opened, chosen);
+  if (toggles === undefined) return undefined;
+  // Adding what is already there, or removing what is already gone, changes nothing.
+  const addLabels = toggles.addLabels?.filter((id) => !facts.labelIds.includes(id)) ?? [];
+  const removeLabels = toggles.removeLabels?.filter((id) => facts.labelIds.includes(id)) ?? [];
+  const change = {
+    ...(addLabels.length === 0 ? {} : { addLabels }),
+    ...(removeLabels.length === 0 ? {} : { removeLabels }),
+  };
+  return addLabels.length === 0 && removeLabels.length === 0
+    ? undefined
+    : { issue: facts.id, ...change };
 }
 
 export function dueDateInput(

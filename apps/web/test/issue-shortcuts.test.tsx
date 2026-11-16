@@ -8,7 +8,8 @@
 import { overlayManager } from '@surface/ui';
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deleteRequests } from '../src/features/issues/delete-flow.js';
+import { askDelete, deleteRequests, lastDelete } from '../src/features/issues/delete-flow.js';
+import { IssueDeleteHost } from '../src/features/issues/IssueDeleteHost.js';
 import { pickerRequests } from '../src/features/issues/pickers/picker-request.js';
 import { EDIT_TITLE_STATE_KEY } from '../src/features/issues/focus-model.js';
 import { ShortcutEngine } from '../src/shortcuts/engine.js';
@@ -41,6 +42,7 @@ afterEach(async () => {
   engine = undefined;
   pickerRequests.close();
   deleteRequests.close();
+  lastDelete.take();
   await mounted?.unmount();
   await page?.unmount();
   mounted = undefined;
@@ -181,6 +183,59 @@ describe('the issue keys on a list act on the focused row (AC-8)', () => {
   });
 });
 
+describe('Mod+Z restores the last deleted issue through the engine (SPEC-012 §3.11, AC-16, E23)', () => {
+  const modZ = { code: 'KeyZ', metaKey: true };
+  const mountWithHost = async () => {
+    const app = new IssueApp([alpha, bravo]);
+    mounted = await mountLists(app, '/team/ENG/issues', <IssueDeleteHost />);
+    startEngine(mounted.commands);
+    return app;
+  };
+
+  it('does nothing when no delete is remembered (E23)', async () => {
+    const app = await mountWithHost();
+    await keydown(await focusRow('Alpha'), 'z', modZ);
+    expect(app.dispatched).toEqual([]);
+  });
+
+  it('does not dispatch while focus is in a text field, where Mod+Z undoes typing', async () => {
+    const app = await mountWithHost();
+    lastDelete.set({ id: 'gone-1', identifier: 'ENG-9' });
+    const input = document.createElement('input');
+    document.body.append(input);
+    await act(async () => {
+      input.focus();
+      await Promise.resolve();
+    });
+    await keydown(input, 'z', modZ);
+    input.remove();
+    expect(app.dispatched).toEqual([]);
+    expect(lastDelete.get()?.id).toBe('gone-1');
+  });
+
+  it('with focus on a row it dispatches issue.restore for the remembered issue, once', async () => {
+    const app = await mountWithHost();
+    lastDelete.set({ id: 'gone-1', identifier: 'ENG-9' });
+    const row = await focusRow('Alpha');
+    await keydown(row, 'z', modZ);
+    expect(app.dispatched).toEqual([{ op: 'issue.restore', input: { issue: 'gone-1' } }]);
+    await keydown(row, 'z', modZ);
+    expect(app.dispatched).toHaveLength(1);
+  });
+
+  it('is unavailable while the delete dialog is open', async () => {
+    const app = await mountWithHost();
+    lastDelete.set({ id: 'gone-1', identifier: 'ENG-9' });
+    const row = await focusRow('Alpha');
+    await act(async () => {
+      askDelete({ issueId: alpha.id, identifier: 'ENG-1', title: 'Alpha' });
+      await Promise.resolve();
+    });
+    await keydown(row, 'z', modZ);
+    expect(app.dispatched).toEqual([]);
+  });
+});
+
 describe('the issue keys on the page act on the open issue (AC-8, E22)', () => {
   const layout = () => document.querySelector<HTMLElement>('[data-shortcut-scope="issue"]');
 
@@ -222,6 +277,28 @@ describe('the issue keys on the page act on the open issue (AC-8, E22)', () => {
     expect(toasts).toEqual(['ENG-41 is archived. Restore it to edit it.']);
     // The pills of an archived issue are read-only text.
     expect(document.querySelector('[data-property]')).toBeNull();
+  });
+
+  it('Mod+Backspace deletes an archived issue (SPEC-015 §3.4) but not a deleted one', async () => {
+    const del = { code: 'Backspace', ctrlKey: true };
+    page = await mountIssuePage({
+      app: new FakeApp({
+        issues: [issueRow(ISSUE_A, 41, { archivedAt: '2026-11-01T00:00:00.000Z' })],
+      }),
+      ref: 'ENG-41',
+    });
+    await keydown(layout() ?? document.body, 'Backspace', del);
+    expect(deleteRequests.snapshot()).toMatchObject({ issueId: ISSUE_A, identifier: 'ENG-41' });
+    deleteRequests.close();
+    await page.unmount();
+    page = await mountIssuePage({
+      app: new FakeApp({
+        issues: [issueRow(ISSUE_A, 43, { deletedAt: '2026-11-10T00:00:00.000Z' })],
+      }),
+      ref: 'ENG-43',
+    });
+    await keydown(layout() ?? document.body, 'Backspace', del);
+    expect(deleteRequests.snapshot()).toBeUndefined();
   });
 
   it('opens with the title in edit mode when a list row asked for it (Shift+R)', async () => {

@@ -23,7 +23,13 @@ export function IssueDeleteHost() {
       const store = app.readyStore;
       if (store !== null) void restoreLastDeleted(store);
     },
-    { when: () => app.readyStore !== null && lastDelete.get() !== undefined },
+    {
+      // Nor while the delete dialog is open: the dialog is modal and a restore under it confuses.
+      when: () =>
+        app.readyStore !== null &&
+        lastDelete.get() !== undefined &&
+        deleteRequests.snapshot() === undefined,
+    },
   );
 
   if (request === undefined) return null;

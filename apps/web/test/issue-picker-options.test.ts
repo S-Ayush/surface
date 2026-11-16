@@ -219,12 +219,28 @@ describe('the one issue.update a choice sends (AC-7)', () => {
   it('labels: one update with the difference, and nothing when unchanged', () => {
     const before = facts({ labelIds: ['l-bug', 'l-s'] });
     // Choosing Large in the exclusive Size group unchecks Small (the picker's own rule).
-    expect(labelsInput(before, ['l-bug', 'l-l'])).toEqual({
+    expect(labelsInput(before, before.labelIds, ['l-bug', 'l-l'])).toEqual({
       issue: 'issue-1',
       addLabels: ['l-l'],
       removeLabels: ['l-s'],
     });
-    expect(labelsInput(before, ['l-s', 'l-bug'])).toBeUndefined();
+    expect(labelsInput(before, before.labelIds, ['l-s', 'l-bug'])).toBeUndefined();
+  });
+
+  it('labels: a label someone else added while the picker was open survives (review m1)', () => {
+    // The picker opened with Bug; meanwhile another client added Small; the user then adds Large.
+    const now = facts({ labelIds: ['l-bug', 'l-s'] });
+    expect(labelsInput(now, ['l-bug'], ['l-bug', 'l-l'])).toEqual({
+      issue: 'issue-1',
+      addLabels: ['l-l'],
+    });
+    // Unchecking both removes only what is still there: Old was removed by someone else meanwhile.
+    expect(labelsInput(now, ['l-bug', 'l-old'], [])).toEqual({
+      issue: 'issue-1',
+      removeLabels: ['l-bug'],
+    });
+    // Nothing the user toggled changes the issue now: nothing is sent.
+    expect(labelsInput(facts({ labelIds: ['l-bug'] }), [], ['l-bug'])).toBeUndefined();
   });
 
   it('assign to me does nothing when it is already mine or the team doesn’t offer "Me" (§3.6)', () => {
