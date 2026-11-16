@@ -1,17 +1,21 @@
 // The Copy › actions (SPEC-012 §3.7): what each one copies and what its toast says. Pure, so the
 // list's row menu, PLAN-012 S4's page header and S6's keys share the wording. "Copy issue as
-// Markdown" needs the description, which a list row doesn't have, so it joins with S4.
-import { gitBranchName, issueSlug, issueUrl } from '@surface/domain';
+// Markdown" copies the description too once the page has it (`CopyTarget.description`; a list row
+// and, until PLAN-012 S4b, the page don't).
+import { gitBranchName, issueSlug, issueUrl, type DocNodeJSON } from '@surface/domain';
+import { docToMarkdown } from '@surface/editor/schema';
 import { toast } from '@surface/ui';
 import { copyText, type ClipboardLike } from '../members/reset-link.js';
 import { announce } from './announcer.js';
 
-export type CopyKind = 'id' | 'url' | 'title' | 'title-link' | 'branch';
+export type CopyKind = 'id' | 'url' | 'title' | 'title-link' | 'markdown' | 'branch';
 
 /** What a copy reads of an issue. `identifier` is `ENG-42`, or null while the number is pending. */
 export interface CopyTarget {
   readonly identifier: string | null;
   readonly title: string;
+  /** The description, when the caller has it. Null or absent: the copy has no description part. */
+  readonly description?: DocNodeJSON | null;
 }
 
 export type CopyPlan =
@@ -23,6 +27,7 @@ export const COPY_ITEMS: readonly { readonly kind: CopyKind; readonly label: str
   { kind: 'url', label: 'Copy URL' },
   { kind: 'title', label: 'Copy title' },
   { kind: 'title-link', label: 'Copy title as link' },
+  { kind: 'markdown', label: 'Copy issue as Markdown' },
   { kind: 'branch', label: 'Copy git branch name' },
 ];
 
@@ -54,6 +59,20 @@ export function planCopy(
         text: `[${title}](${issueUrl(origin, identifier, title)})`,
         message: 'Copied title as link',
       };
+    case 'markdown': {
+      // SPEC-012 §3.7: the heading, the description as Markdown, then the URL.
+      const description = target.description == null ? '' : docToMarkdown(target.description);
+      const parts = [
+        `# ${identifier} ${title}`,
+        ...(description.trim() === '' ? [] : [description.trim()]),
+        issueUrl(origin, identifier, title),
+      ];
+      return {
+        ok: true,
+        text: parts.join('\n\n'),
+        message: `Copied ${identifier} as Markdown`,
+      };
+    }
     case 'branch':
       return {
         ok: true,

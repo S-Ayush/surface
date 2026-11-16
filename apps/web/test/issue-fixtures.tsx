@@ -2,7 +2,7 @@
 // `issue-not-found.test.tsx`): a replica with observable issue rows (a remote change re-renders
 // the page), a store that records what is dispatched, and the page mounted on a real router.
 import { userActor, type Actor } from '@surface/domain';
-import { Issue, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
+import { Issue, Label, Team, TeamMembership, User, WorkflowStatus } from '@surface/domain/model';
 import type { SyncStore } from '@surface/sync-client';
 import {
   createMemoryHistory,
@@ -19,6 +19,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { AppModel } from '../src/app/AppModel.js';
 import { AuthState, type Session } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
+import { TargetContext, TargetStore } from '../src/command-menu/context.js';
 import type { IssueApi } from '../src/features/issues/issue-api.js';
 import { IssueApiContext } from '../src/features/issues/issue-api.js';
 import { IssuePage } from '../src/features/issues/IssuePage.js';
@@ -75,7 +76,12 @@ export class FakeApp extends AppModel {
   readonly opened: string[] = [];
   readonly issues: Row[];
 
-  constructor(options: { issues: readonly Row[]; teams?: readonly Row[] }) {
+  constructor(options: {
+    issues: readonly Row[];
+    teams?: readonly Row[];
+    statuses?: readonly Row[];
+    labels?: readonly Row[];
+  }) {
     const unused = () => Promise.reject(new Error('unused'));
     super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
     this.issues = options.issues.map((row) => observable({ ...row }));
@@ -83,11 +89,25 @@ export class FakeApp extends AppModel {
     const byModel = new Map<unknown, readonly Row[]>([
       [Team, teams],
       [TeamMembership, teams.map((t) => ({ teamId: t['id'], userId: 'u-ada' }))],
-      [User, [{ id: 'u-ada', name: 'Ada Lovelace', displayName: 'Ada', email: 'a@x.test' }]],
+      [
+        User,
+        [
+          {
+            id: 'u-ada',
+            name: 'Ada Lovelace',
+            displayName: 'Ada',
+            email: 'a@x.test',
+            active: true,
+          },
+        ],
+      ],
       [
         WorkflowStatus,
-        [{ id: STATUS, teamId: TEAM, name: 'In Progress', category: 'started', color: 'yellow' }],
+        options.statuses ?? [
+          { id: STATUS, teamId: TEAM, name: 'In Progress', category: 'started', color: 'yellow' },
+        ],
       ],
+      [Label, options.labels ?? []],
       [Issue, this.issues],
     ]);
     this.#store = {
@@ -224,9 +244,11 @@ export async function mountIssuePage(options: {
       <AppContext value={options.app}>
         <IssueApiContext value={api}>
           <ShellContext value={new ShellStore(null)}>
-            <ShortcutProvider bindings={ALL_KEYS}>
-              <RouterProvider router={router} />
-            </ShortcutProvider>
+            <TargetContext value={new TargetStore()}>
+              <ShortcutProvider bindings={ALL_KEYS}>
+                <RouterProvider router={router} />
+              </ShortcutProvider>
+            </TargetContext>
           </ShellContext>
         </IssueApiContext>
       </AppContext>,

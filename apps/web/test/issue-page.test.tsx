@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/AppModel.js';
 import { AuthState, type Session } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
+import { TargetContext, TargetStore } from '../src/command-menu/context.js';
 import { IssuePage } from '../src/features/issues/IssuePage.js';
 import { LIST_SOURCE_STATE_KEY } from '../src/features/issues/focus-model.js';
 import { ShellContext } from '../src/shell/ShellContext.js';
@@ -124,9 +125,11 @@ async function render(
   return renderToString(
     <AppContext value={app}>
       <ShellContext value={new ShellStore(null)}>
-        <ShortcutProvider>
-          <RouterProvider router={router} />
-        </ShortcutProvider>
+        <TargetContext value={new TargetStore()}>
+          <ShortcutProvider>
+            <RouterProvider router={router} />
+          </ShortcutProvider>
+        </TargetContext>
       </ShellContext>
     </AppContext>,
   );
@@ -157,8 +160,8 @@ describe('IssuePage (AC-11)', () => {
     expect(html).toContain('Assignee: Ada');
     expect(shown).toContain('Created by Ada · Nov 6');
     expect(shown).toMatch(/Updated /);
-    // Read-only pills until PLAN-012 S6 binds the pickers.
-    expect(html).not.toContain(', change');
+    // The pills of a live issue open their pickers (PLAN-012 S6).
+    expect(html).toContain('Status: In Progress, change');
   });
 
   it('shows an estimate on the team’s scale plainly and an off-scale one with a hint', async () => {

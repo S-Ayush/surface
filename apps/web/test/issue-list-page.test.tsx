@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { announcer } from '../src/features/issues/announcer.js';
 import { focusMemory } from '../src/features/issues/focus-model.js';
 import { ENG, ENG_DOING, ENG_DONE, ENG_TODO, ME, OTHER } from './issue-list-fixtures.js';
+import { pickerRequests } from '../src/features/issues/pickers/picker-request.js';
 import { IssueApp, issue, mountLists, type Mounted } from './issue-list-harness.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -84,13 +85,17 @@ describe('team issue list', () => {
     expect(mounted.host.textContent).toContain('ENG-…');
   });
 
-  it('shows pills read-only until the pickers arrive (S6)', async () => {
+  it('shows pills that open their picker on click, without opening the issue (S6)', async () => {
     mounted = await mountLists(new IssueApp([todo]), '/team/ENG/issues');
-    const priority = mounted.host.querySelector(
-      '[role="gridcell"] [aria-label],[role="gridcell"] span',
+    const pill = Array.from(mounted.host.querySelectorAll('button')).find((button) =>
+      button.textContent.startsWith('Status:'),
     );
-    expect(priority).not.toBeNull();
-    expect(mounted.host.querySelectorAll('[role="gridcell"] button').length).toBe(0);
+    expect(pill).toBeDefined();
+    await inAct(() => pill?.click());
+    expect(pickerRequests.snapshot()).toMatchObject({ kind: 'status', issueId: todo.id });
+    // The click stopped at the pill: the list is still the page.
+    expect(mounted.host.querySelector('[data-testid="issue-route"]')).toBeNull();
+    pickerRequests.close();
   });
 
   it('states an empty team and offers no Create button before the composer exists', async () => {

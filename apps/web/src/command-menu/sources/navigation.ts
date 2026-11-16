@@ -21,6 +21,12 @@ export const NAV_ROUTES: readonly {
     keywords: ['home', 'assigned to me'],
   },
   {
+    id: 'nav:drafts',
+    title: 'Go to Drafts',
+    path: '/drafts',
+    keywords: ['unsent', 'saved issues'],
+  },
+  {
     id: 'nav:settings',
     title: commandTitle('nav:settings'),
     path: '/settings',

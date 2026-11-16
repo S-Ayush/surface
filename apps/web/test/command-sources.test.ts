@@ -30,6 +30,7 @@ describe('navigation commands', () => {
     const commands = navigationSource(ctx);
     expect(commands.map((command) => command.title)).toEqual([
       'Go to My issues',
+      'Go to Drafts',
       'Go to settings',
       'Open team…',
       'Go to Engineering',

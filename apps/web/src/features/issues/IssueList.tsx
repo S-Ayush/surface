@@ -17,7 +17,16 @@ import {
   type VirtualListHandle,
 } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
-import { Copy } from 'lucide-react';
+import {
+  Calendar,
+  Copy,
+  Gauge,
+  SignalHigh,
+  Tag,
+  Trash2,
+  User as UserIcon,
+  CircleDot,
+} from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -26,19 +35,28 @@ import {
   useState,
   useSyncExternalStore,
   type FocusEvent,
+  type ReactNode,
 } from 'react';
 import { useApp, useObserved } from '../../app/context.js';
+import { useCommandContext } from '../../command-menu/context.js';
+import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
+import type { CommandId } from '../../commands/catalog.js';
 import { useCommand, useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
 import { announce } from './announcer.js';
 import { browserStorage, readCollapse, writeCollapse } from './collapse-state.js';
 import { COPY_ITEMS, planCopy, runCopy } from './copy-actions.js';
+import { askDelete } from './delete-flow.js';
 import {
+  EDIT_TITLE_STATE_KEY,
   LIST_SOURCE_STATE_KEY,
   focusMemory,
   resolveFocus,
   type IssueListSource,
 } from './focus-model.js';
 import { openComposerWith } from './composer-request.js';
+import { readIssueFacts, type PickerKind } from './issue-pickers.js';
+import { openPicker } from './pickers/picker-request.js';
+import { useIssueCommands, type IssueSubject } from './useIssueCommands.js';
 import styles from './IssueList.module.css';
 import {
   flattenGroups,
@@ -80,6 +98,16 @@ function useCompact(): boolean {
   );
 }
 
+/**
+ * Makes the focused row the command target (`Mod+K`'s context chip and property commands), while
+ * it is mounted. A component, not a hook call in the list: a header has focus too, and then the
+ * page's own target (the team) must stay.
+ */
+function RowTarget({ id, label }: { id: string; label: string }) {
+  useCommandContext({ kind: 'issue', ids: [id], label }, 'focus');
+  return null;
+}
+
 type Focus = { readonly id: string | null; readonly order: readonly string[] };
 
 export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) {
@@ -109,6 +137,10 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
   }
   const focusedId = focus.id;
   const focusedIndex = focusedId === null ? -1 : ids.indexOf(focusedId);
+  const focusedIndexRef = useRef(focusedIndex);
+  useEffect(() => {
+    focusedIndexRef.current = focusedIndex;
+  });
   const [initialScrollTop] = useState(() => focusMemory.recall(listKey)?.scrollTop ?? 0);
 
   // Announce when the focused issue left the list (E2). Collapsing a group isn't a removal: the
@@ -193,7 +225,7 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
   );
 
   const open = useCallback(
-    (row: ListRow) => {
+    (row: ListRow, editTitle = false) => {
       const source: IssueListSource = {
         href,
         routeKey: listKey,
@@ -201,7 +233,12 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
       };
       void navigate({
         href: row.pending ? `/issue/${row.issueId}` : issuePath(row.identifier, row.title),
-        state: (previous) => ({ ...previous, [LIST_SOURCE_STATE_KEY]: source }),
+        state: (previous) => ({
+          ...previous,
+          [LIST_SOURCE_STATE_KEY]: source,
+          // `Shift+R` opens the page with the title in edit mode (SPEC-012 §3.6).
+          ...(editTitle ? { [EDIT_TITLE_STATE_KEY]: true } : {}),
+        }),
       });
     },
     [groups, href, listKey, navigate],
@@ -215,6 +252,46 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
   };
 
   const focusedItem: ListItem | undefined = items[focusedIndex];
+
+  // The issue commands (SPEC-012 §3.6, PLAN-012 S6) act on the focused row.
+  const subjectOf = (row: ListRow): IssueSubject => {
+    const facts =
+      app.readyStore === null ? undefined : readIssueFacts(app.readyStore.pool, row.issueId);
+    return {
+      id: row.issueId,
+      identifier: row.pending ? null : row.identifier,
+      title: row.title,
+      teamKey: row.identifier.slice(0, row.identifier.lastIndexOf('-')),
+      lifecycle: facts?.lifecycle ?? 'live',
+      // A row the replica doesn't hold (the archive pages read the server) can't be edited here.
+      editable: facts?.lifecycle === 'live',
+    };
+  };
+  const focusedRow = focusedItem?.kind === 'row' ? focusedItem.row : undefined;
+  const rowElement = (issueId: string): Element | null => {
+    const index = ids.indexOf(issueId);
+    return index < 0
+      ? null
+      : (grid.current?.querySelector(`[role="row"][aria-rowindex="${String(index + 1)}"]`) ?? null);
+  };
+  /** After a picker or the delete dialog: focus goes back to the focused row (SPEC-012 §3.5). */
+  const refocusRow = useCallback(() => {
+    hasFocus.current = true;
+    // After Radix has restored focus itself (it does so in a timeout of its own).
+    window.setTimeout(() => {
+      const element = grid.current?.querySelector<HTMLElement>(
+        `[role="row"][aria-rowindex="${String(focusedIndexRef.current + 1)}"]`,
+      );
+      element?.focus({ preventScroll: true });
+    }, 0);
+  }, []);
+  useIssueCommands(() => (focusedRow === undefined ? undefined : subjectOf(focusedRow)), {
+    anchor: () => (focusedRow === undefined ? null : rowElement(focusedRow.issueId)),
+    onOverlayClosed: refocusRow,
+    rename: () => {
+      if (focusedRow !== undefined) open(focusedRow, true);
+    },
+  });
   useCommand('list:next', () => {
     move(1);
   });
@@ -255,8 +332,15 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
     return store.pool.get(User, userId)?.displayName ?? '';
   };
 
-  const rowMenu = (row: ListRow): MenuEntry[] => [
-    {
+  /** The key hint of a command, only once the build binds it (a hint never names a dead key). */
+  const keyHint = (command: CommandId): { shortcut: string | readonly string[] } | undefined => {
+    const keys = shortcutsFor(command)[0];
+    return keys === undefined ? undefined : { shortcut: keys };
+  };
+
+  const rowMenu = (row: ListRow): MenuEntry[] => {
+    const subject = subjectOf(row);
+    const copy: MenuEntry = {
       type: 'submenu',
       label: 'Copy',
       icon: <Copy aria-hidden="true" />,
@@ -265,18 +349,69 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
         label: item.label,
         onSelect: () => {
           void runCopy(
-            planCopy(
-              item.kind,
-              { identifier: row.pending ? null : row.identifier, title: row.title },
-              window.location.origin,
-              displayName(),
-            ),
+            planCopy(item.kind, subject, window.location.origin, displayName()),
             typeof navigator === 'undefined' ? undefined : navigator.clipboard,
           );
         },
       })),
-    },
-  ];
+    };
+    // An issue the replica doesn't hold, or an archived or deleted one, only copies (§3.8).
+    if (!subject.editable) return [copy];
+    const picker = (
+      label: string,
+      kind: PickerKind,
+      command: CommandId,
+      icon: ReactNode,
+    ): MenuEntry => ({
+      type: 'item',
+      label,
+      icon,
+      ...keyHint(command),
+      // After the menu has closed, so its focus return doesn't take focus from the picker.
+      onSelect: () => {
+        window.setTimeout(() => {
+          openPicker({
+            kind,
+            issueId: row.issueId,
+            anchor: rowElement(row.issueId),
+            onClosed: refocusRow,
+          });
+        }, 0);
+      },
+    });
+    return [
+      picker('Status', 'status', 'issue:status', <CircleDot aria-hidden="true" />),
+      picker('Priority', 'priority', 'issue:priority', <SignalHigh aria-hidden="true" />),
+      picker('Assignee', 'assignee', 'issue:assignee', <UserIcon aria-hidden="true" />),
+      picker('Labels', 'labels', 'issue:labels', <Tag aria-hidden="true" />),
+      // Hidden while the team doesn't use estimates: the row has no estimate cell either.
+      ...(row.estimate === undefined
+        ? []
+        : [picker('Estimate', 'estimate', 'issue:estimate', <Gauge aria-hidden="true" />)]),
+      picker('Due date', 'dueDate', 'issue:due-date', <Calendar aria-hidden="true" />),
+      { type: 'separator' },
+      copy,
+      ...(subject.identifier === null
+        ? []
+        : ([
+            { type: 'separator' },
+            {
+              type: 'item',
+              label: 'Delete',
+              icon: <Trash2 aria-hidden="true" />,
+              ...keyHint('issue:delete'),
+              onSelect: () => {
+                askDelete({
+                  issueId: row.issueId,
+                  identifier: subject.identifier ?? '',
+                  title: row.title,
+                  onClosed: refocusRow,
+                });
+              },
+            },
+          ] satisfies MenuEntry[])),
+    ];
+  };
 
   // The `+` shows once PLAN-012 S5's composer registers `issue:create` (no dead button before).
   const addAvailable = useObserved(
@@ -318,7 +453,7 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
     const { row } = item;
     return (
       <ContextMenu key={item.id} items={rowMenu(row)}>
-        <div role="none" style={style}>
+        <div role="none" style={style} data-shortcut-scope="issue">
           <IssueRow
             rowIndex={index + 1}
             identifier={row.identifier}
@@ -338,6 +473,19 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
             onOpen={() => {
               open(row);
             }}
+            // The pills open their pickers (§3.3 item 5), on an issue the user can edit.
+            {...(subjectOf(row).editable
+              ? {
+                  onPropertyClick: (property: PickerKind, anchor: HTMLElement) => {
+                    openPicker({
+                      kind: property,
+                      issueId: row.issueId,
+                      anchor,
+                      onClosed: refocusRow,
+                    });
+                  },
+                }
+              : {})}
           />
         </div>
       </ContextMenu>
@@ -351,7 +499,13 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
     if (id !== undefined && id !== focusedId) setFocus({ id, order: ids });
   };
   const onBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget)) hasFocus.current = false;
+    const next = event.relatedTarget;
+    // Focus moving into a picker, the delete dialog or a menu keeps the list "focused": it takes
+    // focus back when that closes (SPEC-012 §3.5), and a removed row's neighbour gets it (E2).
+    const intoOverlay =
+      next instanceof Element &&
+      next.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null;
+    if (!event.currentTarget.contains(next) && !intoOverlay) hasFocus.current = false;
   };
 
   return (
@@ -363,6 +517,9 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
       onFocus={onFocus}
       onBlur={onBlur}
     >
+      {focusedRow !== undefined && (
+        <RowTarget id={focusedRow.issueId} label={focusedRow.identifier} />
+      )}
       <VirtualList
         ref={listRef}
         aria-label={ariaLabel}

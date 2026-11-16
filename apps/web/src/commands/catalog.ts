@@ -46,6 +46,7 @@ export const COMMANDS = {
   'issue:copy-url': { title: 'Copy URL' },
   'issue:copy-branch': { title: 'Copy git branch name' },
   'issue:copy-title': { title: 'Copy title' },
+  'issue:copy-title-link': { title: 'Copy title as link' },
   'issue:copy-markdown': { title: 'Copy issue as Markdown' },
   'issue:delete': { title: 'Delete issue' },
   'issue:restore': { title: 'Restore issue' },

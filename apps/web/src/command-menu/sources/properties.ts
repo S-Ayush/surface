@@ -4,8 +4,10 @@
 // live in `features/issues` next to their pickers (PLAN-012 S6); this is the kind and its source.
 import type { ResolvedRefs } from '@surface/domain';
 import type { OperationRegistry } from '@surface/operations';
+import type { CommandId } from '../../commands/catalog.js';
 import type { Command, CommandContext, CommandPage, CommandSource } from '../model.js';
 import { isAvailableHere, permits } from './operations.js';
+import { shortcutsFor } from './shortcuts.js';
 
 /** The target kinds a property command acts on. */
 export type PropertyTargetKind = 'issue' | 'issues';
@@ -36,6 +38,8 @@ export type PropertyCommand = {
   /** As `ui.available` (SPEC-003 §3.1): false hides the command, e.g. on an archived issue. */
   readonly available?: (target: PropertyTarget, store: unknown) => boolean;
   readonly destructive?: boolean;
+  /** The shortcut command whose keys the row shows as hints (`issue:status` shows `S`). */
+  readonly shortcut?: CommandId;
 } & (
   | /** Opens the §3.5 picker as a sub-page; choosing an item dispatches the update. */ {
       readonly picker: (ctx: CommandContext) => CommandPage;
@@ -69,6 +73,7 @@ export function propertySource(
         section: def.section,
         ...(def.keywords === undefined ? {} : { keywords: def.keywords }),
         ...(def.destructive === true ? { destructive: true } : {}),
+        ...(def.shortcut === undefined ? {} : { shortcuts: shortcutsFor(def.shortcut) }),
         when: (ctx: CommandContext) => {
           const target = propertyTarget(ctx);
           if (target === null || !def.appliesTo.includes(target.kind)) return false;

@@ -18,6 +18,27 @@ import type {
   ComposerUser,
 } from './composer-model.js';
 
+/**
+ * The labels to add and remove to go from `before` to `after` (SPEC-012 §3.5): one
+ * `issue.update` with the difference, or undefined when nothing changed. Order never matters.
+ */
+export function labelChange(
+  before: readonly string[],
+  after: readonly string[],
+): { readonly addLabels?: string[]; readonly removeLabels?: string[] } | undefined {
+  const addLabels = after.filter((id) => !before.includes(id));
+  const removeLabels = before.filter((id) => !after.includes(id));
+  if (addLabels.length === 0 && removeLabels.length === 0) return undefined;
+  return {
+    ...(addLabels.length === 0 ? {} : { addLabels }),
+    ...(removeLabels.length === 0 ? {} : { removeLabels }),
+  };
+}
+
+/** `Shift+E` on a team whose scale is `off` (SPEC-012 §3.5): the hint instead of a picker. */
+export const estimatesOffMessage = (teamKey: string) =>
+  `${teamKey} doesn't use estimates. Turn them on in team settings.`;
+
 /** The id of the "none" option in single-value pickers that allow no value. */
 export const NONE = '__none__';
 

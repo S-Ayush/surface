@@ -26,12 +26,16 @@ import {
   Link as LinkIcon,
   MoreHorizontal,
   PanelRight,
+  Trash2,
   WifiOff,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { parseIssueRef } from '@surface/domain';
 import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
+import { useCommandContext } from '../../command-menu/context.js';
+import { askDelete } from './delete-flow.js';
+import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
 import { structurallyEqual } from '../../app/equal.js';
 import { PageHeader } from '../../shell/PageHeader.js';
 import { useCommand, useCommandRegistry, usePageScope } from '../../shortcuts/ShortcutProvider.js';
@@ -42,7 +46,7 @@ import { openComposerWith } from './composer-request.js';
 import { IssueNotFound } from './IssueNotFound.js';
 import { useIssueApi } from './issue-api.js';
 import { COPY_ITEMS, planCopy, runCopy, type CopyKind } from './copy-actions.js';
-import { readListSource } from './focus-model.js';
+import { readListSource, wantsTitleEdit, withoutEditTitle } from './focus-model.js';
 import {
   chooseIssueSource,
   findRejectedCreate,
@@ -58,8 +62,11 @@ import {
   resolveIssueAddress,
 } from './issue-url.js';
 import { issueViewFromPool, type IssueView } from './issue-view.js';
+import type { PickerKind } from './issue-pickers.js';
 import { usePanelMode } from './panel-layout.js';
+import { openPicker } from './pickers/picker-request.js';
 import { PropertiesPanel } from './PropertiesPanel.js';
+import { useIssueCommands } from './useIssueCommands.js';
 import { ISSUE_PAGE_SLOTS } from './slots.js';
 import { teamListPath, stepInfo, stepTarget, type Direction } from './source-list.js';
 import pageStyles from './issue-page.module.css';
@@ -255,7 +262,8 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   const routerState = useLocation({ select: (location) => location.state });
   const mode = usePanelMode();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
+  // `Shift+R` on a list row opens the page with the title in edit mode (SPEC-012 §3.6).
+  const [editing, setEditing] = useState(() => !readOnly && wantsTitleEdit(routerState));
   const now = new Date();
 
   usePageScope('issue-page');
@@ -299,7 +307,8 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
       void navigate({
         to: '/issue/$ref',
         params: { ref: target },
-        state: routerState,
+        // The next issue opens normally, not in title edit mode.
+        state: withoutEditTitle(routerState),
         replace: true,
       });
     },
@@ -328,12 +337,28 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
   useCommand('issue-page:previous', () => {
     step('previous');
   });
-  useCommand(
-    'issue:rename',
-    () => {
-      setEditing(true);
+  const editable = !readOnly && view.lifecycle === 'live' && view.teamId !== null;
+  // The open issue is the command target (the chip in `Mod+K`, the property commands), and the
+  // `issue` commands act on it (PLAN-012 S6).
+  useCommandContext({ kind: 'issue', ids: [view.id], label: view.identifier ?? 'New issue' });
+  useIssueCommands(
+    () => ({
+      id: view.id,
+      identifier: view.identifier,
+      title: view.title,
+      teamKey: view.teamKey,
+      lifecycle: view.lifecycle,
+      editable,
+    }),
+    {
+      // The properties panel's pill; with the panel closed (the drawer), the page itself.
+      anchor: (kind) =>
+        document.querySelector(`[data-property="${kind}"]`) ??
+        document.querySelector('[data-shortcut-scope="issue"]'),
+      rename: () => {
+        setEditing(true);
+      },
     },
-    { when: () => !readOnly },
   );
 
   // Read on click, not in render: the origin is the browser's.
@@ -341,6 +366,8 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
     const plan = planCopy(kind, view, window.location.origin, userName);
     void runCopy(plan, navigator.clipboard);
   };
+  const deleteKeys = shortcutsFor('issue:delete')[0];
+  const deleteHint = deleteKeys === undefined ? {} : { shortcut: deleteKeys };
   const menu: MenuEntry[] = [
     {
       type: 'submenu',
@@ -354,6 +381,21 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
         },
       })),
     },
+    ...(editable && view.identifier !== null
+      ? ([
+          { type: 'separator' },
+          {
+            type: 'item',
+            label: 'Delete',
+            icon: <Trash2 />,
+            ...deleteHint,
+            onSelect: () => {
+              if (view.identifier === null) return;
+              askDelete({ issueId: view.id, identifier: view.identifier, title: view.title });
+            },
+          },
+        ] satisfies MenuEntry[])
+      : []),
   ];
 
   const saveTitle = (title: string) => {
@@ -462,7 +504,17 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
         </article>
         {(mode === 'inline' || drawerOpen) && (
           <aside className={mode === 'drawer' ? pageStyles.drawer : pageStyles.aside}>
-            <PropertiesPanel view={view} now={now} />
+            <PropertiesPanel
+              view={view}
+              now={now}
+              {...(editable
+                ? {
+                    onPick: (kind: PickerKind, anchor: HTMLElement) => {
+                      openPicker({ kind, issueId: view.id, anchor });
+                    },
+                  }
+                : {})}
+            />
           </aside>
         )}
       </div>

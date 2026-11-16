@@ -3,8 +3,10 @@
 // doesn't need to change for each feature.
 import type { ComponentType } from 'react';
 import { AnnouncerHost } from './issues/AnnouncerHost.js';
+import { IssueDeleteHost } from './issues/IssueDeleteHost.js';
 import { IssueNavHost } from './issues/IssueNavHost.js';
 import { IssuesHost } from './issues/IssuesHost.js';
+import { IssuePickersHost } from './issues/pickers/IssuePickersHost.js';
 import { TeamMenu } from './teams/TeamMenu.js';
 import { TeamsHost } from './teams/TeamsHost.js';
 
@@ -21,6 +23,8 @@ export const SHELL_HOSTS: readonly ComponentType[] = [
   AnnouncerHost,
   IssueNavHost,
   IssuesHost,
+  IssuePickersHost,
+  IssueDeleteHost,
 ];
 
 /**

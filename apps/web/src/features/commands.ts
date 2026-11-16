@@ -8,7 +8,7 @@ import type { OperationCommand } from '../command-menu/sources/operations.js';
 import type { PropertyCommand } from '../command-menu/sources/properties.js';
 import { INVITE_COMMANDS } from './invites/commands.js';
 import { ESTIMATE_COMMANDS } from './estimates/commands.js';
-import { ISSUE_COMMANDS } from './issues/commands.js';
+import { ISSUE_COMMANDS, ISSUE_PROPERTY_COMMANDS } from './issues/commands.js';
 import { COMMENT_COMMANDS } from './comments/commands.js';
 import { LABEL_COMMANDS } from './labels/commands.js';
 import { STATUS_COMMANDS } from './statuses/commands.js';
@@ -25,7 +25,6 @@ export const OPERATION_COMMANDS: Readonly<Record<string, OperationCommand>> = {
 };
 
 /**
- * Property commands (SPEC-012 §3.8), from `features/issues/commands.ts` when PLAN-012 S6 adds it.
- * Shared registry file, append-only: spread your own list here.
+ * Property commands (SPEC-012 §3.8). Shared registry file, append-only: spread your own list here.
  */
-export const PROPERTY_COMMANDS: readonly PropertyCommand[] = [];
+export const PROPERTY_COMMANDS: readonly PropertyCommand[] = [...ISSUE_PROPERTY_COMMANDS];

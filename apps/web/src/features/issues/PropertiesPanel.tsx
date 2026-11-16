@@ -1,7 +1,10 @@
 // The issue page's properties panel (SPEC-012 §3.4 item 5): one PropertyPill per property, then
-// "Created by" and "Updated". The pills are read-only until PLAN-012 S6 binds the pickers.
+// "Created by" and "Updated". The pills open the bound pickers (PLAN-012 S6) unless the issue is
+// read-only (archived, deleted, or not in the replica).
 import { formatDueDate, formatEstimate, priorityLabel } from '@surface/domain';
+import type { MouseEvent } from 'react';
 import { Avatar, PriorityIcon, PropertyPill, StatusIcon } from '@surface/ui';
+import type { PickerKind } from './issue-pickers.js';
 import { agoText, estimateRow, shortDate, type IssueView } from './issue-view.js';
 import styles from './issue-page.module.css';
 
@@ -11,7 +14,26 @@ function todayYmd(now: Date): string {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
-export function PropertiesPanel({ view, now }: { view: IssueView; now: Date }) {
+export function PropertiesPanel({
+  view,
+  now,
+  onPick,
+}: {
+  view: IssueView;
+  now: Date;
+  /** Opens the picker for a property, anchored to its pill. Absent: the pills are read-only. */
+  onPick?: (kind: PickerKind, anchor: HTMLElement) => void;
+}) {
+  /** The pill's props: a button that opens its picker, or read-only text. */
+  const pill = (kind: PickerKind) =>
+    onPick === undefined
+      ? { readOnly: true as const }
+      : {
+          'data-property': kind,
+          onClick: (event: MouseEvent<HTMLButtonElement>) => {
+            onPick(kind, event.currentTarget);
+          },
+        };
   const estimate = estimateRow(view);
   const estimateText =
     estimate.shown && estimate.value !== null
@@ -27,7 +49,7 @@ export function PropertiesPanel({ view, now }: { view: IssueView; now: Date }) {
           <dt>Status</dt>
           <dd>
             <PropertyPill
-              readOnly
+              {...pill('status')}
               property="Status"
               value={view.status.name}
               icon={<StatusIcon category={view.status.category} color={view.status.color} />}
@@ -38,7 +60,7 @@ export function PropertiesPanel({ view, now }: { view: IssueView; now: Date }) {
           <dt>Priority</dt>
           <dd>
             <PropertyPill
-              readOnly
+              {...pill('priority')}
               property="Priority"
               value={priorityLabel(view.priority)}
               icon={<PriorityIcon priority={view.priority} />}
@@ -49,7 +71,7 @@ export function PropertiesPanel({ view, now }: { view: IssueView; now: Date }) {
           <dt>Assignee</dt>
           <dd>
             <PropertyPill
-              readOnly
+              {...pill('assignee')}
               property="Assignee"
               value={view.assignee?.name ?? null}
               icon={
@@ -62,7 +84,7 @@ export function PropertiesPanel({ view, now }: { view: IssueView; now: Date }) {
           <dt>Labels</dt>
           <dd>
             <PropertyPill
-              readOnly
+              {...pill('labels')}
               property="Labels"
               value={labelNames.length === 0 ? null : labelNames.join(', ')}
             />
@@ -72,7 +94,7 @@ export function PropertiesPanel({ view, now }: { view: IssueView; now: Date }) {
           <div className={styles.property}>
             <dt>Estimate</dt>
             <dd>
-              <PropertyPill readOnly property="Estimate" value={estimateText} />
+              <PropertyPill {...pill('estimate')} property="Estimate" value={estimateText} />
               {estimate.offScale && <span className={styles.hint}>Off scale</span>}
             </dd>
           </div>
@@ -81,7 +103,7 @@ export function PropertiesPanel({ view, now }: { view: IssueView; now: Date }) {
           <dt>Due date</dt>
           <dd>
             <PropertyPill
-              readOnly
+              {...pill('dueDate')}
               property="Due date"
               value={view.dueDate === null ? null : formatDueDate(view.dueDate, todayYmd(now))}
             />

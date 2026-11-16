@@ -91,6 +91,8 @@ export function operationSource(
         title: ui.title,
         section: impl.section ?? (op.name.endsWith('.create') ? 'create' : 'settings'),
         keywords: op.keywords,
+        // Delete issue and the like never rank first for a keyword match (SPEC-012 §3.8, AC-16).
+        ...(op.destructive ? { destructive: true } : {}),
         ...(ui.shortcut && isBound(ui.shortcut) ? { shortcuts: [ui.shortcut] } : {}),
         when: (ctx) =>
           matchesContext(ui.contexts, ctx.target) &&

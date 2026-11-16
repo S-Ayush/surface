@@ -77,6 +77,22 @@ export interface IssueListSource {
 /** The router-state key that holds an `IssueListSource`. */
 export const LIST_SOURCE_STATE_KEY = 'issueListSource';
 
+/**
+ * Router state set by `Shift+R` on a list row (SPEC-012 §3.6): the page opens with the title in
+ * edit mode. `withoutEditTitle` drops it when the page steps to another issue.
+ */
+export const EDIT_TITLE_STATE_KEY = 'issueEditTitle';
+
+export function wantsTitleEdit(state: unknown): boolean {
+  return (
+    typeof state === 'object' && state !== null && Reflect.get(state, EDIT_TITLE_STATE_KEY) === true
+  );
+}
+
+export function withoutEditTitle(state: object): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(state).filter(([key]) => key !== EDIT_TITLE_STATE_KEY));
+}
+
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }

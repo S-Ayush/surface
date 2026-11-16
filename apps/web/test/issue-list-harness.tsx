@@ -68,6 +68,8 @@ export class IssueApp extends AppModel {
   readonly #loadedTeams = observable.set<string>();
   /** The teams pages opened (`store.openTeam`), in order. */
   readonly opened: string[] = [];
+  /** The operations dispatched (PLAN-012 S6), in order. */
+  readonly dispatched: { readonly op: string; readonly input: unknown }[] = [];
 
   constructor(
     initial: readonly ListIssue[],
@@ -102,6 +104,7 @@ export class IssueApp extends AppModel {
     const connection = this.#connection;
     const loadedTeams = this.#loadedTeams;
     const opened = this.opened;
+    const dispatched = this.dispatched;
     this.#store = {
       status: 'ready',
       get connection() {
@@ -115,6 +118,10 @@ export class IssueApp extends AppModel {
       },
       openTeam: (teamId: string) => {
         opened.push(teamId);
+      },
+      dispatch: (op: { name: string }, input: unknown) => {
+        dispatched.push({ op: op.name, input });
+        return Promise.resolve({ status: 'confirmed' });
       },
       pool: {
         all: (model: unknown) => byModel.get(model)?.() ?? [],
