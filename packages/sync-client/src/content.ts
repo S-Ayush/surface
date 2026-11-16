@@ -361,13 +361,17 @@ export class ContentHydration {
    */
   async peek(parent: string): Promise<ContentPeek> {
     const id = parent.toLowerCase();
-    if (this.#closed.get() || !this.#online()) return { state: 'offline' };
+    if (this.#closed.get()) return { state: 'offline' };
+    // A socket about to dial (a start or a resync) waits, as a load does (E11).
+    if (!(await this.#fetchable(this.#epoch.get()))) return { state: 'offline' };
     let answer: ContentAnswer;
     try {
       answer = await this.#host.fetchContent([id], this.#abort.signal);
     } catch (error) {
       if (error instanceof ClientOutdatedError) this.#host.outdated();
-      return this.#online() ? { state: 'failed' } : { state: 'offline' };
+      // While the socket keeps retrying after a failed attempt, the view says "available when
+      // online", as `state()` does, not "couldn't load".
+      return this.#reachableNow() ? { state: 'failed' } : { state: 'offline' };
     }
     const rows: Record<string, ModelRow[]> = {};
     for (const model of this.#byModel.keys()) rows[model] = [];

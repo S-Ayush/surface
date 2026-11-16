@@ -47,8 +47,15 @@ function contentWorld(
     updatedAt: AT,
   });
   const opened: string[] = [];
+  // PLAN-011 S7: a parent gone from the replica while wanted is `ready` with no rows.
+  const gone = observable.box(false);
   return {
     opened,
+    gone() {
+      runInAction(() => {
+        gone.set(true);
+      });
+    },
     remote(text: string, version: number) {
       runInAction(() => {
         row.set({ ...row.get(), description: docOfText(text), version });
@@ -56,7 +63,7 @@ function contentWorld(
     },
     api: {
       state: () => state,
-      rows: () => (state === 'ready' ? { IssueContent: [row.get()] } : {}),
+      rows: () => (state === 'ready' && !gone.get() ? { IssueContent: [row.get()] } : {}),
       open: (id: string) => {
         opened.push(id);
         return { release: () => undefined };
@@ -339,6 +346,33 @@ describe('closing the page while a save waits', () => {
     expect(saves(app)).toEqual([
       { issue: ISSUE_A, baseVersion: 6, description: docOfText('Mine, then left') },
     ]);
+  });
+});
+
+describe('the issue deleted or archived while open (E3, PLAN-011 S7)', () => {
+  it('never renders the live description empty before the read-only view', async () => {
+    const content = contentWorld();
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], content: content.api });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    expect(editor()?.value).toBe('Steps to reproduce');
+    // Every text the page commits from here on.
+    const seen: string[] = [];
+    const observer = new MutationObserver(() => {
+      seen.push(document.body.textContent ?? '');
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    // One delta: the issue leaves the replica, and its content is then marked gone (`ready`, no
+    // rows), in separate actions of the same turn.
+    await inAct(() => {
+      app.removeIssue(ISSUE_A);
+      content.gone();
+    });
+    await settle();
+    observer.disconnect();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.some((text) => text.includes('No description'))).toBe(false);
+    expect(document.querySelector('[aria-label="Edit title"]')).toBeNull();
+    expect(editor()).toBeNull();
   });
 });
 

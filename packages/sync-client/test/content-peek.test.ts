@@ -4,25 +4,33 @@
 // so later packets for it are still dropped.
 import { computeSchemaHash, issueParent } from '@surface/sync-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
+import { teamLockName } from '../src/locks.js';
+import type { SocketFactory } from '../src/socket.js';
+import { IndexedDbStorage } from '../src/storage/indexeddb.js';
+import type { StorageConnector } from '../src/storage/open.js';
 import type { SyncStore } from '../src/store.js';
 import { FakeHub } from './support/hub.js';
 import {
   eventually,
+  idle,
   keptMemoryStorage,
   liveStore,
   teamStore,
   teamView,
   until,
 } from './support/live.js';
+import { FakeLocks } from './support/locks.js';
 import { CONTENT_TEST_MODELS, OTHER_USER, USER_ID, id } from './support/models.js';
+import { uniqueName } from './support/storage.js';
 
 const stores: SyncStore[] = [];
 afterEach(async () => {
   for (const store of stores.splice(0)) await store.close();
 });
 
-/** Items 1 (notes 11, 12) and 2 (note 21). */
+/** Items 1 (notes 11, 12) and 2 (note 21). `down`: every connection attempt fails at once. */
 async function itemWorld() {
+  const network = { down: false, hang: false };
   const hub = new FakeHub();
   hub.schemaHash = computeSchemaHash(CONTENT_TEST_MODELS);
   hub.upsert(1);
@@ -31,14 +39,21 @@ async function itemWorld() {
   hub.upsertNote(12, 1);
   hub.upsertNote(21, 2);
   const kept = keptMemoryStorage();
+  const socket: SocketFactory = (url, handlers) => {
+    if (!network.down) return hub.socket(url, handlers);
+    // Down: the attempt fails at once, or (`hang`) stays connecting.
+    if (!network.hang) queueMicrotask(() => handlers.onClose(1006));
+    return { send: () => undefined, close: () => undefined };
+  };
   const { store, timers } = liveStore(hub, {
     models: CONTENT_TEST_MODELS,
     connectStorage: kept.connect,
+    connection: { socket },
   });
   stores.push(store);
   await store.start();
   await until(() => store.connection === 'online');
-  return { hub, store, kept, timers };
+  return { hub, store, kept, timers, network };
 }
 
 const bodies = (rows: readonly Record<string, unknown>[] | undefined): Record<string, unknown> =>
@@ -84,6 +99,60 @@ describe('content.peek (PLAN-012 S4b)', () => {
     await until(() => store.connection === 'offline');
     expect(await store.content.peek(id(1))).toEqual({ state: 'offline' });
     expect(hub.contentRequests).toEqual([]);
+  });
+
+  it('is offline, not failed, when the request fails while the socket keeps retrying (E11)', async () => {
+    const { hub, store, timers, network } = await itemWorld();
+    network.down = true;
+    hub.failContent = 100; // the network is down for HTTP too
+    hub.last.close();
+    await until(() => store.connection === 'offline');
+    // A retry dials and stays connecting, after a failed attempt.
+    network.hang = true;
+    timers.runNext();
+    expect(store.connection).toBe('connecting');
+    expect(await store.content.peek(id(1))).toEqual({ state: 'offline' });
+    expect(store.connection).toBe('connecting');
+  });
+
+  it('waits for a socket about to dial (a warm start preparing its teams) instead of answering offline', async () => {
+    const hub = new FakeHub().withTeams();
+    hub.addSquad(1);
+    hub.join(USER_ID, 1);
+    hub.putTask(110, 1, { creatorId: OTHER_USER });
+    hub.putTaskNote(601, 110);
+    const workspaceId = uniqueName('ws');
+    const replica = `surface-${workspaceId}-${USER_ID}`;
+    const locks = new FakeLocks();
+    const connect: StorageConnector = (name, models, content) =>
+      IndexedDbStorage.open(name, models, content);
+    const options = { workspaceId, connectStorage: connect };
+    const first = teamStore(hub, { ...options, locks: locks.forTab('first') }).store;
+    await first.start();
+    await until(() => first.connection === 'online' && first.followedTeams.has(id(1)));
+    await first.close();
+
+    // Another tab holds the team's lock: this tab's start prepares its teams before it dials.
+    let free: () => void = () => undefined;
+    const removing = new Promise<void>((resolve) => {
+      free = resolve;
+    });
+    void locks
+      .forTab('other')
+      .request(teamLockName(replica, id(1)), { mode: 'exclusive' }, () => removing);
+    const { store } = teamStore(hub, { ...options, locks: locks.forTab('a') });
+    stores.push(store);
+    const started = store.start();
+    await until(() => store.status === 'ready');
+    await idle();
+    expect(store.connection).toBe('disconnected');
+    const peek = store.content.peek(id(110));
+    free();
+    await started;
+    const answer = await peek;
+    expect(answer.state).toBe('ready');
+    if (answer.state !== 'ready') return;
+    expect((answer.rows['TaskNote'] ?? []).map((row) => row.id)).toEqual([id(601)]);
   });
 
   it('fails when the request fails while online, and stores nothing', async () => {
