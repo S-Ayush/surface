@@ -42,6 +42,7 @@ import { addRealEvents, trackRealWork } from './clock.js';
 import type {
   CommentServer,
   CommentState,
+  ReactionState,
   StoredDraft,
   IssueFixtures,
   IssueRecord,
@@ -440,6 +441,25 @@ export class RealServer implements CommentServer {
 
   reactionCount(): Promise<number> {
     return this.#serially('count the reactions', () => this.#entry.reactionCount());
+  }
+
+  reactions(): Promise<Record<string, ReactionState>> {
+    return this.#serially('read the reactions', async () => {
+      const rows = await this.#entry.reactions();
+      return Object.fromEntries(
+        rows.map((row): [string, ReactionState] => [
+          row.id,
+          {
+            issueId: row.issueId,
+            teamId: row.teamId,
+            commentId: row.commentId,
+            userId: row.userId,
+            emoji: row.emoji,
+            createdAt: row.createdAt,
+          },
+        ]),
+      );
+    });
   }
 
   compactLog(): void {

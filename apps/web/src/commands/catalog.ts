@@ -64,6 +64,8 @@ export const COMMANDS = {
   'comment:delete': { title: 'Delete comment' },
   'comment:resolve': { title: 'Resolve thread' },
   'comment:reopen': { title: 'Reopen thread' },
+  // PLAN-013 S4: "Add reaction…" (contexts comment and issue); S5 registers the handler.
+  'reaction:add': { title: 'Add reaction…' },
   'editor:bold': { title: 'Bold' },
   'editor:italic': { title: 'Italic' },
   'editor:underline': { title: 'Underline' },

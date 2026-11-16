@@ -8,7 +8,7 @@
  */
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { Comment, DebugItem, Draft, Issue } from '@surface/domain/model';
+import { Comment, DebugItem, Draft, Issue, Reaction } from '@surface/domain/model';
 import type { AnyOperation, InputOf } from '@surface/operations';
 import type { MutationOutcome, StorageConnector } from '@surface/sync-client';
 import { SyncStore } from '@surface/sync-client';
@@ -20,7 +20,14 @@ import type { Link } from './network.js';
 import { Network } from './network.js';
 import type { Random } from './random.js';
 import { seededRandom, uuidFrom } from './random.js';
-import type { CommentState, DraftState, IssueState, ItemState, SimServer } from './server.js';
+import type {
+  CommentState,
+  DraftState,
+  IssueState,
+  ItemState,
+  ReactionState,
+  SimServer,
+} from './server.js';
 import { TabTimers } from './timers.js';
 
 export interface WorldOptions {
@@ -373,6 +380,22 @@ export class World {
         groups: item.groups,
         archivedAt: item.archivedAt,
         archived: item.$archived,
+      },
+    ]);
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /** The reactions a live tab holds, by id: base plus overlay (PLAN-013 S4). */
+  reactionView(tab: Tab): Record<string, ReactionState> {
+    const entries = tab.store.pool.all(Reaction).map((r): [string, ReactionState] => [
+      r.id,
+      {
+        issueId: r.issueId,
+        teamId: r.teamId,
+        commentId: r.commentId,
+        userId: r.userId,
+        emoji: r.emoji,
+        createdAt: r.createdAt,
       },
     ]);
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));

@@ -21,6 +21,7 @@ import {
   draftSave,
   issueCreate,
   issueUpdate,
+  reactionSet,
 } from '@surface/operations';
 import { Comment, Issue } from '@surface/domain/model';
 import type { Faults } from './network.js';
@@ -113,6 +114,19 @@ export type Step =
   | { readonly t: 'commentDelete'; readonly tab: number; readonly comment: number }
   | { readonly t: 'commentResolve'; readonly tab: number; readonly comment: number }
   | { readonly t: 'commentReopen'; readonly tab: number; readonly comment: number }
+  /**
+   * `reaction.set` (PLAN-013 S4): set or clear one of `REACTION_EMOJI` on a comment an earlier
+   * step created (`on: 'comment'`), or on an issue the tab shows (`on: 'issue'`), both wrapped
+   * around the list. Placeholders and gone comments are NOT_FOUND; the 21st emoji is refused.
+   */
+  | {
+      readonly t: 'reactionSet';
+      readonly tab: number;
+      readonly on: 'comment' | 'issue';
+      readonly target: number;
+      readonly emoji: number;
+      readonly reacted: boolean;
+    }
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -355,6 +369,53 @@ export function commentCase(): fc.Arbitrary<Case> {
   return caseOf(step).map((c) => ({ ...c, lateUsers: 0, steps: [...COMMENT_ISSUES, ...c.steps] }));
 }
 
+/**
+ * The emoji the reaction steps pick from (PLAN-013 S4): few, so tabs and users collide on the
+ * same one (E4, E5), and sequences and a flag among them (one emoji each, `\p{RGI_Emoji}`).
+ */
+export const REACTION_EMOJI = ['👍', '🎉', '👀', '❤️', '👍🏽', '🏳️‍🌈'] as const;
+
+/**
+ * Reactions (SPEC-013 AC-5 and AC-22 for reactions; PLAN-013 S4): set and clear on comments and on
+ * the issues themselves from every tab, among comment creates and deletes (a delete takes its
+ * reactions), with the same faults as `commentCase` and for the same reason: until the client
+ * loads content per issue (PLAN-011 S5b), compaction, crashes and late users are left out.
+ */
+export function reactionCase(): fc.Arbitrary<Case> {
+  const kept = new Set(['wait', 'faults', 'disconnect', 'offline', 'restart', 'reload']);
+  const reaction = fc.record({
+    t: fc.constant('reactionSet'),
+    tab,
+    on: fc.constantFrom('comment', 'issue'),
+    target: index,
+    emoji: fc.nat(REACTION_EMOJI.length - 1),
+    // Mostly sets, so rows pile up and clears find something to clear.
+    reacted: fc.oneof(
+      { weight: 3, arbitrary: fc.constant(true) },
+      { weight: 1, arbitrary: fc.constant(false) },
+    ),
+  });
+  const step = fc.oneof(
+    { weight: 10, arbitrary: reaction },
+    {
+      weight: 3,
+      arbitrary: fc.record({
+        t: fc.constant('commentCreate'),
+        tab,
+        issue: index,
+        parent: fc.option(index, { nil: undefined, freq: 3 }),
+        text: commentText,
+      }),
+    },
+    { weight: 1, arbitrary: fc.record({ t: fc.constant('commentDelete'), tab, comment: index }) },
+    ...faultSteps.map((arbitrary) => ({
+      weight: 1,
+      arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
+    })),
+  );
+  return caseOf(step).map((c) => ({ ...c, lateUsers: 0, steps: [...COMMENT_ISSUES, ...c.steps] }));
+}
+
 /** A UUIDv7 from the case's randomness, as `issue.create` takes, so a case replays exactly. */
 function uuidV7From(random: Random): string {
   const hex = Array.from({ length: 32 }, () => Math.floor(random() * 16).toString(16));
@@ -553,6 +614,23 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       } else if (step.t === 'commentDelete') world.dispatch(target, commentDelete, { comment });
       else if (step.t === 'commentResolve') world.dispatch(target, commentResolve, { comment });
       else world.dispatch(target, commentReopen, { comment });
+      return;
+    }
+    case 'reactionSet': {
+      const target = pick(readyTabs(live), step.tab);
+      const emoji = REACTION_EMOJI[step.emoji % REACTION_EMOJI.length];
+      if (target === undefined || emoji === undefined) return;
+      if (step.on === 'comment') {
+        const comment = pick(world.commentIds, step.target);
+        if (comment === undefined) return;
+        world.dispatch(target, reactionSet, { comment, emoji, reacted: step.reacted });
+        return;
+      }
+      // An issue on screen, as the issue page's row reacts to the open issue.
+      const shown = world.issueIds.filter((id) => target.store.pool.get(Issue, id) !== undefined);
+      const issue = pick(shown, step.target);
+      if (issue === undefined) return;
+      world.dispatch(target, reactionSet, { issue, emoji, reacted: step.reacted });
       return;
     }
     case 'wait':

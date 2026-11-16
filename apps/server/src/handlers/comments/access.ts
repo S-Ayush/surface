@@ -7,13 +7,14 @@
 import {
   COMMENT_MESSAGES,
   issueIdentifier,
+  summariseReactions,
   type CommentActorKind,
   type DocNodeJSON,
   type RefEntity,
 } from '@surface/domain';
 import { docToMarkdown } from '@surface/editor/schema';
 import type { CommentOutputSchema } from '@surface/operations';
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   comments,
@@ -74,6 +75,17 @@ export function commentAccess(ctx: HandlerContext): CommentAccess {
         .onConflictDoUpdate({ target: commentSearchText.commentId, set: { text } });
     },
     claimFiles: (doc, issue) => claimInlineFiles(tx, doc, issue, ctx.actor),
+    reactionsOn: (issueId, commentId) =>
+      tx
+        .select()
+        .from(reactions)
+        .where(
+          and(
+            eq(reactions.issueId, issueId),
+            commentId === null ? isNull(reactions.commentId) : eq(reactions.commentId, commentId),
+          ),
+        )
+        .orderBy(asc(reactions.id)),
   };
 }
 
@@ -141,17 +153,17 @@ export async function commentOutputs(
     .from(users)
     .where(inArray(users.id, userIds));
   // Reactions are rows of the comment's issue, so whoever sees the comment sees them (§5.1).
+  // At most 20 emoji per comment (D15), so the rows are few; the chips are `summariseReactions`',
+  // the same as `IssueOutput.reactions` and the client's.
   const reactionRows = await tx
     .select({
       commentId: reactions.commentId,
+      userId: reactions.userId,
       emoji: reactions.emoji,
-      count: sql<number>`count(*)::int`,
-      mine: sql<boolean>`coalesce(bool_or(${reactions.userId} = ${viewerId}::uuid), false)`,
+      createdAt: reactions.createdAt,
     })
     .from(reactions)
-    .where(inArray(reactions.commentId, commentIds))
-    .groupBy(reactions.commentId, reactions.emoji)
-    .orderBy(sql`min(${reactions.createdAt})`, asc(reactions.emoji));
+    .where(inArray(reactions.commentId, commentIds));
 
   const identifiers = new Map(
     issueRows.map((i) => [i.id, issueIdentifier(i.key, i.number ?? 0)] as const),
@@ -188,9 +200,10 @@ export async function commentOutputs(
         row.resolvedAt === null || row.resolvedById === null
           ? null
           : { at: row.resolvedAt.toISOString(), by: person(row.resolvedById) },
-      reactions: reactionRows
-        .filter((r) => r.commentId === row.id)
-        .map((r) => ({ emoji: r.emoji, count: r.count, mine: r.mine })),
+      reactions: summariseReactions(
+        reactionRows.filter((r) => r.commentId === row.id),
+        viewerId,
+      ),
     };
   });
 }

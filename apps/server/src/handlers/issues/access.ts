@@ -4,11 +4,11 @@
  * each for a whole page. Every one of them is visible to whoever sees the issue: its team's status
  * and labels or workspace labels (INV-06), and users, who are workspace-wide.
  */
-import { issueIdentifier, issueUrl, isStatusCategory } from '@surface/domain';
+import { issueIdentifier, issueUrl, isStatusCategory, summariseReactions } from '@surface/domain';
 import type { IssueOutputSchema } from '@surface/operations';
-import { asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
-import { labels, teams, users, workflowStatuses } from '../../db/schema/index.js';
+import { labels, reactions, teams, users, workflowStatuses } from '../../db/schema/index.js';
 import type { HandlerContext } from '../../executor/context.js';
 import { lockIssueForWrite } from '../../issues/lifecycle.js';
 import { newIssuePosition } from '../../issues/numbering.js';
@@ -88,10 +88,14 @@ export function issueWriteContext(ctx: HandlerContext): IssueWriteContext {
 
 const iso = (value: Date | null): string | null => (value === null ? null : value.toISOString());
 
-/** The full output of each row, in the rows' order (§6.1). */
+/**
+ * The full output of each row, in the rows' order (§6.1). `reactions: false` leaves the issue's
+ * reactions out (an empty list) for callers whose schema drops them, like `issue.list`'s summaries.
+ */
 export async function issueOutputs(
-  ctx: Pick<HandlerContext, 'tx' | 'publicUrl'>,
+  ctx: Pick<HandlerContext, 'tx' | 'publicUrl' | 'actor'>,
   rows: readonly IssueRow[],
+  options: { readonly reactions?: boolean } = {},
 ): Promise<IssueOutput[]> {
   if (rows.length === 0) return [];
   const { tx, publicUrl } = ctx;
@@ -127,6 +131,29 @@ export async function issueOutputs(
           .from(labels)
           .where(inArray(labels.id, labelIds)),
   ];
+  // The issue's own reactions (commentId null, SPEC-013 §4.2, D8): rows of the issue, so whoever
+  // sees it sees them. At most 20 emoji per issue (D15).
+  const reactionRows =
+    options.reactions === false
+      ? []
+      : await tx
+          .select({
+            issueId: reactions.issueId,
+            userId: reactions.userId,
+            emoji: reactions.emoji,
+            createdAt: reactions.createdAt,
+          })
+          .from(reactions)
+          .where(
+            and(
+              inArray(
+                reactions.issueId,
+                rows.map((r) => r.id),
+              ),
+              isNull(reactions.commentId),
+            ),
+          );
+  const viewerId = ctx.actor.userId ?? null;
   const keys = new Map(teamRows.map((t) => [t.id, t.key]));
   const statuses = new Map(statusRows.map((s) => [s.id, s]));
   const names = new Map(userRows.map((u) => [u.id, u.name]));
@@ -174,13 +201,17 @@ export async function issueOutputs(
       creator,
       startedAt: iso(row.startedAt),
       canceledAt: iso(row.canceledAt),
+      reactions: summariseReactions(
+        reactionRows.filter((r) => r.issueId === row.id),
+        viewerId,
+      ),
     };
   });
 }
 
 /** One row's full output. */
 export async function issueOutput(
-  ctx: Pick<HandlerContext, 'tx' | 'publicUrl'>,
+  ctx: Pick<HandlerContext, 'tx' | 'publicUrl' | 'actor'>,
   row: IssueRow,
 ): Promise<IssueOutput> {
   const [output] = await issueOutputs(ctx, [row]);

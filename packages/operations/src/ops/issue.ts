@@ -5,8 +5,8 @@
  * `NOT_FOUND` before any permission check. Statuses and labels of `issue.update` resolve within
  * the issue's own team (`scopedTo(…, 'issue')`), never a team named elsewhere.
  *
- * `IssueOutput` has no `description` or `version` until S6, and no `attachments` or `reactions`
- * until PLAN-014 and PLAN-013; each adds its fields, additively. `issue.create` takes no
+ * `IssueOutput` has no `description` or `version` until S6, and no `attachments` until PLAN-014;
+ * each adds its fields, additively. `reactions` came with PLAN-013 S4. `issue.create` takes no
  * description until S6.
  *
  * Optimistic updates call the same domain rules as the handlers (`@surface/domain` `issue.ts`),
@@ -43,6 +43,7 @@ import { z } from 'zod';
 import { defineOperation } from '../define.js';
 import { connectionOf, countInput, CountOutput, listInput } from '../list.js';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
+import { ReactionSummariesSchema } from './reaction.js';
 import { Timestamp } from './shared.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -101,6 +102,8 @@ export const IssueOutputSchema = IssueSummarySchema.extend({
   creator: Named,
   startedAt: Timestamp.nullable(),
   canceledAt: Timestamp.nullable(),
+  /** The reactions on the issue itself, not its comments' (SPEC-013 §4.2; PLAN-013 S4). */
+  reactions: ReactionSummariesSchema,
 });
 
 export const ISSUE_GROUPINGS = ['status', 'assignee', 'priority', 'label'] as const;

@@ -121,6 +121,18 @@ export interface CommentRow {
   readonly syncGroups: readonly string[];
 }
 
+/** A stored reaction (PLAN-013 S4), timestamps as ISO strings. */
+export interface ReactionRow {
+  readonly id: string;
+  readonly issueId: string;
+  readonly teamId: string;
+  readonly commentId: string | null;
+  readonly userId: string;
+  readonly emoji: string;
+  readonly createdAt: string;
+  readonly syncGroups: readonly string[];
+}
+
 /** The SPEC-003 response body of `POST /api/ops/:name`. */
 export type OpResponse =
   | { readonly ok: true; readonly result: unknown }
@@ -154,6 +166,8 @@ export interface TestServer {
   comments(): Promise<CommentRow[]>;
   /** How many `reactions` rows are stored (PLAN-013 S3: none until `reaction.set`, S4). */
   reactionCount(): Promise<number>;
+  /** Every `reactions` row, by id (PLAN-013 S4). */
+  reactions(): Promise<ReactionRow[]>;
   /**
    * Retention runs now: `sync_log` keeps only its newest row, so a client behind it gets
    * `resync(too_old)` when it next connects (SPEC-002 E8). The job's own pruning, all at once.
@@ -214,6 +228,17 @@ const CommentDbRow = z.object({
   deleted_at: instantText,
   resolved_at: instantText,
   resolved_by_id: z.string().nullable(),
+  sync_groups: z.array(z.string()),
+});
+
+const ReactionDbRow = z.object({
+  id: z.string(),
+  issue_id: z.string(),
+  team_id: z.string(),
+  comment_id: z.string().nullable(),
+  user_id: z.string(),
+  emoji: z.string(),
+  created_at: z.date().transform((value) => value.toISOString()),
   sync_groups: z.array(z.string()),
 });
 
@@ -379,6 +404,25 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
       reactionCount: async () => {
         const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM reactions');
         return rows[0]?.n ?? 0;
+      },
+      reactions: async () => {
+        const { rows } = await db.query(
+          `SELECT id, issue_id, team_id, comment_id, user_id, emoji, created_at, sync_groups
+             FROM reactions ORDER BY id`,
+        );
+        return rows.map((row) => {
+          const r = ReactionDbRow.parse(row);
+          return {
+            id: r.id,
+            issueId: r.issue_id,
+            teamId: r.team_id,
+            commentId: r.comment_id,
+            userId: r.user_id,
+            emoji: r.emoji,
+            createdAt: r.created_at,
+            syncGroups: r.sync_groups,
+          };
+        });
       },
       compactLog: async () => {
         // Every row older than year 9999: all but the newest (`pruneSyncLog` keeps it).

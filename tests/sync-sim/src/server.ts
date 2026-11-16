@@ -142,12 +142,27 @@ export interface CommentState {
   readonly resolvedById: unknown;
 }
 
+/**
+ * What a client should end up showing for one reaction (PLAN-013 S4): every field `reaction.set`
+ * writes. `createdAt` is an ISO string, as on the wire.
+ */
+export interface ReactionState {
+  readonly issueId: unknown;
+  readonly teamId: unknown;
+  readonly commentId: unknown;
+  readonly userId: unknown;
+  readonly emoji: unknown;
+  readonly createdAt: unknown;
+}
+
 /** A server the comment steps run against: the real one, with issues. */
 export interface CommentServer extends IssueServer {
   /** The database's comments, by id. */
   comments(): Promise<Record<string, CommentState>>;
   /** How many reactions are stored. */
   reactionCount(): Promise<number>;
+  /** The database's reactions, by id (PLAN-013 S4). */
+  reactions(): Promise<Record<string, ReactionState>>;
 }
 
 export function isCommentServer(server: SimServer): server is CommentServer {

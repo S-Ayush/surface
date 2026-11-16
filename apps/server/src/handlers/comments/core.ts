@@ -52,7 +52,14 @@ export interface CommentAccess {
   setSearchText(commentId: string, text: string | null): Promise<void>;
   /** `claimInlineFiles` (SPEC-014 §4.3): the document to store, or `INVALID_INPUT`. */
   claimFiles(doc: DocNodeJSON, issue: LockedIssue): Promise<DocNodeJSON>;
+  /**
+   * The reactions on one subject, read under its lock (PLAN-013 S4): a comment's, or with
+   * `commentId` null the issue's own (SPEC-013 §4.2, D8).
+   */
+  reactionsOn(issueId: string, commentId: string | null): Promise<ReactionRow[]>;
 }
+
+export type ReactionRow = ModelRow<'Reaction'>;
 
 /** Who writes: the user, or for `api` and `mcp` the key's owner (§4.1, D16). */
 export interface CommentAuthor {
@@ -115,7 +122,7 @@ function canonical(value: unknown): string {
  * The comment a `CommentRef` named, re-read after the thread lock (§4.3 step 3), or `NOT_FOUND`
  * worded as for a comment that never existed (it was deleted in between).
  */
-async function lockTarget(
+export async function lockTarget(
   ctx: CommentWriteContext,
   target: CommentTarget,
   operation: string,

@@ -56,6 +56,7 @@ import {
   commentResolve,
   commentUpdate,
 } from './comment.js';
+import { reactionSet } from './reaction.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -72,6 +73,7 @@ export * from './issue.js';
 export * from './issue-lifecycle.js';
 export * from './draft.js';
 export * from './comment.js';
+export * from './reaction.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -156,6 +158,8 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   commentResolve,
   commentReopen,
   commentDelete,
+  // A reaction on the seed's first thread, then one on ENG-1 itself (SPEC-013 §6.1).
+  reactionSet,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

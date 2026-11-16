@@ -1,7 +1,8 @@
 // Command-menu entries for the comment operations (SPEC-013 §6.1, SPEC-005 §4.1). Each opens the
 // app command the comment UI registers (PLAN-013 S5): "Comment…" focuses the comment box of the
 // open issue (`issue-page:comment`, the `Ctrl+M` command), and the comment-context entries act on
-// the focused comment. Until S5 registers those handlers the commands are unavailable, so the
+// the focused comment; "Add reaction…" opens the EmojiPicker of the focused comment or of the
+// issue (`reaction:add`). Until S5 registers those handlers the commands are unavailable, so the
 // menu doesn't offer the entries (`commands.isAvailable`).
 import type { CommandContext } from '../../command-menu/model.js';
 import type { OperationCommand } from '../../command-menu/sources/operations.js';
@@ -18,10 +19,20 @@ function targetCommentRefs({ target }: CommandContext) {
   return id === undefined ? {} : { comment: { id } };
 }
 
+/**
+ * "Add reaction…" acts on a focused comment or on the issue (SPEC-013 §6.1, PLAN-013 S4): the
+ * refs name whichever the target is.
+ */
+function targetReactionRefs(ctx: CommandContext) {
+  return ctx.target.kind === 'comment' ? targetCommentRefs(ctx) : targetIssueRefs(ctx);
+}
+
 export const COMMENT_COMMANDS: Readonly<Record<string, OperationCommand>> = {
   'comment.create': { opens: 'issue-page:comment', refs: targetIssueRefs },
   'comment.update': { opens: 'comment:edit', refs: targetCommentRefs },
   'comment.delete': { opens: 'comment:delete', refs: targetCommentRefs },
   'comment.resolve': { opens: 'comment:resolve', refs: targetCommentRefs },
   'comment.reopen': { opens: 'comment:reopen', refs: targetCommentRefs },
+  // Opens the EmojiPicker of the focused comment or of the issue's reaction row (S5 registers it).
+  'reaction.set': { opens: 'reaction:add', refs: targetReactionRefs },
 };

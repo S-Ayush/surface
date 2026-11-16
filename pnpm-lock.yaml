@@ -430,6 +430,9 @@ importers:
       fast-check:
         specifier: ^4.10.2
         version: 4.10.2
+      jsdom:
+        specifier: ^31.0.0
+        version: 31.0.0
       playwright:
         specifier: ^1.65.0
         version: 1.65.0

@@ -40,6 +40,7 @@ import {
   TEAM,
   type MemoryComments,
 } from './support/memory-comments.js';
+import { byId, clientRow, storeOver } from './support/memory-store.js';
 import { recordingDb } from './support/scripted-db.js';
 
 async function failure(run: Promise<unknown>): Promise<SurfaceError> {
@@ -547,55 +548,6 @@ describe('lock order (§4.3)', () => {
     expect(m.lockModes).toEqual(['edit']);
   });
 });
-
-/** A row as the client replica holds it: ISO timestamps, no groups (content rows carry none). */
-function clientRow(row: object): StoreRow {
-  return Object.fromEntries(
-    Object.entries(row)
-      .filter(([key]) => key !== 'syncGroups')
-      .map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]),
-  );
-}
-
-const byId = (rows: Iterable<StoreRow>) =>
-  [...rows].sort((a, b) => String(a['id']).localeCompare(String(b['id'])));
-
-/** The client store over a copy of `m`'s rows, with its live issue and `me` (Ada) (§6.2). */
-function storeOver(
-  m: MemoryComments,
-  me: string = ADA,
-): OptimisticStore & { rows(model: string): StoreRow[] } {
-  const tables = new Map<string, Map<string, StoreRow>>([
-    ['Comment', new Map([...m.comments].map(([id, row]) => [id, clientRow(row)]))],
-    ['Reaction', new Map([...m.reactions].map(([id, row]) => [id, clientRow(row)]))],
-    ['Issue', new Map([[m.issue.id, clientRow(m.issue)]])],
-    ['User', new Map([[me, { id: me, role: 'member' }]])],
-  ]);
-  const table = (model: string) => {
-    const found = tables.get(model);
-    if (found === undefined) throw new Error(`no ${model} in this store`);
-    return found;
-  };
-  const get = (model: string, ref: string) =>
-    table(model).get(model === 'User' && ref === 'me' ? me : ref);
-  return {
-    now: NOW,
-    get,
-    find: (model, fields) =>
-      byId(table(model).values()).filter((row) =>
-        Object.entries(fields).every(([key, value]) => row[key] === value),
-      ),
-    insert: (model, row) => void table(model).set(row.id, row),
-    patch: (model, ref, changes) => {
-      const row = get(model, ref);
-      if (row !== undefined) table(model).set(ref, { ...row, ...changes });
-    },
-    remove: (model, ref) => void table(model).delete(ref),
-    archive: () => undefined,
-    unarchive: () => undefined,
-    rows: (model) => byId(table(model).values()),
-  };
-}
 
 describe('AC-11: optimistic equals the server', () => {
   /** A thread by Ada with a reply by Iris, and Iris's reaction on the root. */

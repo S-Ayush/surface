@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { defineOperation } from '../define.js';
 import { connectionOf, listInput } from '../list.js';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
+import { ReactionSummariesSchema } from './reaction.js';
 import { Timestamp } from './shared.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -77,7 +78,7 @@ export const CommentOutputSchema = z.object({
   deleted: z.boolean(),
   /** The thread's resolved state, on top-level comments; null on replies and open threads. */
   resolved: z.object({ at: Timestamp, by: Named }).nullable(),
-  reactions: z.array(z.object({ emoji: z.string(), count: z.int().min(1), mine: z.boolean() })),
+  reactions: ReactionSummariesSchema,
 });
 
 // Fixed ids of the seed fixture's comments (`apps/server/test/seed.ts`), which the examples name.

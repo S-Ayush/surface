@@ -32,6 +32,7 @@ import {
   type CommentWriteContext,
 } from '../src/handlers/comments/core.js';
 import { createIssue, updateIssue, type IssueRow } from '../src/handlers/issues/core.js';
+import { setReaction } from '../src/handlers/reactions/core.js';
 import type { Repo } from '../src/sync/repo.js';
 import { deleteIssue, restoreIssue } from '../src/handlers/issues/lifecycle-core.js';
 import { memoryComments } from './support/memory-comments.js';
@@ -160,6 +161,10 @@ const CASES: Readonly<Record<string, Case>> = {
   'comment.delete': commentCase((ctx, t) => deleteComment(ctx, t)),
   'comment.resolve': commentCase((ctx, t) => setThreadResolved(ctx, t, true)),
   'comment.reopen': commentCase((ctx, t) => setThreadResolved(ctx, t, false), { resolved: true }),
+  // PLAN-013 S4: a reaction on the thread's root; the issue's own reaction is in reaction-set.test.ts.
+  'reaction.set': commentCase((ctx, t) =>
+    setReaction(ctx, { subject: { kind: 'comment', target: t }, emoji: '👍', reacted: true }),
+  ),
 };
 
 /** What happened, in the table's words. */
@@ -205,7 +210,6 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
     );
     expect(pending).toEqual({
       'issue.updateDescription': 'PLAN-011 S6',
-      'reaction.set': 'PLAN-013 S4',
       'attachment.createFile': 'PLAN-014 S4a',
       'attachment.createLink': 'PLAN-014 S4a',
       'attachment.update': 'PLAN-014 S4a',
@@ -288,6 +292,7 @@ const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
   'comment.delete': { comment: COMMENT_ID },
   'comment.resolve': { comment: COMMENT_ID },
   'comment.reopen': { comment: COMMENT_ID },
+  'reaction.set': { comment: COMMENT_ID, emoji: '👍', reacted: true },
 };
 
 const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);

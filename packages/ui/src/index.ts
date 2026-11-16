@@ -117,3 +117,19 @@ export {
   ROW_HEIGHT,
   ROW_HEIGHT_COMPACT,
 } from './components/VirtualList/window.js';
+
+// Reactions and the emoji picker (PLAN-013 S4)
+export { EmojiPicker } from './components/EmojiPicker/EmojiPicker.js';
+export type { EmojiPickerProps, PickerEmoji } from './components/EmojiPicker/EmojiPicker.js';
+export { FREQUENT_STORAGE_KEY } from './components/EmojiPicker/model.js';
+export {
+  ReactionChips,
+  ReactionRow,
+  reactionChipLabel,
+  reactionTooltip,
+} from './components/ReactionChips/ReactionChips.js';
+export type {
+  ReactionChipData,
+  ReactionChipsProps,
+  ReactionRowProps,
+} from './components/ReactionChips/ReactionChips.js';

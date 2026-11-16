@@ -35,8 +35,8 @@ export const listHandler = handler(issueList, async (ctx, input) => {
     withTotal: input.withTotal ?? false,
   });
   // Summaries are the full output minus the fields only `IssueOutput` has; the executor's output
-  // schema strips those, so one builder serves both.
-  return { ...page, nodes: await issueOutputs(ctx, page.nodes) };
+  // schema strips those, so one builder serves both. Reactions are not read for them.
+  return { ...page, nodes: await issueOutputs(ctx, page.nodes, { reactions: false }) };
 });
 
 export const countHandler = handler(issueCount, async (ctx, input) => ({

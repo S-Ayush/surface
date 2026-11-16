@@ -297,3 +297,51 @@ export const commentConvergence: Property = {
     expect(await server.reactionCount()).toBe(0);
   },
 };
+
+/** At most this many distinct emoji per comment and per issue (SPEC-013 D15). */
+const EMOJI_CAP = 20;
+
+/**
+ * Reactions (SPEC-013 AC-5 and AC-22 for reactions; PLAN-013 S4): the issue property, then every
+ * tab holds exactly the server's comments and reactions, and the stored reactions keep §4.2's
+ * rules: each on a live comment of its own issue or on the issue itself (no reaction left on a
+ * deleted or placeholder comment), unique per (subject, user, emoji) through the derived id, and
+ * at most 20 distinct emoji per subject. Refusals (a placeholder's NOT_FOUND, the cap) are part of
+ * the run.
+ */
+export const reactionConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    await issueConvergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isCommentServer(server)) throw new Error('The reaction property needs the real server.');
+    const comments = await server.comments();
+    const reactions = await server.reactions();
+    for (const tab of world.live) {
+      expect(world.commentView(tab), tab.name).toEqual(comments);
+      expect(world.reactionView(tab), tab.name).toEqual(reactions);
+    }
+    checkThreads(comments);
+    const emojiBySubject = new Map<string, Set<unknown>>();
+    const keys = new Set<string>();
+    for (const [id, r] of Object.entries(reactions)) {
+      const subject = typeof r.commentId === 'string' ? r.commentId : String(r.issueId);
+      if (typeof r.commentId === 'string') {
+        const comment = comments[r.commentId];
+        expect(comment, `${id}: its comment is gone`).toBeDefined();
+        expect(comment?.deletedAt, `${id}: on a placeholder`).toBeNull();
+        expect(comment?.issueId, `${id}: on another issue's comment`).toBe(r.issueId);
+      }
+      const key = `${subject}:${String(r.userId)}:${String(r.emoji)}`;
+      expect(keys.has(key), `${id}: a second ${key}`).toBe(false);
+      keys.add(key);
+      const set = emojiBySubject.get(subject) ?? new Set<unknown>();
+      set.add(r.emoji);
+      emojiBySubject.set(subject, set);
+    }
+    for (const [subject, set] of emojiBySubject) {
+      expect(set.size, `${subject}: distinct emoji`).toBeLessThanOrEqual(EMOJI_CAP);
+    }
+  },
+};

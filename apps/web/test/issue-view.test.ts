@@ -73,6 +73,7 @@ describe('issueViewFromOutput', () => {
     creator: { id: ID, name: 'Ada' },
     startedAt: null,
     canceledAt: null,
+    reactions: [],
   };
 
   it('reads the number and lifecycle, and falls back for values it does not know', () => {

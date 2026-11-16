@@ -1,18 +1,20 @@
 // PLAN-013 S3 leak test (SPEC-013 AC-12, §5.1, §5.2; permissions.md §5; CLAUDE.md rule 4; not
-// held, plans README §6). A SEC member comments on a private SEC issue, replies, edits, resolves
-// and reacts, through the real operations (the reaction through the repo until `reaction.set`,
-// PLAN-013 S4). For a user outside SEC (a Member and an Admin) and for an API key limited to ENG:
+// held, plans README §6). A SEC member comments on a private SEC issue, replies, edits, resolves,
+// and reacts to the thread and to the issue itself, through the real operations (`reaction.set`
+// since PLAN-013 S4). For a user outside SEC (a Member and an Admin) and for an API key limited to ENG:
 // - `/sync/content` leaves the SEC issue out exactly like an unknown one and returns no SEC
 //   comment or reaction, alone or next to a visible ENG issue;
 // - live deltas carry no SEC comment or reaction, nor its id, nor its text;
 // - `comment.list` on the SEC issue is the `NOT_FOUND` of an issue that doesn't exist;
 // - a `CommentRef` to a SEC comment is `NOT_FOUND`, worded as for a comment id that doesn't exist,
 //   in every operation that takes one (and as `parent` of a reply on a visible issue);
+// - `reaction.set` on the SEC issue itself is the `NOT_FOUND` of an issue that doesn't exist, and
+//   neither a refused reaction nor the SEC reactions change what an outsider is told (PLAN-013 S4);
 // - `sync_log` stores SEC comment rows under `team:<SEC>` only (D12), and the outbox events carry
 //   ids, never the body.
 // The SEC member gets everything, so the answers come from visibility, not a broken path.
 import { randomUUID } from 'node:crypto';
-import { teamGroup, type Actor } from '@surface/domain';
+import { reactionId, teamGroup, type Actor } from '@surface/domain';
 import {
   ContentStreamReader,
   decodeServerMessage,
@@ -63,7 +65,8 @@ const secIssue = uuidv7();
 const engIssue = uuidv7();
 const secThread = uuidv7();
 const secReply = uuidv7();
-const secReaction = uuidv7();
+const secReaction = () => reactionId(secThread, sam, '👀');
+const secIssueReaction = () => reactionId(secIssue, sam, '🔒');
 const engComment = uuidv7();
 const SECRET = 'Rotate the leaked signing key';
 
@@ -100,8 +103,15 @@ async function refusal(operation: string, input: object, actor: Actor) {
   return result.error;
 }
 
-/** Sam's SEC thread: a comment, a reply, an edit, a resolve, and a reaction. */
-async function secActivity(ids: { thread: string; reply: string; reaction: string }, text: string) {
+/**
+ * Sam's SEC thread: a comment, a reply, an edit, a resolve, a reaction on the thread and one with
+ * `issueEmoji` on the issue itself, through `reaction.set`. Returns the two reactions' ids.
+ */
+async function secActivity(
+  ids: { thread: string; reply: string },
+  text: string,
+  issueEmoji: string,
+): Promise<{ reaction: string; issueReaction: string }> {
   await ok('comment.create', { id: ids.thread, issue: secIssue, body: doc(text) }, samActor);
   await ok(
     'comment.create',
@@ -114,16 +124,12 @@ async function secActivity(ids: { thread: string; reply: string; reaction: strin
     samActor,
   );
   await ok('comment.resolve', { comment: ids.reply }, samActor);
-  await transaction((repo) =>
-    repo.insert('Reaction', {
-      id: ids.reaction,
-      issueId: secIssue,
-      teamId: h.teams.sec,
-      commentId: ids.thread,
-      userId: sam,
-      emoji: '👀',
-    }),
-  );
+  await ok('reaction.set', { comment: ids.thread, emoji: '👀', reacted: true }, samActor);
+  await ok('reaction.set', { issue: secIssue, emoji: issueEmoji, reacted: true }, samActor);
+  return {
+    reaction: reactionId(ids.thread, sam, '👀'),
+    issueReaction: reactionId(secIssue, sam, issueEmoji),
+  };
 }
 
 beforeAll(async () => {
@@ -179,7 +185,7 @@ beforeAll(async () => {
   executor = testExecutor(h.pool).executor;
   await ok('issue.create', { id: secIssue, team: 'SEC', title: 'Secret work' }, samActor);
   await ok('issue.create', { id: engIssue, team: 'ENG', title: 'Fix login' }, anaActor);
-  await secActivity({ thread: secThread, reply: secReply, reaction: secReaction }, SECRET);
+  await secActivity({ thread: secThread, reply: secReply }, SECRET, '🔒');
   await ok('comment.create', { id: engComment, issue: engIssue, body: 'Public note' }, anaActor);
 
   const config = testConfig();
@@ -230,7 +236,15 @@ const outsider = (who: (typeof OUTSIDERS)[number]): Actor =>
   })[who];
 
 /** Every SEC id and text that must never reach an outsider. */
-const secMarks = () => [secIssue, secThread, secReply, secReaction, h.teams.sec, SECRET];
+const secMarks = () => [
+  secIssue,
+  secThread,
+  secReply,
+  secReaction(),
+  secIssueReaction(),
+  h.teams.sec,
+  SECRET,
+];
 function expectNoSec(text: string) {
   for (const mark of secMarks()) expect(text).not.toContain(mark);
 }
@@ -283,10 +297,15 @@ describe('/sync/content for a SEC issue’s comments', () => {
     },
   );
 
-  it('gives the SEC member the thread, its reply and the reaction', async () => {
+  it('gives the SEC member the thread, its reply and both reactions', async () => {
     const { frames, body } = await content('member', [issueParent(secIssue)]);
     expect(commentRows(frames).sort()).toEqual(
-      [`Comment ${secThread}`, `Comment ${secReply}`, `Reaction ${secReaction}`].sort(),
+      [
+        `Comment ${secThread}`,
+        `Comment ${secReply}`,
+        `Reaction ${secReaction()}`,
+        `Reaction ${secIssueReaction()}`,
+      ].sort(),
     );
     expect(body).toContain(SECRET);
   });
@@ -349,8 +368,10 @@ describe('SEC comments in live deltas', () => {
     const admin = connect('admin', at);
     const member = connect('member', at);
     try {
-      const ids = { thread: uuidv7(), reply: uuidv7(), reaction: uuidv7() };
-      await secActivity(ids, 'Live secret');
+      const ids = { thread: uuidv7(), reply: uuidv7() };
+      const reacted = await secActivity(ids, 'Live secret', '🔐');
+      // Clearing is a delta too (a `D` with the id only).
+      await ok('reaction.set', { issue: secIssue, emoji: '🔐', reacted: false }, samActor);
       await ok('comment.delete', { comment: ids.reply }, samActor);
       // Written last, one per connection (each follows its member teams, SPEC-011 §5.7).
       const marker = uuidv7();
@@ -365,7 +386,8 @@ describe('SEC comments in live deltas', () => {
       );
       for (const c of [outsider, admin]) {
         expect(commentPackets(c.packets())).toEqual([`I Comment ${marker}`]);
-        for (const mark of [...Object.values(ids), secIssue, h.teams.sec, 'Live secret']) {
+        const marks = [...Object.values(ids), ...Object.values(reacted), secIssue, h.teams.sec];
+        for (const mark of [...marks, 'Live secret']) {
           expect(c.text()).not.toContain(mark);
         }
       }
@@ -374,7 +396,9 @@ describe('SEC comments in live deltas', () => {
           `I Comment ${ids.thread}`,
           `I Comment ${ids.reply}`,
           `U Comment ${ids.thread}`,
-          `I Reaction ${ids.reaction}`,
+          `I Reaction ${reacted.reaction}`,
+          `I Reaction ${reacted.issueReaction}`,
+          `D Reaction ${reacted.issueReaction}`,
           `D Comment ${ids.reply}`,
           `I Comment ${secMarker}`,
         ]),
@@ -419,6 +443,8 @@ describe('comment operations on SEC comments', () => {
         ['comment.resolve', (comment) => ({ comment })],
         ['comment.reopen', (comment) => ({ comment })],
         ['comment.create', (comment) => ({ issue: engIssue, parent: comment, body: 'x' })],
+        ['reaction.set', (comment) => ({ comment, emoji: '👍', reacted: true })],
+        ['reaction.set', (comment) => ({ comment, emoji: '👀', reacted: false })],
       ];
       for (const [operation, input] of inputs) {
         const hidden = await refusal(operation, input(secThread), actor);
@@ -433,6 +459,43 @@ describe('comment operations on SEC comments', () => {
       expect(listed.nodes.find((n) => n.id === secThread)).toMatchObject({ version: 2 });
     },
   );
+
+  it.each(OUTSIDERS)(
+    'reaction.set on the SEC issue is NOT_FOUND, worded as a missing issue, for %s',
+    async (who) => {
+      const actor = outsider(who);
+      const missingId = uuidv7();
+      for (const [emoji, reacted] of [
+        ['👍', true],
+        ['🔒', false],
+      ] as const) {
+        const hidden = await refusal('reaction.set', { issue: secIssue, emoji, reacted }, actor);
+        const missing = await refusal('reaction.set', { issue: missingId, emoji, reacted }, actor);
+        expect(hidden.code).toBe('NOT_FOUND');
+        expect(errorShape(hidden, secIssue)).toBe(errorShape(missing, missingId));
+      }
+      // Nothing changed: Sam's 🔒 is still the issue's only reaction, and the thread keeps its 👀.
+      const { rows } = await h.pool.query<{ id: string }>(
+        `SELECT id FROM reactions
+          WHERE issue_id = $1 AND (comment_id IS NULL OR comment_id = $2) ORDER BY id`,
+        [secIssue, secThread],
+      );
+      expect(rows.map((r) => r.id)).toEqual([secReaction(), secIssueReaction()].sort());
+    },
+  );
+
+  it('the SEC member’s outputs carry the SEC reactions, the ENG issue none of them', async () => {
+    const issue = (await ok('issue.get', { issue: secIssue }, samActor)) as { reactions: unknown };
+    expect(issue.reactions).toEqual([{ emoji: '🔒', count: 1, mine: true }]);
+    const listed = (await ok('comment.list', { issue: secIssue }, samActor)) as {
+      nodes: { id: string; reactions: unknown }[];
+    };
+    expect(listed.nodes.find((n) => n.id === secThread)?.reactions).toEqual([
+      { emoji: '👀', count: 1, mine: true },
+    ]);
+    const eng = (await ok('issue.get', { issue: engIssue }, anaActor)) as { reactions: unknown };
+    expect(eng.reactions).toEqual([]);
+  });
 
   it('comment.list gives the SEC member the thread, with Markdown and JSON bodies', async () => {
     const listed = (await ok('comment.list', { issue: secIssue }, samActor)) as {
@@ -478,7 +541,7 @@ describe('stored SEC comment rows', () => {
     const { rows } = await h.pool.query<{ model: string; groups: string[] }>(
       `SELECT model, groups FROM sync_log WHERE model IN ('Comment', 'Reaction')
          AND model_id = ANY($1::uuid[])`,
-      [[secThread, secReply, secReaction]],
+      [[secThread, secReply, secReaction(), secIssueReaction()]],
     );
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) expect(row.groups).toEqual([teamGroup(h.teams.sec)]);
@@ -486,10 +549,17 @@ describe('stored SEC comment rows', () => {
 
   it('give outbox events with ids and the actor, never the body', async () => {
     const { rows } = await h.pool.query<{ type: string; doc: string }>(
-      `SELECT type, row_to_json(e)::text AS doc FROM event_outbox e WHERE type LIKE 'comment.%'`,
+      `SELECT type, row_to_json(e)::text AS doc FROM event_outbox e
+        WHERE type LIKE 'comment.%' OR type LIKE 'reaction.%'`,
     );
     expect(rows.map((r) => r.type)).toEqual(
-      expect.arrayContaining(['comment.created', 'comment.updated', 'comment.resolved']),
+      expect.arrayContaining([
+        'comment.created',
+        'comment.updated',
+        'comment.resolved',
+        'reaction.added',
+        'reaction.removed',
+      ]),
     );
     for (const row of rows) {
       expect(row.doc).not.toContain(SECRET);

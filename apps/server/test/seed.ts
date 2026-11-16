@@ -22,12 +22,14 @@
  * examples run in registry order: edit and resolve the first thread, reopen the second, delete the
  * last comment.
  *
+ * PLAN-013 S4: Iris's reactions on that first thread (👍) and on ENG-1 itself (🎉).
+ *
  * PLAN-001 S6 (session E, agreed with A): the actor's password and a second session of theirs.
  * `session.revoke`'s example ends that session, and `user.changePassword`'s example changes the
  * password from `SEED_PASSWORD`.
  */
 import { randomUUID } from 'node:crypto';
-import type { Actor } from '@surface/domain';
+import { reactionId, type Actor } from '@surface/domain';
 import { docToText, markdownToDoc } from '@surface/editor/schema';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedTeamWorkflow, teamWorkflow } from '../src/handlers/teams/seed.js';
@@ -181,6 +183,21 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
         id,
         docToText(body),
       ]);
+    }
+    // PLAN-013 S4: Iris's 👍 on the first thread and her 🎉 on ENG-1 itself, so the
+    // `reaction.set` examples join an existing chip and add a new one.
+    for (const [commentId, emoji] of [
+      [SEED_COMMENTS.thread, '👍'],
+      [null, '🎉'],
+    ] as const) {
+      await repo.insert('Reaction', {
+        id: reactionId(commentId ?? eng1, users.iris, emoji),
+        issueId: eng1,
+        teamId: teams.eng,
+        commentId,
+        userId: users.iris,
+        emoji,
+      });
     }
     await repo.flush({});
     // Server-only, so plain SQL. The id is the one `invite.revoke`'s example names.

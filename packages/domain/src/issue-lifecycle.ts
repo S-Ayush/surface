@@ -274,7 +274,7 @@ export const ISSUE_LIFECYCLE_RULES: Readonly<Record<string, LifecycleRule>> = {
   'comment.delete': { ...EDIT, spec: 'SPEC-013' },
   'comment.resolve': { ...EDIT, spec: 'SPEC-013' },
   'comment.reopen': { ...EDIT, spec: 'SPEC-013' },
-  'reaction.set': { ...EDIT, spec: 'SPEC-013', pending: 'PLAN-013 S4' },
+  'reaction.set': { ...EDIT, spec: 'SPEC-013' },
   'attachment.createFile': { ...EDIT, spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
   'attachment.createLink': { ...EDIT, spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
   'attachment.update': { ...EDIT, spec: 'SPEC-014', pending: 'PLAN-014 S4a' },

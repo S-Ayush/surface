@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import {
   issueIdentifier,
   lifecycleOf,
+  reactionId,
   lifecycleRefusal,
   lockRefusal,
   type IssueLockMode,
@@ -25,6 +26,7 @@ import type {
   CommentAuthor,
   CommentRow,
   CommentWriteContext,
+  ReactionRow,
 } from '../../src/handlers/comments/core.js';
 import { claimInlineFiles } from '../../src/files/claim.js';
 import type { LockedIssue } from '../../src/issues/lifecycle.js';
@@ -44,14 +46,8 @@ export interface MemoryIssue {
   deletedAt: Date | null;
 }
 
-export interface MemoryReaction {
-  readonly id: string;
-  readonly issueId: string;
-  readonly teamId: string;
-  readonly commentId: string | null;
-  readonly userId: string;
-  readonly emoji: string;
-}
+/** A stored reaction (PLAN-013 S4: `reaction.set` writes them, `addReaction` seeds them). */
+export type MemoryReaction = ReactionRow;
 
 /** A write as the repo would log it: `I`/`U`/`D` per row, in order. */
 export interface LoggedWrite {
@@ -79,7 +75,13 @@ export interface MemoryComments {
   addIssue(number: number): MemoryIssue;
   /** Seeds a comment row as stored, without logging a write. */
   addComment(fields: Partial<CommentRow> & { readonly issueId?: string }): CommentRow;
-  addReaction(commentId: string | null, userId: string, emoji: string): MemoryReaction;
+  /** Seeds a reaction as stored, with its derived id (SPEC-013 §4.2), without logging a write. */
+  addReaction(
+    commentId: string | null,
+    userId: string,
+    emoji: string,
+    issueId?: string,
+  ): MemoryReaction;
   /** Forgets the calls, writes and events so far. */
   reset(): void;
 }
@@ -161,6 +163,14 @@ export function memoryComments(): MemoryComments {
       calls.push('claimFiles');
       return claimInlineFiles(claimDb, doc, issue, claimActor);
     },
+    reactionsOn(issueId, commentId) {
+      calls.push(`reactionsOn:${commentId ?? issueId}`);
+      return Promise.resolve(
+        [...reactions.values()]
+          .filter((r) => r.issueId === issueId && r.commentId === commentId)
+          .sort((a, b) => a.id.localeCompare(b.id)),
+      );
+    },
   };
 
   const log = (action: RowChange['action'], model: string, id: string) =>
@@ -168,6 +178,21 @@ export function memoryComments(): MemoryComments {
 
   const repo: Repo = {
     insert(model, values) {
+      if (model === 'Reaction') {
+        const parent = issues.get(String(Reflect.get(values, 'issueId')));
+        // The generic insert type does not narrow on `model`; the rule under test passes a full row.
+        const row = {
+          ...values,
+          teamId: parent?.teamId ?? TEAM,
+          syncGroups: groups,
+          createdAt: NOW,
+        } as unknown as ReactionRow;
+        // The primary key: the derived id is unique per (subject, user, emoji).
+        if (reactions.has(row.id)) throw new Error(`reactions ${row.id} already exists`);
+        reactions.set(row.id, row);
+        log('I', model, row.id);
+        return Promise.resolve(row as never);
+      }
       if (model !== 'Comment') throw new Error(`unexpected insert into ${model}`);
       const parent = issues.get(String(Reflect.get(values, 'issueId')));
       const row = {
@@ -192,6 +217,11 @@ export function memoryComments(): MemoryComments {
       return Promise.resolve(next as never);
     },
     purge(model, id) {
+      if (model === 'Reaction') {
+        if (!reactions.delete(id)) throw new SurfaceError('NOT_FOUND', `${model} ${id} not found.`);
+        log('D', model, id);
+        return Promise.resolve();
+      }
       if (model !== 'Comment' || !comments.has(id)) {
         throw new SurfaceError('NOT_FOUND', `${model} ${id} not found.`);
       }
@@ -272,14 +302,16 @@ export function memoryComments(): MemoryComments {
       searchText.set(row.id, 'Hi');
       return row;
     },
-    addReaction(commentId, userId, emoji) {
+    addReaction(commentId, userId, emoji, issueId = issue.id) {
       const row: MemoryReaction = {
-        id: randomUUID(),
-        issueId: issue.id,
+        id: reactionId(commentId ?? issueId, userId, emoji),
+        issueId,
         teamId: TEAM,
         commentId,
         userId,
         emoji,
+        syncGroups: groups,
+        createdAt: NOW,
       };
       reactions.set(row.id, row);
       return row;

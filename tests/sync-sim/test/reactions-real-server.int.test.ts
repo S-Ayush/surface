@@ -1,0 +1,137 @@
+/**
+ * PLAN-013 S4, the sync property suite for reactions (not held, plans README §6), against the real
+ * server: SPEC-013 AC-5 for reactions (sets and clears on comments from several clients, in any
+ * interleaving, converge to the server's state, at most 20 emoji per subject, none left on a
+ * deleted comment) and AC-22 (reactions on the issue itself, in the same runs), E4 (two people,
+ * one emoji) and E5 (one person, one emoji, from a queued repeat).
+ *
+ * The plan names `reactions.prop.test.ts`; the fake hub runs no operation handlers, so the suite
+ * runs on the real server, as the comment suite does (PLAN-013 S3). The 21st-emoji race (E14) is
+ * a unit test (`apps/server/test/reaction-set.test.ts`): the steps pick from six emoji, and the
+ * property checks that no subject ever holds more than 20.
+ */
+import fc from 'fast-check';
+import { describe, expect, inject, it } from 'vitest';
+import { simParameters } from '../src/context.js';
+import { reactionConvergence } from '../src/properties.js';
+import type { RealServer } from '../src/real-server.js';
+import { startRealServer } from '../src/real-server.js';
+import type { SimServer } from '../src/server.js';
+import { simulate } from '../src/simulate.js';
+import type { Case, Step } from '../src/steps.js';
+import { reactionCase } from '../src/steps.js';
+
+function reactionServers() {
+  let latest: RealServer | undefined;
+  const server = async (users: number): Promise<SimServer> => {
+    latest = await startRealServer({
+      adminUrl: inject('pgAdminUrl'),
+      template: inject('pgTemplateDb'),
+      users,
+    });
+    await latest.seedIssueFixtures();
+    return latest;
+  };
+  return { server, last: () => latest };
+}
+
+const THUMBS = 0; // 👍 in REACTION_EMOJI
+const PARTY = 1; // 🎉
+
+const react = (tab: number, on: 'comment' | 'issue', emoji: number, reacted = true): Step => ({
+  t: 'reactionSet',
+  tab,
+  on,
+  target: 0,
+  emoji,
+  reacted,
+});
+
+/**
+ * Tab 0 (user 0) comments; both users react 👍 to it (E4: two rows). Tab 1 goes offline and sets
+ * 🎉 on the issue twice (E5: the queued repeat changes nothing) while tab 0 sets 🎉 there too.
+ * Back online, tab 0 clears its 👍, then deletes its comment, which takes Iris's 👍 with it. The
+ * issue keeps both 🎉.
+ */
+const example: Case = {
+  seed: 7,
+  users: 2,
+  lateUsers: 0,
+  webLocks: true,
+  steps: [
+    { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+    { t: 'wait', ms: 3_000 },
+    { t: 'commentCreate', tab: 0, issue: 0, text: 'LGTM' },
+    { t: 'wait', ms: 2_000 },
+    react(0, 'comment', THUMBS),
+    react(1, 'comment', THUMBS),
+    { t: 'wait', ms: 2_000 },
+    { t: 'offline', tab: 1, ms: 5_000 },
+    react(1, 'issue', PARTY),
+    react(1, 'issue', PARTY),
+    react(0, 'issue', PARTY),
+    { t: 'wait', ms: 8_000 },
+    react(0, 'comment', THUMBS, false),
+    { t: 'wait', ms: 2_000 },
+    { t: 'commentDelete', tab: 0, comment: 0 },
+    { t: 'wait', ms: 2_000 },
+  ],
+};
+
+describe('reactions against the real server', () => {
+  it('keeps one row per person and emoji, and a deleted comment takes its reactions (E4, E5, AC-22)', async () => {
+    const servers = reactionServers();
+    const result = await simulate(
+      example,
+      { ...reactionConvergence.options, server: servers.server },
+      async (outcome) => {
+        await reactionConvergence.check(outcome);
+        const stored = Object.values((await servers.last()?.reactions()) ?? {});
+        return {
+          outcomes: outcome.world.dispatched
+            .filter((d) => d.op === 'reaction.set' || d.op === 'comment.delete')
+            .map((d) => `${d.op} ${String(d.outcome?.status)}`),
+          stored: stored.map((r) => [r.commentId, r.emoji]),
+        };
+      },
+    );
+    expect(result.outcomes).toEqual([
+      'reaction.set confirmed',
+      'reaction.set confirmed',
+      'reaction.set confirmed',
+      // The repeat from the offline tab: confirmed, and nothing changed (E5).
+      'reaction.set confirmed',
+      'reaction.set confirmed',
+      'reaction.set confirmed',
+      'comment.delete confirmed',
+    ]);
+    expect(result.stored).toEqual([
+      [null, '🎉'],
+      [null, '🎉'],
+    ]);
+  });
+
+  it('every tab converges on the comments and reactions, which keep §4.2’s rules, after any faults (AC-5, AC-22)', async () => {
+    const { server } = reactionServers();
+    // What the runs did, so a generator that stops reaching the server fails here, not silently.
+    const confirmed = { comment: 0, issue: 0, cleared: 0 };
+    await fc.assert(
+      fc.asyncProperty(reactionCase(), (simCase) =>
+        simulate(simCase, { ...reactionConvergence.options, server }, async (outcome) => {
+          await reactionConvergence.check(outcome);
+          for (const d of outcome.world.dispatched) {
+            if (d.op !== 'reaction.set' || d.outcome?.status !== 'confirmed') continue;
+            const input = typeof d.input === 'object' && d.input !== null ? d.input : {};
+            if (Reflect.get(input, 'reacted') === false) confirmed.cleared += 1;
+            else if ('comment' in input) confirmed.comment += 1;
+            else confirmed.issue += 1;
+          }
+        }),
+      ),
+      simParameters(),
+    );
+    expect(confirmed.comment, 'confirmed comment reactions').toBeGreaterThan(0);
+    expect(confirmed.issue, 'confirmed issue reactions').toBeGreaterThan(0);
+    expect(confirmed.cleared, 'confirmed clears').toBeGreaterThan(0);
+  });
+});

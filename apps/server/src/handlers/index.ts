@@ -64,6 +64,7 @@ import {
   resolveHandler as commentResolve,
 } from './comments/resolve.js';
 import commentUpdate from './comments/update.js';
+import reactionSet from './reactions/set.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
 export const HANDLERS: readonly Handler[] = [
@@ -128,4 +129,5 @@ export const HANDLERS: readonly Handler[] = [
   commentResolve,
   commentReopen,
   commentDelete,
+  reactionSet,
 ];

@@ -43,6 +43,7 @@ const OUTPUT: IssueOutput = {
   creator: { id: ID, name: 'Ada' },
   startedAt: null,
   canceledAt: null,
+  reactions: [],
 };
 
 function deps(
