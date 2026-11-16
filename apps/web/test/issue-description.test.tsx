@@ -236,6 +236,7 @@ describe('an earlier save of this description still unconfirmed when the page op
     const content = contentWorld('ready', 'Mine', 6);
     const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], content: content.api });
     app.pending.push({
+      seq: 1000,
       op: 'issue.updateDescription',
       input: { issue: ISSUE_A, baseVersion: 5, description: docOfText('Mine') },
     });
@@ -277,6 +278,67 @@ describe('an earlier save of this description still unconfirmed when the page op
     expect(editor()?.value).toBe('Mine, more');
     await blur();
     expect(saves(app)).toEqual([]);
+  });
+});
+
+describe('the queue and the overlay changing in separate actions (SPEC-012 D31)', () => {
+  it('never pairs a predicted row with an empty queue: the refused save gives the banner, not a send', async () => {
+    const content = contentWorld('ready', 'First', 3);
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], content: content.api });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    // An earlier page's save is queued (one action), then its prediction shows (another).
+    await inAct(() => {
+      runInAction(() => {
+        app.pending.push({
+          seq: 1000,
+          op: 'issue.updateDescription',
+          input: { issue: ISSUE_A, baseVersion: 3, description: docOfText('Queued') },
+        });
+      });
+      content.remote('Queued', 4);
+    });
+    await settle();
+    expect(editor()?.value).toBe('Queued');
+    await type('Queued, more');
+    await blur();
+    expect(saves(app)).toEqual([]);
+
+    // Refused: the store drops it from the queue (one action), then rolls the overlay back
+    // (another). A read between the two would see the predicted v4 with nothing unconfirmed.
+    await inAct(() => {
+      app.pending.clear();
+      content.remote('First', 3);
+    });
+    await settle();
+    expect(saves(app)).toEqual([]);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      DESCRIPTION_CONFLICT_MESSAGE,
+    );
+    expect(editor()?.value).toBe('Queued, more');
+  });
+});
+
+describe('closing the page while a save waits', () => {
+  it('sends the text after the page closed, once the earlier save is confirmed', async () => {
+    const content = contentWorld('ready', 'Mine', 6);
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], content: content.api });
+    app.pending.push({
+      seq: 1000,
+      op: 'issue.updateDescription',
+      input: { issue: ISSUE_A, baseVersion: 5, description: docOfText('Mine') },
+    });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await type('Mine, then left');
+    await page.unmount();
+    page = undefined;
+    expect(saves(app)).toEqual([]);
+    await inAct(() => {
+      app.pending.clear();
+    });
+    await settle();
+    expect(saves(app)).toEqual([
+      { issue: ISSUE_A, baseVersion: 6, description: docOfText('Mine, then left') },
+    ]);
   });
 });
 

@@ -167,8 +167,9 @@ function useIssueSource(issueRef: string) {
     }).then((result) => {
       if (!current) return;
       setLoaded({ ref: issueRef, result });
-      // Asked after any delete was confirmed: the answer says what the issue is now.
-      setDeletedHere(undefined);
+      // Asked after any delete was confirmed: an answer says what the issue is now. Offline or a
+      // failure says nothing, so the last row stays Deleted.
+      if (result.kind === 'remote' || result.kind === 'not-found') setDeletedHere(undefined);
     });
     return () => {
       current = false;

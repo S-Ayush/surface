@@ -13,18 +13,23 @@ import type { DocNodeJSON } from '@surface/domain';
 import type { RichTextEditorHandle } from '@surface/editor';
 import { docToMarkdown } from '@surface/editor/schema';
 import { Button, Skeleton, toast } from '@surface/ui';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { useApp, useObserved } from '../../app/context.js';
+import { reaction } from 'mobx';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { AppModel } from '../../app/AppModel.js';
+import { structurallyEqual } from '../../app/equal.js';
+import { useApp } from '../../app/context.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
 import { CommentDoc, CommentEditor } from '../comments/editor-host.js';
 import { hasContent } from '../comments/model.js';
 import { copyText } from '../members/reset-link.js';
 import {
+  changesDescription,
   DescriptionSaver,
   descriptionSendResult,
+  type DescriptionSnapshot,
+  type DescriptionSource,
   type DescriptionTimers,
   type SavedDescription,
-  unconfirmedDescriptionChanges,
 } from './description-save.js';
 import { docInput } from './draft-adapter.js';
 import { descriptionOf, useIssueContentView, type ContentView } from './server-issue.js';
@@ -40,6 +45,34 @@ const BROWSER_TIMERS: DescriptionTimers = {
   },
 };
 
+const NOTHING: DescriptionSnapshot = { saved: undefined, changes: [], refusals: [] };
+
+/**
+ * The store as the saver watches it (SPEC-012 D31): the replica's row, and the queue's unconfirmed
+ * changes and recent refusals of this description, read together. Outlives the page: the saver
+ * stops watching once what it holds is sent.
+ */
+export function storeDescriptionSource(app: AppModel, issueId: string): DescriptionSource {
+  const read = (): DescriptionSnapshot => {
+    const store = app.store;
+    if (store === null) return NOTHING;
+    const key = (seq: number) => `${store.clientId}:${seq}`;
+    return {
+      saved: descriptionOf(store.content.rows(issueId)['IssueContent']),
+      changes: store.pending
+        .filter(({ op, input }) => changesDescription(op, input, issueId))
+        .map(({ seq }) => key(seq)),
+      refusals: store.rejections
+        .filter(({ op, input }) => changesDescription(op, input, issueId))
+        .map(({ seq, message }) => ({ key: key(seq), message })),
+    };
+  };
+  return {
+    read,
+    watch: (changed) => reaction(read, changed, { equals: structurallyEqual }),
+  };
+}
+
 /** The live issue's description, from the replica, editable. */
 export function LiveDescription({ issueId }: { issueId: string }) {
   const content = useIssueContentView(issueId);
@@ -52,46 +85,41 @@ export function LiveDescription({ issueId }: { issueId: string }) {
 
 function EditableDescription({ issueId, saved }: { issueId: string; saved: SavedDescription }) {
   const app = useApp();
-  // SPEC-012 D31: while an earlier save of this description (or the issue's create) is
-  // unconfirmed, the replica's version is a prediction the saver must not send on.
-  const unconfirmed = useObserved(
-    useCallback(
-      () => unconfirmedDescriptionChanges(app.store?.pending ?? [], issueId),
-      [app, issueId],
-    ),
-  );
+  // The saver reads the store itself (SPEC-012 D31): the row and the queue in one read, also
+  // after the page closed, until what it holds is sent.
   const [saver] = useState(
     () =>
-      new DescriptionSaver(
-        saved,
-        {
-          timers: BROWSER_TIMERS,
-          send: async ({ baseVersion, description }, shown) => {
-            const store = app.readyStore;
-            // Thrown, so the saver reports it: the store never saw it.
-            if (store === null) throw new Error("Couldn't save the description. Try again.");
-            // While the page is open it shows the refusal itself (the banner, or the toast below);
-            // after it closed, the shell's toast does.
-            const outcome = await store.dispatch(
-              issueUpdateDescription,
-              { issue: issueId, baseVersion, description: docInput(description) },
-              { reportRejection: () => !shown() },
-            );
-            return descriptionSendResult(outcome);
-          },
-          onRefused: (message) => {
-            toast({ tone: 'danger', message });
-          },
+      new DescriptionSaver(saved, {
+        source: storeDescriptionSource(app, issueId),
+        timers: BROWSER_TIMERS,
+        send: async ({ baseVersion, description }, shown, queued) => {
+          const store = app.readyStore;
+          // Thrown, so the saver reports it: the store never saw it.
+          if (store === null) throw new Error("Couldn't save the description. Try again.");
+          // While the page is open it shows the refusal itself (the banner, or the toast below);
+          // after it closed, the shell's toast does.
+          const outcome = await store.dispatch(
+            issueUpdateDescription,
+            { issue: issueId, baseVersion, description: docInput(description) },
+            {
+              reportRejection: () => !shown(),
+              onQueued: ({ clientId, seq }) => {
+                queued(`${clientId}:${seq}`);
+              },
+            },
+          );
+          return descriptionSendResult(outcome);
         },
-        unconfirmed,
-      ),
+        onRefused: (message) => {
+          toast({ tone: 'danger', message });
+        },
+      }),
   );
-  useEffect(() => {
-    saver.remote(saved, unconfirmed);
-  }, [saver, saved, unconfirmed]);
   // Detaching (leaving the page, or stepping to another issue) saves what is unsaved.
   useEffect(() => saver.attach(), [saver]);
-  // A tab closed or hidden may never run React's cleanup: the queue keeps what is sent now.
+  // A tab closed or hidden may never run React's cleanup: the queue keeps what is sent now. A save
+  // already in flight when the tab closes holds back the next one (one in flight), so text typed
+  // after it is lost (SPEC-012 D31 records the limit).
   useEffect(() => {
     const flush = () => {
       saver.saveNow();
@@ -130,7 +158,9 @@ function EditableDescription({ issueId, saved }: { issueId: string; saved: Saved
     <section aria-label="Description" className={pageStyles.description}>
       {state.conflict && (
         <div role="alert" className={pageStyles.conflict}>
-          <p className={pageStyles.conflictMessage}>{DESCRIPTION_CONFLICT_MESSAGE}</p>
+          <p className={pageStyles.conflictMessage}>
+            {state.conflictMessage ?? DESCRIPTION_CONFLICT_MESSAGE}
+          </p>
           <Button size="sm" onClick={copyMine}>
             Copy my text
           </Button>

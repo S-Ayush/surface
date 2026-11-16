@@ -306,7 +306,7 @@ describe('an open issue that leaves the replica (E3)', () => {
     // What `deleteIssue` does: the delete is queued and its optimistic effect removes the row; it
     // waits for its confirmation.
     await inAct(() => {
-      app.pending.push({ op: 'issue.delete', input: { issue: ISSUE_A } });
+      app.pending.push({ seq: 1000, op: 'issue.delete', input: { issue: ISSUE_A } });
     });
     app.removeIssue(ISSUE_A);
     await settle();
@@ -324,6 +324,25 @@ describe('an open issue that leaves the replica (E3)', () => {
     expect(text()).toContain('Iris deleted the issue');
   });
 
+  it('stays Deleted when the server can’t answer after the delete is confirmed', async () => {
+    const store = content();
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], users: [IRIS], content: store.api });
+    const api = issueApi(() => ({ ok: false, code: 'INTERNAL', message: 'Something went wrong.' }));
+    page = await mountIssuePage({ app, ref: 'ENG-42', api });
+    await inAct(() => {
+      app.pending.push({ seq: 1000, op: 'issue.delete', input: { issue: ISSUE_A } });
+    });
+    app.removeIssue(ISSUE_A);
+    await settle();
+    await inAct(() => {
+      app.pending.clear();
+    });
+    await settle();
+    // Asked, and the answer said nothing about the issue: its last row stays Deleted.
+    expect(api.asked).toEqual(['ENG-42']);
+    expect(text()).toContain('Recently deleted issues');
+  });
+
   it('shows an archived issue deleted from its page as Deleted at once', async () => {
     const store = content();
     const app = new FakeApp({ issues: [], users: [IRIS], content: store.api });
@@ -334,7 +353,7 @@ describe('an open issue that leaves the replica (E3)', () => {
     expect(text()).toContain('Archived issues');
 
     await inAct(() => {
-      app.pending.push({ op: 'issue.delete', input: { issue: ISSUE_A } });
+      app.pending.push({ seq: 1000, op: 'issue.delete', input: { issue: ISSUE_A } });
     });
     await settle();
     expect(text()).toContain('Recently deleted issues');

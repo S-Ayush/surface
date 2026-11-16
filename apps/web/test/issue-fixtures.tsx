@@ -81,14 +81,29 @@ const teamRow: Row = {
 
 export type Dispatched = { readonly op: string; readonly input: unknown };
 
+/** The fake store's `clientId`: its mutations' keys are `tab-1:<seq>`. */
+export const FAKE_CLIENT_ID = 'tab-1';
+
 export class FakeApp extends AppModel {
   readonly #store: SyncStore;
+  /** The fake queue's last `seq`; tests pushing their own entries use 1000 and up. */
+  #seq = 0;
   readonly dispatched: Dispatched[] = [];
   /** The teams the page opened (`store.openTeam`), in order. */
   readonly opened: string[] = [];
   readonly issues: IObservableArray<Row>;
   /** The store's unconfirmed mutations (`store.pending`), observable. */
-  readonly pending = observable.array<{ op: string; input?: unknown }>([], { deep: false });
+  readonly pending = observable.array<{ seq: number; op: string; input?: unknown }>([], {
+    deep: false,
+  });
+  /** The store's recent rejections (`store.rejections`), observable. */
+  readonly rejections = observable.array<{
+    seq: number;
+    op: string;
+    input: unknown;
+    code: string;
+    message: string;
+  }>([], { deep: false });
 
   constructor(options: {
     issues: readonly Row[];
@@ -137,12 +152,32 @@ export class FakeApp extends AppModel {
     this.#store = {
       status: 'ready',
       connection: 'online',
-      rejections: [],
+      clientId: FAKE_CLIENT_ID,
+      rejections: this.rejections,
       pending: this.pending,
       content: options.content ?? NO_CONTENT,
-      dispatch: (op: { name: string }, input: unknown) => {
+      // Like the store's queue: a `(clientId, seq)` (`onQueued`), an unconfirmed entry in
+      // `pending` until the answer, which settles the dispatch.
+      dispatch: (
+        op: { name: string },
+        input: unknown,
+        dispatchOptions?: { onQueued?: (key: { clientId: string; seq: number }) => void },
+      ) => {
         this.dispatched.push({ op: op.name, input });
-        return options.answer?.(op.name, input) ?? Promise.resolve({ status: 'confirmed' });
+        this.#seq += 1;
+        const seq = this.#seq;
+        dispatchOptions?.onQueued?.({ clientId: FAKE_CLIENT_ID, seq });
+        runInAction(() => {
+          this.pending.push({ seq, op: op.name, input });
+        });
+        const answer: Promise<MutationOutcome> =
+          options.answer?.(op.name, input) ?? Promise.resolve({ status: 'confirmed' });
+        return answer.then((outcome) => {
+          runInAction(() => {
+            this.pending.replace(this.pending.filter((entry) => entry.seq !== seq));
+          });
+          return outcome;
+        });
       },
       openTeam: (teamId: string) => {
         this.opened.push(teamId);
