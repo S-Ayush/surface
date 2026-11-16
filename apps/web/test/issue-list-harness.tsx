@@ -132,6 +132,10 @@ export class IssueApp extends AppModel {
         all: (model: unknown) => byModel.get(model)?.() ?? [],
         get: (model: unknown, id: string) =>
           (byModel.get(model)?.() ?? []).find((row) => (row as { id?: string }).id === id),
+        findBy: (model: unknown, field: string, value: unknown) =>
+          (byModel.get(model)?.() ?? []).filter(
+            (row) => (row as Record<string, unknown>)[field] === value,
+          ),
       },
     } as unknown as SyncStore;
   }

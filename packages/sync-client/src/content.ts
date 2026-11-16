@@ -114,6 +114,12 @@ export const CONTENT_CACHE_LIMIT = 2000;
 /** At most this many prefetch requests in flight (SPEC-011 §5.4). */
 export const PREFETCH_REQUESTS = 4;
 
+/**
+ * At most this many parents wait for a prefetch: the assigned issues (100), a list's rows (50) and
+ * a few hovered, several times over. Beyond it the oldest asked go: a list scrolled past since.
+ */
+export const PREFETCH_QUEUE_LIMIT = 500;
+
 /** What content hydration needs from its store. */
 export interface ContentHost {
   readonly pool: ObjectPool;
@@ -214,8 +220,15 @@ export class ContentHydration {
   /** The content lock of each wanted parent (§5.4): its release once granted. */
   readonly #holds = new Map<string, Promise<(() => Promise<void>) | undefined>>();
   #lockAbort = new AbortController();
-  /** Prefetch (§5.4): parents waiting for a request, in the order asked. */
+  /**
+   * Prefetch (§5.4): parents asked for and not requested yet, in the order asked. Kept until they
+   * can be (the store online, the issue held, its team followed), across a resync; at most
+   * `PREFETCH_QUEUE_LIMIT`, the oldest dropped first.
+   */
   readonly #prefetchQueue: string[] = [];
+  /** Bumped when `#prefetchQueue` changes, so the pump's reaction sees it. */
+  readonly #prefetchQueued: IObservableValue<number> = observable.box(0);
+  #stopPrefetch: (() => void) | undefined;
   /** Parents in a prefetch request in flight, with its end: an open of one waits for it. */
   readonly #prefetching = new Map<string, Promise<void>>();
   #prefetchRequests = 0;
@@ -315,7 +328,7 @@ export class ContentHydration {
     const parent = this.#resolve(ref);
     if (parent === undefined) {
       // A row the store doesn't hold: a parent never hydrated. Online, the server decides.
-      return this.#online() ? 'proceed' : 'unavailable';
+      return this.#online() || this.#dialing() ? 'proceed' : 'unavailable';
     }
     if (this.#paged.has(parent)) return 'proceed';
     this.#want(parent);
@@ -354,7 +367,11 @@ export class ContentHydration {
   /** After a start or resync (§5.3 step 7): nothing is paged in; open parents load again. */
   reset(): void {
     this.#newEpoch();
-    runInAction(() => this.#closed.set(false));
+    runInAction(() => {
+      this.#closed.set(false);
+      // A new replica, so the server answered: no attempt has failed since (E11).
+      this.#reachable.set(true);
+    });
     this.#stopOnline ??= reaction(
       () => this.#host.ready() && this.#online(),
       (up) => {
@@ -389,10 +406,19 @@ export class ContentHydration {
         }
       },
     );
+    // Prefetches asked for before they could run (warm start before the socket is up or the
+    // teams acked, a resync, an issue not held yet) run once they can (PLAN-011 S7 review).
+    this.#stopPrefetch ??= reaction(
+      () => this.#prefetchWaiting(),
+      (waiting) => {
+        if (waiting > 0) this.#pumpPrefetch();
+      },
+    );
     void Promise.resolve().then(() => {
       this.#reloadWanted();
       // A replica past the limit (a smaller limit, or marks added while no tab evicted).
       this.#scheduleEviction();
+      this.#pumpPrefetch();
     });
   }
 
@@ -405,6 +431,9 @@ export class ContentHydration {
     this.#stopFound = undefined;
     this.#stopReach?.();
     this.#stopReach = undefined;
+    this.#stopPrefetch?.();
+    this.#stopPrefetch = undefined;
+    this.#setQueue([]);
     // The tab's content locks go with it; a parent still wanted takes its lock again on its next load.
     this.#lockAbort.abort();
     this.#lockAbort = new AbortController();
@@ -467,6 +496,8 @@ export class ContentHydration {
     this.#wanted.delete(parent);
     this.#stopRetry(parent);
     this.#unhold(parent);
+    // Its next open starts afresh: a replica read shows loading again.
+    runInAction(() => this.#unavailable.delete(parent));
     // Closed, it may be evicted now: the cache may have filled while it was open.
     this.#scheduleEviction();
   }
@@ -540,14 +571,21 @@ export class ContentHydration {
     // §5.7: content needs the team's subscription; opening the issue subscribes its team.
     const team = this.#teamOf(parent);
     if (team !== undefined && !this.#host.followedTeams().has(team)) {
-      this.#host.openTeam(team);
-      await this.#host.whenTeamLoaded(team);
+      // Before the socket dials, no public team is acked yet: wait for it (E11).
+      await this.#fetchable(epoch);
       if (epoch !== this.#epoch.get()) return 'stale';
-      if (!this.#host.followedTeams().has(team)) return this.#online() ? 'missing' : 'offline';
+      if (!this.#host.followedTeams().has(team)) {
+        this.#host.openTeam(team);
+        await this.#host.whenTeamLoaded(team);
+        if (epoch !== this.#epoch.get()) return 'stale';
+        if (!this.#host.followedTeams().has(team)) return this.#online() ? 'missing' : 'offline';
+      }
     }
     const local = await this.#pageIn(parent, epoch);
     if (local !== 'absent') return local;
-    if (!this.#online()) return 'offline';
+    const fetchable = await this.#fetchable(epoch);
+    if (epoch !== this.#epoch.get()) return 'stale';
+    if (!fetchable) return 'offline';
     if (!this.#inBase(parent)) {
       if (!this.#inView(parent)) return this.#miss(parent, true);
       // Only this tab's overlay holds it (a create not confirmed yet): its `I` hydrates it.
@@ -557,11 +595,14 @@ export class ContentHydration {
           !this.#inView(parent) ||
           this.#inBase(parent) ||
           epoch !== this.#epoch.get() ||
-          !this.#online(),
+          !(this.#online() || this.#dialing()),
       );
       if (epoch !== this.#epoch.get()) return 'stale';
       if (this.#paged.has(parent)) return 'ready';
-      if (!this.#online()) return 'offline';
+      if (!(await this.#fetchable(epoch))) {
+        return epoch === this.#epoch.get() ? 'offline' : 'stale';
+      }
+      if (epoch !== this.#epoch.get()) return 'stale';
       if (!this.#inBase(parent)) return this.#miss(parent, true);
       // The `I` arrived without hydrating it (its team isn't followed here): fetch it.
     }
@@ -615,6 +656,11 @@ export class ContentHydration {
       } catch (error) {
         if (epoch !== this.#epoch.get()) return 'stale';
         if (error instanceof ClientOutdatedError) this.#host.outdated();
+        else if (this.#dialing()) {
+          // Cut as a resync stopped the socket, which dials again soon: load again then (E11).
+          await this.#fetchable(epoch);
+          return 'stale';
+        }
         // Cut by the connection going down (or failed with it): it loads when back online.
         if (!this.#online()) return 'offline';
         // §5.3 step 3: a failed request drops the buffer and the mark; a retry follows.
@@ -765,13 +811,15 @@ export class ContentHydration {
     this.#loads.clear();
     this.#since.clear();
     this.#absent.clear();
-    this.#prefetchQueue.length = 0;
+    // The prefetch queue stays: what was asked for is still wanted after a resync, and pumps
+    // again once the store is ready and online (`reset`).
     this.#inFlight = 0;
     runInAction(() => {
       this.#epoch.set(this.#epoch.get() + 1);
       this.#paged.clear();
       this.#loading.clear();
       this.#fetching.clear();
+      this.#unavailable.clear();
       this.#missing.clear();
     });
   }
@@ -781,26 +829,75 @@ export class ContentHydration {
 
   /**
    * Fetch and store these parents' content, so opening them later reads the replica (§5.4). Only
-   * issues the pool holds, of teams this tab follows (§5.7), not paged in, loading or hydrated
-   * already; never paged in here (the pool stays small). At most `MAX_CONTENT_PARENTS` per
-   * request and `PREFETCH_REQUESTS` in flight, in the order asked. Best effort: a failed request
-   * is dropped, and the next prefetch or open asks again (§5.3 step 3).
+   * issues the pool holds, of teams this tab follows (§5.7), not open, paged in, loading or
+   * hydrated already; never paged in here (the pool stays small). At most `MAX_CONTENT_PARENTS`
+   * per request and `PREFETCH_REQUESTS` in flight, in the order asked. A parent that can't be
+   * fetched yet (the store not online, its issue or team not loaded) waits in the queue until it
+   * can. Best effort: a request that fails online is dropped, and the next prefetch or open asks
+   * again (§5.3 step 3).
    */
   prefetch(parents: readonly string[]): void {
     if (this.#closed.get() || !this.enabled) return;
-    const queued = new Set(this.#prefetchQueue);
+    const queue = [...this.#prefetchQueue];
+    const queued = new Set(queue);
     for (const raw of parents) {
       const parent = raw.toLowerCase();
-      if (queued.has(parent) || !this.#prefetchable(parent)) continue;
+      if (queued.has(parent) || this.#underway(parent)) continue;
       queued.add(parent);
-      this.#prefetchQueue.push(parent);
+      queue.push(parent);
     }
+    this.#setQueue(queue.slice(-PREFETCH_QUEUE_LIMIT));
     this.#pumpPrefetch();
   }
 
+  #setQueue(queue: readonly string[]): void {
+    this.#prefetchQueue.splice(0, this.#prefetchQueue.length, ...queue);
+    runInAction(() => this.#prefetchQueued.set(this.#prefetchQueued.get() + 1));
+  }
+
+  /** Put parents back first in line (asked for before anything queued since), unless closed. */
+  #requeue(parents: readonly string[]): void {
+    if (this.#closed.get()) return;
+    const back = parents.filter((p) => !this.#prefetchQueue.includes(p) && !this.#underway(p));
+    if (back.length === 0) return;
+    this.#setQueue([...back, ...this.#prefetchQueue].slice(0, PREFETCH_QUEUE_LIMIT));
+  }
+
+  /**
+   * Observable: how many queued parents could be requested now (0 while the store isn't ready
+   * and online). The pump's reaction runs as it grows: the socket came up, a team was acked, an
+   * issue arrived.
+   */
+  #prefetchWaiting(): number {
+    this.#prefetchQueued.get();
+    if (this.#closed.get() || !this.#host.ready() || this.#host.connection() !== 'online') {
+      return 0;
+    }
+    const followed = this.#host.followedTeams();
+    const rules = this.#host.rules;
+    let waiting = 0;
+    for (const parent of this.#prefetchQueue) {
+      if (!this.#inView(parent)) continue;
+      const issue = rules === undefined ? undefined : this.#host.pool.get(rules.issue, parent);
+      const team = issue === undefined ? undefined : teamOf(rowOf(issue));
+      if (team === undefined || followed.has(team)) waiting += 1;
+    }
+    return waiting;
+  }
+
   #pumpPrefetch(): void {
-    while (this.#prefetchRequests < PREFETCH_REQUESTS && this.#prefetchQueue.length > 0) {
-      const batch = this.#prefetchQueue.splice(0, MAX_CONTENT_PARENTS);
+    if (this.#closed.get() || !this.#host.ready() || this.#host.connection() !== 'online') return;
+    let rest = this.#prefetchQueue.filter((parent) => !this.#underway(parent));
+    while (this.#prefetchRequests < PREFETCH_REQUESTS) {
+      // Those that can't be fetched yet wait, in their place, for the issue or its team.
+      const batch: string[] = [];
+      const waiting: string[] = [];
+      for (const parent of rest) {
+        if (batch.length < MAX_CONTENT_PARENTS && this.#prefetchable(parent)) batch.push(parent);
+        else waiting.push(parent);
+      }
+      rest = waiting;
+      if (batch.length === 0) break;
       this.#prefetchRequests += 1;
       void this.#prefetchBatch(batch)
         .catch(() => undefined)
@@ -809,17 +906,24 @@ export class ContentHydration {
           this.#pumpPrefetch();
         });
     }
+    if (rest.length !== this.#prefetchQueue.length) this.#setQueue(rest);
+  }
+
+  /** Whether a parent is open, paged in, loading or being prefetched: it is or will be hydrated. */
+  #underway(parent: string): boolean {
+    return untracked(
+      () =>
+        this.#wanted.has(parent) ||
+        this.#paged.has(parent) ||
+        this.#loads.has(parent) ||
+        this.#prefetching.has(parent),
+    );
   }
 
   /** Whether a parent may be prefetched now (before the storage check). Untracked. */
   #prefetchable(parent: string): boolean {
     return untracked(
-      () =>
-        this.#inBase(parent) &&
-        this.#teamAllowsParent(parent) &&
-        !this.#paged.has(parent) &&
-        !this.#loads.has(parent) &&
-        !this.#prefetching.has(parent),
+      () => this.#inBase(parent) && this.#teamAllowsParent(parent) && !this.#underway(parent),
     );
   }
 
@@ -827,13 +931,20 @@ export class ContentHydration {
     const epoch = this.#epoch.get();
     const persistence = this.#host.persistence();
     const generation = this.#host.generation();
-    // No way to fetch it, or nowhere to store it: nothing to do.
-    if (!this.#host.ready() || this.#host.connection() !== 'online') return;
-    if (persistence === undefined || generation === undefined) return;
+    if (persistence === undefined || generation === undefined) {
+      // Nowhere to store it yet (a resync between replicas): it waits for the next reset.
+      this.#requeue(batch);
+      return;
+    }
     const stored = await this.#host.enqueue(() =>
       persistence.writeReplica(generation, (storage) => storage.readHydrated()),
     );
-    if (epoch !== this.#epoch.get() || stored === undefined) return;
+    // A resync, or the socket dropped meanwhile: asked again once it is back.
+    if (epoch !== this.#epoch.get() || this.#host.connection() !== 'online') {
+      this.#requeue(batch);
+      return;
+    }
+    if (stored === undefined) return;
     const hydrated = new Set(stored);
     const parents = batch.filter((parent) => !hydrated.has(parent) && this.#prefetchable(parent));
     if (parents.length === 0) return;
@@ -845,7 +956,7 @@ export class ContentHydration {
       this.#prefetching.set(parent, request);
       this.#begin(parent);
     }
-    let again: readonly string[];
+    let again: readonly string[] = [];
     try {
       let answer: ContentAnswer;
       try {
@@ -853,10 +964,16 @@ export class ContentHydration {
       } catch (error) {
         if (epoch === this.#epoch.get() && error instanceof ClientOutdatedError) {
           this.#host.outdated();
+          return;
         }
+        // Cut by a resync or the connection going down: asked again once it is back.
+        again = epoch !== this.#epoch.get() || !this.#online() ? parents : [];
         return;
       }
-      if (epoch !== this.#epoch.get()) return;
+      if (epoch !== this.#epoch.get()) {
+        again = parents;
+        return;
+      }
       const C = answer.lastSyncId;
       // As an open's answer (§5.3 step 3): parents purged meanwhile, or of a team no longer
       // followed, are skipped with their rows (E23).
@@ -867,20 +984,19 @@ export class ContentHydration {
         .filter((r) => accepted.has(this.#parentOf(r.model, r.row) ?? ''))
         .map((r): LoadedRow => ({ ...r, version: C }));
       this.#store(accepted, rows, C, this.#replayOf(accepted, C));
-      // D16: a parent left out for the answer's size is asked for again; an invisible one isn't.
+      // D16: the parents after the last one taken may only have been left out for the answer's
+      // size, so they are asked again; an invisible one among them at most until it leads.
       again = leftOutParents(parents, answer.parents);
+      this.#scheduleEviction();
     } finally {
       for (const parent of parents) {
         this.#end(parent, epoch);
         if (this.#prefetching.get(parent) === request) this.#prefetching.delete(parent);
       }
       finish();
+      // Here, once no longer underway, so a request cut short is put back too.
+      this.#requeue(again);
     }
-    if (epoch !== this.#epoch.get()) return;
-    this.#scheduleEviction();
-    const retry = again.filter((parent) => this.#prefetchable(parent));
-    // First in line: they were asked for before anything queued since.
-    if (retry.length > 0) this.#prefetchQueue.unshift(...retry);
   }
 
   /** The buffered upserts of `parents` above `floor` (§5.3 step 3: replay above `C`). */
@@ -1005,10 +1121,28 @@ export class ContentHydration {
     return connection === 'online' || connection === 'connecting';
   }
 
-  /** Online, or connecting with no failed attempt since it was last online (E11). Observable. */
+  /**
+   * A ready store whose socket hasn't dialled yet: its teams are being prepared after a start, or
+   * a resync runs. It is about to connect, so nothing is offline yet (E11). Observable.
+   */
+  #dialing(): boolean {
+    return this.#host.connection() === 'disconnected' && this.#host.ready() && !this.#closed.get();
+  }
+
+  /** Whether content can be fetched, once a socket about to dial has (`#dialing`). */
+  async #fetchable(epoch: number): Promise<boolean> {
+    await when(() => !this.#dialing() || epoch !== this.#epoch.get());
+    return this.#online();
+  }
+
+  /**
+   * Online, or connecting (or about to) with no failed attempt since it was last online (E11).
+   * Observable.
+   */
   #reachableNow(): boolean {
     const connection = this.#host.connection();
-    return connection === 'online' || (connection === 'connecting' && this.#reachable.get());
+    if (connection === 'online') return true;
+    return (connection === 'connecting' || this.#dialing()) && this.#reachable.get();
   }
 
   /** The parent a mutation's `contentParent` names, lower-cased; `undefined` if not held. */

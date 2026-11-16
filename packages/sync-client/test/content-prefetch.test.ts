@@ -1,6 +1,7 @@
 // SPEC-011 §5.4, D16; PLAN-011 S7: content prefetch. A list's first 50 rows once they stay 200 ms,
 // an issue under the pointer after 150 ms; at most 50 parents per request and 4 requests in
 // flight; hydrated parents not asked for; parents an answer left out for its size asked again.
+import 'fake-indexeddb/auto';
 import { computeSchemaHash, issueParent, type ContentParent } from '@surface/sync-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { leftOutParents } from '../src/content.js';
@@ -9,6 +10,8 @@ import {
   PREFETCH_LIST_DEBOUNCE_MS,
   PREFETCH_LIST_ROWS,
 } from '../src/prefetch.js';
+import { IndexedDbStorage } from '../src/storage/indexeddb.js';
+import type { StorageConnector } from '../src/storage/open.js';
 import type { SyncStore } from '../src/store.js';
 import { FakeHub } from './support/hub.js';
 import {
@@ -21,6 +24,7 @@ import {
   until,
 } from './support/live.js';
 import { CONTENT_TEST_MODELS, OTHER_USER, USER_ID, id } from './support/models.js';
+import { uniqueName } from './support/storage.js';
 
 const stores: SyncStore[] = [];
 afterEach(async () => {
@@ -96,13 +100,48 @@ describe('what is prefetched (§5.4)', () => {
     expect(store.content.rows(id(1))['Note']?.map((n) => n['body'])).toEqual(['Edited meanwhile']);
   });
 
-  it('prefetches nothing offline', async () => {
-    const { hub, store } = await itemWorld();
+  it('prefetches nothing offline, and asks once back online', async () => {
+    const { hub, store, timers, kept } = await itemWorld();
     hub.last.close();
     await until(() => store.connection === 'offline');
     store.content.prefetch(ids(1));
     await idle();
     expect(hub.contentRequests).toEqual([]);
+    timers.runNext();
+    await until(() => store.connection === 'online');
+    await eventually(async () => (await kept.hydrated()).length === 1);
+    expect(hub.contentRequests).toEqual([asked(1)]);
+  });
+
+  it('runs a prefetch asked for before a warm start is online, once its team is acked', async () => {
+    const hub = new FakeHub().withTeams();
+    hub.addSquad(1);
+    hub.join(USER_ID, 1);
+    hub.putTask(110, 1, { creatorId: OTHER_USER });
+    hub.putTaskNote(601, 110);
+    const workspaceId = uniqueName('ws');
+    const connect: StorageConnector = (name, models, content) =>
+      IndexedDbStorage.open(name, models, content);
+    const first = teamStore(hub, { workspaceId, connectStorage: connect, locks: null }).store;
+    await first.start();
+    await until(() => first.connection === 'online' && first.followedTeams.has(id(1)));
+    await first.close();
+
+    hub.holdAcks = true;
+    const { store, timers } = teamStore(hub, { workspaceId, connectStorage: connect, locks: null });
+    stores.push(store);
+    // The shell asks as soon as it mounts, before the replica is even read.
+    store.content.prefetchList('assigned', ids(110));
+    timers.advance(PREFETCH_LIST_DEBOUNCE_MS);
+    expect(await store.start()).toBe('warm');
+    await until(() => store.connection === 'online');
+    await idle();
+    // Not followed until the server acks it (§5.7): nothing asked yet, and nothing forgotten.
+    expect(store.followedTeams.has(id(1))).toBe(false);
+    expect(hub.contentRequests).toEqual([]);
+    hub.releaseAcks();
+    await eventually(() => hub.contentRequests.length === 1);
+    expect(hub.contentRequests).toEqual([asked(110)]);
   });
 
   it('prefetches only issues of followed teams (§5.7)', async () => {
@@ -167,7 +206,7 @@ describe('answers cut by the size budget (D16)', () => {
     expect(hub.contentRequests).toEqual([asked(1, 2, 3), asked(2, 3), asked(3)]);
   });
 
-  it('doesn’t ask again for a parent the server doesn’t show', async () => {
+  it('asks again for a parent the server doesn’t show only until it leads a request', async () => {
     const hub = itemHub();
     hub.contentBudget = 1;
     hub.hiddenParents.add(id(2));

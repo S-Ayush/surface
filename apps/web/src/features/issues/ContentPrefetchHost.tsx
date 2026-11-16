@@ -19,7 +19,9 @@ export function ContentPrefetchHost() {
       if (store === null || userId === undefined) return '';
       const { pool } = store;
       const categories = new Map(pool.all(WorkflowStatus).map((s) => [s.id, s.category]));
-      const issues = pool.all(Issue).map((i) => ({
+      // By the assignee index: only the user's issues are read, so other issues' changes don't
+      // run this again.
+      const issues = pool.findBy(Issue, 'assigneeId', userId).map((i) => ({
         id: i.id,
         statusId: i.statusId,
         assigneeId: i.assigneeId,

@@ -45,7 +45,7 @@ interface TabHandle {
   readonly life: Life;
   readonly timers: ManualTimers;
   readonly connections: HubConnection[];
-  readonly handles: ContentHandle[];
+  readonly handles: { readonly parent: string; readonly handle: ContentHandle }[];
 }
 
 /** A tab's storage calls, and its death (a crash: the store is never closed). */
@@ -58,6 +58,9 @@ interface Life {
   die(): void;
 }
 
+/** Parents evicted over all runs: the property must see evictions happen, not only allow them. */
+let evictions = 0;
+
 /** `storage`, whose calls never settle once the tab is dead: what it wrote before stays. */
 function mortal(storage: SyncStorage, life: Life): SyncStorage {
   return new Proxy(storage, {
@@ -69,6 +72,14 @@ function mortal(storage: SyncStorage, life: Life): SyncStorage {
         if (life.dieAt !== undefined && life.calls >= life.dieAt) life.die();
         if (life.dead) return new Promise(() => undefined);
         const result: unknown = Reflect.apply(value, target, args);
+        if (key === 'evictContent' && result instanceof Promise) {
+          result.then(
+            (evicted: unknown) => {
+              if (Array.isArray(evicted)) evictions += evicted.length;
+            },
+            () => undefined,
+          );
+        }
         return result;
       };
     },
@@ -255,11 +266,11 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
               break;
             case 'open': {
               const t = tabs[c.tab];
-              t?.handles.push(t.store.content.open(id(c.item)));
+              t?.handles.push({ parent: id(c.item), handle: t.store.content.open(id(c.item)) });
               break;
             }
             case 'close':
-              tabs[c.tab]?.handles.shift()?.release();
+              tabs[c.tab]?.handles.shift()?.handle.release();
               break;
             case 'prefetch':
               tabs[c.tab]?.store.content.prefetch(c.items.map(id));
@@ -320,6 +331,15 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
         for (const t of tabs) if (t.life.dieAt !== undefined) t.life.die();
         await revive();
         await settle(hub, tabs);
+        // Quiet, the replica keeps at most the limit, beyond the items open in a tab (§5.4).
+        const open = new Set<string>();
+        for (const t of tabs) {
+          for (const { parent } of t.handles) open.add(parent);
+        }
+        const stored = tabs[0]?.life.storages.at(-1);
+        await eventually(
+          async () => ((await stored?.readHydrated()) ?? []).length <= CACHE_LIMIT + open.size,
+        );
         for (const t of tabs) await expectFetched(hub, t);
         // Closing waits for every queued storage write.
         for (const t of tabs) await t.store.close();
@@ -417,6 +437,8 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
       ],
     },
   );
+  // The limit is small enough that runs evict: the property covers eviction, not just its absence.
+  expect(evictions).toBeGreaterThan(0);
 }, 240_000);
 
 /** Run reconnects and retries to the end, then one probe every tab applies. */

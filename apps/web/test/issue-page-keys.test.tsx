@@ -6,6 +6,7 @@
 // build. Server-rendered markup (`issue-page.test.tsx`) can't show any of it.
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LIST_SOURCE_STATE_KEY } from '../src/features/issues/focus-model.js';
+import { recordingContent } from './content-stub.js';
 import {
   FakeApp,
   ISSUE_A,
@@ -104,6 +105,30 @@ describe('J and K (AC-17, E10)', () => {
     expect(pathname()).toBe(`/issue/${UNHELD}`);
     expect(document.body.textContent).not.toContain('Login page flickers');
     expect(document.querySelector('[aria-label="Loading issue"]')).not.toBeNull();
+  });
+});
+
+describe('prefetch (SPEC-011 §5.4, PLAN-011 S7)', () => {
+  it('asks for the content of the issues J and K open next', async () => {
+    const content = recordingContent();
+    mounted = await mountIssuePage({
+      app: new FakeApp({ issues: rows(), content }),
+      ref: 'ENG-42',
+      state: list([ISSUE_A, ISSUE_B, ISSUE_C]),
+    });
+    expect([...content.lists.values()]).toEqual([[ISSUE_C, ISSUE_A]]);
+    await keydown(document.body, 'j');
+    // At the end of the list: only the previous one.
+    expect([...content.lists.values()].filter((ids) => ids.length > 0)).toEqual([[ISSUE_B]]);
+  });
+
+  it('asks for nothing without a source list', async () => {
+    const content = recordingContent();
+    mounted = await mountIssuePage({
+      app: new FakeApp({ issues: rows(), content }),
+      ref: 'ENG-42',
+    });
+    expect([...content.lists.values()].filter((ids) => ids.length > 0)).toEqual([]);
   });
 });
 

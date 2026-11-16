@@ -5,7 +5,7 @@ import 'fake-indexeddb/auto';
 import { computeSchemaHash, issueParent } from '@surface/sync-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CONTENT_CACHE_LIMIT } from '../src/content.js';
-import { contentLockName } from '../src/locks.js';
+import { contentLockName, type ReplicaLocks } from '../src/locks.js';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
 import type { SyncStore, SyncStoreOptions } from '../src/store.js';
@@ -130,9 +130,75 @@ describe('eviction by last opened (Q11)', () => {
   }, 30_000);
 });
 
+/** Stops tab a's next eviction once armed, until opened: to land an open in the middle of it. */
+class Gate {
+  #armed = false;
+  hit = false;
+  #open: () => void = () => undefined;
+  #wait: Promise<void> = Promise.resolve();
+
+  arm(): void {
+    this.#armed = true;
+    this.#wait = new Promise((resolve) => {
+      this.#open = resolve;
+    });
+  }
+
+  open(): void {
+    this.#open();
+  }
+
+  /** Where tab a's eviction passes: waits there once, when armed. */
+  async pass(): Promise<void> {
+    if (!this.#armed) return;
+    this.#armed = false;
+    this.hit = true;
+    await this.#wait;
+  }
+}
+
+/** Storage whose `evictContent` waits at `gate` first: the eviction is under way, lock held. */
+function gatedStorage(gate: Gate): StorageConnector {
+  return async (name, models, content) => {
+    const storage = await IndexedDbStorage.open(name, models, content);
+    return new Proxy(storage, {
+      get(target, key, receiver) {
+        const value: unknown = Reflect.get(target, key, receiver);
+        if (typeof value !== 'function') return value;
+        if (key !== 'evictContent') {
+          return (...args: unknown[]): unknown => Reflect.apply(value, target, args);
+        }
+        return async (...args: unknown[]): Promise<unknown> => {
+          await gate.pass();
+          return Reflect.apply(value, target, args);
+        };
+      },
+    });
+  };
+}
+
+/** Locks whose `ifAvailable` grants (eviction's) wait at `gate` while held. */
+function gatedLocks(inner: ReplicaLocks, gate: Gate): ReplicaLocks {
+  return {
+    request(name, options, callback) {
+      return inner.request(name, options, async (lock) => {
+        if (options.ifAvailable === true && lock !== null) await gate.pass();
+        return callback(lock);
+      });
+    },
+  };
+}
+
 describe('several tabs on one replica (§5.4)', () => {
-  /** Two tabs sharing an IndexedDB replica, with Web Locks (`FakeLocks`) unless `locks: null`. */
-  async function sharedTabs(hub: FakeHub, withLocks = true) {
+  /**
+   * Two tabs sharing an IndexedDB replica, with Web Locks (`FakeLocks`) unless `withLocks` is
+   * false. `gate` stops tab a's next eviction at its storage write or once it holds a lock.
+   */
+  async function sharedTabs(
+    hub: FakeHub,
+    withLocks = true,
+    gate?: { at: 'storage' | 'lock'; gate: Gate },
+  ) {
     const workspaceId = uniqueName('ws');
     const locks = new FakeLocks();
     // One clock for both tabs, so their opens are ordered.
@@ -140,11 +206,14 @@ describe('several tabs on one replica (§5.4)', () => {
     const connect: StorageConnector = (name, models, content) =>
       IndexedDbStorage.open(name, models, content);
     const tab = async (name: string) => {
+      const gated = name === 'a' ? gate : undefined;
+      const tabLocks =
+        gated?.at === 'lock' ? gatedLocks(locks.forTab(name), gated.gate) : locks.forTab(name);
       const { store } = liveStore(hub, {
         models: CONTENT_TEST_MODELS,
         workspaceId,
-        connectStorage: connect,
-        locks: withLocks ? locks.forTab(name) : null,
+        connectStorage: gated?.at === 'storage' ? gatedStorage(gated.gate) : connect,
+        locks: withLocks ? tabLocks : null,
         clock,
         contentCacheLimit: 1,
       });
@@ -186,6 +255,55 @@ describe('several tabs on one replica (§5.4)', () => {
     expect(await hydrated()).toEqual([id(1)]);
     expect(b.content.rows(id(1))['Note']).toHaveLength(1);
     open.release();
+  });
+
+  it('makes a tab that opens an issue being evicted wait, then fetch it again', async () => {
+    const hub = itemHub();
+    const gate = new Gate();
+    const { a, b, locks, replica } = await sharedTabs(hub, true, { at: 'storage', gate });
+    const name = contentLockName(replica, id(1));
+    await visit(a, 1);
+    gate.arm();
+    // Tab a hydrates 2, past the limit (1): it evicts 1, and stops as it removes it.
+    await visit(a, 2);
+    await eventually(() => gate.hit);
+    expect(locks.holders(name)).toEqual([{ tab: 'a', mode: 'exclusive' }]);
+    const before = hub.contentRequests.length;
+    const one = b.content.open(id(1));
+    let settled = false;
+    void one.ready.then(() => {
+      settled = true;
+    });
+    await idle();
+    expect(settled).toBe(false);
+    expect(locks.waiting(name)).toBe(1);
+    gate.open();
+    expect(await one.ready).toBe('ready');
+    // Evicted while it waited: fetched again, not read from a half-removed replica.
+    expect(hub.contentRequests.slice(before)).toEqual([[issueParent(id(1))]]);
+    expect(b.content.rows(id(1))['Note']?.map((note) => note.id)).toEqual([id(11)]);
+    one.release();
+  });
+
+  it('keeps an issue this tab opens while its eviction holds the issue’s lock', async () => {
+    const hub = itemHub();
+    const gate = new Gate();
+    const { a, hydrated } = await sharedTabs(hub, true, { at: 'lock', gate });
+    await visit(a, 1);
+    gate.arm();
+    // Hydrating 2 evicts 1: the eviction takes 1's lock and stops there.
+    await visit(a, 2);
+    await eventually(() => gate.hit);
+    const before = hub.contentRequests.length;
+    const one = a.content.open(id(1));
+    gate.open();
+    expect(await one.ready).toBe('ready');
+    // Open before the eviction looked again: kept, and read from the replica.
+    expect(hub.contentRequests).toHaveLength(before);
+    expect(a.content.rows(id(1))['Note']?.map((note) => note.id)).toEqual([id(11)]);
+    await eventually(async () => (await hydrated()).length === 1);
+    expect(await hydrated()).toEqual([id(1)]);
+    one.release();
   });
 
   it('evicts nothing without Web Locks: another tab may have an issue open unseen', async () => {

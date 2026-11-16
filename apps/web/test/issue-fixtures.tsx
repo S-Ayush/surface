@@ -82,6 +82,8 @@ export class FakeApp extends AppModel {
     teams?: readonly Row[];
     statuses?: readonly Row[];
     labels?: readonly Row[];
+    /** The store's `content` (`content-stub.ts`); `NO_CONTENT` by default. */
+    content?: unknown;
   }) {
     const unused = () => Promise.reject(new Error('unused'));
     super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
@@ -115,7 +117,7 @@ export class FakeApp extends AppModel {
       status: 'ready',
       connection: 'online',
       rejections: [],
-      content: NO_CONTENT,
+      content: options.content ?? NO_CONTENT,
       dispatch: (op: { name: string }, input: unknown) => {
         this.dispatched.push({ op: op.name, input });
         return Promise.resolve({ status: 'confirmed' });

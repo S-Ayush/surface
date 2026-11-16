@@ -10,6 +10,7 @@ import {
 import { reaction } from 'mobx';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fetchContent } from '../src/content.js';
+import { teamLockName } from '../src/locks.js';
 import { ObjectPool } from '../src/pool.js';
 import type { SocketFactory } from '../src/socket.js';
 import { BACKOFF_MAX_MS, backoffDelay } from '../src/socket.js';
@@ -26,6 +27,7 @@ import {
   teamView,
   until,
 } from './support/live.js';
+import { FakeLocks } from './support/locks.js';
 import { CONTENT_TEST_MODELS, OTHER_USER, USER_ID, id } from './support/models.js';
 import { ndjsonResponse } from './support/server.js';
 import { uniqueName } from './support/storage.js';
@@ -323,6 +325,54 @@ describe('offline (E11)', () => {
     });
     await until(() => store.content.state(id(2)) === 'ready');
     expect(notes(store, 2)).toEqual({ [id(21)]: 'Note 21' });
+    stop();
+    handle.release();
+  });
+
+  it('never shows an issue never loaded as offline while a warm start waits to connect', async () => {
+    const hub = new FakeHub().withTeams();
+    hub.addSquad(1);
+    hub.join(USER_ID, 1);
+    hub.putTask(110, 1, { creatorId: OTHER_USER });
+    hub.putTaskNote(601, 110);
+    const workspaceId = uniqueName('ws');
+    const replica = `surface-${workspaceId}-${USER_ID}`;
+    const locks = new FakeLocks();
+    const connect: StorageConnector = (name, models, content) =>
+      IndexedDbStorage.open(name, models, content);
+    const options = { workspaceId, connectStorage: connect };
+    const first = teamStore(hub, { ...options, locks: locks.forTab('first') }).store;
+    await first.start();
+    await until(() => first.connection === 'online' && first.followedTeams.has(id(1)));
+    await first.close();
+
+    // Another tab holds the team's lock exclusively (removing its rows): this tab's start
+    // prepares its teams before it dials, so the socket waits, disconnected.
+    let free: () => void = () => undefined;
+    const removing = new Promise<void>((resolve) => {
+      free = resolve;
+    });
+    void locks
+      .forTab('other')
+      .request(teamLockName(replica, id(1)), { mode: 'exclusive' }, () => removing);
+    const { store } = teamStore(hub, { ...options, locks: locks.forTab('a') });
+    stores.push(store);
+    const started = store.start();
+    await until(() => store.status === 'ready');
+    const states: string[] = [];
+    const stop = reaction(
+      () => store.content.state(id(110)),
+      (state) => states.push(state),
+      { fireImmediately: true },
+    );
+    const handle = store.content.open(id(110));
+    await idle();
+    expect(store.connection).toBe('disconnected');
+    free();
+    await started;
+    expect(await handle.ready).toBe('ready');
+    expect(Object.keys(teamView(store).notes)).toEqual([id(601)]);
+    expect(states).not.toContain('offline');
     stop();
     handle.release();
   });
