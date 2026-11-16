@@ -81,8 +81,11 @@ describe('reload (AC-6)', () => {
         op: 'debug.rename',
         input: { id: id(1), title: 'Offline edit' },
         code: 'NOT_FOUND',
+        // Keyed by the tab that queued it, whatever this tab's id is now (PLAN-012 S4b).
+        clientId: TAB_A,
       }),
     );
+    expect(after.store.rejections.map((r) => r.clientId)).toEqual([TAB_A]);
     await after.store.close();
   });
 
@@ -250,12 +253,14 @@ describe('without Web Locks (plain-HTTP origins)', () => {
     expect(a.store.error).toBe(
       'Another tab took over the changes waiting to be sent. Reload this tab.',
     );
+    expect(a.store.queueLost).toBe(true);
     expect(() => a.store.dispatch(debugTouch, { id: id(1) })).toThrow(/Reload this tab/);
     expect(a.store.connection).toBe('disconnected');
 
     // Starting again (what a reload does) claims a queue of its own (review m5).
     await a.store.start();
     expect(a.store.status).toBe('ready');
+    expect(a.store.queueLost).toBe(false);
     expect(a.store.error).toBeUndefined();
     expect([TAB_A, TAB_C]).not.toContain(a.store.clientId);
     offline.network.up = true;

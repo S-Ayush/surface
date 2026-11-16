@@ -451,6 +451,7 @@ describe('bad or unexpected messages', () => {
     }
     expect(store.status).toBe('failed');
     expect(store.error).toMatch(/Invalid DebugItem row/);
+    expect(store.queueLost).toBe(false); // a failure that isn't the queue's
     expect(store.connection).toBe('disconnected');
     expect(timers.pending).toEqual([]);
     expect(hub.bootstraps).toBe(2);

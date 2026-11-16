@@ -482,6 +482,15 @@ export class SyncStore {
     return this.#error.get();
   }
 
+  /**
+   * Another tab took this tab's unsent changes over (lease mode): nothing this store dispatched
+   * before will be answered here, and nothing more can be sent until a reload. Unlike a failed
+   * resync, which retries, this stays. Observable.
+   */
+  get queueLost(): boolean {
+    return this.status === 'failed' && this.error === QUEUE_LOST;
+  }
+
   /** The live connection, for the offline indicator. Observable. */
   get connection(): ConnectionState {
     return this.#socket.state;

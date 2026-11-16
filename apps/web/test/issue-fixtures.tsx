@@ -93,11 +93,19 @@ export class FakeApp extends AppModel {
   readonly opened: string[] = [];
   readonly issues: IObservableArray<Row>;
   /** The store's unconfirmed mutations (`store.pending`), observable. */
-  readonly pending = observable.array<{ seq: number; op: string; input?: unknown }>([], {
+  readonly pending = observable.array<{
+    clientId?: string;
+    seq: number;
+    op: string;
+    input?: unknown;
+  }>([], {
     deep: false,
   });
+  /** `store.queueLost`, observable: another tab took the queue over. */
+  readonly queueLost = observable.box(false);
   /** The store's recent rejections (`store.rejections`), observable. */
   readonly rejections = observable.array<{
+    clientId?: string;
     seq: number;
     op: string;
     input: unknown;
@@ -149,8 +157,12 @@ export class FakeApp extends AppModel {
       [Label, options.labels ?? []],
       [Issue, this.issues],
     ]);
+    const queueLost = this.queueLost;
     this.#store = {
       status: 'ready',
+      get queueLost() {
+        return queueLost.get();
+      },
       connection: 'online',
       clientId: FAKE_CLIENT_ID,
       rejections: this.rejections,

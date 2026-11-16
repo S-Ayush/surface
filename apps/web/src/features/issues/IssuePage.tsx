@@ -617,7 +617,7 @@ function IssueBody({
           {mode === 'stacked' && panel}
           {editable ? (
             <StoreProvided>
-              <LiveDescription issueId={view.id} />
+              <LiveDescription issueId={view.id} subject={label} />
             </StoreProvided>
           ) : (
             <ReadOnlyDescription

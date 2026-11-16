@@ -38,10 +38,12 @@ describe('a rejected mutation (AC-7)', () => {
     expect(store.pool.get(DebugItem, id(1))?.title).toBe('Item 1');
     expect(store.pool.get(DebugItem, id(2))?.counter).toBe(3);
     expect(onRejected).toHaveBeenCalledOnce();
+    // Keyed by the `clientId` it was queued under (PLAN-012 S4b).
     expect(onRejected).toHaveBeenCalledWith({
       op: 'debug.rename',
       seq: 1,
       input: { id: id(1), title: 'Too late' },
+      clientId: store.clientId,
       code: 'NOT_FOUND',
       message: 'Debug item not found. It may have been deleted.',
     });
@@ -110,6 +112,7 @@ describe("a rejection's issues", () => {
       op: 'debug.create',
       seq: 1,
       input: { id: id(1), title: 'Again' },
+      clientId: store.clientId,
       code: 'CONFLICT',
       message,
       issues,

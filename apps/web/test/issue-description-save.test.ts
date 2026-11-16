@@ -9,6 +9,9 @@ import { describe, expect, it } from 'vitest';
 import {
   changesDescription,
   DESCRIPTION_IDLE_MS,
+  descriptionAbandonedMessage,
+  descriptionConflictAfterCloseMessage,
+  descriptionNotSavedMessage,
   DescriptionSaver,
   descriptionSendResult,
   type DescriptionSendResult,
@@ -101,6 +104,7 @@ function world(
       return new Promise((resolve) => answers.push({ key, input, resolve }));
     },
     onRefused: (message) => refused.push(message),
+    subject: 'ENG-42',
   });
   const detach = saver.attach();
   /**
@@ -570,5 +574,114 @@ describe('an earlier save still unconfirmed (SPEC-012 D31: never on a predicted 
     );
     expect(changesDescription('issue.update', { issue, title: 'x' }, issue)).toBe(false);
     expect(changesDescription('issue.updateDescription', null, issue)).toBe(false);
+  });
+});
+
+describe('after the page closed, nothing is dropped silently (SPEC-012 D31)', () => {
+  const predicted = { doc: doc('Mine'), version: 6 };
+  const earlier = ['tab-1:500'];
+
+  it('says so when the earlier save it waited for turns out overwritten, then stops watching', () => {
+    const { sent, saver, source, remote, refused, detach } = world(predicted, earlier);
+    saver.edit(doc('Mine, more'));
+    detach();
+    expect(source.watchers).toBe(1);
+    // Refused: Bob had made v6.
+    remote({ doc: doc('Theirs'), version: 6 }, []);
+    expect(refused).toEqual([descriptionConflictAfterCloseMessage('ENG-42')]);
+    expect(sent).toEqual([]);
+    expect(source.watchers).toBe(0);
+  });
+
+  it('says the text wasn’t saved when the earlier save was refused for another reason', () => {
+    const { sent, saver, source, refused, detach } = world(predicted, earlier);
+    saver.edit(doc('Mine, more'));
+    detach();
+    source.set({
+      saved: { doc: doc('First'), version: 5 },
+      changes: [],
+      refusals: [
+        { key: 'tab-1:500', message: 'Description is too long. Shorten it and try again.' },
+      ],
+    });
+    // The store reports the earlier save's own refusal; the saver, the text that waited on it.
+    expect(refused).toEqual([descriptionNotSavedMessage('ENG-42')]);
+    expect(sent).toEqual([]);
+    expect(source.watchers).toBe(0);
+  });
+
+  it('says text typed after a save refused after the page closed wasn’t saved', async () => {
+    const { sent, saver, answer, source, refused, detach } = world();
+    saver.edit(doc('Second'));
+    saver.blur();
+    saver.edit(doc('Third'));
+    detach();
+    await answer({ kind: 'refused', message: 'ENG-42 was deleted. Restore it to edit it.' });
+    // "Second"'s refusal is the shell's toast; "Third" was never sent.
+    expect(refused).toEqual([descriptionNotSavedMessage('ENG-42')]);
+    expect(sent).toHaveLength(1);
+    expect(source.watchers).toBe(0);
+  });
+
+  it('says text typed after a save that conflicted after the page closed wasn’t saved', async () => {
+    const { sent, saver, answer, source, refused, detach } = world();
+    saver.edit(doc('Second'));
+    saver.blur();
+    saver.edit(doc('Third'));
+    detach();
+    await answer({ kind: 'conflict' });
+    expect(refused).toEqual([descriptionNotSavedMessage('ENG-42')]);
+    expect(sent).toHaveLength(1);
+    expect(source.watchers).toBe(0);
+  });
+
+  it('shows the text it holds when the page opens again, and keeps saving it', async () => {
+    const { sent, saver, answer, source, detach } = world();
+    saver.edit(doc('Second'));
+    saver.blur();
+    saver.edit(doc('Third'));
+    detach();
+    // The issue opened again: the same saver, still watching once.
+    const detachAgain = saver.attach();
+    expect(saver.getState().doc).toEqual(doc('Third'));
+    expect(source.watchers).toBe(1);
+    await answer({ kind: 'confirmed' });
+    expect(sent).toEqual([
+      { baseVersion: 3, description: doc('Second') },
+      { baseVersion: 4, description: doc('Third') },
+    ]);
+    detachAgain();
+    await answer({ kind: 'confirmed' });
+    expect(source.watchers).toBe(0);
+  });
+});
+
+describe('the store goes away (the session changed, or another tab took the queue)', () => {
+  it('says a save in flight may not be saved, stops, and ignores a later answer', async () => {
+    const { sent, saver, answer, source, refused, detach } = world();
+    saver.edit(doc('Second'));
+    saver.blur();
+    saver.edit(doc('Third'));
+    detach();
+    source.set({ abandoned: true });
+    expect(refused).toEqual([descriptionAbandonedMessage('ENG-42')]);
+    expect(source.watchers).toBe(0);
+    expect(saver.getState().saving).toBe(false);
+    await answer({ kind: 'confirmed' });
+    // "Third" never goes to a store that is gone.
+    expect(sent).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+  });
+
+  it('says nothing with nothing held, then once when the user types into the open page', () => {
+    const { sent, saver, timers, source, refused } = world();
+    source.set({ abandoned: true });
+    expect(refused).toEqual([]);
+    saver.edit(doc('Second'));
+    saver.edit(doc('Second, more'));
+    timers.advance(DESCRIPTION_IDLE_MS);
+    saver.blur();
+    expect(refused).toEqual([descriptionAbandonedMessage('ENG-42')]);
+    expect(sent).toEqual([]);
   });
 });

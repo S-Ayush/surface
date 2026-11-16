@@ -7,6 +7,7 @@
 // carrying the description.
 import { DESCRIPTION_MESSAGES } from '@surface/domain';
 import type { MutationOutcome } from '@surface/sync-client';
+import { overlayManager } from '@surface/ui';
 import { observable, runInAction } from 'mobx';
 import { act } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,7 @@ import {
   DESCRIPTION_CONFLICT_MESSAGE,
   DESCRIPTION_OFFLINE_MESSAGE,
 } from '../src/features/issues/IssueDescription.js';
+import { descriptionAbandonedMessage } from '../src/features/issues/description-save.js';
 import { docOfText } from './comment-editor-fake.js';
 import {
   FakeApp,
@@ -346,6 +348,68 @@ describe('closing the page while a save waits', () => {
     expect(saves(app)).toEqual([
       { issue: ISSUE_A, baseVersion: 6, description: docOfText('Mine, then left') },
     ]);
+  });
+});
+
+describe('opening the issue again while its text is still being saved (SPEC-012 D31)', () => {
+  it('takes the earlier page’s saver back: its text shows, and it is sent once', async () => {
+    const content = contentWorld();
+    const answers: ((outcome: MutationOutcome) => void)[] = [];
+    const app = new FakeApp({
+      issues: [issueRow(ISSUE_A, 42)],
+      content: content.api,
+      answer: () => new Promise((resolve) => answers.push(resolve)),
+    });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await type('Second');
+    await blur();
+    await type('Third');
+    await page.unmount();
+    // "Second" is in flight, "Third" waits behind it; the issue opens again.
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await settle();
+    expect(editor()?.value).toBe('Third');
+    await inAct(() => {
+      content.remote('Second', 4);
+      answers.shift()?.({ status: 'confirmed' });
+    });
+    await settle();
+    expect(saves(app)).toEqual([
+      { issue: ISSUE_A, baseVersion: 3, description: docOfText('Second') },
+      { issue: ISSUE_A, baseVersion: 4, description: docOfText('Third') },
+    ]);
+  });
+});
+
+describe('another tab taking the queue over with a save in flight', () => {
+  afterEach(() => {
+    const { visibleToasts, queuedToasts } = overlayManager.getSnapshot();
+    for (const toast of [...visibleToasts, ...queuedToasts]) overlayManager.dismissToast(toast.id);
+  });
+
+  it('says the latest changes may not be saved, once the page closed', async () => {
+    const content = contentWorld();
+    const app = new FakeApp({
+      issues: [issueRow(ISSUE_A, 42)],
+      content: content.api,
+      // Never answered: the queue that held it is another tab's now.
+      answer: () => new Promise(() => undefined),
+    });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await type('Second');
+    await blur();
+    await page.unmount();
+    page = undefined;
+    await inAct(() => {
+      runInAction(() => {
+        app.queueLost.set(true);
+      });
+    });
+    await settle();
+    const { visibleToasts, queuedToasts } = overlayManager.getSnapshot();
+    expect([...visibleToasts, ...queuedToasts].map((toast) => toast.message)).toContain(
+      descriptionAbandonedMessage('ENG-42'),
+    );
   });
 });
 

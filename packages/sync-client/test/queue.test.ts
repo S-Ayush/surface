@@ -69,7 +69,9 @@ describe('confirming a mutation', () => {
     await store.start();
     await until(() => store.connection === 'online');
     const outcome = store.dispatch(debugTouch, { id: id(2) });
-    expect(store.pending).toMatchObject([{ op: 'debug.touch', input: { id: id(2) } }]);
+    expect(store.pending).toMatchObject([
+      { op: 'debug.touch', input: { id: id(2) }, clientId: store.clientId },
+    ]);
     expect(await outcome).toEqual({ status: 'confirmed' });
     expect(store.pending).toEqual([]);
     await store.close();

@@ -26,6 +26,31 @@ import { DESCRIPTION_MESSAGES, sameDocJson, type DocNodeJSON } from '@surface/do
 /** SPEC-012 §3.4 item 3: the idle time before a save. */
 export const DESCRIPTION_IDLE_MS = 2000;
 
+/** The banner's message (§3.4 item 3). */
+export const DESCRIPTION_CONFLICT_MESSAGE = 'Someone changed this description since you opened it.';
+
+/**
+ * After the page closed nothing shows the text any more, so a save the saver can't make is said
+ * in a toast (SPEC-012 D31). `subject`: the issue, as the user knows it ("ENG-42").
+ */
+export function descriptionNotSavedMessage(subject: string): string {
+  return `Your latest changes to the ${subject} description weren't saved. Open ${subject} and add them again.`;
+}
+
+/** The detached conflict: someone else's save stands, so the text held wasn't sent. */
+export function descriptionConflictAfterCloseMessage(subject: string): string {
+  return `Someone changed the ${subject} description, so your latest changes weren't saved. Open ${subject} and add them again.`;
+}
+
+/**
+ * The store went away (the session changed, or it lost its queue to another tab) with a save
+ * unanswered or text unsent: the saver can't tell whether the save landed, and can send nothing
+ * more. A reload opens a working store.
+ */
+export function descriptionAbandonedMessage(subject: string): string {
+  return `Surface stopped saving the ${subject} description, so your latest changes may not be saved. Reload the page and check ${subject}.`;
+}
+
 /** A description and the version it has on the server. */
 export interface SavedDescription {
   readonly doc: DocNodeJSON;
@@ -50,6 +75,11 @@ export interface DescriptionTimers {
 export interface DescriptionSnapshot {
   /** The replica's row; undefined when it holds none (the issue left the replica). */
   readonly saved: SavedDescription | undefined;
+  /**
+   * The store the saver sends to is gone (the session changed, the store closed) or lost its
+   * queue: a save in flight will never be answered, and nothing more can be sent.
+   */
+  readonly abandoned?: boolean;
   /** `clientId:seq` of each unconfirmed change to this description in the queue. */
   readonly changes: readonly string[];
   /** The store's recent refusals of changes to this description, by `clientId:seq`. */
@@ -82,8 +112,12 @@ export interface DescriptionSaveDeps {
    * sequence of actions did together (the queue and the overlay change in separate actions).
    */
   readonly schedule?: (run: () => void) => void;
-  /** A refusal that isn't the conflict: the page toasts its message. */
+  /** A refusal that isn't the conflict, or text dropped after the page closed: a toast. */
   onRefused?(message: string): void;
+  /** The issue as the user knows it, for those toasts ("ENG-42"). */
+  readonly subject?: string;
+  /** The saver stopped watching: the page closed and nothing is held (the registry forgets it). */
+  onStopped?(): void;
 }
 
 export interface DescriptionSaveState {
@@ -149,6 +183,10 @@ export class DescriptionSaver {
   #timer: unknown = undefined;
   #stopWatching: (() => void) | undefined = undefined;
   #readScheduled = false;
+  /** The store went away: a save in flight is abandoned, and nothing more happens. */
+  #dead = false;
+  /** The abandonment was reported (once is enough). */
+  #deadReported = false;
   #state: DescriptionSaveState;
   readonly #listeners = new Set<() => void>();
 
@@ -182,6 +220,11 @@ export class DescriptionSaver {
     this.#doc = doc;
     this.#emit();
     this.#clearTimer();
+    if (this.#dead) {
+      // Typing into a page whose store went away: nothing will save it, so say so once.
+      if (this.#attached && this.#dirty()) this.#reportAbandoned();
+      return;
+    }
     if (this.#conflict || !this.#dirty()) return;
     this.#arm();
   }
@@ -194,7 +237,7 @@ export class DescriptionSaver {
   /** Blur, `Mod+Enter`, the idle timer, the page hidden or closed. */
   saveNow(): void {
     this.#clearTimer();
-    if (this.#conflict || !this.#dirty()) return;
+    if (this.#dead || this.#conflict || !this.#dirty()) return;
     // One in flight; and nothing goes out on a predicted version: it waits for the confirmation.
     if (this.#inFlight || this.#blocked()) {
       this.#queued = true;
@@ -224,6 +267,11 @@ export class DescriptionSaver {
    */
   attach(): () => void {
     this.#attached = true;
+    if (this.#dead) {
+      return () => {
+        this.#attached = false;
+      };
+    }
     this.#stopWatching ??= this.#deps.source.watch(() => {
       this.#scheduleRead();
     });
@@ -260,6 +308,10 @@ export class DescriptionSaver {
   #read(): void {
     if (this.#stopWatching === undefined) return;
     const snapshot = this.#deps.source.read();
+    if (snapshot.abandoned === true) {
+      this.#abandon();
+      return;
+    }
     this.#refusals = snapshot.refusals;
     this.#foreign = snapshot.changes.filter((key) => !this.#own.has(key));
     for (const key of this.#foreign) this.#seen.add(key);
@@ -297,16 +349,22 @@ export class DescriptionSaver {
       reported = true;
     }
     if (key !== undefined) this.#own.delete(key);
+    if (this.#dead) return;
     this.#inFlight = false;
+    // After the page closed, text typed after this save goes with it: the store reports this
+    // save's refusal, and the saver says the later text wasn't saved either.
+    const laterDropped = !this.#attached && !sameDocJson(this.#doc, sent);
     if (result.kind === 'conflict') {
       // D17: never send the queued save; its base is stale too.
       this.#enterConflict(undefined);
+      if (laterDropped) this.#report(descriptionNotSavedMessage(this.#subject()));
       this.#stopWhenIdle();
       return;
     }
     if (result.kind === 'refused') {
       this.#queued = false;
-      if (reported) this.#deps.onRefused?.(result.message);
+      if (reported) this.#report(result.message);
+      if (laterDropped) this.#report(descriptionNotSavedMessage(this.#subject()));
       this.#emit();
       this.#stopWhenIdle();
       return;
@@ -350,8 +408,16 @@ export class DescriptionSaver {
         !sameDocJson(server.doc, this.#doc)
       ) {
         // The text this saver built on was refused, or overwritten since: D17's banner, with the
-        // refusal's own reason when it wasn't the stale base.
-        this.#enterConflict(this.#refusalReason());
+        // refusal's own reason when it wasn't the stale base. With no page to show it, a toast.
+        const reason = this.#refusalReason();
+        this.#enterConflict(reason);
+        if (!this.#attached) {
+          this.#report(
+            reason === undefined
+              ? descriptionConflictAfterCloseMessage(this.#subject())
+              : descriptionNotSavedMessage(this.#subject()),
+          );
+        }
         this.#seen.clear();
         this.#stopWhenIdle();
         return;
@@ -406,9 +472,42 @@ export class DescriptionSaver {
     if (this.#attached || this.#stopWatching === undefined) return;
     const waiting = this.#queued && !this.#conflict && this.#dirty();
     if (this.#inFlight || waiting) return;
+    this.#stop();
+  }
+
+  #stop(): void {
     this.#clearTimer();
-    this.#stopWatching();
+    this.#stopWatching?.();
     this.#stopWatching = undefined;
+    this.#deps.onStopped?.();
+  }
+
+  /**
+   * The store went away with a save in flight or text unsent (the session changed, the store
+   * closed or lost its queue): the save will never be answered. Say so, and stop.
+   */
+  #abandon(): void {
+    const held = this.#inFlight || (this.#dirty() && !this.#conflict);
+    this.#dead = true;
+    this.#inFlight = false;
+    this.#queued = false;
+    if (held) this.#reportAbandoned();
+    this.#emit();
+    this.#stop();
+  }
+
+  #reportAbandoned(): void {
+    if (this.#deadReported) return;
+    this.#deadReported = true;
+    this.#report(descriptionAbandonedMessage(this.#subject()));
+  }
+
+  #report(message: string): void {
+    this.#deps.onRefused?.(message);
+  }
+
+  #subject(): string {
+    return this.#deps.subject ?? 'issue';
   }
 
   #enterConflict(message: string | undefined): void {

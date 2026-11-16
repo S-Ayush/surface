@@ -97,6 +97,12 @@ export interface Rejection extends RejectionError {
   readonly op: string;
   readonly seq: number;
   readonly input: unknown;
+  /**
+   * The `clientId` the mutation was queued under (with `seq`, its key): after a queue is adopted
+   * the store's `clientId` may differ (PLAN-012 S4b). Optional so rejections built elsewhere
+   * needn't carry it.
+   */
+  readonly clientId?: string;
 }
 
 /** A pending mutation, for the inspector and the offline badge (SPEC-002 §5.4, §7). */
@@ -105,6 +111,8 @@ export interface PendingView {
   readonly op: string;
   readonly at: string;
   readonly state: 'queued' | 'sent' | 'committed';
+  /** The `clientId` it was queued under (with `seq`, its key, as `onQueued` gave it). */
+  readonly clientId?: string;
   /**
    * What was dispatched, as dispatched: lets a page tell whose change is still unconfirmed (the
    * issue page's description waits for one, PLAN-012 S4b). Never send or store it from here.
@@ -421,6 +429,7 @@ export class MutationQueue {
       op: record.op,
       at: record.at,
       state: record.lastSyncId !== undefined ? 'committed' : sent ? 'sent' : 'queued',
+      clientId: record.clientId,
       input: record.input,
     }));
     runInAction(() => this.#view.replace(view));
@@ -700,8 +709,8 @@ export class MutationQueue {
     else this.#publish();
     // Reported once rolled back, so a toast handler sees what the user sees (review m2).
     for (const { entry, error } of rejected) {
-      const { op, seq, input } = entry.record;
-      this.#options.onRejected({ op, seq, input, ...error }, reportable(entry));
+      const { op, seq, input, clientId } = entry.record;
+      this.#options.onRejected({ op, seq, input, clientId, ...error }, reportable(entry));
       entry.settle({ status: 'rejected', error });
     }
   }
