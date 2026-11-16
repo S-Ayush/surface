@@ -43,6 +43,7 @@ import type { BootstrapProgress, FetchLike } from './bootstrap.js';
 import { ClientOutdatedError, bootstrap } from './bootstrap.js';
 import type { ContentHandle, ContentLoadState } from './content.js';
 import {
+  CONTENT_CACHE_LIMIT,
   ContentHydration,
   ContentLoadFailedError,
   ContentUnavailableError,
@@ -55,6 +56,7 @@ import type { HydrateResult } from './hydrate.js';
 import { hydrate } from './hydrate.js';
 import type { LockMode, ReplicaLocks } from './locks.js';
 import { replicaLockName, webLocks } from './locks.js';
+import { PrefetchScheduler } from './prefetch.js';
 import { OverlayEngine } from './overlay.js';
 import type { QueueOwnership } from './owner.js';
 import { claimQueue } from './owner.js';
@@ -135,6 +137,8 @@ export interface SyncStoreOptions {
   readonly partial?: PartialLoading | null;
   /** On-demand teams kept at most; defaults to 5 (SPEC-011 §5.7). For tests. */
   readonly onDemandLimit?: number;
+  /** Hydrated issues the replica keeps at most; defaults to 2,000 (SPEC-011 §5.4, Q11). For tests. */
+  readonly contentCacheLimit?: number;
 }
 
 /** How long the "is the server up?" probe waits for an answer (sync-protocol.md §4.3). */
@@ -184,6 +188,18 @@ export interface ContentAccess {
   state(issueId: string): ContentLoadState;
   /** The issue's content rows in memory, per content model, by id. Observable. */
   rows(issueId: string): Readonly<Record<string, readonly ModelRow[]>>;
+  /**
+   * Fetch and store these issues' content now, so opening them reads the replica (SPEC-011 §5.4):
+   * issues held, of subscribed teams, not hydrated yet; 50 per request, 4 requests in flight.
+   */
+  prefetch(issueIds: readonly string[]): void;
+  /**
+   * A view (`slot`) shows these issues, in order: the first `limit` (50) are prefetched once they
+   * stay for 200 ms. A later call for the slot replaces a pending one; an empty list cancels it.
+   */
+  prefetchList(slot: string, issueIds: readonly string[], limit?: number): void;
+  /** The pointer rests on an issue: prefetched after 150 ms. Call the result when it leaves. */
+  prefetchOnHover(issueId: string): () => void;
 }
 
 /** Where the replica position stands after a start or resync. */
@@ -247,6 +263,7 @@ export class SyncStore {
   readonly #rules: PartialRules | undefined;
   readonly #teams: TeamSubscriptions | undefined;
   readonly #content: ContentHydration;
+  readonly #prefetch: PrefetchScheduler;
   /**
    * Content dispatches wait for their issue in call order (SPEC-011 §5.3 step 6): a later
    * dispatch, content or not, takes its seq after them.
@@ -266,6 +283,7 @@ export class SyncStore {
     this.#rules = partialRules(options.models, options.partial);
     this.#teams = this.#rules && this.#subscriptions(this.#rules);
     this.#content = this.#contentHydration();
+    this.#prefetch = new PrefetchScheduler(this.#timers, (ids) => this.#content.prefetch(ids));
     const connection = options.connection ?? {};
     const online = connection.online ?? windowOnline();
     this.#socket = new SyncSocket({
@@ -412,6 +430,9 @@ export class SyncStore {
       open: (issueId) => content.open(issueId),
       state: (issueId) => content.state(issueId),
       rows: (issueId) => content.rows(issueId),
+      prefetch: (issueIds) => content.prefetch(issueIds),
+      prefetchList: (slot, issueIds, limit) => this.#prefetch.list(slot, issueIds, limit),
+      prefetchOnHover: (issueId) => this.#prefetch.hover(issueId),
     };
   }
 
@@ -594,6 +615,7 @@ export class SyncStore {
     this.#resyncPending = false;
     this.#mutations.get()?.setOnline(false);
     this.#teams?.close();
+    this.#prefetch.close();
     this.#content.close();
     this.#abort.abort();
     this.#abort = new AbortController();
@@ -1121,6 +1143,10 @@ export class SyncStore {
     const models = contentModels(this.#options.models);
     return new ContentHydration({
       pool: this.#pool,
+      replica: this.#replica,
+      cacheLimit: this.#options.contentCacheLimit ?? CONTENT_CACHE_LIMIT,
+      locks: () => (this.#sharedStorage() ? this.#locks : undefined),
+      sharedStorage: () => this.#sharedStorage(),
       models,
       rules: this.#rules,
       timers: this.#timers,

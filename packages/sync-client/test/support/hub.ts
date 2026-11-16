@@ -167,6 +167,11 @@ export class FakeHub {
   /** Cut the answer before its `end` frame, as a dropped connection would. */
   truncateContent = false;
   /**
+   * The size budget (SPEC-011 D16), in parents: a multi-parent answer takes at most this many
+   * visible parents, in request order, and leaves the rest out of `parents`. Unset: no budget.
+   */
+  contentBudget: number | undefined = undefined;
+  /**
    * Take the snapshot at once but hold the answer until `releaseContent()`, so packets above
    * its `lastSyncId` can commit and be delivered first (SPEC-011 §5.3 buffering, E17).
    */
@@ -521,7 +526,8 @@ export class FakeHub {
 
   /** The content answer for `parents` at the current head: visible items and their notes. */
   contentSnapshot(parents: readonly ContentParent[]): ContentFrame[] {
-    // In id order, as the server's `ORDER BY id`, whatever order they were asked in.
+    // In request order, as the server's `ORDER BY array_position` (PLAN-011 S6), cut to the
+    // budget: whole parents while they fit, the first always.
     // With the team world on, a live task is a parent too (as an Issue is, PLAN-011 S5b): visible
     // when its squad is public or the user is a member.
     const visibleTask = (taskId: string) => {
@@ -536,7 +542,7 @@ export class FakeHub {
         if (this.hiddenParents.has(itemId)) return false;
         return this.rows.has(itemId) || (this.teamsOn && visibleTask(itemId));
       })
-      .sort((a, b) => (a < b ? -1 : 1));
+      .slice(0, parents.length > 1 ? this.contentBudget : undefined);
     const ids = new Set(found.map(parentIssueId));
     const rows = [
       ...[...this.notes.values()]

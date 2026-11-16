@@ -342,17 +342,19 @@ The old rule "skip deltas at or below the answer's `lastSyncId`" is removed. The
 - **Persistent hydrated set.** The hydrated set lives in IndexedDB, in a store written in the **same IDB transaction** as the content rows it covers. Tabs share it. The keep-or-drop decision for a content packet (§5.3 step 4) reads the shared set, so a parent one tab hydrated is kept live by every tab.
 - **Lazy reads.** A warm start doesn't page content models into memory. Content rows are read per parent, through a per-parent IDB index on `issueId`, when an issue is opened or prefetched, or before a content mutation is dispatched (§5.3 step 6). Packets for a hydrated parent that isn't in memory are written to IDB only.
 - **Paging in rebuilds the overlay.** The overlay's `find` and `patch` see only rows held in memory (`overlay.ts:133-147`). When a parent's rows are paged in, the overlay is rebuilt, so pending mutations on those rows replay against them. Without this, `comment.update`'s patch would do nothing and `comment.delete`'s `find` would see no replies.
-- **Cache size.** At most 2,000 hydrated issues per replica, least recently opened evicted first (Q11).
-  - Eviction removes a parent's rows and its hydrated mark in one IDB transaction.
-  - A tab holds a shared Web Lock `surface-content:<issueId>` while an issue is open. Eviction skips any parent whose lock is held, so no tab loses an open issue.
-  - Where Web Locks are unavailable (plain HTTP, `locks.ts`), nothing is evicted.
+- **Cache size.** At most 2,000 hydrated issues per replica, least recently opened evicted first (Q11). The hydrated mark records `openedAt`: set when the content is fetched, raised when the issue is opened. A parent hydrated by a live `I` packet counts as never opened (D18).
+  - Eviction removes a parent's rows and its hydrated mark in one IDB transaction. The rows are deleted, not tombstoned; tombstones stay (D18).
+  - A tab holds a shared Web Lock `<replica>:content:<issueId>` while an issue is open (D18). Eviction takes each candidate's lock exclusively with `ifAvailable` and skips any parent whose lock is held, so no tab loses an open issue.
+  - Where Web Locks are unavailable (plain HTTP, `locks.ts`), nothing is evicted from a shared replica. An in-memory replica belongs to one tab and is evicted without locks.
+  - A tab checks the limit at start, after it stores fetched content, after a live packet hydrates a parent, and when it closes an issue.
 - **Prefetch:**
   - open issues assigned to the user in subscribed teams (the 100 most recently updated);
-  - the first 50 visible rows of the current list (debounced 200 ms);
-  - an issue on hover, after 150 ms.
+  - the first 50 visible rows of the current list (debounced 200 ms). "Visible" is the list's rendered window, overscan included (D18);
+  - an issue on hover, after 150 ms;
+  - on an issue page, the issues `J` and `K` open next (D18).
 
-  At most 50 parents per request and 4 content requests in flight. Parents already hydrated are not requested.
-- **Offline:** content that was never hydrated shows "Available when online" (sync-protocol §5.3).
+  Prefetch stores content without paging it into memory. It runs only while the socket is `online`, for issues the replica holds in followed teams, and subscribes to nothing. At most 50 parents per request and 4 content requests in flight. Parents already hydrated are not requested. A parent the size budget left out of an answer (D16) is asked for again; an invisible one is not. Opening an issue whose prefetch is in flight waits for it instead of asking twice.
+- **Offline:** content that was never hydrated shows "Available when online" (sync-protocol §5.3). This is the state while the socket is offline or retrying after a failed attempt, not while it first connects (E11, D18).
 - **Catch-up:** on reconnect, deltas for hydrated parents arrive with catch-up as usual.
 
 ### 5.5 Archive state on the wire
@@ -631,6 +633,7 @@ None. Every question has been decided; see the Decisions table below.
 | D15 | PLAN-011 S6 as built (§4.4): both folds merge only into the issue's **latest** entry, so an entry never changes after a later one exists. The creator fold also needs the same actor identity as the `created` entry (kind, user and key): an API or MCP change by the creator is its own entry, so its "via API" line stays. | 2026-11-16 |
 | D16 | PLAN-011 S6 as built (§5.2): a content answer is capped at about 4 MiB of row JSON (`CONTENT_ANSWER_BUDGET_BYTES`), by whole parents in request order, the first always taken. A left-out parent is absent from `meta.parents`, as an invisible one is, and the client asks again. No wire change: S5b's client fetches one parent per request, and S7's prefetch retries the parents left out. | 2026-11-16 |
 | D17 | PLAN-011 S6 as built (§4.1, §6.1): a description save whose text equals the stored one (compared as JSON, key order ignored) raises `version` only. The issue's `updatedAt`, the history and the `issue.updated` event stay, as an `issue.update` that changes nothing writes nothing (E12). The version still moves, but a client must not rely on that to chain saves: a second save sent with a *predicted* `baseVersion` overwrites someone else's edit when the first save is refused, because the second then matches the other person's version. So the editor keeps one save in flight, drops any queued save on `CONFLICT` instead of sending it, and saves only when the text changed (PLAN-012 S4b). | 2026-11-16 |
+| D18 | PLAN-011 S7 as built (§5.4): the content lock is named per replica, `<replica>:content:<issueId>`, like the team lock (D12), so two replicas in one browser never block each other. Eviction deletes a parent's live content rows (tombstones stay), so a refetch starts clean. An in-memory replica is evicted without Web Locks, since one tab owns it. Prefetch stores rows without paging them in, so a prefetched issue costs no memory until it is opened; its mark counts from the fetch, and a mark from a live `I` packet counts as never opened. Copy Linear: an issue page also prefetches the issues `J` and `K` open next, and a list prefetches its rendered window (overscan included) rather than exactly the rows on screen. "Available when online" (E11) shows once a connection attempt has failed, not during the first connect. A tab that keeps an issue open while it is deleted or archived and then restored reloads its content when the row comes back (found by PLAN-015 S2). | 2026-11-16 |
 | Q13 | The filter conformance run for Issue (Postgres) is allowed under the testing hold, as an exception the user granted at the M1 gate. | 2026-11-12 |
 | Q15 | Copy Linear: partial issue loading (§5.7, ADR-0020) instead of raising the budget. The 35 MB eager budget stays, per replica. VISION §6 changes with it (§12). | 2026-11-12 |
 | Q18 | Description history stays v2 (PRD FR-ISS-14); M1 shows only the "updated the description" activity line. | 2026-11-12 |

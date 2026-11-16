@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { parseIssueRef } from '@surface/domain';
-import { SyncStoreProvider } from '@surface/sync-react';
+import { SyncStoreProvider, usePrefetchContent } from '@surface/sync-react';
 import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
 import { useCommandContext } from '../../command-menu/context.js';
@@ -435,6 +435,12 @@ function IssueBody({ view, readOnly }: { view: IssueView; readOnly: boolean }) {
 
   return (
     <>
+      {position !== undefined && (
+        <PrefetchNeighbours
+          {...(position.next === undefined ? {} : { next: position.next })}
+          {...(position.previous === undefined ? {} : { previous: position.previous })}
+        />
+      )}
       <PageHeader
         title={`${label} ${view.title}`}
         crumbs={[
@@ -538,6 +544,25 @@ function DescriptionArea() {
       <p className={pageStyles.placeholder}>No description</p>
     </section>
   );
+}
+
+/**
+ * `J` and `K` open these next (SPEC-012 §3.4): their content is prefetched (SPEC-011 §5.4). In its
+ * own provider, as `Slots`, so the page works wherever it mounts.
+ */
+function PrefetchNeighbours({ next, previous }: { next?: string; previous?: string }) {
+  const store = useApp().readyStore;
+  if (store === null) return null;
+  return (
+    <SyncStoreProvider store={store}>
+      <Prefetch ids={[next, previous].filter((id): id is string => id !== undefined)} />
+    </SyncStoreProvider>
+  );
+}
+
+function Prefetch({ ids }: { ids: readonly string[] }) {
+  usePrefetchContent(ids);
+  return null;
 }
 
 function Slots({

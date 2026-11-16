@@ -6,6 +6,7 @@
 import type {
   BootstrapRecord,
   BootstrapStart,
+  ContentMark,
   ContentModelRef,
   ContentRead,
   ContentRecord,
@@ -192,6 +193,45 @@ export class MemoryStorage implements SyncStorage {
 
   readHydrated(): Promise<readonly string[]> {
     return settle(() => [...this.#hydrated.keys()]);
+  }
+
+  readContentMarks(): Promise<readonly ContentMark[]> {
+    return settle(() =>
+      [...this.#hydrated].map(([parent, openedAt]): ContentMark => ({ parent, openedAt })),
+    );
+  }
+
+  touchContent(generation: string, parents: readonly string[], openedAt: number): Promise<void> {
+    return settle(() => {
+      this.#check(generation);
+      for (const parent of parents) {
+        const before = this.#hydrated.get(parent);
+        if (before !== undefined && before < openedAt) this.#hydrated.set(parent, openedAt);
+      }
+    });
+  }
+
+  evictContent(generation: string, marks: readonly ContentMark[]): Promise<readonly string[]> {
+    return settle(() => {
+      this.#check(generation);
+      const evicted = marks
+        .filter(({ parent, openedAt }) => {
+          const stored = this.#hydrated.get(parent);
+          return stored !== undefined && stored <= openedAt;
+        })
+        .map(({ parent }) => parent);
+      const gone = new Set(evicted);
+      for (const parent of gone) this.#hydrated.delete(parent);
+      for (const ref of this.#content) {
+        const table = this.#table(ref.model);
+        for (const record of [...table.values()]) {
+          if (record.row !== null && gone.has(String(record.row[ref.field]))) {
+            table.delete(record.id);
+          }
+        }
+      }
+      return evicted;
+    });
   }
 
   writePartialRows(generation: string, write: PartialWrite): Promise<void> {

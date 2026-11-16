@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { SyncStoreProvider } from '../src/context.js';
 import type { IssueContent } from '../src/hooks.js';
-import { useIssueContent } from '../src/hooks.js';
+import { useIssueContent, usePrefetchContent, usePrefetchOnHover } from '../src/hooks.js';
 
 function read(store: SyncStore, issueId: string): IssueContent {
   let value: IssueContent | undefined;
@@ -75,5 +75,29 @@ describe('useIssueContent', () => {
     const { store, opened } = fakeStore({});
     read(store, 'issue-1');
     expect(opened).toEqual([]);
+  });
+});
+
+describe('usePrefetchContent and usePrefetchOnHover (PLAN-011 S7)', () => {
+  it('ask the store for nothing while rendering: the prefetch is set up by an effect', () => {
+    const asked: string[] = [];
+    const content = {
+      prefetchList: (slot: string) => asked.push(`list ${slot}`),
+      prefetchOnHover: (issueId: string) => {
+        asked.push(`hover ${issueId}`);
+        return () => undefined;
+      },
+    };
+    function Probe() {
+      usePrefetchContent(['issue-1', 'issue-2']);
+      usePrefetchOnHover();
+      return null;
+    }
+    renderToStaticMarkup(
+      <SyncStoreProvider store={{ content } as unknown as SyncStore}>
+        <Probe />
+      </SyncStoreProvider>,
+    );
+    expect(asked).toEqual([]);
   });
 });

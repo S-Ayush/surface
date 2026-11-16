@@ -175,6 +175,16 @@ export interface ContentRead {
   readonly records: readonly ContentRecord[];
 }
 
+/**
+ * A parent in the hydrated set and when a tab last opened it (epoch ms; 0 when its `I` packet
+ * hydrated it and no tab opened it since). The content cache evicts the least recently opened
+ * first (SPEC-011 §5.4, Q11).
+ */
+export interface ContentMark {
+  readonly parent: string;
+  readonly openedAt: number;
+}
+
 /** The on-demand teams after `touchOnDemand`: most recently opened first, and those dropped. */
 export interface OnDemandTeams {
   readonly teams: readonly string[];
@@ -313,6 +323,29 @@ export interface SyncStorage {
 
   /** Every hydrated parent. */
   readonly readHydrated: () => Promise<readonly string[]>;
+
+  /** Every hydrated parent with when it was last opened (SPEC-011 §5.4, PLAN-011 S7). */
+  readonly readContentMarks: () => Promise<readonly ContentMark[]>;
+
+  /** A tab opened these parents at `openedAt`: those in the hydrated set move up (LRU, Q11). */
+  readonly touchContent: (
+    generation: string,
+    parents: readonly string[],
+    openedAt: number,
+  ) => Promise<void>;
+
+  /**
+   * Evict parents from the content cache (SPEC-011 §5.4): each one's live content rows and its
+   * hydration mark go in one transaction, so no tab sees it hydrated without its rows. A parent
+   * opened since the caller read its mark (a later `openedAt`) is kept. Rows are deleted, not
+   * tombstoned: a tombstone at the row's own version would make an answer at that same `C` skip
+   * the row. Tombstones stay. Returns the parents evicted. The caller holds each one's content
+   * lock exclusively.
+   */
+  readonly evictContent: (
+    generation: string,
+    marks: readonly ContentMark[],
+  ) => Promise<readonly string[]>;
 
   /**
    * Store a partial bootstrap answer (SPEC-011 §5.7, E30, E35) in one transaction. A row is

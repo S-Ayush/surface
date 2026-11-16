@@ -48,6 +48,15 @@ export function teamLockName(replica: string, teamId: string): string {
 }
 
 /**
+ * The lock of an issue's content in a replica (SPEC-011 §5.4 `surface-content:<issueId>`, scoped
+ * to the replica like the team lock, D12): a tab holds it shared while the issue is open, and
+ * eviction takes it exclusively with `ifAvailable`, skipping the issue when it is held.
+ */
+export function contentLockName(replica: string, issueId: string): string {
+  return `${replica}:content:${issueId}`;
+}
+
+/**
  * Hold `name` shared until the returned function is called. Resolves once granted. The release
  * resolves once the lock is let go: locks are released asynchronously, so a request made right
  * after `release()`, without awaiting it, would still find this tab holding the lock.

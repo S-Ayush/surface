@@ -592,13 +592,6 @@ export const lifecycleConvergence: Property = {
     ]);
     // As `commentConvergence`: the live issues open in every tab first (PLAN-011 S5b).
     const liveIds = world.issueIds.filter((id) => live[id] !== undefined);
-    // A page left open across its issue's delete and restore doesn't load the content again (the
-    // delete dropped it); a fresh look at the page does. Open again what didn't come back.
-    for (const tab of world.live) {
-      for (const id of liveIds) {
-        if (tab.store.content.state(id) !== 'ready') tab.store.content.open(id);
-      }
-    }
     await world.showEverywhere(liveIds);
     for (const tab of world.live) {
       expect(world.issueView(tab), tab.name).toEqual(asSeenBy(live, tab.user.id));

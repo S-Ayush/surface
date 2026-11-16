@@ -31,6 +31,7 @@ import { ShellContext } from '../src/shell/ShellContext.js';
 import { ShellStore } from '../src/shell/ShellStore.js';
 import { ShortcutProvider, useCommandRegistry } from '../src/shortcuts/ShortcutProvider.js';
 import type { CommandRegistry } from '../src/commands/registry.js';
+import { recordingContent } from './content-stub.js';
 import { DES, DES_DONE, DES_TODO, ENG, ME, STATUSES, issue, uuid } from './issue-list-fixtures.js';
 
 // jsdom has no matchMedia: a wide screen, which never changes.
@@ -68,6 +69,8 @@ export class IssueApp extends AppModel {
   readonly #loadedTeams = observable.set<string>();
   /** The teams pages opened (`store.openTeam`), in order. */
   readonly opened: string[] = [];
+  /** What the list asked the store to prefetch (PLAN-011 S7). */
+  readonly content = recordingContent();
   /** The operations dispatched (PLAN-012 S6), in order. */
   readonly dispatched: { readonly op: string; readonly input: unknown }[] = [];
 
@@ -105,8 +108,10 @@ export class IssueApp extends AppModel {
     const loadedTeams = this.#loadedTeams;
     const opened = this.opened;
     const dispatched = this.dispatched;
+    const content = this.content;
     this.#store = {
       status: 'ready',
+      content,
       get connection() {
         return connection.get();
       },

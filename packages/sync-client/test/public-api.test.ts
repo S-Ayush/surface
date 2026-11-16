@@ -18,6 +18,9 @@ it('exports only the store, read helpers, UI bindings and errors', () => {
     'ContentLoadFailedError',
     'ContentUnavailableError',
     'InvalidInputError',
+    // SPEC-011 §5.4: how many issues the views prefetch.
+    'PREFETCH_ASSIGNED',
+    'PREFETCH_LIST_ROWS',
     'STATUS_GONE_MESSAGE',
     'StorageUnavailableError',
     'SyncStore',

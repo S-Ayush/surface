@@ -7,9 +7,11 @@ import {
   issueParent,
   type ContentFrame,
 } from '@surface/sync-protocol';
+import { reaction } from 'mobx';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fetchContent } from '../src/content.js';
 import { ObjectPool } from '../src/pool.js';
+import type { SocketFactory } from '../src/socket.js';
 import { BACKOFF_MAX_MS, backoffDelay } from '../src/socket.js';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
@@ -272,6 +274,60 @@ describe('a failed load (§5.3 step 3)', () => {
   });
 });
 
+describe('offline (E11)', () => {
+  it('shows an item never loaded as offline while the socket keeps retrying, then loads it', async () => {
+    const hub = itemHub();
+    let down = false;
+    // While down, every connection attempt fails before it opens.
+    const socket: SocketFactory = (url, handlers) => {
+      if (!down) return hub.socket(url, handlers);
+      queueMicrotask(() => handlers.onClose(1006));
+      return { send: () => undefined, close: () => undefined };
+    };
+    const kept = keptMemoryStorage();
+    const { store, timers } = liveStore(hub, {
+      models: CONTENT_TEST_MODELS,
+      connectStorage: kept.connect,
+      connection: { socket },
+    });
+    stores.push(store);
+    await store.start();
+    await until(() => store.connection === 'online');
+    await store.content.open(id(1)).ready;
+    down = true;
+    hub.failContent = 100; // the network is down for HTTP too
+    hub.last.close();
+    await until(() => store.connection === 'offline');
+    const handle = store.content.open(id(2));
+    // It may show loading while the replica is read; once that finds nothing, offline.
+    expect(await handle.ready).toBe('offline');
+    const states: string[] = [];
+    const stop = reaction(
+      () => store.content.state(id(2)),
+      (state) => states.push(state),
+      { fireImmediately: true },
+    );
+    // A hydrated item still opens from the replica.
+    expect(await store.content.open(id(1)).ready).toBe('ready');
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      timers.runNext();
+      await until(() => store.connection === 'offline');
+      await idle(5);
+    }
+    expect(new Set(states)).toEqual(new Set(['offline']));
+    down = false;
+    hub.failContent = 0;
+    await eventually(() => {
+      if (store.connection === 'offline') timers.runNext();
+      return store.connection === 'online';
+    });
+    await until(() => store.content.state(id(2)) === 'ready');
+    expect(notes(store, 2)).toEqual({ [id(21)]: 'Note 21' });
+    stop();
+    handle.release();
+  });
+});
+
 describe('fetchContent', () => {
   it('drops a row whose parent the answer’s meta doesn’t name (E15)', async () => {
     const pool = new ObjectPool(CONTENT_TEST_MODELS);
@@ -396,6 +452,27 @@ describe('issues and team subscriptions (§5.3 step 5, E24)', () => {
     await settled();
     expect(teamView(store).notes).toEqual({});
     expect(await kept.content(id(110))).toEqual({ hydrated: false, ids: [] });
+  });
+
+  it.each([
+    ['deleted and restored (V)', (hub: FakeHub) => hub.deleteTask(110), 'V' as const],
+    ['deleted and restored (U)', (hub: FakeHub) => hub.deleteTask(110), 'U' as const],
+    ['archived and restored', (hub: FakeHub) => hub.archiveTask(110), 'V' as const],
+  ])('loads an issue kept open again once it is back: %s (PLAN-015 S2)', async (_, remove, as) => {
+    const { hub, store, settled } = await teamWorld();
+    const handle = store.content.open(id(110));
+    expect(await handle.ready).toBe('ready');
+    remove(hub);
+    await settled();
+    expect(teamView(store).notes).toEqual({});
+    // Written while it was gone: only a fresh load brings it.
+    hub.putTaskNote(602, 110);
+    hub.restoreTask(110, as);
+    await settled();
+    await until(() => Object.keys(teamView(store).notes).length === 2);
+    expect(store.content.state(id(110))).toBe('ready');
+    expect(Object.keys(teamView(store).notes)).toEqual([id(601), id(602)]);
+    handle.release();
   });
 
   it('subscribes the team of an issue it opens, then fetches the content', async () => {

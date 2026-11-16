@@ -15,6 +15,7 @@ import { openDB } from 'idb';
 import type {
   BootstrapRecord,
   BootstrapStart,
+  ContentMark,
   ContentModelRef,
   ContentRead,
   ContentRecord,
@@ -375,6 +376,51 @@ export class IndexedDbStorage implements SyncStorage {
     return keys.filter((key): key is string => typeof key === 'string');
   }
 
+  async readContentMarks(): Promise<readonly ContentMark[]> {
+    const values: unknown[] = await this.#open().getAll(HYDRATED_STORE);
+    return values.filter(isHydratedMark).map(({ id, openedAt }) => ({ parent: id, openedAt }));
+  }
+
+  async touchContent(
+    generation: string,
+    parents: readonly string[],
+    openedAt: number,
+  ): Promise<void> {
+    const tx = this.#write([HYDRATED_STORE]);
+    await fence(tx, generation);
+    const store = tx.objectStore(HYDRATED_STORE);
+    for (const parent of parents) {
+      const stored: unknown = await store.get(parent);
+      if (!isHydratedMark(stored) || stored.openedAt >= openedAt) continue;
+      await store.put({ id: parent, openedAt } satisfies HydratedMark);
+    }
+    await tx.done;
+  }
+
+  async evictContent(
+    generation: string,
+    marks: readonly ContentMark[],
+  ): Promise<readonly string[]> {
+    const tx = this.#write([...this.#content.map((ref) => rowStore(ref.model)), HYDRATED_STORE]);
+    await fence(tx, generation);
+    const evicted: string[] = [];
+    for (const { parent, openedAt } of marks) {
+      const stored: unknown = await tx.objectStore(HYDRATED_STORE).get(parent);
+      // Gone already, or opened again since the caller read it: kept.
+      if (!isHydratedMark(stored) || stored.openedAt > openedAt) continue;
+      await tx.objectStore(HYDRATED_STORE).delete(parent);
+      for (const ref of this.#content) {
+        const store = tx.objectStore(rowStore(ref.model));
+        // The parent index holds live rows only: a tombstone's row is null.
+        const keys = await store.index(PARENT_INDEX).getAllKeys(parent);
+        for (const key of keys) await store.delete(key);
+      }
+      evicted.push(parent);
+    }
+    await tx.done;
+    return evicted;
+  }
+
   async writePartialRows(generation: string, write: PartialWrite): Promise<void> {
     const models = partialWriteModels(write);
     const tx = this.#write([...models.map((m) => this.#rowStore(m)), HYDRATED_STORE]);
@@ -635,6 +681,10 @@ function isStoredMeta(value: unknown): value is StoredMeta {
     (value.state === 'bootstrapping' || value.state === 'ready') &&
     (value.teamThrough === undefined || isTeamThrough(value.teamThrough))
   );
+}
+
+function isHydratedMark(value: unknown): value is HydratedMark {
+  return isObject(value) && typeof value.id === 'string' && typeof value.openedAt === 'number';
 }
 
 function isTeamThrough(value: unknown): value is Record<string, number> {

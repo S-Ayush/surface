@@ -22,6 +22,13 @@
  * - **Gone:** a batch that leaves a parent absent drops its content and marks (`deltas.ts`, and
  *   storage); an unsubscribe or sweep drops them through `forget` (`subscriptions.ts`).
  * - **Start and resync** clear the paged set (step 7); open parents load again.
+ * - **Cache** (§5.4, Q11; PLAN-011 S7): an open parent's content lock is held shared; past
+ *   `cacheLimit` hydrated parents, the least recently opened are evicted (rows and mark in one
+ *   transaction), skipping any whose lock another tab holds. Without Web Locks on shared storage,
+ *   nothing is evicted.
+ * - **Prefetch** (§5.4): `prefetch(ids)` stores parents' content without paging it in, at most
+ *   50 parents per request and 4 requests in flight; a parent a multi-parent answer left out for
+ *   its size budget (D16) is asked for again.
  */
 import { isUuid, issueIdentifier, type RefType } from '@surface/domain';
 import type { ModelDef, ModelRow } from '@surface/domain/model';
@@ -29,6 +36,7 @@ import type { ContentParentRef } from '@surface/operations';
 import {
   CONTENT_PATH,
   ContentStreamReader,
+  MAX_CONTENT_PARENTS,
   NdjsonDecoder,
   ProtocolError,
   encodeContentQuery,
@@ -38,6 +46,8 @@ import {
 import type { IObservableValue, ObservableSet } from 'mobx';
 import { observable, reaction, runInAction, untracked, when } from 'mobx';
 import type { FetchLike } from './bootstrap.js';
+import type { ReplicaLocks } from './locks.js';
+import { contentLockName, holdShared, tryHold } from './locks.js';
 import type { ModelInstance } from './instance.js';
 import { fieldOf, rowOf } from './instance.js';
 import { ClientOutdatedError, decodeRow, requestNdjson } from './bootstrap.js';
@@ -47,7 +57,7 @@ import type { Persistence } from './persistence.js';
 import type { BaseChange, ObjectPool } from './pool.js';
 import type { ConnectionState, Timers } from './socket.js';
 import { backoffDelay } from './socket.js';
-import type { ContentModelRef, ContentWrite, StoredChange } from './storage/types.js';
+import type { ContentMark, ContentModelRef, ContentWrite, StoredChange } from './storage/types.js';
 import { teamOf } from './storage/types.js';
 import type { TeamLoadState } from './subscriptions.js';
 
@@ -62,7 +72,7 @@ export type ContentLoadState = 'loading' | 'ready' | 'offline';
 export interface ContentHandle {
   /** Settles once the parent is paged in, or can't be now: its load state then. */
   readonly ready: Promise<ContentLoadState>;
-  /** The view closed. Repeated calls do nothing. (PLAN-011 S7 frees the parent's lock here.) */
+  /** The view closed: the parent's content lock is let go. Repeated calls do nothing. */
   release(): void;
 }
 
@@ -98,9 +108,23 @@ export function contentModels(models: readonly ModelDef[]): ContentModelRef[] {
   );
 }
 
+/** At most this many hydrated parents per replica (SPEC-011 §5.4, Q11). */
+export const CONTENT_CACHE_LIMIT = 2000;
+
+/** At most this many prefetch requests in flight (SPEC-011 §5.4). */
+export const PREFETCH_REQUESTS = 4;
+
 /** What content hydration needs from its store. */
 export interface ContentHost {
   readonly pool: ObjectPool;
+  /** The replica, for lock names. */
+  readonly replica: string;
+  /** The most hydrated parents the replica keeps (`CONTENT_CACHE_LIMIT`). */
+  readonly cacheLimit: number;
+  /** Web Locks for shared storage; `undefined` without them, or for memory storage. */
+  locks(): ReplicaLocks | undefined;
+  /** Whether storage is shared by tabs (IndexedDB); memory storage is this tab's alone. */
+  sharedStorage(): boolean;
   readonly models: readonly ContentModelRef[];
   readonly rules: PartialRules | undefined;
   readonly timers: Timers;
@@ -157,6 +181,10 @@ export class ContentHydration {
   readonly #paged: ObservableSet<string> = observable.set();
   /** Parents being read from storage, or fetched from the server. */
   readonly #loading: ObservableSet<string> = observable.set();
+  /** Of `#loading`, those an open is fetching from the server (not paging in from the replica). */
+  readonly #fetching: ObservableSet<string> = observable.set();
+  /** Parents whose last load couldn't reach the server: a retry's replica check shows no loading. */
+  readonly #unavailable: ObservableSet<string> = observable.set();
   /** Parents the server didn't show (unknown, invisible, or not in this replica): nothing to load. */
   readonly #missing: ObservableSet<string> = observable.set();
   /** Of `#missing`, those the pool didn't show: they load once it does. */
@@ -176,6 +204,24 @@ export class ContentHydration {
   readonly #retries = new Map<string, { timer: unknown; attempt: number }>();
   #stopOnline: (() => void) | undefined;
   #stopFound: (() => void) | undefined;
+  #stopReach: (() => void) | undefined;
+  /**
+   * Whether content could be fetched when last tried: false from a failed connection attempt
+   * until the socket is online again, so a parent never hydrated stays `offline` while the
+   * socket keeps retrying (E11), instead of flickering to `loading` with each attempt.
+   */
+  readonly #reachable: IObservableValue<boolean> = observable.box(true);
+  /** The content lock of each wanted parent (§5.4): its release once granted. */
+  readonly #holds = new Map<string, Promise<(() => Promise<void>) | undefined>>();
+  #lockAbort = new AbortController();
+  /** Prefetch (§5.4): parents waiting for a request, in the order asked. */
+  readonly #prefetchQueue: string[] = [];
+  /** Parents in a prefetch request in flight, with its end: an open of one waits for it. */
+  readonly #prefetching = new Map<string, Promise<void>>();
+  #prefetchRequests = 0;
+  /** Eviction running, and whether it was asked for again meanwhile. */
+  #evicting: Promise<void> | undefined;
+  #evictAgain = false;
   readonly routing: ContentRouting;
 
   constructor(host: ContentHost) {
@@ -203,9 +249,12 @@ export class ContentHydration {
   state(parent: string): ContentLoadState {
     const id = parent.toLowerCase();
     if (this.#paged.has(id) || this.#missing.has(id)) return 'ready';
-    if (this.#loading.has(id) || !this.#host.ready()) return 'loading';
-    const connection = this.#host.connection();
-    return connection === 'online' || connection === 'connecting' ? 'loading' : 'offline';
+    if (!this.#host.ready()) return 'loading';
+    // Paging in from the replica works offline; a fetch while the socket can't connect shows
+    // "Available when online" until it lands (E11), not a loading state with each retry.
+    const paging = this.#loading.has(id) && !this.#fetching.has(id);
+    if (paging && !this.#unavailable.has(id)) return 'loading';
+    return this.#reachableNow() ? 'loading' : 'offline';
   }
 
   /** The parent's content rows in the pool, per content model, by id. Observable. */
@@ -242,7 +291,11 @@ export class ContentHydration {
     const id = parent.toLowerCase();
     this.#want(id);
     let released = false;
-    const ready = this.#settle(id).then(() => this.state(id));
+    const ready = this.#settle(id).then(() => {
+      // Least recently opened goes first (Q11): opening moves the parent up.
+      if (!released) this.#touch(id);
+      return this.state(id);
+    });
     return {
       ready,
       release: () => {
@@ -271,7 +324,7 @@ export class ContentHydration {
       if (this.#closed.get()) return 'closed';
       if (result === 'ready' || result === 'missing') return 'proceed';
       // A load that failed because the connection dropped is E11's case, not D14's.
-      return result === 'failed' && this.#online() ? 'failed' : 'unavailable';
+      return result === 'failed' && this.#reachableNow() ? 'failed' : 'unavailable';
     } finally {
       this.#unwant(parent);
     }
@@ -327,7 +380,20 @@ export class ContentHydration {
         this.#reloadWanted();
       },
     );
-    void Promise.resolve().then(() => this.#reloadWanted());
+    this.#stopReach ??= reaction(
+      () => this.#host.connection(),
+      (connection) => {
+        if (connection === 'online') runInAction(() => this.#reachable.set(true));
+        else if (connection === 'offline' || connection === 'revoked') {
+          runInAction(() => this.#reachable.set(false));
+        }
+      },
+    );
+    void Promise.resolve().then(() => {
+      this.#reloadWanted();
+      // A replica past the limit (a smaller limit, or marks added while no tab evicted).
+      this.#scheduleEviction();
+    });
   }
 
   close(): void {
@@ -337,6 +403,12 @@ export class ContentHydration {
     this.#stopOnline = undefined;
     this.#stopFound?.();
     this.#stopFound = undefined;
+    this.#stopReach?.();
+    this.#stopReach = undefined;
+    // The tab's content locks go with it; a parent still wanted takes its lock again on its next load.
+    this.#lockAbort.abort();
+    this.#lockAbort = new AbortController();
+    for (const parent of [...this.#holds.keys()]) this.#unhold(parent);
   }
 
   /** An unsubscribe or a sweep removed these issues' content from the pool (§5.7). */
@@ -362,8 +434,15 @@ export class ContentHydration {
       for (const parent of plan.goneParents) {
         this.#paged.delete(parent);
         this.#missing.delete(parent);
+        // Still open here (deleted or archived, then perhaps restored, PLAN-015 S2): it waits as
+        // an issue the pool doesn't show, and loads again once its row comes back.
+        if (this.#wanted.has(parent)) {
+          this.#absent.add(parent);
+          this.#missing.add(parent);
+        }
       }
     });
+    if (plan.hydrated.length > 0) this.#scheduleEviction();
     if (this.#inFlight === 0) return;
     for (const packet of plan.content) {
       const key = rowKey(packet.model, packet.id);
@@ -387,6 +466,33 @@ export class ContentHydration {
     }
     this.#wanted.delete(parent);
     this.#stopRetry(parent);
+    this.#unhold(parent);
+    // Closed, it may be evicted now: the cache may have filled while it was open.
+    this.#scheduleEviction();
+  }
+
+  /**
+   * The content lock of a wanted parent (§5.4), taken shared on its first load, once the store
+   * knows its storage: no tab evicts the parent while this tab has it open. Settles once granted
+   * (an eviction holding it finishes first), or at once without locks.
+   */
+  #lock(parent: string): Promise<unknown> {
+    if (!this.#wanted.has(parent)) return Promise.resolve();
+    const held = this.#holds.get(parent);
+    if (held !== undefined) return held;
+    const locks = this.#host.sharedStorage() ? this.#host.locks() : undefined;
+    if (locks === undefined) return Promise.resolve();
+    const name = contentLockName(this.#host.replica, parent);
+    const hold = holdShared(locks, name, this.#lockAbort.signal).catch(() => undefined);
+    this.#holds.set(parent, hold);
+    return hold;
+  }
+
+  #unhold(parent: string): void {
+    const hold = this.#holds.get(parent);
+    if (hold === undefined) return;
+    this.#holds.delete(parent);
+    void hold.then((release) => release?.());
   }
 
   /** Load until a result that isn't overtaken by a start or resync. */
@@ -396,10 +502,17 @@ export class ContentHydration {
       // Not before the store has a replica: the pool can't tell yet whether the parent is held.
       await when(() => this.#host.ready() || this.#closed.get());
       if (this.#closed.get()) return 'stale';
+      await this.#lock(parent);
+      if (this.#closed.get()) return 'stale';
       const result = await this.#loadOnce(parent);
       if (result !== 'stale') {
         if (result === 'failed') this.#scheduleRetry(parent);
         else if (result === 'ready' || result === 'missing') this.#stopRetry(parent);
+        const unavailable = result === 'offline' || (result === 'failed' && !this.#reachableNow());
+        runInAction(() => {
+          if (unavailable) this.#unavailable.add(parent);
+          else this.#unavailable.delete(parent);
+        });
         return result;
       }
     }
@@ -418,6 +531,12 @@ export class ContentHydration {
   async #load(parent: string): Promise<LoadResult> {
     const epoch = this.#epoch.get();
     if (this.#paged.has(parent)) return 'ready';
+    // A prefetch of it in flight: its answer is stored first, then paged in from there.
+    const prefetched = this.#prefetching.get(parent);
+    if (prefetched !== undefined) {
+      await prefetched;
+      if (epoch !== this.#epoch.get()) return 'stale';
+    }
     // §5.7: content needs the team's subscription; opening the issue subscribes its team.
     const team = this.#teamOf(parent);
     if (team !== undefined && !this.#host.followedTeams().has(team)) {
@@ -488,6 +607,7 @@ export class ContentHydration {
   /** Fetch a parent from the server and store it (§5.3 steps 1–3). */
   async #fetch(parent: string, epoch: number): Promise<LoadResult> {
     this.#begin(parent);
+    runInAction(() => this.#fetching.add(parent));
     try {
       let answer: ContentAnswer;
       try {
@@ -514,9 +634,12 @@ export class ContentHydration {
         for (const id of accepted) this.#paged.add(id);
       });
       this.#store(accepted, rows, C, replay);
+      this.#scheduleEviction();
       if (accepted.has(parent) || this.#paged.has(parent)) return 'ready';
-      return this.#miss(parent);
+      // Gone from the pool meanwhile (deleted, purged): it loads again if it comes back.
+      return this.#miss(parent, !this.#inBase(parent));
     } finally {
+      runInAction(() => this.#fetching.delete(parent));
       this.#end(parent, epoch);
     }
   }
@@ -642,13 +765,236 @@ export class ContentHydration {
     this.#loads.clear();
     this.#since.clear();
     this.#absent.clear();
+    this.#prefetchQueue.length = 0;
     this.#inFlight = 0;
     runInAction(() => {
       this.#epoch.set(this.#epoch.get() + 1);
       this.#paged.clear();
       this.#loading.clear();
+      this.#fetching.clear();
       this.#missing.clear();
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Prefetch (SPEC-011 §5.4)
+
+  /**
+   * Fetch and store these parents' content, so opening them later reads the replica (§5.4). Only
+   * issues the pool holds, of teams this tab follows (§5.7), not paged in, loading or hydrated
+   * already; never paged in here (the pool stays small). At most `MAX_CONTENT_PARENTS` per
+   * request and `PREFETCH_REQUESTS` in flight, in the order asked. Best effort: a failed request
+   * is dropped, and the next prefetch or open asks again (§5.3 step 3).
+   */
+  prefetch(parents: readonly string[]): void {
+    if (this.#closed.get() || !this.enabled) return;
+    const queued = new Set(this.#prefetchQueue);
+    for (const raw of parents) {
+      const parent = raw.toLowerCase();
+      if (queued.has(parent) || !this.#prefetchable(parent)) continue;
+      queued.add(parent);
+      this.#prefetchQueue.push(parent);
+    }
+    this.#pumpPrefetch();
+  }
+
+  #pumpPrefetch(): void {
+    while (this.#prefetchRequests < PREFETCH_REQUESTS && this.#prefetchQueue.length > 0) {
+      const batch = this.#prefetchQueue.splice(0, MAX_CONTENT_PARENTS);
+      this.#prefetchRequests += 1;
+      void this.#prefetchBatch(batch)
+        .catch(() => undefined)
+        .finally(() => {
+          this.#prefetchRequests -= 1;
+          this.#pumpPrefetch();
+        });
+    }
+  }
+
+  /** Whether a parent may be prefetched now (before the storage check). Untracked. */
+  #prefetchable(parent: string): boolean {
+    return untracked(
+      () =>
+        this.#inBase(parent) &&
+        this.#teamAllowsParent(parent) &&
+        !this.#paged.has(parent) &&
+        !this.#loads.has(parent) &&
+        !this.#prefetching.has(parent),
+    );
+  }
+
+  async #prefetchBatch(batch: readonly string[]): Promise<void> {
+    const epoch = this.#epoch.get();
+    const persistence = this.#host.persistence();
+    const generation = this.#host.generation();
+    // No way to fetch it, or nowhere to store it: nothing to do.
+    if (!this.#host.ready() || this.#host.connection() !== 'online') return;
+    if (persistence === undefined || generation === undefined) return;
+    const stored = await this.#host.enqueue(() =>
+      persistence.writeReplica(generation, (storage) => storage.readHydrated()),
+    );
+    if (epoch !== this.#epoch.get() || stored === undefined) return;
+    const hydrated = new Set(stored);
+    const parents = batch.filter((parent) => !hydrated.has(parent) && this.#prefetchable(parent));
+    if (parents.length === 0) return;
+    let finish: () => void = () => undefined;
+    const request = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    for (const parent of parents) {
+      this.#prefetching.set(parent, request);
+      this.#begin(parent);
+    }
+    let again: readonly string[];
+    try {
+      let answer: ContentAnswer;
+      try {
+        answer = await this.#host.fetchContent(parents, this.#abort.signal);
+      } catch (error) {
+        if (epoch === this.#epoch.get() && error instanceof ClientOutdatedError) {
+          this.#host.outdated();
+        }
+        return;
+      }
+      if (epoch !== this.#epoch.get()) return;
+      const C = answer.lastSyncId;
+      // As an open's answer (§5.3 step 3): parents purged meanwhile, or of a team no longer
+      // followed, are skipped with their rows (E23).
+      const accepted = new Set(
+        answer.parents.filter((id) => this.#inBase(id) && this.#teamAllowsParent(id)),
+      );
+      const rows = answer.rows
+        .filter((r) => accepted.has(this.#parentOf(r.model, r.row) ?? ''))
+        .map((r): LoadedRow => ({ ...r, version: C }));
+      this.#store(accepted, rows, C, this.#replayOf(accepted, C));
+      // D16: a parent left out for the answer's size is asked for again; an invisible one isn't.
+      again = leftOutParents(parents, answer.parents);
+    } finally {
+      for (const parent of parents) {
+        this.#end(parent, epoch);
+        if (this.#prefetching.get(parent) === request) this.#prefetching.delete(parent);
+      }
+      finish();
+    }
+    if (epoch !== this.#epoch.get()) return;
+    this.#scheduleEviction();
+    const retry = again.filter((parent) => this.#prefetchable(parent));
+    // First in line: they were asked for before anything queued since.
+    if (retry.length > 0) this.#prefetchQueue.unshift(...retry);
+  }
+
+  /** The buffered upserts of `parents` above `floor` (§5.3 step 3: replay above `C`). */
+  #replayOf(parents: ReadonlySet<string>, floor: number): StoredChange[] {
+    const replay: StoredChange[] = [];
+    for (const packet of this.#since.values()) {
+      if (packet.parent === undefined || !parents.has(packet.parent)) continue;
+      if (packet.version <= floor || packet.stored.kind === 'delete') continue;
+      replay.push(packet.stored);
+    }
+    return replay;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cache size (SPEC-011 §5.4, Q11)
+
+  /** A tab opened `parent`: it moves up in the cache's order (least recently opened go first). */
+  #touch(parent: string): void {
+    const persistence = this.#host.persistence();
+    const generation = this.#host.generation();
+    if (persistence === undefined || generation === undefined || !this.#paged.has(parent)) return;
+    const openedAt = this.#host.clock();
+    void this.#host
+      .enqueue(() =>
+        persistence.writeReplica(generation, (storage) =>
+          storage.touchContent(generation, [parent], openedAt),
+        ),
+      )
+      .catch(() => undefined);
+  }
+
+  /** Evict past the limit once the writes queued now are done; one eviction at a time. */
+  #scheduleEviction(): void {
+    if (this.#evicting !== undefined) {
+      this.#evictAgain = true;
+      return;
+    }
+    this.#evicting = this.#evict()
+      .catch(() => undefined)
+      .finally(() => {
+        this.#evicting = undefined;
+        if (!this.#evictAgain) return;
+        this.#evictAgain = false;
+        this.#scheduleEviction();
+      });
+  }
+
+  /**
+   * Evict the least recently opened parents past `cacheLimit` (§5.4): never one open in this tab,
+   * nor one whose lock another tab holds (taken exclusively with `ifAvailable`, kept until the
+   * eviction is written). Without Web Locks on shared storage another tab may have a parent open
+   * unseen, so nothing is evicted. Memory storage is this tab's alone: no locks needed.
+   */
+  async #evict(): Promise<void> {
+    if (this.#closed.get() || !this.#host.ready()) return;
+    const persistence = this.#host.persistence();
+    const generation = this.#host.generation();
+    if (persistence === undefined || generation === undefined) return;
+    const shared = this.#host.sharedStorage();
+    const locks = shared ? this.#host.locks() : undefined;
+    if (shared && locks === undefined) return;
+    const marks = await this.#host.enqueue(() =>
+      persistence.writeReplica(generation, (storage) => storage.readContentMarks()),
+    );
+    if (marks === undefined) return;
+    const excess = marks.length - this.#host.cacheLimit;
+    if (excess <= 0) return;
+    const oldest = [...marks].sort(
+      (a, b) => a.openedAt - b.openedAt || (a.parent < b.parent ? -1 : a.parent > b.parent ? 1 : 0),
+    );
+    const chosen: ContentMark[] = [];
+    const releases: (() => void)[] = [];
+    try {
+      for (const mark of oldest) {
+        if (chosen.length >= excess) break;
+        if (this.#wanted.has(mark.parent)) continue;
+        if (locks !== undefined) {
+          const release = await tryHold(locks, contentLockName(this.#host.replica, mark.parent));
+          // Open in another tab: skipped.
+          if (release === undefined) continue;
+          releases.push(release);
+          // Opened here meanwhile (its shared request waits behind this one): kept.
+          if (this.#wanted.has(mark.parent)) continue;
+        }
+        chosen.push(mark);
+      }
+      if (chosen.length === 0 || this.#closed.get()) return;
+      const evicted = await this.#host.enqueue(() =>
+        persistence.writeReplica(generation, (storage) => storage.evictContent(generation, chosen)),
+      );
+      this.#dropPaged(evicted ?? []);
+    } finally {
+      for (const release of releases) release();
+    }
+  }
+
+  /**
+   * Evicted parents paged in here but not open leave the pool too, so it doesn't keep growing.
+   * One opened meanwhile stays: its pool rows are complete and live.
+   */
+  #dropPaged(evicted: readonly string[]): void {
+    const parents = new Set(evicted.filter((p) => this.#paged.has(p) && !this.#wanted.has(p)));
+    if (parents.size === 0) return;
+    const changes: BaseChange[] = [];
+    for (const [model, ref] of this.#byModel) {
+      for (const { row } of this.#host.pool.baseRows(model)) {
+        if (parents.has(String(row[ref.field])))
+          changes.push({ kind: 'delete', model, id: row.id });
+      }
+    }
+    runInAction(() => {
+      for (const parent of parents) this.#paged.delete(parent);
+    });
+    this.#host.applyBase(changes);
   }
 
   // ---------------------------------------------------------------------------
@@ -657,6 +1003,12 @@ export class ContentHydration {
   #online(): boolean {
     const connection = this.#host.connection();
     return connection === 'online' || connection === 'connecting';
+  }
+
+  /** Online, or connecting with no failed attempt since it was last online (E11). Observable. */
+  #reachableNow(): boolean {
+    const connection = this.#host.connection();
+    return connection === 'online' || (connection === 'connecting' && this.#reachable.get());
   }
 
   /** The parent a mutation's `contentParent` names, lower-cased; `undefined` if not held. */
@@ -733,6 +1085,25 @@ export class ContentHydration {
 function byField(pool: ObjectPool, model: string, field: string, value: string): ModelInstance[] {
   if (pool.hasIndex(model, field)) return pool.findBy(model, field, value);
   return pool.all(model).filter((row) => row[field] === value);
+}
+
+/**
+ * SPEC-011 D16: the parents a multi-parent answer left out for its size budget. The server takes
+ * whole parents in request order while they fit and stops at the first that doesn't, the first
+ * visible one always. So a requested parent missing before the last one taken is unknown or
+ * invisible, and those after it may only have been left out. An answer that took none left none
+ * out: the first visible parent always comes.
+ */
+export function leftOutParents(
+  requested: readonly string[],
+  answered: readonly string[],
+): string[] {
+  const taken = new Set(answered);
+  let last = -1;
+  requested.forEach((parent, index) => {
+    if (taken.has(parent)) last = index;
+  });
+  return last < 0 ? [] : requested.slice(last + 1);
 }
 
 // ---------------------------------------------------------------------------

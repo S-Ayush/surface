@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -43,6 +44,11 @@ export type VirtualListProps = {
   initialViewportHeight?: number;
   initialScrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
+  /**
+   * The items rendered changed: `start` to `end` (exclusive), the viewport plus the overscan, in
+   * an effect after the render. Must be stable, like `itemHeight`. For prefetching what is shown.
+   */
+  onRangeChange?: (start: number, end: number) => void;
   /** Names the grid ("Issues in ENG"). */
   'aria-label': string;
   className?: string;
@@ -64,6 +70,7 @@ export function VirtualList({
   initialViewportHeight = 600,
   initialScrollTop = 0,
   onScrollTopChange,
+  onRangeChange,
   'aria-label': ariaLabel,
   className,
   ref,
@@ -108,6 +115,10 @@ export function VirtualList({
     // Only the first scroll position is applied; later ones come from the user.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    onRangeChange?.(win.start, win.end);
+  }, [onRangeChange, win.start, win.end]);
 
   useImperativeHandle(
     ref,

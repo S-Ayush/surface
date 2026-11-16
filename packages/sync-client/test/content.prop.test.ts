@@ -3,7 +3,8 @@
  * S5b), on the fake hub's debug items and their notes: two tabs share one IndexedDB replica.
  * Note writes and deletes, item purges (whose note deletes are not logged), group changes (`D`+`U`),
  * new items, opens and releases in either tab, held and failed content answers, socket drops and
- * resyncs interleave. A tab may die mid-run, as it starts a storage call (between an answer and
+ * resyncs interleave, with prefetches (whose answers a size budget may cut, D16) and evictions
+ * past a small cache limit (PLAN-011 S7). A tab may die mid-run, as it starts a storage call (between an answer and
  * what follows it, say); a new tab then warm-starts from the replica in its place. Once quiet,
  * every item each tab opens shows exactly the server's notes (a fresh fetch), the shared replica
  * stores exactly those for every hydrated item, and a tab started afterwards from the replica
@@ -34,6 +35,8 @@ const REFS = [{ model: 'Note', field: 'itemId', parent: 'DebugItem' }];
 const ITEMS = [1, 2, 3] as const;
 /** The item `settle` writes to: its `I` hydrates it. */
 const PROBE = 9;
+/** A small content cache, so opens, prefetches and `I` packets evict (SPEC-011 §5.4). */
+const CACHE_LIMIT = 2;
 
 type Tab = 0 | 1;
 interface TabHandle {
@@ -78,6 +81,8 @@ type Command =
   | { kind: 'purge' | 'regroup'; item: number }
   | { kind: 'create' }
   | { kind: 'open'; tab: Tab; item: number }
+  | { kind: 'prefetch'; tab: Tab; items: number[] }
+  | { kind: 'budget' }
   | { kind: 'close'; tab: Tab }
   | { kind: 'hold' | 'release' | 'fail' }
   | { kind: 'drop-socket' | 'tick' | 'resync'; tab: Tab }
@@ -108,6 +113,15 @@ const command: fc.Arbitrary<Command> = fc.oneof(
   { weight: 1, arbitrary: fc.record({ kind: fc.constant('create' as const) }) },
   { weight: 5, arbitrary: fc.record({ kind: fc.constant('open' as const), tab, item }) },
   { weight: 2, arbitrary: fc.record({ kind: fc.constant('close' as const), tab }) },
+  {
+    weight: 3,
+    arbitrary: fc.record({
+      kind: fc.constant('prefetch' as const),
+      tab,
+      items: fc.uniqueArray(item, { minLength: 1, maxLength: 3 }),
+    }),
+  },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant('budget' as const) }) },
   {
     weight: 3,
     arbitrary: fc.record({
@@ -203,6 +217,7 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
           workspaceId,
           connectStorage: connect,
           locks: locks.forTab(name),
+          contentCacheLimit: CACHE_LIMIT,
           connection: { socket },
         });
         const handle: TabHandle = { name, store, life, timers, connections, handles: [] };
@@ -245,6 +260,13 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
             }
             case 'close':
               tabs[c.tab]?.handles.shift()?.release();
+              break;
+            case 'prefetch':
+              tabs[c.tab]?.store.content.prefetch(c.items.map(id));
+              break;
+            case 'budget':
+              // One parent per multi-parent answer, or no budget.
+              hub.contentBudget = hub.contentBudget === undefined ? 1 : undefined;
               break;
             case 'hold':
               hub.holdContent = true;
@@ -331,6 +353,27 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
       seed: PROPERTY_SEED,
       numRuns: 150,
       examples: [
+        // PLAN-011 S7: a prefetch cut by the budget (D16) while the answer is held and notes
+        // change, evictions past the limit while the other tab keeps an item open, then reopens.
+        [
+          [
+            { kind: 'open', tab: 1, item: 1 },
+            { kind: 'create' },
+            { kind: 'budget' },
+            { kind: 'hold' },
+            { kind: 'prefetch', tab: 0, items: [2, 3, 1] },
+            { kind: 'yield', turns: 5 },
+            { kind: 'note', item: 3, k: 1, body: 'B' },
+            { kind: 'note', item: 2, k: 2, body: 'A' },
+            { kind: 'release' },
+            { kind: 'yield', turns: 5 },
+            { kind: 'open', tab: 0, item: 2 },
+            { kind: 'close', tab: 0 },
+            { kind: 'drop', item: 2, k: 1 },
+            { kind: 'wait' },
+            { kind: 'open', tab: 0, item: 2 },
+          ],
+        ],
         // E17: an answer held while its item's notes change and a group change passes.
         [
           [

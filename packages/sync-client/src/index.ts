@@ -68,4 +68,6 @@ export type { PartialLoading } from './partial.js';
 export { ContentLoadFailedError, ContentUnavailableError } from './content.js';
 export type { ContentHandle, ContentLoadState } from './content.js';
 export type { ContentAccess } from './store.js';
+// Content prefetch (SPEC-011 §5.4, PLAN-011 S7): how many issues the views ask for.
+export { PREFETCH_ASSIGNED, PREFETCH_LIST_ROWS } from './prefetch.js';
 export type { ContentModelRef } from './storage/types.js';

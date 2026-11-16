@@ -7,10 +7,12 @@ export {
   useInspector,
   useIssueContent,
   usePendingCount,
+  usePrefetchContent,
+  usePrefetchOnHover,
   useStorageWarning,
   useTeamLoadState,
 } from './hooks.js';
-export type { IssueContent } from './hooks.js';
+export type { HoverPrefetch, IssueContent } from './hooks.js';
 export { SyncInspector } from './SyncInspector.js';
 export type { SyncInspectorProps } from './SyncInspector.js';
 export { inspectorAllowed } from './gate.js';

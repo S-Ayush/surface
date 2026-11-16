@@ -70,16 +70,28 @@ describe('the fake hub’s /sync/content', () => {
     expect(fake.contentRequests).toEqual([parents]);
   });
 
-  it('lists the found parents in id order, whatever order they were asked in', async () => {
+  it('lists the found parents in request order, as the server since PLAN-011 S6', async () => {
     const fake = hub();
     const parents = [item(2), item(1)];
     const answer = await frames(await request(fake, parents), parents);
-    expect(answer[0]).toMatchObject({ parents: [item(1), item(2)], rows: 3 });
+    expect(answer[0]).toMatchObject({ parents: [item(2), item(1)], rows: 3 });
     expect(answer.flatMap((f) => (f.t === 'row' ? [f.d.id] : []))).toEqual([
       id(11),
       id(12),
       id(21),
     ]);
+  });
+
+  it('cuts a multi-parent answer to its budget, the first visible parent always taken (D16)', async () => {
+    const fake = hub();
+    fake.contentBudget = 1;
+    const parents = [item(2), item(1)];
+    const answer = await frames(await request(fake, parents), parents);
+    expect(answer[0]).toMatchObject({ parents: [item(2)], rows: 1 });
+    // A single-parent request is never cut.
+    fake.contentBudget = 0;
+    const alone = await frames(await request(fake, [item(1)]), [item(1)]);
+    expect(alone[0]).toMatchObject({ parents: [item(1)], rows: 2 });
   });
 
   it('refuses a bad query, a missing userId and another user before the first frame', async () => {

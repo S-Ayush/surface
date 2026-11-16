@@ -9,6 +9,7 @@ import { IssuesHost } from './issues/IssuesHost.js';
 import { IssuePickersHost } from './issues/pickers/IssuePickersHost.js';
 import { TeamMenu } from './teams/TeamMenu.js';
 import { TeamsHost } from './teams/TeamsHost.js';
+import { ContentPrefetchHost } from './issues/ContentPrefetchHost.js';
 
 /** The team a team ⋯ menu acts on. */
 export type TeamRef = { readonly id: string; readonly key: string; readonly name: string };
@@ -25,6 +26,7 @@ export const SHELL_HOSTS: readonly ComponentType[] = [
   IssuesHost,
   IssuePickersHost,
   IssueDeleteHost,
+  ContentPrefetchHost,
 ];
 
 /**

@@ -15,6 +15,7 @@ import type {
   TeamLoadState,
 } from '@surface/sync-client';
 import {
+  PREFETCH_LIST_ROWS,
   bootstrapOf,
   connectionOf,
   inspect,
@@ -22,7 +23,7 @@ import {
   pendingCountOf,
   storageWarningOf,
 } from '@surface/sync-client';
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useId, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useSyncStore } from './context.js';
 
 /** `select` must be a stable function (module level), or the source is rebuilt each render. */
@@ -113,4 +114,56 @@ export function useIssueContent(issueId: string): IssueContent {
     [store, issueId],
   );
   return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
+}
+
+/**
+ * Prefetch the content of the issues a view shows, in order (SPEC-011 §5.4; PLAN-011 S7): the
+ * first `limit` (50) once they have stayed for 200 ms, so scrolling past rows fetches nothing.
+ * Only issues of subscribed teams that aren't hydrated yet are fetched. Unmounting cancels a
+ * pending prefetch.
+ */
+export function usePrefetchContent(
+  issueIds: readonly string[],
+  limit: number = PREFETCH_LIST_ROWS,
+): void {
+  const store = useSyncStore();
+  const slot = useId();
+  // A key, so a new array with the same ids doesn't restart the wait.
+  const key = issueIds.slice(0, limit).join(',');
+  useEffect(() => {
+    store.content.prefetchList(slot, key === '' ? [] : key.split(','), limit);
+  }, [store, slot, key, limit]);
+  useEffect(() => () => store.content.prefetchList(slot, []), [store, slot]);
+}
+
+/** Pointer handlers for `usePrefetchOnHover`. */
+export interface HoverPrefetch {
+  /** The pointer entered an issue's row or link. */
+  readonly enter: (issueId: string) => void;
+  /** It left (or the row unmounted). Bound: pass it as an event handler. */
+  readonly leave: () => void;
+}
+
+/**
+ * Prefetch an issue's content when the pointer rests on it for 150 ms (SPEC-011 §5.4). One
+ * pending issue at a time: entering another cancels the previous one.
+ */
+export function usePrefetchOnHover(): HoverPrefetch {
+  const store = useSyncStore();
+  const cancel = useRef<(() => void) | undefined>(undefined);
+  const handlers = useMemo(
+    (): HoverPrefetch => ({
+      enter: (issueId) => {
+        cancel.current?.();
+        cancel.current = store.content.prefetchOnHover(issueId);
+      },
+      leave: () => {
+        cancel.current?.();
+        cancel.current = undefined;
+      },
+    }),
+    [store],
+  );
+  useEffect(() => () => handlers.leave(), [handlers]);
+  return handlers;
 }

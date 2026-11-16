@@ -657,6 +657,101 @@ describe.each(BACKENDS)('$name content storage', (backend) => {
     if (tabB !== tabA) await tabB.close();
   });
 
+  describe('the content cache (§5.4, Q11; PLAN-011 S7)', () => {
+    const marks = async (storage: SyncStorage) =>
+      [...(await storage.readContentMarks())].sort((a, b) => (a.parent < b.parent ? -1 : 1));
+
+    it('keeps when each hydrated parent was last opened: 0 for one an I packet hydrated', async () => {
+      const { storage, generation } = await seeded();
+      await storage.writeContent(generation, { ...answer(11, [1], [[11, 1]]), openedAt: 500 });
+      await storage.applyChanges(generation, [upsert(12, 2)], 12, undefined, [id(2)]);
+      expect(await marks(storage)).toEqual([
+        { parent: id(1), openedAt: 500 },
+        { parent: id(2), openedAt: 0 },
+      ]);
+      await storage.touchContent(generation, [id(2), id(3)], 700);
+      // Only later times move a mark; a parent not hydrated gets none.
+      await storage.touchContent(generation, [id(1)], 400);
+      expect(await marks(storage)).toEqual([
+        { parent: id(1), openedAt: 500 },
+        { parent: id(2), openedAt: 700 },
+      ]);
+      await storage.close();
+    });
+
+    it('evicts a parent’s rows and mark together, keeping its tombstones and other parents', async () => {
+      const { storage, generation } = await seeded();
+      await storage.writeContent(
+        generation,
+        answer(
+          11,
+          [1, 2],
+          [
+            [11, 1],
+            [12, 1],
+            [21, 2],
+          ],
+        ),
+      );
+      await storage.applyChanges(generation, [noteGone(13, 12)], 13);
+      expect(await storage.evictContent(generation, [{ parent: id(1), openedAt: 1 }])).toEqual([
+        id(1),
+      ]);
+      expect(await content(storage, 1)).toEqual({ hydrated: false, rows: [] });
+      expect(await content(storage, 2)).toEqual({
+        hydrated: true,
+        rows: [[id(21), 'Note 21', 11]],
+      });
+      // Its packets are dropped now, as for any parent no tab hydrated…
+      await storage.applyChanges(generation, [note(14, 11, 1, 'Edited')], 14);
+      expect(await content(storage, 1)).toEqual({ hydrated: false, rows: [] });
+      // …and the tombstone of note 12 still keeps an older answer from bringing it back (E25).
+      await storage.writeContent(
+        generation,
+        answer(
+          12,
+          [1],
+          [
+            [11, 1],
+            [12, 1],
+          ],
+        ),
+      );
+      expect(await content(storage, 1)).toEqual({
+        hydrated: true,
+        rows: [[id(11), 'Note 11', 12]],
+      });
+      await storage.close();
+    });
+
+    it('keeps a parent opened since its mark was read, and skips one not hydrated', async () => {
+      const { storage, generation } = await seeded();
+      await storage.writeContent(generation, answer(11, [1], [[11, 1]]));
+      await storage.touchContent(generation, [id(1)], 900);
+      const evicted = await storage.evictContent(generation, [
+        { parent: id(1), openedAt: 1 },
+        { parent: id(2), openedAt: 1 },
+      ]);
+      expect(evicted).toEqual([]);
+      expect(await content(storage, 1)).toEqual({
+        hydrated: true,
+        rows: [[id(11), 'Note 11', 11]],
+      });
+      await storage.close();
+    });
+
+    it('refuses to evict or touch from another generation', async () => {
+      const { storage } = await seeded();
+      await expect(
+        storage.evictContent('elsewhere', [{ parent: id(1), openedAt: 1 }]),
+      ).rejects.toBeInstanceOf(StorageFencedError);
+      await expect(storage.touchContent('elsewhere', [id(1)], 1)).rejects.toBeInstanceOf(
+        StorageFencedError,
+      );
+      await storage.close();
+    });
+  });
+
   it('clears the hydrated set and content on re-bootstrap and resync (§5.3 step 7)', async () => {
     const { storage, generation } = await seeded();
     await storage.writeContent(generation, answer(11, [1], [[11, 1]]));

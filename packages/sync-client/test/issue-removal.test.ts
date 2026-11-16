@@ -66,19 +66,22 @@ describe('archived and deleted issues leave the replica (AC-29)', () => {
   });
 
   it.each(['V', 'U'] as const)(
-    'inserts it again on a restore %s, with its re-logged part (content comes by hydration)',
+    'inserts it again on a restore %s, with its re-logged part; its content comes by hydration',
     async (as) => {
       const { hub, store, kept, settled } = await started();
       hub.deleteTask(110);
       await settled();
+      expect(teamView(store).notes).toEqual({});
       hub.restoreTask(110, as);
       await settled();
       const view = teamView(store);
       expect(Object.keys(view.tasks)).toEqual([id(110)]);
       expect(view.parts).toEqual({ [id(501)]: id(110) });
-      expect(view.notes).toEqual({});
       expect(await kept.stored('Task')).toEqual([id(110)]);
       expect(await kept.stored('TaskPart')).toEqual([id(501)]);
+      // Still open in this tab, it loads its content again (PLAN-011 S7).
+      await until(() => Object.keys(teamView(store).notes).length === 2);
+      expect(teamView(store).notes).toEqual({ [id(601)]: id(110), [id(602)]: id(110) });
     },
   );
 

@@ -16,6 +16,7 @@ import {
   type VirtualItemProps,
   type VirtualListHandle,
 } from '@surface/ui';
+import { usePrefetchContent, usePrefetchOnHover } from '@surface/sync-react';
 import { useNavigate } from '@tanstack/react-router';
 import {
   Calendar,
@@ -124,6 +125,22 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
   );
   const items = useMemo(() => flattenGroups(groups, collapse), [groups, collapse]);
   const ids = useMemo(() => items.map((item) => item.id), [items]);
+
+  // SPEC-011 §5.4: the content of the rows on screen is prefetched once they stay 200 ms, and a
+  // row's when the pointer rests on it, so opening an issue reads the replica.
+  const [range, setRange] = useState<readonly [number, number]>([0, 0]);
+  const onRangeChange = useCallback((start: number, end: number) => {
+    setRange((before) => (before[0] === start && before[1] === end ? before : [start, end]));
+  }, []);
+  const shown = useMemo(
+    () =>
+      items
+        .slice(range[0], range[1])
+        .flatMap((item) => (item.kind === 'row' ? [item.row.issueId] : [])),
+    [items, range],
+  );
+  usePrefetchContent(shown);
+  const hover = usePrefetchOnHover();
 
   // Focus is an id, so it follows its issue across live re-sorts (E1) and, when the issue leaves,
   // moves to its neighbour (E2). Derived during render from the previous order, so the pinned row
@@ -453,7 +470,15 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
     const { row } = item;
     return (
       <ContextMenu key={item.id} items={rowMenu(row)}>
-        <div role="none" style={style} data-shortcut-scope="issue">
+        <div
+          role="none"
+          style={style}
+          data-shortcut-scope="issue"
+          onPointerEnter={() => {
+            hover.enter(row.issueId);
+          }}
+          onPointerLeave={hover.leave}
+        >
           <IssueRow
             rowIndex={index + 1}
             identifier={row.identifier}
@@ -532,6 +557,7 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
         onScrollTopChange={(top) => {
           scrollTop.current = top;
         }}
+        onRangeChange={onRangeChange}
       />
     </div>
   );
