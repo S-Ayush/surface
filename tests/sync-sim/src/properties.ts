@@ -325,6 +325,8 @@ export const reactionConvergence: Property = {
     if (!isCommentServer(server)) throw new Error('The reaction property needs the real server.');
     const comments = await server.comments();
     const reactions = await server.reactions();
+    // As `commentConvergence`: every issue open in every tab first (PLAN-011 S5b).
+    await world.showEverywhere(world.issueIds);
     for (const tab of world.live) {
       expect(world.commentView(tab), tab.name).toEqual(comments);
       expect(world.reactionView(tab), tab.name).toEqual(reactions);

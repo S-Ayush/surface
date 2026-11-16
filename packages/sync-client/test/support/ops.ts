@@ -4,7 +4,7 @@
  * ones belong in `packages/operations` (session A); until then the engine is
  * tested against these. The fake hub runs the server side (`hub.ts`).
  */
-import { createRegistry, defineOperation } from '@surface/operations';
+import { OptimisticRefusal, createRegistry, defineOperation } from '@surface/operations';
 import { z } from 'zod';
 
 const item = z.object({ id: z.uuid(), title: z.string(), counter: z.number().int() });
@@ -125,6 +125,8 @@ export const debugNote = defineOperation({
     itemId: z.uuid(),
     body: z.string().min(1),
     viaNote: z.boolean().optional(),
+    /** Only an edit: refused when the store, once the item is paged in, doesn't show the note. */
+    existing: z.boolean().optional(),
   }),
   output: z.object({ id: z.uuid() }),
   examples: [
@@ -140,6 +142,7 @@ export const debugNote = defineOperation({
       : { model: 'DebugItem', id: input.itemId },
   optimistic(store, input) {
     if (store.get('Note', input.id) === undefined) {
+      if (input.existing === true) throw new OptimisticRefusal('This note was deleted.');
       store.insert('Note', { id: input.id, itemId: input.itemId, body: input.body });
     } else {
       store.patch('Note', input.id, { body: input.body });

@@ -307,7 +307,8 @@ export class FakeHub {
       archivedAt: null,
       deletedAt: null,
     };
-    const next: ModelRow = { ...base, ...fields };
+    // An existing task named with another squad moves there (its groups change: D+U).
+    const next: ModelRow = { ...base, teamId: id(squad), ...fields };
     const row = { ...next, groups: this.taskGroups(next) };
     this.tasks.set(row.id, row);
     const before = existing === undefined ? undefined : this.taskGroups(existing);
@@ -496,7 +497,7 @@ export class FakeHub {
   /** `GET /sync/bootstrap` from the current state, `POST /sync/mutate`, or `GET /auth/session`. */
   readonly fetch: FetchLike = (url, init) => {
     if (url.endsWith(MUTATE_PATH)) return this.#mutate(init);
-    if (new URL(url).pathname === CONTENT_PATH) return this.#content(url);
+    if (new URL(url).pathname === CONTENT_PATH) return this.#content(url, init.signal ?? undefined);
     if (url.endsWith(SESSION_PATH)) {
       this.sessionRequests += 1;
       if (this.sessionStatus !== 200) {
@@ -555,7 +556,7 @@ export class FakeHub {
   }
 
   /** `GET /sync/content`, with the server's answers before the first frame (SPEC-011 §5.2). */
-  async #content(url: string): Promise<Response> {
+  async #content(url: string, signal?: AbortSignal): Promise<Response> {
     if (this.failContent > 0) {
       this.failContent -= 1;
       throw new TypeError('Failed to fetch');
@@ -583,7 +584,13 @@ export class FakeHub {
     const frames = this.contentSnapshot(query.parents);
     const sent = this.truncateContent ? frames.slice(0, -1) : frames;
     if (!this.holdContent) return ndjsonResponse(sent);
-    return new Promise((resolve) => this.#heldContent.push(() => resolve(ndjsonResponse(sent))));
+    // As `fetch`: aborting the request while it waits for the answer rejects it.
+    return new Promise((resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+        once: true,
+      });
+      this.#heldContent.push(() => resolve(ndjsonResponse(sent)));
+    });
   }
 
   /** Let held mutate responses through, in order. */

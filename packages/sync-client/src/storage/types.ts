@@ -151,6 +151,14 @@ export interface ContentWrite {
   readonly rows: readonly BootstrapRecord[];
   readonly version: number;
   readonly openedAt: number;
+  /**
+   * The content packets above `version` that arrived while the answer was in flight (§5.3 step
+   * 3: replay above `C`). Storage dropped them then (the parent wasn't hydrated yet), so they are
+   * stored here, in the same transaction, under the per-row version rules. Without that, another
+   * tab could page in the parent between the answer and its replay, or a tab closing in between
+   * would leave it hydrated but stale for good (`lastSyncId` is already past them).
+   */
+  readonly replay: readonly StoredChange[];
 }
 
 /** A stored content row with the version that wrote it. */
@@ -290,8 +298,9 @@ export interface SyncStorage {
   ) => Promise<void>;
 
   /**
-   * Store a content answer and mark its parents hydrated in one transaction (SPEC-011 §5.3 step
-   * 3, §5.4). A row is skipped when storage holds it at `version` or newer (a tombstone included).
+   * Store a content answer, its replay above `C`, and mark its parents hydrated, in one
+   * transaction (SPEC-011 §5.3 step 3, §5.4). An answer row is skipped when storage holds it at
+   * `version` or newer (a tombstone included); a replayed change follows the delta rules.
    */
   readonly writeContent: (generation: string, write: ContentWrite) => Promise<void>;
 

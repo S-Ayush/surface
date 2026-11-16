@@ -234,6 +234,7 @@ describe.each(BACKENDS)('$name content storage', (backend) => {
             })),
             version: at.version,
             openedAt: 1,
+            replay: [],
           });
         };
         const apply = async (tab: number) => {

@@ -11,7 +11,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { Comment, DebugItem, Draft, Issue, Reaction } from '@surface/domain/model';
 import type { AnyOperation, InputOf } from '@surface/operations';
 import type { MutationOutcome, StorageConnector } from '@surface/sync-client';
-import { SyncStore } from '@surface/sync-client';
+import { ContentUnavailableError, SyncStore } from '@surface/sync-client';
 import type { QueueWrite, SyncStorage } from '@surface/sync-client/testing';
 import { IndexedDbStorage } from '@surface/sync-client/testing';
 import { advance, settle } from './clock.js';
@@ -271,10 +271,12 @@ export class World {
         if (record !== undefined) record.outcome = result;
       },
       (error: unknown) => {
-        // Refused before it was queued, as a synchronous throw is: offline on an issue never
-        // loaded ("Available when online"), or the tab closed while it waited.
-        if (record === undefined) return;
-        this.#problems.push(`${tab.name}: dispatch failed: ${String(error)}`);
+        // Refused before it was queued, as a synchronous throw is, only offline on an issue never
+        // loaded ("Available when online", E11). Any other refusal is a problem.
+        const offline = tab.store.connection === 'offline';
+        if (record === undefined && offline && error instanceof ContentUnavailableError) return;
+        const when = record === undefined ? 'before it was queued' : record.key;
+        this.#problems.push(`${tab.name}: dispatch failed (${when}): ${String(error)}`);
       },
     );
     return true;

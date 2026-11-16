@@ -43,6 +43,24 @@ export function goneParents(
   return new Set([...last].filter(([, deleted]) => deleted).map(([id]) => id));
 }
 
+/**
+ * The replayed changes of a content write that storage keeps (§5.3 step 3): those of a parent the
+ * write hydrates, oldest first. A delete is kept whatever its parent (E25).
+ */
+export function replayed(
+  replay: readonly StoredChange[],
+  parents: ReadonlySet<string>,
+  byModel: ReadonlyMap<string, ContentModelRef>,
+): StoredChange[] {
+  return replay
+    .filter((change) => {
+      if (!byModel.has(change.model)) return false;
+      const parent = upsertParent(change, byModel);
+      return parent === undefined || parents.has(parent);
+    })
+    .sort((a, b) => a.version - b.version);
+}
+
 /** Whether a content answer's row may overwrite `existing`: only an older one, or none. */
 export function contentRowIsNewer(version: number, existing: StoredRecord | undefined): boolean {
   return existing === undefined || existing.version < version;

@@ -9,6 +9,7 @@ interface Held {
 interface Waiting {
   readonly name: string;
   readonly mode: LockMode;
+  readonly tab: string;
   readonly run: () => void;
 }
 
@@ -22,12 +23,27 @@ const aborted = () => new DOMException('The request was aborted.', 'AbortError')
 export class FakeLocks {
   readonly held: Held[] = [];
   readonly #waiting: Waiting[] = [];
+  readonly #dead = new Set<string>();
 
   /** The `navigator.locks` of tab `tab`. */
   forTab(tab: string): ReplicaLocks {
     return {
       request: (name, options, callback) => this.#request(tab, name, options, callback),
     };
+  }
+
+  /**
+   * The tab died: the browser drops its waiting requests and frees every lock it held (their
+   * callbacks never settle).
+   */
+  kill(tab: string): void {
+    // Its code may still run on (a promise that never settles stops it only where awaited):
+    // nothing more is granted to it.
+    this.#dead.add(tab);
+    for (let i = this.#waiting.length - 1; i >= 0; i -= 1) {
+      if (this.#waiting[i]?.tab === tab) this.#waiting.splice(i, 1);
+    }
+    for (const held of this.held.filter((h) => h.tab === tab)) this.#release(held);
   }
 
   /** Who holds `name`, and how. */
@@ -46,6 +62,7 @@ export class FakeLocks {
     options: { mode: LockMode; signal?: AbortSignal; ifAvailable?: boolean },
     callback: (lock: unknown) => Promise<T>,
   ): Promise<T> {
+    if (this.#dead.has(tab)) return new Promise<T>(() => undefined);
     return new Promise<T>((resolve, reject) => {
       const run = () => {
         const held: Held = { name, mode: options.mode, tab };
@@ -70,7 +87,7 @@ export class FakeLocks {
       if (free) run();
       else if (options.ifAvailable) callback(null).then(resolve, reject);
       else {
-        const waiting: Waiting = { name, mode: options.mode, run };
+        const waiting: Waiting = { name, mode: options.mode, tab, run };
         this.#waiting.push(waiting);
         // As Web Locks: aborting a request still waiting rejects it with an AbortError.
         options.signal?.addEventListener('abort', () => {

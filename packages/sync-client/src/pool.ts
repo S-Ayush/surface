@@ -188,6 +188,11 @@ export class ObjectPool implements ReadonlyPool {
     return table.visibleCount;
   }
 
+  /** Whether `findBy` can look `field` up: declared in `indexes`, or implied by a backRef. */
+  hasIndex(model: string, field: string): boolean {
+    return this.#table(model).indexes.has(field);
+  }
+
   /** Visible instances whose indexed `field` equals `value`. */
   findBy<M extends ModelDef>(model: M, field: string, value: IndexKey): InstanceOf<M>[];
   findBy(model: string, field: string, value: IndexKey): ModelInstance[];

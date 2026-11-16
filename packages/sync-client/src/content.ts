@@ -23,7 +23,7 @@
  *   storage); an unsubscribe or sweep drops them through `forget` (`subscriptions.ts`).
  * - **Start and resync** clear the paged set (step 7); open parents load again.
  */
-import { isUuid, type RefType } from '@surface/domain';
+import { isUuid, issueIdentifier, type RefType } from '@surface/domain';
 import type { ModelDef, ModelRow } from '@surface/domain/model';
 import type { ContentParentRef } from '@surface/operations';
 import {
@@ -47,7 +47,7 @@ import type { Persistence } from './persistence.js';
 import type { BaseChange, ObjectPool } from './pool.js';
 import type { ConnectionState, Timers } from './socket.js';
 import { backoffDelay } from './socket.js';
-import type { ContentModelRef, StoredChange } from './storage/types.js';
+import type { ContentModelRef, ContentWrite, StoredChange } from './storage/types.js';
 import { teamOf } from './storage/types.js';
 import type { TeamLoadState } from './subscriptions.js';
 
@@ -74,6 +74,18 @@ export class ContentUnavailableError extends Error {
   override readonly name = 'ContentUnavailableError';
   constructor() {
     super('Available when online');
+  }
+}
+
+/**
+ * A content mutation whose parent couldn't be loaded while online (a server or network error):
+ * refused, nothing queued. Not "Available when online": the connection is up, so trying again
+ * may work (SPEC-011 D14).
+ */
+export class ContentLoadFailedError extends Error {
+  override readonly name = 'ContentLoadFailedError';
+  constructor(label: string) {
+    super(`Couldn't load ${label}. Try again.`);
   }
 }
 
@@ -118,8 +130,11 @@ export interface ContentHost {
 /** How one load ended. `stale`: a start, resync or close overtook it. */
 type LoadResult = 'ready' | 'missing' | 'offline' | 'failed' | 'stale';
 
-/** What dispatch does after `ensure`. */
-export type EnsureResult = 'proceed' | 'unavailable' | 'closed';
+/**
+ * What dispatch does after `ensure`: `unavailable` offline with the parent never hydrated (E11);
+ * `failed` when loading it failed while online (D14).
+ */
+export type EnsureResult = 'proceed' | 'unavailable' | 'failed' | 'closed';
 
 /** A loaded content row, with the version that wrote it. */
 interface LoadedRow {
@@ -157,7 +172,7 @@ export class ContentHydration {
   readonly #epoch: IObservableValue<number> = observable.box(0);
   readonly #closed: IObservableValue<boolean> = observable.box(false);
   #abort = new AbortController();
-  /** Retries of failed loads of open parents, per parent. */
+  /** Retries of failed loads of open parents, per parent; `timer` is unset between attempts. */
   readonly #retries = new Map<string, { timer: unknown; attempt: number }>();
   #stopOnline: (() => void) | undefined;
   #stopFound: (() => void) | undefined;
@@ -254,10 +269,30 @@ export class ContentHydration {
     try {
       const result = await this.#settle(parent);
       if (this.#closed.get()) return 'closed';
-      return result === 'ready' || result === 'missing' ? 'proceed' : 'unavailable';
+      if (result === 'ready' || result === 'missing') return 'proceed';
+      // A load that failed because the connection dropped is E11's case, not D14's.
+      return result === 'failed' && this.#online() ? 'failed' : 'unavailable';
     } finally {
       this.#unwant(parent);
     }
+  }
+
+  /** How a refusal names `ref`'s parent: its identifier (`ENG-42`) when the pool shows it. */
+  describe(ref: ContentParentRef): string {
+    const parent = this.#resolve(ref);
+    const rules = this.#host.rules;
+    if (parent === undefined || rules === undefined) return 'this issue';
+    return untracked(() => {
+      const issue = this.#host.pool.get(rules.issue, parent);
+      const row = issue === undefined ? undefined : rowOf(issue);
+      const teamId = row === undefined ? undefined : teamOf(row);
+      const team = teamId === undefined ? undefined : this.#host.pool.get(rules.team, teamId);
+      const key = team === undefined ? undefined : rowOf(team)['key'];
+      const number = row?.['number'];
+      return typeof key === 'string' && typeof number === 'number'
+        ? issueIdentifier(key, number)
+        : 'this issue';
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -270,7 +305,14 @@ export class ContentHydration {
     this.#stopOnline ??= reaction(
       () => this.#host.ready() && this.#online(),
       (up) => {
-        if (up) this.#reloadWanted();
+        if (up) {
+          this.#reloadWanted();
+          return;
+        }
+        // A stalled answer must not hold a waiting dispatch (and the chain behind it) until the
+        // body times out: offline, its load ends now, as `offline` (review m4).
+        this.#abort.abort();
+        this.#abort = new AbortController();
       },
     );
     // A parent missing because its Issue wasn't held yet (its team still loading) loads once the
@@ -303,8 +345,11 @@ export class ContentHydration {
       for (const parent of parents) {
         this.#paged.delete(parent);
         this.#missing.delete(parent);
+        this.#absent.delete(parent);
       }
     });
+    // A view still open on one loads it again (subscribing its team), instead of staying empty.
+    this.#reloadWanted();
   }
 
   /** After a delta batch is applied (`deltas.ts` planned it with `routing`). */
@@ -341,9 +386,7 @@ export class ContentHydration {
       return;
     }
     this.#wanted.delete(parent);
-    const retry = this.#retries.get(parent);
-    if (retry !== undefined) this.#host.timers.clearTimeout(retry.timer);
-    this.#retries.delete(parent);
+    this.#stopRetry(parent);
   }
 
   /** Load until a result that isn't overtaken by a start or resync. */
@@ -356,6 +399,7 @@ export class ContentHydration {
       const result = await this.#loadOnce(parent);
       if (result !== 'stale') {
         if (result === 'failed') this.#scheduleRetry(parent);
+        else if (result === 'ready' || result === 'missing') this.#stopRetry(parent);
         return result;
       }
     }
@@ -451,7 +495,9 @@ export class ContentHydration {
       } catch (error) {
         if (epoch !== this.#epoch.get()) return 'stale';
         if (error instanceof ClientOutdatedError) this.#host.outdated();
-        // §5.3 step 3: a failed request drops the buffer and the mark; the next open retries.
+        // Cut by the connection going down (or failed with it): it loads when back online.
+        if (!this.#online()) return 'offline';
+        // §5.3 step 3: a failed request drops the buffer and the mark; a retry follows.
         return 'failed';
       }
       if (epoch !== this.#epoch.get()) return 'stale';
@@ -506,7 +552,8 @@ export class ContentHydration {
       if (later !== undefined && later.version > version) {
         // A `D` (or an upsert the pool took) is applied already; a buffered upsert goes now.
         if (!later.inPool && later.stored.kind !== 'delete') {
-          changes.push({ kind: 'upsert', model, row: later.stored.row });
+          // Its kind kept: a buffered `A` or `V` sets the archive flag too.
+          changes.push({ kind: later.stored.kind, model, row: later.stored.row });
         }
         continue;
       }
@@ -518,13 +565,16 @@ export class ContentHydration {
       if (packet.version <= floor || packet.stored.kind === 'delete') continue;
       replay.push(packet.stored);
       if (loaded.has(key) || packet.inPool) continue;
-      changes.push({ kind: 'upsert', model: packet.model, row: packet.stored.row });
+      changes.push({ kind: packet.stored.kind, model: packet.model, row: packet.stored.row });
     }
     this.#host.applyBase(changes);
     return replay;
   }
 
-  /** Store an answer at `C`, then the packets buffered above it (storage dropped them). */
+  /**
+   * Store an answer at `C` with the packets buffered above it (storage dropped them), in one
+   * transaction: no tab reads the parent hydrated without them (PLAN-011 S5b review B1).
+   */
   #store(
     parents: ReadonlySet<string>,
     rows: readonly LoadedRow[],
@@ -534,46 +584,46 @@ export class ContentHydration {
     const persistence = this.#host.persistence();
     const generation = this.#host.generation();
     if (persistence === undefined || generation === undefined || parents.size === 0) return;
-    const write = {
+    const write: ContentWrite = {
       parents: [...parents],
       rows: rows.map(({ model, row, archived }) => ({ model, row, archived })),
       version: C,
       openedAt: this.#host.clock(),
+      replay: [...replay].sort((a, b) => a.version - b.version),
     };
     void this.#host
       .enqueue(() =>
         persistence.writeReplica(generation, (storage) => storage.writeContent(generation, write)),
       )
       .catch(() => undefined);
-    if (replay.length === 0) return;
-    const sorted = [...replay].sort((a, b) => a.version - b.version);
-    const last = sorted.at(-1)?.version ?? C;
-    void this.#host
-      .enqueue(() =>
-        persistence.writeReplica(generation, (storage) =>
-          storage.applyChanges(generation, sorted, last),
-        ),
-      )
-      .catch(() => undefined);
   }
 
+  /**
+   * Load an open parent again after a failed load, on the socket's backoff: one record per parent,
+   * whose attempt grows with each failure until a load succeeds or the parent is released.
+   */
   #scheduleRetry(parent: string): void {
-    if (!this.#wanted.has(parent) || this.#retries.has(parent)) return;
-    const attempt = this.#retries.get(parent)?.attempt ?? 0;
+    if (!this.#wanted.has(parent)) return;
+    const previous = this.#retries.get(parent);
+    if (previous?.timer !== undefined) return;
+    const attempt = previous?.attempt ?? 0;
     const timer = this.#host.timers.setTimeout(
       () => {
-        const entry = this.#retries.get(parent);
-        this.#retries.delete(parent);
+        if (this.#retries.get(parent)?.timer !== timer) return;
+        // Fired: the next failure schedules attempt + 1.
+        this.#retries.set(parent, { timer: undefined, attempt: attempt + 1 });
         if (!this.#wanted.has(parent) || this.#paged.has(parent)) return;
-        void this.#settle(parent).then((result) => {
-          if (result === 'failed' && entry !== undefined) {
-            this.#retries.set(parent, { timer: undefined, attempt: entry.attempt + 1 });
-          }
-        });
+        void this.#settle(parent);
       },
       backoffDelay(attempt, this.#host.random()),
     );
     this.#retries.set(parent, { timer, attempt });
+  }
+
+  #stopRetry(parent: string): void {
+    const retry = this.#retries.get(parent);
+    if (retry?.timer !== undefined) this.#host.timers.clearTimeout(retry.timer);
+    this.#retries.delete(parent);
   }
 
   /** Open parents not in the pool load again (after a start, or back online). */
@@ -591,6 +641,7 @@ export class ContentHydration {
     this.#retries.clear();
     this.#loads.clear();
     this.#since.clear();
+    this.#absent.clear();
     this.#inFlight = 0;
     runInAction(() => {
       this.#epoch.set(this.#epoch.get() + 1);
@@ -680,11 +731,8 @@ export class ContentHydration {
 
 /** The visible rows of `model` whose `field` is `value`: by its index if it has one (a backRef's). */
 function byField(pool: ObjectPool, model: string, field: string, value: string): ModelInstance[] {
-  try {
-    return pool.findBy(model, field, value);
-  } catch {
-    return pool.all(model).filter((row) => row[field] === value);
-  }
+  if (pool.hasIndex(model, field)) return pool.findBy(model, field, value);
+  return pool.all(model).filter((row) => row[field] === value);
 }
 
 // ---------------------------------------------------------------------------

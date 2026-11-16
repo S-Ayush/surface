@@ -441,7 +441,12 @@ describe.each(BACKENDS)('$name content storage', (backend) => {
     await storage.finishBootstrap(generation);
     return { storage, generation, name };
   }
-  const answer = (version: number, parents: number[], notes: [number, number, string?][]) => ({
+  const answer = (
+    version: number,
+    parents: number[],
+    notes: [number, number, string?][],
+    replay: StoredChange[] = [],
+  ) => ({
     parents: parents.map(id),
     rows: notes.map(([n, item, body]) => ({
       model: 'Note',
@@ -450,6 +455,7 @@ describe.each(BACKENDS)('$name content storage', (backend) => {
     })),
     version,
     openedAt: 1,
+    replay,
   });
   /** What the stored generation holds for `item`. */
   const content = async (storage: SyncStorage, item: number) => {
@@ -483,6 +489,50 @@ describe.each(BACKENDS)('$name content storage', (backend) => {
       ],
     });
     expect(await storage.readHydrated()).toEqual([id(1)]);
+    expect(await content(storage, 2)).toEqual({ hydrated: false, rows: [] });
+    await storage.close();
+  });
+
+  it('stores the replay above C with the answer: another tab reading right after sees it (§5.3 step 3)', async () => {
+    const { storage: tabA, generation, name } = await seeded();
+    const tabB = backend.name === 'memory' ? tabA : await open(name);
+    // Packets 13–15 arrived while the answer at 12 was in flight; storage dropped them then.
+    await tabA.applyChanges(generation, [note(13, 11, 1, 'Edited'), note(14, 13, 1)], 15);
+    await tabA.writeContent(
+      generation,
+      answer(
+        12,
+        [1, 2],
+        [
+          [11, 1],
+          [12, 1],
+        ],
+        [note(14, 13, 1), note(13, 11, 1, 'Edited'), noteGone(15, 12), note(15, 21, 2)],
+      ),
+    );
+    // In version order, under the delta rules: 11 edited, 12 tombstoned, 13 added.
+    expect(await content(tabB, 1)).toEqual({
+      hydrated: true,
+      rows: [
+        [id(11), 'Edited', 13],
+        [id(13), 'Note 13', 14],
+      ],
+    });
+    expect(await content(tabB, 2)).toEqual({ hydrated: true, rows: [[id(21), 'Note 21', 15]] });
+    await tabA.close();
+    if (tabB !== tabA) await tabB.close();
+  });
+
+  it('replays no upsert of a parent the answer skips, nor over a newer row', async () => {
+    const { storage, generation } = await seeded();
+    await storage.applyChanges(generation, [change('delete', 11, 2)], 11);
+    await storage.writeContent(generation, answer(11, [1], []));
+    await storage.applyChanges(generation, [note(16, 11, 1, 'Newer')], 16);
+    await storage.writeContent(
+      generation,
+      answer(12, [1, 2], [], [note(14, 11, 1, 'Older'), note(14, 21, 2)]),
+    );
+    expect(await content(storage, 1)).toEqual({ hydrated: true, rows: [[id(11), 'Newer', 16]] });
     expect(await content(storage, 2)).toEqual({ hydrated: false, rows: [] });
     await storage.close();
   });

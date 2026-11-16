@@ -463,11 +463,11 @@ export const REACTION_EMOJI = ['👍', '🎉', '👀', '❤️', '👍🏽', '�
 /**
  * Reactions (SPEC-013 AC-5 and AC-22 for reactions; PLAN-013 S4): set and clear on comments and on
  * the issues themselves from every tab, among comment creates and deletes (a delete takes its
- * reactions), with the same faults as `commentCase` and for the same reason: until the client
- * loads content per issue (PLAN-011 S5b), compaction, crashes and late users are left out.
+ * reactions), with the same faults as `commentCase`: crashes and late users load each issue's
+ * content when the tab opens the issue (PLAN-011 S5b); compaction stays out for the issue
+ * property's numbering check (PLAN-011 S8 brings it back).
  */
 export function reactionCase(): fc.Arbitrary<Case> {
-  const kept = new Set(['wait', 'faults', 'disconnect', 'offline', 'restart', 'reload']);
   const reaction = fc.record({
     t: fc.constant('reactionSet'),
     tab,
@@ -495,10 +495,10 @@ export function reactionCase(): fc.Arbitrary<Case> {
     { weight: 1, arbitrary: fc.record({ t: fc.constant('commentDelete'), tab, comment: index }) },
     ...faultSteps.map((arbitrary) => ({
       weight: 1,
-      arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
+      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
     })),
   );
-  return caseOf(step).map((c) => ({ ...c, lateUsers: 0, steps: [...COMMENT_ISSUES, ...c.steps] }));
+  return caseOf(step).map((c) => ({ ...c, steps: [...COMMENT_ISSUES, ...c.steps] }));
 }
 
 /** A UUIDv7 from the case's randomness, as `issue.create` takes, so a case replays exactly. */
@@ -709,6 +709,8 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       const target = pick(readyTabs(live), step.tab);
       const emoji = REACTION_EMOJI[step.emoji % REACTION_EMOJI.length];
       if (target === undefined || emoji === undefined) return;
+      // PLAN-011 S5b: the tab has the issue pages open, so their content is paged in.
+      world.showIssues(target, world.issueIds);
       if (step.on === 'comment') {
         const comment = pick(world.commentIds, step.target);
         if (comment === undefined) return;

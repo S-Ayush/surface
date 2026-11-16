@@ -36,7 +36,10 @@ export interface ContentRouting {
   readonly models: ReadonlyMap<string, ContentModelRef>;
   /** The models content hangs off (Issue in production). */
   readonly parents: ReadonlySet<string>;
-  /** Whether this tab's pool takes content rows of `parent` now: paged in, and not loading. */
+  /**
+   * Whether this tab's pool holds `parent`'s content now (paged in), so its packets go straight
+   * to the pool. A parent still loading isn't: its packets are buffered for the load.
+   */
   inPool(parent: string): boolean;
   /** Whether the `I` of this parent row hydrates it here (its team is subscribed, step 5). */
   hydratesOnInsert(model: string, row: ModelRow): boolean;

@@ -44,6 +44,7 @@ import { ClientOutdatedError, bootstrap } from './bootstrap.js';
 import type { ContentHandle, ContentLoadState } from './content.js';
 import {
   ContentHydration,
+  ContentLoadFailedError,
   ContentUnavailableError,
   contentModels,
   fetchContent,
@@ -341,6 +342,11 @@ export class SyncStore {
    * the server's change reaches the replica (`confirmed`) or the server
    * rejects it (`rejected`, effect rolled back). It stays pending if the store
    * closes first: the mutation stays queued and the next start sends it.
+   *
+   * A content mutation whose issue isn't paged in, and any dispatch behind one,
+   * runs after the wait (SPEC-011 §5.3 step 6): what would throw then (a
+   * refusal, `ContentUnavailableError`, `ContentLoadFailedError`) rejects the
+   * promise instead, with nothing queued and no seq used.
    */
   dispatch<Op extends AnyOperation>(
     op: Op,
@@ -359,6 +365,7 @@ export class SyncStore {
       if (parent !== undefined) {
         const result = await this.#content.ensure(parent);
         if (result === 'unavailable') throw new ContentUnavailableError();
+        if (result === 'failed') throw new ContentLoadFailedError(this.#content.describe(parent));
       }
       return { outcome: this.#usableQueue().dispatch(op, input, options) };
     });

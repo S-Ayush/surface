@@ -172,16 +172,46 @@ describe('subscriptions', () => {
     store.openTeam(id(3));
     await until(() => store.teamLoadState(id(3)) === 'ready');
     hub.putPart(501, 131);
-    // Its content is held once the issue is opened (§5.4).
-    expect(await store.content.open(id(131)).ready).toBe('ready');
+    // Its content is held once the issue is opened (§5.4), and kept only while it is open.
+    const handle = store.content.open(id(131));
+    expect(await handle.ready).toBe('ready');
     hub.putTaskNote(601, 131);
     await until(() => teamView(store).notes[id(601)] !== undefined);
     expect(teamView(store).parts).toEqual({ [id(501)]: id(131) });
+    handle.release();
     store.openTeam(id(4));
     await until(() => !store.followedTeams.has(id(3)));
     await until(() => teamView(store).notes[id(601)] === undefined);
     expect(teamView(store).parts).toEqual({});
     expect(taskIds(store)).toContain(id(131));
+  });
+
+  it('loads an issue still open again after its team is unsubscribed: it subscribes the team and fetches (PLAN-011 S5b)', async () => {
+    const hub = world();
+    const kept = keptMemoryStorage();
+    const { store } = await started(hub, { onDemandLimit: 1, connectStorage: kept.connect });
+    store.openTeam(id(3));
+    await until(() => store.teamLoadState(id(3)) === 'ready');
+    hub.putTaskNote(601, 131);
+    const handle = store.content.open(id(131));
+    expect(await handle.ready).toBe('ready');
+    expect(teamView(store).notes).toEqual({ [id(601)]: id(131) });
+    expect(hub.contentRequests).toHaveLength(1);
+    // Another team's list takes squad 3's on-demand place: the unsubscribe drops 131's content.
+    store.openTeam(id(4));
+    await eventually(() => sentOf(hub, 'unsubscribe').length === 1);
+    // The issue page is still open, so it doesn't stay "loading": squad 3 is subscribed again and
+    // the content fetched, its storage marks having gone with the team.
+    await eventually(() => hub.contentRequests.length === 2);
+    await until(
+      () =>
+        store.content.state(id(131)) === 'ready' &&
+        teamView(store).notes[id(601)] !== undefined &&
+        store.followedTeams.has(id(3)),
+    );
+    hub.putTaskNote(602, 131);
+    await until(() => teamView(store).notes[id(602)] !== undefined);
+    handle.release();
   });
 
   it('follows membership rows: joining a public team subscribes it, leaving unsubscribes it', async () => {

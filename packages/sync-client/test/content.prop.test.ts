@@ -3,9 +3,11 @@
  * S5b), on the fake hub's debug items and their notes: two tabs share one IndexedDB replica.
  * Note writes and deletes, item purges (whose note deletes are not logged), group changes (`D`+`U`),
  * new items, opens and releases in either tab, held and failed content answers, socket drops and
- * resyncs interleave. Once quiet, every item each tab opens shows exactly the server's notes (a
- * fresh fetch), the shared replica stores exactly those for every hydrated item, and a tab started
- * afterwards from the replica alone shows the same.
+ * resyncs interleave. A tab may die mid-run, as it starts a storage call (between an answer and
+ * what follows it, say); a new tab then warm-starts from the replica in its place. Once quiet,
+ * every item each tab opens shows exactly the server's notes (a fresh fetch), the shared replica
+ * stores exactly those for every hydrated item, and a tab started afterwards from the replica
+ * alone shows the same.
  */
 import 'fake-indexeddb/auto';
 import { computeSchemaHash } from '@surface/sync-protocol';
@@ -15,6 +17,7 @@ import type { ContentHandle } from '../src/content.js';
 import type { SocketFactory } from '../src/socket.js';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
+import type { SyncStorage } from '../src/storage/types.js';
 import type { SyncStore } from '../src/store.js';
 import { PROPERTY_SEED } from './support/fc.js';
 import type { HubConnection } from './support/hub.js';
@@ -34,10 +37,39 @@ const PROBE = 9;
 
 type Tab = 0 | 1;
 interface TabHandle {
+  readonly name: string;
   readonly store: SyncStore;
+  readonly life: Life;
   readonly timers: ManualTimers;
   readonly connections: HubConnection[];
   readonly handles: ContentHandle[];
+}
+
+/** A tab's storage calls, and its death (a crash: the store is never closed). */
+interface Life {
+  calls: number;
+  /** Die as this storage call starts. */
+  dieAt: number | undefined;
+  dead: boolean;
+  readonly storages: SyncStorage[];
+  die(): void;
+}
+
+/** `storage`, whose calls never settle once the tab is dead: what it wrote before stays. */
+function mortal(storage: SyncStorage, life: Life): SyncStorage {
+  return new Proxy(storage, {
+    get(target, key, receiver) {
+      const value: unknown = Reflect.get(target, key, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]): unknown => {
+        life.calls += 1;
+        if (life.dieAt !== undefined && life.calls >= life.dieAt) life.die();
+        if (life.dead) return new Promise(() => undefined);
+        const result: unknown = Reflect.apply(value, target, args);
+        return result;
+      };
+    },
+  });
 }
 
 type Command =
@@ -49,6 +81,7 @@ type Command =
   | { kind: 'close'; tab: Tab }
   | { kind: 'hold' | 'release' | 'fail' }
   | { kind: 'drop-socket' | 'tick' | 'resync'; tab: Tab }
+  | { kind: 'kill'; tab: Tab; after: number }
   | { kind: 'yield'; turns: number }
   | { kind: 'wait' };
 
@@ -96,6 +129,14 @@ const command: fc.Arbitrary<Command> = fc.oneof(
     }),
   },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant('wait' as const) }) },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      kind: fc.constant('kill' as const),
+      tab,
+      after: fc.integer({ min: 0, max: 4 }),
+    }),
+  },
 );
 
 /** The server's notes of item `n` (a fresh fetch): id → body; none for an item it doesn't hold. */
@@ -128,11 +169,29 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
       const workspaceId = uniqueName('ws');
       const replica = `surface-${workspaceId}-${USER_ID}`;
       const locks = new FakeLocks();
-      const connect: StorageConnector = (name, models, content) =>
-        IndexedDbStorage.open(name, models, content);
-      const all: SyncStore[] = [];
+      const all: TabHandle[] = [];
+      let born = 0;
       const begin = async (name: string): Promise<TabHandle> => {
         const connections: HubConnection[] = [];
+        const life: Life = {
+          calls: 0,
+          dieAt: undefined,
+          dead: false,
+          storages: [],
+          die: () => {
+            if (life.dead) return;
+            life.dead = true;
+            // The browser closes a dead tab's sockets, database connections and locks.
+            for (const connection of connections) if (connection.isOpen) connection.close(1006);
+            for (const storage of life.storages) storage.close().catch(() => undefined);
+            locks.kill(name);
+          },
+        };
+        const connect: StorageConnector = async (replicaName, models, content) => {
+          const storage = await IndexedDbStorage.open(replicaName, models, content);
+          life.storages.push(storage);
+          return mortal(storage, life);
+        };
         const socket: SocketFactory = (url, handlers) => {
           const client = hub.socket(url, handlers);
           const connection = hub.connections.at(-1);
@@ -146,13 +205,19 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
           locks: locks.forTab(name),
           connection: { socket },
         });
-        all.push(store);
+        const handle: TabHandle = { name, store, life, timers, connections, handles: [] };
+        all.push(handle);
         await store.start();
-        return { store, timers, connections, handles: [] };
+        return handle;
       };
+      /** A dead tab's place goes to a new one, warm-started from the replica. */
+      const revive = async () => {
+        for (const [index, t] of tabs.entries()) {
+          if (t.life.dead) tabs[index] = await begin(`${t.name}-${String((born += 1))}`);
+        }
+      };
+      const tabs = [await begin('a'), await begin('b')];
       try {
-        const tabs = [await begin('a'), await begin('b')];
-
         for (const c of commands) {
           switch (c.kind) {
             case 'note':
@@ -197,8 +262,18 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
               }
               break;
             case 'tick':
-              tabs[c.tab]?.timers.runNext();
+              if (tabs[c.tab]?.life.dead === false) tabs[c.tab]?.timers.runNext();
               break;
+            case 'kill': {
+              const life = tabs[c.tab]?.life;
+              if (life === undefined || life.dead) break;
+              if (c.after > 0) life.dieAt = life.calls + c.after;
+              else {
+                life.die();
+                await revive();
+              }
+              break;
+            }
             case 'resync':
               void tabs[c.tab]?.store.resync().catch(() => undefined);
               break;
@@ -209,6 +284,7 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
             case 'wait':
               hub.holdContent = false;
               hub.releaseContent();
+              await revive();
               await settle(hub, tabs);
               break;
           }
@@ -218,6 +294,9 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
         hub.holdContent = false;
         hub.failContent = 0;
         hub.releaseContent();
+        // A tab set to die and not dead yet dies now, before quiet: its writes so far stay.
+        for (const t of tabs) if (t.life.dieAt !== undefined) t.life.die();
+        await revive();
         await settle(hub, tabs);
         for (const t of tabs) await expectFetched(hub, t);
         // Closing waits for every queued storage write.
@@ -244,7 +323,8 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
         await settle(hub, [later]);
         await expectFetched(hub, later);
       } finally {
-        for (const store of all) await store.close();
+        // A dead tab's store is never closed, as in a crash; its storage calls never settle.
+        for (const t of all) if (!t.life.dead) await t.store.close();
       }
     }),
     {
@@ -261,6 +341,22 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
             { kind: 'note', item: 1, k: 2, body: 'A' },
             { kind: 'regroup', item: 1 },
             { kind: 'release' },
+          ],
+        ],
+        // Review B1: the tab dies as it starts the storage call after the answer's write; the tab
+        // that takes its place pages item 1 in from the replica, which must hold the replayed note.
+        [
+          [
+            { kind: 'hold' },
+            { kind: 'open', tab: 0, item: 1 },
+            { kind: 'yield', turns: 5 },
+            { kind: 'note', item: 1, k: 1, body: 'B' },
+            { kind: 'note', item: 1, k: 2, body: 'A' },
+            { kind: 'yield', turns: 5 },
+            { kind: 'kill', tab: 0, after: 2 },
+            { kind: 'release' },
+            { kind: 'yield', turns: 5 },
+            { kind: 'wait' },
           ],
         ],
         // E23: a purge while the answer is held; E18: the other tab keeps item 2 live.

@@ -64,7 +64,7 @@ export type { LockMode, ReplicaLocks } from './locks.js';
 export type { TeamLoadState } from './subscriptions.js';
 export type { PartialLoading } from './partial.js';
 // Per-issue content (SPEC-011 §5.3, §5.4, PLAN-011 S5b): `store.content` and its refusal offline.
-export { ContentUnavailableError } from './content.js';
+export { ContentLoadFailedError, ContentUnavailableError } from './content.js';
 export type { ContentHandle, ContentLoadState } from './content.js';
 export type { ContentAccess } from './store.js';
 export type { ContentModelRef } from './storage/types.js';

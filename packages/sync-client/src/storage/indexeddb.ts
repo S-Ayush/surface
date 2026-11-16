@@ -37,6 +37,7 @@ import type {
 import {
   contentByModel,
   contentRowIsNewer,
+  replayed,
   goneParents,
   sweptIssues,
   teamIssues,
@@ -325,6 +326,13 @@ export class IndexedDbStorage implements SyncStorage {
         continue;
       }
       await store.put({ id: row.id, version: write.version, archived, row } satisfies StoredRecord);
+    }
+    for (const change of replayed(write.replay, parents, this.#contentByModel)) {
+      const store = tx.objectStore(rowStore(change.model));
+      const id = changedId(change);
+      const existing: unknown = await store.get(id);
+      const record = recordFor(change, isStoredRecord(existing) ? existing : undefined);
+      if (record) await store.put(record);
     }
     for (const parent of parents) {
       const mark: HydratedMark = { id: parent, openedAt: write.openedAt };

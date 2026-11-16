@@ -28,6 +28,7 @@ import type {
 import {
   contentByModel,
   contentRowIsNewer,
+  replayed,
   goneParents,
   sweptIssues,
   teamIssues,
@@ -163,6 +164,12 @@ export class MemoryStorage implements SyncStorage {
         const table = this.#table(model);
         if (!contentRowIsNewer(write.version, table.get(row.id))) continue;
         table.set(row.id, { id: row.id, version: write.version, archived, row });
+      }
+      for (const change of replayed(write.replay, parents, this.#contentByModel)) {
+        const table = this.#table(change.model);
+        const id = changedId(change);
+        const record = recordFor(change, table.get(id));
+        if (record) table.set(id, record);
       }
       for (const parent of parents) this.#hydrated.set(parent, write.openedAt);
     });

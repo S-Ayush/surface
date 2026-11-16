@@ -1,9 +1,10 @@
 // SPEC-011 §5.3 step 6, §5.4, AC-22, E11; PLAN-011 S5b: a content mutation waits for its parent's
 // hydration and page-in before its `optimistic` runs and before it takes a seq; later dispatches
 // wait behind it; offline, a parent never hydrated refuses at once. Fake hub, fake-indexeddb.
+import { OptimisticRefusal } from '@surface/operations';
 import { computeSchemaHash } from '@surface/sync-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ContentUnavailableError } from '../src/content.js';
+import { ContentLoadFailedError, ContentUnavailableError } from '../src/content.js';
 import { InvalidInputError } from '../src/queue.js';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
@@ -105,6 +106,47 @@ describe('dispatching a content mutation (SPEC-011 §5.3 step 6, AC-22)', () => 
     ]);
   });
 
+  it('refuses with "Couldn’t load … Try again." when loading the item fails while online (D14)', async () => {
+    const { hub, store } = await started();
+    hub.failContent = 1;
+    const refused = store.dispatch(debugNote, { id: id(22), itemId: id(2), body: 'x' });
+    await expect(refused).rejects.toThrow(ContentLoadFailedError);
+    // Not "Available when online": the connection is up, so trying again may work.
+    await expect(refused).rejects.toThrow("Couldn't load this issue. Try again.");
+    expect(store.connection).toBe('online');
+    expect(store.pending).toEqual([]);
+    // The same mutation goes through once the item loads.
+    const retried = store.dispatch(debugNote, { id: id(22), itemId: id(2), body: 'x' });
+    expect(await retried).toEqual({ status: 'confirmed' });
+  });
+
+  it('refuses a mutation its prediction refuses after the wait, with no seq used and the chain free (SPEC-010 §5)', async () => {
+    const { hub, store } = await started();
+    hub.holdContent = true;
+    // Only once item 1 is paged in does the store show that note 19 doesn't exist.
+    const refused = store.dispatch(debugNote, {
+      id: id(19),
+      itemId: id(1),
+      body: 'Edited',
+      existing: true,
+    });
+    const after = store.dispatch(debugTouch, { id: id(2) });
+    await eventually(() => hub.contentRequests.length === 1);
+    hub.releaseContent();
+    await expect(refused).rejects.toThrow(OptimisticRefusal);
+    await expect(refused).rejects.toThrow('This note was deleted.');
+    expect(notes(store, 1)[id(19)]).toBeUndefined();
+    expect(await after).toEqual({ status: 'confirmed' });
+    expect(await store.dispatch(debugNote, { id: id(11), itemId: id(1), body: 'Mine' })).toEqual({
+      status: 'confirmed',
+    });
+    // No gap: the refused mutation took no seq.
+    expect(hub.mutateRequests.flatMap((r) => r.mutations.map((m) => [m.seq, m.op]))).toEqual([
+      [1, 'debug.touch'],
+      [2, 'debug.note'],
+    ]);
+  });
+
   it('refuses invalid input at once, before waiting for anything', async () => {
     const { hub, store } = await started();
     expect(() => store.dispatch(debugNote, { id: id(13), itemId: id(1), body: '' })).toThrow(
@@ -140,6 +182,20 @@ describe('offline (E11, AC-22)', () => {
     expect(hub.contentRequests).toHaveLength(1);
   });
 
+  it('ends a content mutation waiting on a load when the connection drops: "Available when online"', async () => {
+    const { hub, store, offline } = await started();
+    hub.holdContent = true;
+    const refused = store.dispatch(debugNote, { id: id(22), itemId: id(2), body: 'x' });
+    await eventually(() => hub.contentRequests.length === 1);
+    // The answer never comes; going offline aborts the load instead of waiting for its timeout.
+    await offline();
+    await expect(refused).rejects.toThrow(ContentUnavailableError);
+    expect(store.content.state(id(2))).toBe('offline');
+    // The chain is free: a later dispatch is queued at once.
+    void store.dispatch(debugTouch, { id: id(2) });
+    expect(store.pending.map((p) => p.op)).toEqual(['debug.touch']);
+  });
+
   it('refuses a mutation named through a note the store doesn’t hold', async () => {
     const { store, offline } = await started();
     await offline();
@@ -167,6 +223,21 @@ describe('a parent named through a content row (SPEC-011 §5.3 step 6)', () => {
     expect(await edited).toEqual({ status: 'confirmed' });
     expect(notes(store, 1)[id(15)]).toBe('Edited');
     expect(hub.contentRequests).toHaveLength(1);
+  });
+
+  it('sends a mutation named through a note the store doesn’t hold while online, with no content request (D13)', async () => {
+    const { hub, store } = await started();
+    const outcome = store.dispatch(debugNote, {
+      id: id(21),
+      itemId: id(2),
+      body: 'Edited',
+      viaNote: true,
+    });
+    await until(() => store.pending.length === 1);
+    expect(hub.contentRequests).toEqual([]);
+    expect(await outcome).toEqual({ status: 'confirmed' });
+    expect(hub.notes.get(id(21))?.['body']).toBe('Edited');
+    expect(hub.contentRequests).toEqual([]);
   });
 
   it('resolves a held note to its item and dispatches at once once that item is paged in', async () => {

@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 import { fetchContent } from '../src/content.js';
 import { ObjectPool } from '../src/pool.js';
+import { BACKOFF_MAX_MS, backoffDelay } from '../src/socket.js';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
 import type { SyncStore } from '../src/store.js';
@@ -220,6 +221,54 @@ describe('buffering while a request is in flight (§5.3 steps 1–3)', () => {
     hub.contentStatus = 200;
     expect(await store.content.open(id(1)).ready).toBe('ready');
     expect(Object.keys(notes(store, 1))).toEqual([id(11), id(12), id(13)]);
+  });
+});
+
+describe('a failed load (§5.3 step 3)', () => {
+  it('retries an open item on a growing backoff, up to the cap, until it loads', async () => {
+    const { hub, store, timers } = await itemWorld();
+    hub.failContent = 6;
+    const handle = store.content.open(id(1));
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const delay = backoffDelay(attempt, 0);
+      await eventually(() => hub.failContent === 5 - attempt && timers.pending.includes(delay));
+      timers.advance(delay);
+    }
+    expect(backoffDelay(5, 0)).toBe(BACKOFF_MAX_MS / 2);
+    await until(() => store.content.state(id(1)) === 'ready');
+    expect(notes(store, 1)).toEqual({ [id(11)]: 'Note 11', [id(12)]: 'Note 12' });
+    expect(hub.contentRequests).toEqual([[issueParent(id(1))]]);
+    handle.release();
+  });
+
+  it('cancels the pending retry when the item is released', async () => {
+    const { hub, store, timers } = await itemWorld();
+    hub.failContent = 1;
+    const handle = store.content.open(id(1));
+    const delay = backoffDelay(0, 0);
+    await eventually(() => hub.failContent === 0 && timers.pending.includes(delay));
+    handle.release();
+    expect(timers.pending).not.toContain(delay);
+    timers.advance(delay);
+    await idle();
+    expect(hub.contentRequests).toEqual([]);
+  });
+
+  it('loads an open item that couldn’t load offline once the connection is back', async () => {
+    const { hub, store, timers } = await itemWorld();
+    hub.last.close();
+    await until(() => store.connection === 'offline');
+    const handle = store.content.open(id(2));
+    expect(await handle.ready).toBe('offline');
+    expect(hub.contentRequests).toEqual([]);
+    await eventually(() => {
+      if (store.connection === 'offline') timers.runNext();
+      return store.connection === 'online';
+    });
+    await until(() => store.content.state(id(2)) === 'ready');
+    expect(notes(store, 2)).toEqual({ [id(21)]: 'Note 21' });
+    expect(hub.contentRequests).toEqual([[issueParent(id(2))]]);
+    handle.release();
   });
 });
 

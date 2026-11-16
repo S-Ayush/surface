@@ -142,6 +142,48 @@ describe('team cursors across tabs', () => {
     expect((await stored(workspaceId)).meta?.teamThrough?.[id(3)]).toBe(head);
   });
 
+  it('loads an open issue again after the reload sweeps it: once it shows up in another team, it fetches (PLAN-011 S5b)', async () => {
+    const hub = world();
+    hub.putTaskNote(601, 130);
+    const workspaceId = uniqueName('ws');
+    const locks = new FakeLocks();
+    const a = await tab(hub, workspaceId, locks, 'a');
+    const b = await tab(hub, workspaceId, locks, 'b');
+    await open(a, 3);
+    expect(await a.content.open(id(130)).ready).toBe('ready');
+    await eventually(async () => {
+      let hydrated: readonly string[] = [];
+      await onReplica(workspaceId, async (storage) => (hydrated = await storage.readHydrated()));
+      return hydrated.includes(id(130));
+    });
+    await a.close();
+    // While only tab B (not following squads 3 and 4) is open, task 130 moves to squad 4.
+    hub.putTask(130, 4, { creatorId: OTHER_USER });
+    hub.putTask(111, 1, { creatorId: OTHER_USER });
+    await until(() => teamView(b).tasks[id(111)] !== undefined);
+    const head = hub.head;
+    await eventually(async () => (await stored(workspaceId)).meta?.lastSyncId === head);
+
+    // A new tab finds squad 3 behind; its issue page for 130 opens from the replica first.
+    hub.holdPartial = true;
+    const again = await tab(hub, workspaceId, locks, 'a2');
+    const handle = again.content.open(id(130));
+    expect(await handle.ready).toBe('ready');
+    expect(teamView(again).notes).toEqual({ [id(601)]: id(130) });
+    // The reload's answer lacks 130: swept, with its content.
+    hub.holdPartial = false;
+    hub.releasePartial();
+    await until(() => teamView(again).tasks[id(130)] === undefined);
+    expect(teamView(again).notes).toEqual({});
+    expect(hub.contentRequests).toHaveLength(1); // tab A's, before it closed
+    // Squad 4's list brings 130 back: the page still open loads its content again.
+    await open(again, 4);
+    await eventually(() => hub.contentRequests.length === 2);
+    await until(() => teamView(again).notes[id(601)] !== undefined);
+    expect(again.content.state(id(130))).toBe('ready');
+    handle.release();
+  });
+
   it("keeps a team's stored rows while another tab follows it, and removes them after (E36)", async () => {
     const hub = world();
     const workspaceId = uniqueName('ws');
