@@ -63,3 +63,8 @@ export type { LockMode, ReplicaLocks } from './locks.js';
 // Partial issue loading (SPEC-011 §5.7, PLAN-011 S4c): team load states for the views.
 export type { TeamLoadState } from './subscriptions.js';
 export type { PartialLoading } from './partial.js';
+// Per-issue content (SPEC-011 §5.3, §5.4, PLAN-011 S5b): `store.content` and its refusal offline.
+export { ContentUnavailableError } from './content.js';
+export type { ContentHandle, ContentLoadState } from './content.js';
+export type { ContentAccess } from './store.js';
+export type { ContentModelRef } from './storage/types.js';

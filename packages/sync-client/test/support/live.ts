@@ -17,8 +17,8 @@ import { ManualTimers } from './timers.js';
 
 export const CLIENT_ID = '0190f4c4-0000-7000-8000-00000000c11e';
 
-export const memoryStorage: StorageConnector = (_name, models) =>
-  Promise.resolve(new MemoryStorage(models));
+export const memoryStorage: StorageConnector = (_name, models, content) =>
+  Promise.resolve(new MemoryStorage(models, content));
 
 /** A store wired to `hub`, with manual timers and no jitter. */
 export function liveStore(
@@ -66,8 +66,8 @@ export async function idle(turns = 20): Promise<void> {
 /** A memory-storage connector that keeps the storage it opened, to inspect the queue. */
 export function keptMemoryStorage() {
   const kept: { storage?: MemoryStorage } = {};
-  const connect: StorageConnector = (_name, models) => {
-    kept.storage = new MemoryStorage(models);
+  const connect: StorageConnector = (_name, models, content) => {
+    kept.storage = new MemoryStorage(models, content);
     return Promise.resolve(kept.storage);
   };
   const pending = async () => (await kept.storage?.readQueue())?.pending ?? [];
@@ -82,7 +82,18 @@ export function keptMemoryStorage() {
   const lastSyncId = async () => (await kept.storage?.readMeta())?.lastSyncId ?? 0;
   /** The persisted queue: every client (with its `nextSeq`) and pending record. */
   const queue = async () => kept.storage?.readQueue();
-  return { connect, persisted, has, stored, lastSyncId, queue };
+  /** A parent's stored content (SPEC-011 §5.4): whether it is hydrated, and its rows' ids. */
+  const content = async (parent: string) => {
+    const meta = await kept.storage?.readMeta();
+    const read = meta && (await kept.storage?.readContent(meta.generation, parent));
+    return {
+      hydrated: read?.hydrated ?? false,
+      ids: (read?.records ?? []).map((record) => record.row.id).sort(),
+    };
+  };
+  /** The stored hydrated set, sorted. */
+  const hydrated = async () => [...((await kept.storage?.readHydrated()) ?? [])].sort();
+  return { connect, persisted, has, stored, lastSyncId, queue, content, hydrated, kept };
 }
 
 /** Wait for an observable condition on the store; fails after `ms` instead of hanging. */

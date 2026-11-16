@@ -6,6 +6,8 @@
  *
  * With an Issue model, it loads issues partially (SPEC-011 §5.7, PLAN-011 S4c): the socket names
  * the public teams this tab follows, and `subscriptions.ts` loads, keeps and removes their rows.
+ * Content models (comments, history) load per issue (SPEC-011 §5.3, §5.4, PLAN-011 S5b):
+ * `content.ts` hydrates and pages them in, and a content mutation waits for its issue first.
  *
  * Once ready, the store connects the socket and applies each `deltas`
  * message to the pool at once, then persists it as one storage write. Storage
@@ -14,8 +16,13 @@
  * MobX batch, so a view never sees a change twice or not at all.
  */
 import type { ClientRefResolver } from '@surface/domain';
-import type { ModelDef } from '@surface/domain/model';
-import type { AnyOperation, InputOf, OperationRegistry } from '@surface/operations';
+import type { ModelDef, ModelRow } from '@surface/domain/model';
+import type {
+  AnyOperation,
+  ContentParentRef,
+  InputOf,
+  OperationRegistry,
+} from '@surface/operations';
 import { registry as defaultRegistry } from '@surface/operations';
 import type { DeltasMessage, ResyncMessage, SyncGroup } from '@surface/sync-protocol';
 import {
@@ -34,6 +41,13 @@ import type { TeamLoadState } from './subscriptions.js';
 import { TeamSubscriptions } from './subscriptions.js';
 import type { BootstrapProgress, FetchLike } from './bootstrap.js';
 import { ClientOutdatedError, bootstrap } from './bootstrap.js';
+import type { ContentHandle, ContentLoadState } from './content.js';
+import {
+  ContentHydration,
+  ContentUnavailableError,
+  contentModels,
+  fetchContent,
+} from './content.js';
 import type { AppliedPacket } from './deltas.js';
 import { planDeltas } from './deltas.js';
 import type { HydrateResult } from './hydrate.js';
@@ -47,7 +61,7 @@ import { Persistence } from './persistence.js';
 import type { ReadonlyPool } from './pool.js';
 import { ObjectPool } from './pool.js';
 import type { DispatchOptions, MutationOutcome, PendingView, Rejection } from './queue.js';
-import { MutationQueue } from './queue.js';
+import { InvalidInputError, MutationQueue } from './queue.js';
 import { createClientRefResolver, poolRefSource } from './refs.js';
 import type { StorageConnector } from './storage/open.js';
 import { openStorage, replicaName } from './storage/open.js';
@@ -156,6 +170,19 @@ const QUEUE_LOST = new QueueFencedError().message;
 /** Rejected deliveries of one message before the store re-bootstraps instead. */
 const REJECTED_MESSAGE_LIMIT = 3;
 
+/** Per-issue content (SPEC-011 §5.3, §5.4): `store.content`. */
+export interface ContentAccess {
+  /**
+   * Page an issue's content in from the replica, or fetch it; it stays live while the handle is
+   * held. Opening an issue of a public team the user isn't a member of subscribes that team.
+   */
+  open(issueId: string): ContentHandle;
+  /** Whether the issue's content can be shown. Observable. */
+  state(issueId: string): ContentLoadState;
+  /** The issue's content rows in memory, per content model, by id. Observable. */
+  rows(issueId: string): Readonly<Record<string, readonly ModelRow[]>>;
+}
+
 /** Where the replica position stands after a start or resync. */
 export interface ReplicaPosition {
   readonly lastSyncId: number;
@@ -216,6 +243,13 @@ export class SyncStore {
   #lost = false;
   readonly #rules: PartialRules | undefined;
   readonly #teams: TeamSubscriptions | undefined;
+  readonly #content: ContentHydration;
+  /**
+   * Content dispatches wait for their issue in call order (SPEC-011 §5.3 step 6): a later
+   * dispatch, content or not, takes its seq after them.
+   */
+  #chain: Promise<unknown> = Promise.resolve();
+  #chained = 0;
 
   constructor(options: SyncStoreOptions) {
     this.#options = options;
@@ -228,6 +262,7 @@ export class SyncStore {
     this.#overlay = new OverlayEngine(this.#pool, () => options.userId);
     this.#rules = partialRules(options.models, options.partial);
     this.#teams = this.#rules && this.#subscriptions(this.#rules);
+    this.#content = this.#contentHydration();
     const connection = options.connection ?? {};
     const online = connection.online ?? windowOnline();
     this.#socket = new SyncSocket({
@@ -312,6 +347,31 @@ export class SyncStore {
     input: InputOf<Op>,
     options?: DispatchOptions,
   ): Promise<MutationOutcome> {
+    const queue = this.#usableQueue();
+    const parent = this.#contentParentOf(op, input);
+    if (this.#chained === 0 && (parent === undefined || this.#content.readyFor(parent))) {
+      return queue.dispatch(op, input, options);
+    }
+    // SPEC-011 §5.3 step 6: hydrate and page the issue in before `optimistic` runs and before the
+    // seq is taken; later dispatches queue behind, so seqs keep the call order.
+    this.#chained += 1;
+    const run = this.#chain.then(async () => {
+      if (parent !== undefined) {
+        const result = await this.#content.ensure(parent);
+        if (result === 'unavailable') throw new ContentUnavailableError();
+      }
+      return { outcome: this.#usableQueue().dispatch(op, input, options) };
+    });
+    const settled = run.finally(() => {
+      this.#chained -= 1;
+    });
+    this.#chain = settled.catch(() => undefined);
+    // Wrapped, so the chain waits for the seq, not for the server's answer.
+    return settled.then(({ outcome }) => outcome);
+  }
+
+  /** The queue a dispatch goes to, or why there is none. */
+  #usableQueue(): MutationQueue {
     const queue = this.#mutations.get();
     if (this.status === 'outdated') {
       throw new Error('Surface was updated. Reload the page to keep working.');
@@ -322,7 +382,28 @@ export class SyncStore {
         'Changes cannot be saved yet. Wait for the workspace to load, then try again.',
       );
     }
-    return queue.dispatch(op, input, options);
+    return queue;
+  }
+
+  /** The content parent a mutation names, from its validated input (`InvalidInputError` first). */
+  #contentParentOf<Op extends AnyOperation>(
+    op: Op,
+    input: InputOf<Op>,
+  ): ContentParentRef | undefined {
+    if (op.kind !== 'mutation' || op.contentParent === undefined) return undefined;
+    const parsed = op.input.safeParse(input);
+    if (!parsed.success) throw new InvalidInputError(op.name, parsed.error.issues);
+    return op.contentParent(parsed.data);
+  }
+
+  /** Per-issue content: open, read and watch it (SPEC-011 §5.3, §5.4). */
+  get content(): ContentAccess {
+    const content = this.#content;
+    return {
+      open: (issueId) => content.open(issueId),
+      state: (issueId) => content.state(issueId),
+      rows: (issueId) => content.rows(issueId),
+    };
   }
 
   /** The models this store syncs, by name (for the inspector's row counts). */
@@ -504,6 +585,7 @@ export class SyncStore {
     this.#resyncPending = false;
     this.#mutations.get()?.setOnline(false);
     this.#teams?.close();
+    this.#content.close();
     this.#abort.abort();
     this.#abort = new AbortController();
     // Queued, so the running task settles first and a later `start` runs after.
@@ -743,7 +825,13 @@ export class SyncStore {
     if (position === undefined) return 'pause'; // `ready` always has one; this narrows.
     let plan;
     try {
-      plan = planDeltas(this.#pool, message, position.lastSyncId, this.#rules);
+      plan = planDeltas(
+        this.#pool,
+        message,
+        position.lastSyncId,
+        this.#rules,
+        this.#content.enabled ? this.#content.routing : undefined,
+      );
     } catch (error) {
       if (!(error instanceof ProtocolError)) throw error;
       // A row that does not match its model: drop the connection and retry.
@@ -784,6 +872,7 @@ export class SyncStore {
           this.#confirm(plan.lastSyncId, message.ack, touched);
         });
         this.#teams?.afterDeltas(plan);
+        this.#content.afterDeltas(plan);
         const persistence = this.#persistence.get();
         const { generation } = position;
         if (persistence && generation !== undefined) {
@@ -791,7 +880,7 @@ export class SyncStore {
           const teams = this.#teams?.currentTeams();
           void this.#enqueue(() =>
             persistence.writeReplica(generation, (storage) =>
-              storage.applyChanges(generation, plan.stored, plan.lastSyncId, teams),
+              storage.applyChanges(generation, plan.stored, plan.lastSyncId, teams, plan.hydrated),
             ),
           );
         }
@@ -912,6 +1001,7 @@ export class SyncStore {
       this.#replica,
       names,
       this.#options.connectStorage,
+      contentModels(this.#options.models),
     );
     if (signal.aborted) {
       await storage.close();
@@ -963,13 +1053,7 @@ export class SyncStore {
       connection: () => this.#socket.state,
       appliedId: () => (this.status === 'ready' ? this.#position.get()?.lastSyncId : undefined),
       persistence: () => this.#persistence.get(),
-      generation: () => {
-        const generation = this.#position.get()?.generation;
-        const persistence = this.#persistence.get();
-        return generation !== undefined && persistence?.isCurrent(generation)
-          ? generation
-          : undefined;
-      },
+      generation: () => this.#currentGeneration(),
       enqueue: (task) => {
         void this.#enqueue(task).catch(() => undefined);
       },
@@ -987,7 +1071,54 @@ export class SyncStore {
           timers: this.#timers,
         }),
       outdated: () => this.#outdated(),
+      forgetContent: (issues) => this.#content.forget(issues),
     });
+  }
+
+  /** Content hydration's view of this store (SPEC-011 §5.3, §5.4). */
+  #contentHydration(): ContentHydration {
+    const models = contentModels(this.#options.models);
+    return new ContentHydration({
+      pool: this.#pool,
+      models,
+      rules: this.#rules,
+      timers: this.#timers,
+      random: this.#options.connection?.random ?? Math.random,
+      clock: () => (this.#options.clock ?? Date.now)(),
+      connection: () => this.#socket.state,
+      ready: () => this.status === 'ready',
+      followedTeams: () => this.followedTeams,
+      openTeam: (teamId) => this.openTeam(teamId),
+      whenTeamLoaded: (teamId) => this.whenTeamLoaded(teamId),
+      resolveRef: (type, value) => {
+        const found = this.#refs.resolve(type, value);
+        return found.status === 'found' ? found.entity.id : undefined;
+      },
+      persistence: () => this.#persistence.get(),
+      generation: () => this.#currentGeneration(),
+      enqueue: (task) => this.#enqueue(task),
+      applyBase: (changes) => this.#applyServerRows(changes, true),
+      fetchContent: (parents, signal) =>
+        fetchContent({
+          fetch: this.#options.fetch,
+          baseUrl: this.#options.baseUrl ?? '',
+          userId: this.#options.userId,
+          schemaHash: this.schemaHash,
+          parents,
+          pool: this.#pool,
+          models,
+          signal,
+          timers: this.#timers,
+        }),
+      outdated: () => this.#outdated(),
+    });
+  }
+
+  /** The generation storage writes go to: the position's, while it is still current. */
+  #currentGeneration(): string | undefined {
+    const generation = this.#position.get()?.generation;
+    const persistence = this.#persistence.get();
+    return generation !== undefined && persistence?.isCurrent(generation) ? generation : undefined;
   }
 
   /** IndexedDB is shared by the replica's tabs; the memory fallback is this tab's alone. */
@@ -995,14 +1126,23 @@ export class SyncStore {
     return this.#persistence.get()?.storage.kind === 'indexeddb';
   }
 
-  /** Server rows outside a delta message (a partial answer, a removal): base, then the overlay. */
-  #applyServerRows(changes: readonly BaseChange[]): void {
-    if (changes.length === 0) return;
+  /**
+   * Server rows outside a delta message (a partial answer, a removal, paged-in content): base,
+   * then the overlay. `rebuild`: always rebuild it, as paging in must (SPEC-011 §5.4): a pending
+   * mutation's `find` or `patch` saw nothing of these rows before.
+   */
+  #applyServerRows(changes: readonly BaseChange[], rebuild = false): void {
+    if (changes.length === 0 && !rebuild) return;
     runInAction(() => {
       this.#pool.applyBase(changes);
-      const touched = changes.some((change) =>
-        this.#overlay.dependsOn(change.model, change.kind === 'delete' ? change.id : change.row.id),
-      );
+      const touched =
+        rebuild ||
+        changes.some((change) =>
+          this.#overlay.dependsOn(
+            change.model,
+            change.kind === 'delete' ? change.id : change.row.id,
+          ),
+        );
       const queue = this.#mutations.get();
       if (touched && queue !== undefined) this.#overlay.rebuild(queue.mutations);
     });
@@ -1019,6 +1159,8 @@ export class SyncStore {
       this.#progress.set(undefined);
       this.#status.set('ready');
     });
+    // SPEC-011 §5.3 step 7: the new base holds no content; open issues page in again.
+    this.#content.reset();
   }
 
   #setStatus(status: SyncStatus): void {

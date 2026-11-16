@@ -79,6 +79,8 @@ export interface SubscriptionHost {
   applyBase(changes: readonly BaseChange[]): void;
   fetchPartial(teams: readonly string[], signal: AbortSignal): Promise<PartialAnswer>;
   outdated(): void;
+  /** These issues' content left the pool: they are no longer paged in (SPEC-011 §5.3, `content.ts`). */
+  forgetContent(issues: Iterable<string>): void;
 }
 
 /** Where the replica stands after a start: a cold bootstrap's groups, or a warm start's cursors. */
@@ -584,7 +586,8 @@ export class TeamSubscriptions {
           changes.push({ kind: 'delete', model: child.model, id: row.id });
         }
       }
-      // TODO(PLAN-011 S5b): drop the hydration marks of the swept issues with their content.
+      // SPEC-011 §5.3 step 4: a swept issue's content goes with it; storage drops its marks.
+      this.#host.forgetContent(swept);
       for (const content of rules.shape.content) {
         for (const { row } of pool.baseRows(content.model)) {
           if (swept.has(String(row[content.field])) && !newer(content.model, row.id)) {
@@ -713,7 +716,12 @@ export class TeamSubscriptions {
         live.add(row.id);
       }
     }
-    // TODO(PLAN-011 S5b): drop the hydration marks of these issues with their content.
+    // SPEC-011 §5.7: content is held only for issues of followed teams. Storage keeps its marks:
+    // `removeTeamRows` drops them when the team leaves the replica.
+    const unlive = [...pool.baseRows(rules.issue)]
+      .map(({ row }) => row.id)
+      .filter((id) => !live.has(id));
+    this.#host.forgetContent(unlive);
     for (const child of [...rules.shape.children, ...rules.shape.content]) {
       for (const { row } of pool.baseRows(child.model)) {
         if (!live.has(String(row[child.field]))) {

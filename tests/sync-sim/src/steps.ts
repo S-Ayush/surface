@@ -423,19 +423,15 @@ const COMMENT_ISSUES: readonly Step[] = [
 
 /**
  * Comment threads (SPEC-013 AC-5 for comments; reactions join in PLAN-013 S4): comments, replies,
- * edits, deletes, resolves and reopens on two issues from every tab, with the faults a tab that
- * keeps its replica survives (network faults, socket drops, server restarts, reloads).
- *
- * Left out until the client loads content per issue (PLAN-011 S5b): a tab bootstraps content-less
- * (content is not in the bootstrap), so steps that make a tab bootstrap again after the first
- * comment (compaction, a crash before its replica is complete, a late user's first tab) would
- * leave it without comments the server has. `crash` is out with them: the tab reopened for its
- * user at the end may bootstrap.
+ * edits, deletes, resolves and reopens on two issues from every tab, with the faults: a tab that
+ * bootstraps again (a crash, a late user's first tab) loads each issue's comments when it opens
+ * the issue (PLAN-011 S5b). A comment step acts from the issue pages the tab shows. Without
+ * compaction, as `issueCase`: the issue property's numbering check reads the commit order from
+ * `sync_log`.
  */
 export function commentCase(): fc.Arbitrary<Case> {
   const comment = index;
   const commentStep = (arbitrary: fc.Arbitrary<Step>) => ({ weight: 6, arbitrary });
-  const kept = new Set(['wait', 'faults', 'disconnect', 'offline', 'restart', 'reload']);
   const step = fc.oneof(
     commentStep(
       fc.record({
@@ -452,10 +448,10 @@ export function commentCase(): fc.Arbitrary<Case> {
     commentStep(fc.record({ t: fc.constant('commentReopen'), tab, comment })),
     ...faultSteps.map((arbitrary) => ({
       weight: 1,
-      arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
+      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
     })),
   );
-  return caseOf(step).map((c) => ({ ...c, lateUsers: 0, steps: [...COMMENT_ISSUES, ...c.steps] }));
+  return caseOf(step).map((c) => ({ ...c, steps: [...COMMENT_ISSUES, ...c.steps] }));
 }
 
 /**
@@ -663,6 +659,8 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
     case 'commentCreate': {
       const target = pick(readyTabs(live), step.tab);
       if (target === undefined) return;
+      // PLAN-011 S5b: the tab has the issue pages open, so their comments are paged in.
+      world.showIssues(target, world.issueIds);
       const parent = step.parent === undefined ? undefined : pick(world.commentIds, step.parent);
       const held = parent === undefined ? undefined : target.store.pool.get(Comment, parent);
       const shown = world.issueIds.filter((id) => target.store.pool.get(Issue, id) !== undefined);
@@ -688,6 +686,8 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       const target = pick(readyTabs(live), step.tab);
       const comment = pick(world.commentIds, step.comment);
       if (target === undefined || comment === undefined) return;
+      // PLAN-011 S5b: the tab has the issue pages open, so their comments are paged in.
+      world.showIssues(target, world.issueIds);
       if (step.t === 'commentEdit') {
         // As the edit box does: from the version on screen; a comment the tab lacks isn't edited.
         const row = target.store.pool.get(Comment, comment);

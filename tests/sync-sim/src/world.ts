@@ -161,8 +161,8 @@ export class World {
         }
       },
     };
-    const connectStorage: StorageConnector = async (replica, models) => {
-      const storage = await IndexedDbStorage.open(replica, models);
+    const connectStorage: StorageConnector = async (replica, models, content) => {
+      const storage = await IndexedDbStorage.open(replica, models, content);
       state.storages.push(storage);
       return instrumented(storage, hooks);
     };
@@ -254,23 +254,61 @@ export class World {
   dispatch<Op extends AnyOperation>(tab: Tab, op: Op, input: InputOf<Op>): boolean {
     if (!tab.alive) return false;
     let outcome: Promise<MutationOutcome>;
+    // A content mutation may wait for its issue's content before it is queued (SPEC-011 §5.3
+    // step 6, PLAN-011 S5b): it counts from its seq on.
+    let record: Dispatched | undefined;
+    const onQueued = ({ clientId, seq }: { clientId: string; seq: number }) => {
+      record = { tab: tab.name, op: op.name, input, key: `${clientId}:${String(seq)}` };
+      this.dispatched.push(record);
+    };
     try {
-      outcome = tab.store.dispatch(op, input);
+      outcome = tab.store.dispatch(op, input, { onQueued });
     } catch {
       return false;
     }
-    // `dispatch` lists the new mutation before it returns.
-    const seq = tab.store.pending.at(-1)?.seq;
-    const key = `${tab.store.clientId}:${String(seq)}`;
-    const record: Dispatched = { tab: tab.name, op: op.name, input, key };
-    this.dispatched.push(record);
     outcome.then(
       (result) => {
-        record.outcome = result;
+        if (record !== undefined) record.outcome = result;
       },
-      (error: unknown) => this.#problems.push(`${tab.name}: dispatch failed: ${String(error)}`),
+      (error: unknown) => {
+        // Refused before it was queued, as a synchronous throw is: offline on an issue never
+        // loaded ("Available when online"), or the tab closed while it waited.
+        if (record === undefined) return;
+        this.#problems.push(`${tab.name}: dispatch failed: ${String(error)}`);
+      },
     );
     return true;
+  }
+
+  // Per-issue content (SPEC-011 §5.4, PLAN-011 S5b): a tab holds an issue's comments only while
+  // the issue is open in it, as the issue page keeps it.
+
+  readonly #showing = new Map<Tab, Set<string>>();
+
+  /** The tab shows these issues (their pages are open): their content is paged in and kept live. */
+  showIssues(tab: Tab, issueIds: readonly string[]): void {
+    let open = this.#showing.get(tab);
+    if (open === undefined) this.#showing.set(tab, (open = new Set()));
+    for (const issueId of issueIds) {
+      if (open.has(issueId)) continue;
+      open.add(issueId);
+      tab.store.content.open(issueId);
+    }
+  }
+
+  /** Every live tab shows these issues: run until each has their content (or none to load). */
+  async showEverywhere(issueIds: readonly string[], limitMs = 60_000): Promise<void> {
+    for (const tab of this.live) this.showIssues(tab, issueIds);
+    for (let waited = 0; ; waited += SETTLE_STEP_MS) {
+      const shown = this.live.every((tab) =>
+        issueIds.every((issueId) => tab.store.content.state(issueId) === 'ready'),
+      );
+      if (shown) return;
+      if (waited >= limitMs) {
+        throw new Error(`Issue content not loaded after ${limitMs} ms: ${await this.describe()}`);
+      }
+      await this.run(SETTLE_STEP_MS);
+    }
   }
 
   /** Let `ms` of virtual time pass (storage work in between takes none). */

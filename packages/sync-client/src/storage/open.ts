@@ -7,7 +7,7 @@ import { IndexedDbStorage } from './indexeddb.js';
 import { MemoryStorage } from './memory.js';
 import type { MessagePortLike } from './rpc.js';
 import { connectStorage } from './rpc.js';
-import type { SyncStorage } from './types.js';
+import type { ContentModelRef, SyncStorage } from './types.js';
 
 /** `surface-<workspaceId>-<userId>` (PLAN-002 S6): one replica per user per workspace. */
 export function replicaName(workspaceId: string, userId: string): string {
@@ -20,7 +20,15 @@ export interface OpenStorageResult {
   readonly fallbackReason: string | undefined;
 }
 
-export type StorageConnector = (name: string, models: readonly string[]) => Promise<SyncStorage>;
+/**
+ * Opens the replica `name` for `models`. `content` names the content models among them
+ * (SPEC-011 §5.4, PLAN-011 S5b): a connector that ignores it stores their rows like eager ones.
+ */
+export type StorageConnector = (
+  name: string,
+  models: readonly string[],
+  content?: readonly ContentModelRef[],
+) => Promise<SyncStorage>;
 
 export interface WorkerLike extends MessagePortLike {
   terminate(): void;
@@ -36,21 +44,28 @@ export async function connectWithFallback(
   name: string,
   models: readonly string[],
   createWorker: (() => WorkerLike) | undefined,
+  content: readonly ContentModelRef[] = [],
 ): Promise<SyncStorage> {
   if (typeof indexedDB === 'undefined') throw new Error('IndexedDB is not available');
-  if (createWorker === undefined) return IndexedDbStorage.open(name, models);
+  if (createWorker === undefined) return IndexedDbStorage.open(name, models, content);
   let worker: WorkerLike | undefined;
   try {
     const created = (worker = createWorker());
-    return await connectStorage(created, name, models, { onClose: () => created.terminate() });
+    return await connectStorage(
+      created,
+      name,
+      models,
+      { onClose: () => created.terminate() },
+      content,
+    );
   } catch {
     worker?.terminate();
-    return IndexedDbStorage.open(name, models);
+    return IndexedDbStorage.open(name, models, content);
   }
 }
 
 /** The default connector: a module worker if available (see `connectWithFallback`). */
-export const defaultConnector: StorageConnector = (name, models) =>
+export const defaultConnector: StorageConnector = (name, models, content = []) =>
   connectWithFallback(
     name,
     models,
@@ -58,17 +73,19 @@ export const defaultConnector: StorageConnector = (name, models) =>
       ? undefined
       : // Vite bundles this pattern as a separate worker chunk.
         () => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }),
+    content,
   );
 
 export async function openStorage(
   name: string,
   models: readonly string[],
   connect: StorageConnector = defaultConnector,
+  content: readonly ContentModelRef[] = [],
 ): Promise<OpenStorageResult> {
   try {
-    return { storage: await connect(name, models), fallbackReason: undefined };
+    return { storage: await connect(name, models, content), fallbackReason: undefined };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return { storage: new MemoryStorage(models), fallbackReason: reason };
+    return { storage: new MemoryStorage(models, content), fallbackReason: reason };
   }
 }

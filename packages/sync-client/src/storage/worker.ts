@@ -10,4 +10,4 @@ import { serveStorage } from './rpc.js';
 // Inside a worker the global scope is the message port; the DOM lib types it as Window.
 const scope = globalThis as unknown as MessagePortLike;
 
-serveStorage(scope, (name, models) => IndexedDbStorage.open(name, models));
+serveStorage(scope, (name, models, content) => IndexedDbStorage.open(name, models, content));

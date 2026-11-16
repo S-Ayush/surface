@@ -521,17 +521,32 @@ export class FakeHub {
   /** The content answer for `parents` at the current head: visible items and their notes. */
   contentSnapshot(parents: readonly ContentParent[]): ContentFrame[] {
     // In id order, as the server's `ORDER BY id`, whatever order they were asked in.
+    // With the team world on, a live task is a parent too (as an Issue is, PLAN-011 S5b): visible
+    // when its squad is public or the user is a member.
+    const visibleTask = (taskId: string) => {
+      const task = this.tasks.get(taskId);
+      if (task === undefined || !this.#live(task)) return false;
+      const team = String(task['teamId']);
+      return !this.isPrivate(team) || this.isMember(USER_ID, team);
+    };
     const found = parents
       .filter((parent) => {
         const itemId = parentIssueId(parent);
-        return this.rows.has(itemId) && !this.hiddenParents.has(itemId);
+        if (this.hiddenParents.has(itemId)) return false;
+        return this.rows.has(itemId) || (this.teamsOn && visibleTask(itemId));
       })
       .sort((a, b) => (a < b ? -1 : 1));
     const ids = new Set(found.map(parentIssueId));
-    const rows = [...this.notes.values()]
-      .filter((row) => ids.has(String(row['itemId'])))
-      .sort((a, b) => (a.id < b.id ? -1 : 1))
-      .map((row): ContentFrame => ({ t: 'row', m: 'Note', d: { ...row } }));
+    const rows = [
+      ...[...this.notes.values()]
+        .filter((row) => ids.has(String(row['itemId'])))
+        .map((row) => ({ m: 'Note', d: row })),
+      ...[...this.taskNotes.values()]
+        .filter((row) => ids.has(String(row['issueId'])))
+        .map((row) => ({ m: 'TaskNote', d: row })),
+    ]
+      .sort((a, b) => (a.d.id < b.d.id ? -1 : 1))
+      .map(({ m, d }): ContentFrame => ({ t: 'row', m, d: { ...d } }));
     return [
       { t: 'meta', lastSyncId: this.head, parents: found, rows: rows.length },
       ...rows,
@@ -731,6 +746,15 @@ export class FakeHub {
           this.rows.delete(itemId);
           this.#commit({ id: this.head + 1, a: 'D', m: 'DebugItem', mid: itemId });
           break;
+        case 'debug.note': {
+          const parent = String(get('itemId'));
+          if (!this.rows.has(parent)) return notFound();
+          const row = { id: itemId, itemId: parent, body: String(get('body')) };
+          const before = this.notes.has(itemId);
+          this.notes.set(itemId, row);
+          this.#commit({ id: this.head + 1, a: before ? 'U' : 'I', m: 'Note', d: { ...row } });
+          break;
+        }
         case 'debug.hide':
           this.invisible();
           this.acks.set(this.head, { clientId, seq });
@@ -829,6 +853,17 @@ export class FakeHub {
       if (row['itemId'] === id(n)) this.notes.delete(noteId);
     }
     this.remove(n);
+  }
+
+  /**
+   * A group change of item `n` as the repo logs one: `D`, then `U` with the row, in one message
+   * (sync-protocol §6). The item stays visible, so its content stays (SPEC-011 E24).
+   */
+  regroup(n: number): void {
+    const existing = this.rows.get(id(n));
+    if (existing === undefined) return;
+    this.#commit({ id: this.head + 1, a: 'D', m: 'DebugItem', mid: id(n) }, undefined, false);
+    this.#commit({ id: this.head + 1, a: 'U', m: 'DebugItem', d: { ...existing.row } });
   }
 
   remove(n: number): void {

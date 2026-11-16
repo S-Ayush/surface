@@ -1,9 +1,11 @@
 /**
  * IndexedDB storage (PLAN-002 S6), meant to run inside the storage worker.
  * Object stores: `meta`, the mutation queue (`clients`, and `pending` keyed by
- * `[clientId, seq]`; PLAN-002 S8), the on-demand teams (`subscriptions`; PLAN-011 S4c) and one
- * `row:<Model>` store per synced model, keyed by row id. When the store list changes, the database version is
- * bumped and the row stores are rebuilt; the queue survives.
+ * `[clientId, seq]`; PLAN-002 S8), the on-demand teams (`subscriptions`; PLAN-011 S4c), the
+ * hydrated set (`hydrated`, parent id → last opened; PLAN-011 S5b) and one `row:<Model>` store per
+ * synced model, keyed by row id. A content model's store has the index `parent` on its parent
+ * field (SPEC-011 §5.4). When the stores or those indexes change, the database version is bumped
+ * and the row stores are rebuilt; the queue survives.
  *
  * Every write transaction re-reads `meta` and checks the generation first (the
  * fence described in `types.ts`).
@@ -13,6 +15,10 @@ import { openDB } from 'idb';
 import type {
   BootstrapRecord,
   BootstrapStart,
+  ContentModelRef,
+  ContentRead,
+  ContentRecord,
+  ContentWrite,
   OnDemandTeams,
   PartialWrite,
   PendingRecord,
@@ -28,6 +34,14 @@ import type {
   SyncStorage,
   TeamRemoval,
 } from './types.js';
+import {
+  contentByModel,
+  contentRowIsNewer,
+  goneParents,
+  sweptIssues,
+  teamIssues,
+  upsertParent,
+} from './content-plan.js';
 import type { ReadRecords } from './partial-plan.js';
 import {
   partialWriteModels,
@@ -57,7 +71,19 @@ const QUEUE_STORES = [CLIENTS_STORE, PENDING_STORE];
 /** Survives bootstraps and upgrades, like the queue (SPEC-011 §5.7: per replica). */
 const SUBSCRIPTIONS_STORE = 'subscriptions';
 const ON_DEMAND_KEY = 'onDemand';
+/** The hydrated set (SPEC-011 §5.4), cleared with the rows. */
+const HYDRATED_STORE = 'hydrated';
+/** The index of a content model's store on its parent field. */
+const PARENT_INDEX = 'parent';
 const rowStore = (model: string) => `row:${model}`;
+const parentKeyPath = (ref: ContentModelRef) => `row.${ref.field}`;
+
+/** A parent in the hydrated set. */
+interface HydratedMark {
+  readonly id: string;
+  /** Epoch ms; 0 for a parent hydrated by its `I` packet and never opened. */
+  readonly openedAt: number;
+}
 
 type Tx = IDBPTransaction<unknown, string[], 'readwrite'>;
 
@@ -66,32 +92,66 @@ export class IndexedDbStorage implements SyncStorage {
   #db: IDBPDatabase | undefined;
   #closedReason = 'Local storage is closed.';
   readonly #models: ReadonlySet<string>;
+  readonly #content: readonly ContentModelRef[];
+  readonly #contentByModel: ReadonlyMap<string, ContentModelRef>;
+  readonly #parentModels: ReadonlySet<string>;
 
-  private constructor(db: IDBPDatabase, models: readonly string[]) {
+  private constructor(
+    db: IDBPDatabase,
+    models: readonly string[],
+    content: readonly ContentModelRef[],
+  ) {
     this.#db = db;
     this.#models = new Set(models);
+    this.#content = content.filter((ref) => this.#models.has(ref.model));
+    this.#contentByModel = contentByModel(this.#content);
+    this.#parentModels = new Set(this.#content.map((ref) => ref.parent));
   }
 
-  /** Open (or create, or migrate) the replica database `name` for these models. */
-  static async open(name: string, models: readonly string[]): Promise<IndexedDbStorage> {
+  /**
+   * Open (or create, or migrate) the replica database `name` for these models; `content` names
+   * the content models among them, whose stores get the parent index.
+   */
+  static async open(
+    name: string,
+    models: readonly string[],
+    content: readonly ContentModelRef[] = [],
+  ): Promise<IndexedDbStorage> {
     const wanted = new Set([
       META_STORE,
       ...QUEUE_STORES,
       SUBSCRIPTIONS_STORE,
+      HYDRATED_STORE,
       ...models.map(rowStore),
     ]);
+    const indexed = new Map(
+      content.filter((ref) => models.includes(ref.model)).map((ref) => [rowStore(ref.model), ref]),
+    );
     // Filled in once open; the version-change callbacks below may fire any time after.
     const opened: { storage?: IndexedDbStorage } = {};
     const callbacks = {
-      upgrade(db: IDBPDatabase) {
+      upgrade(
+        db: IDBPDatabase,
+        _old: number,
+        _new: number | null,
+        tx: IDBPTransaction<unknown, string[], 'versionchange'>,
+      ) {
         for (const store of [...db.objectStoreNames]) {
-          // Row stores are rebuilt from the server; the queue must survive (E8).
-          if (!wanted.has(store) || store === META_STORE) db.deleteObjectStore(store);
+          // Row stores are rebuilt from the server; the queue must survive (E8). A content store
+          // without its parent index (made before PLAN-011 S5b) is rebuilt with it.
+          const ref = indexed.get(store);
+          const stale = ref !== undefined && !hasParentIndex(tx.objectStore(store), ref);
+          if (!wanted.has(store) || store === META_STORE || stale) db.deleteObjectStore(store);
         }
         for (const store of wanted) {
           if (!db.objectStoreNames.contains(store)) {
             const outOfLine = store === META_STORE || store === SUBSCRIPTIONS_STORE;
-            db.createObjectStore(store, outOfLine ? undefined : { keyPath: storeKey(store) });
+            const created = db.createObjectStore(
+              store,
+              outOfLine ? undefined : { keyPath: storeKey(store) },
+            );
+            const ref = indexed.get(store);
+            if (ref !== undefined) created.createIndex(PARENT_INDEX, parentKeyPath(ref));
           }
         }
       },
@@ -112,12 +172,19 @@ export class IndexedDbStorage implements SyncStorage {
 
     let db = await openUnblocked(name, undefined, callbacks);
     const stores = new Set(db.objectStoreNames);
-    if (stores.size !== wanted.size || [...wanted].some((store) => !stores.has(store))) {
+    const sameStores =
+      stores.size === wanted.size && [...wanted].every((store) => stores.has(store));
+    const ready =
+      sameStores &&
+      [...indexed].every(([store, ref]) =>
+        hasParentIndex(db.transaction(store).objectStore(store), ref),
+      );
+    if (!ready) {
       const version = db.version + 1;
       db.close();
       db = await openUnblocked(name, version, callbacks);
     }
-    opened.storage = new IndexedDbStorage(db, models);
+    opened.storage = new IndexedDbStorage(db, models, content);
     return opened.storage;
   }
 
@@ -128,8 +195,9 @@ export class IndexedDbStorage implements SyncStorage {
 
   async beginBootstrap(start: BootstrapStart): Promise<string> {
     const generation = newGeneration();
-    const tx = this.#write([...this.#models].map(rowStore));
+    const tx = this.#write([...[...this.#models].map(rowStore), HYDRATED_STORE]);
     for (const model of this.#models) await tx.objectStore(rowStore(model)).clear();
+    await tx.objectStore(HYDRATED_STORE).clear();
     const meta: StoredMeta = {
       ...start,
       generation,
@@ -188,17 +256,44 @@ export class IndexedDbStorage implements SyncStorage {
     changes: readonly StoredChange[],
     lastSyncId: number,
     teams?: readonly string[],
+    hydrate?: readonly string[],
   ): Promise<void> {
-    const models = [...new Set(changes.map((c) => c.model))];
-    const tx = this.#write(models.map((m) => this.#rowStore(m)));
+    const marks = hydrate ?? [];
+    const gone = goneParents(changes, this.#content);
+    const content = marks.length > 0 || gone.size > 0 || changes.some((c) => this.#isContent(c));
+    const models = [
+      ...new Set([
+        ...changes.map((c) => c.model),
+        ...(content ? this.#content.map((ref) => ref.model) : []),
+      ]),
+    ];
+    const stores = models.map((m) => this.#rowStore(m));
+    const tx = this.#write(content ? [...stores, HYDRATED_STORE] : stores);
     const meta = await fence(tx, generation);
+    const hydrated = new Map<string, boolean>();
+    const isHydrated = async (parent: string): Promise<boolean> => {
+      const known = hydrated.get(parent);
+      if (known !== undefined) return known;
+      const found = (await tx.objectStore(HYDRATED_STORE).get(parent)) !== undefined;
+      hydrated.set(parent, found);
+      return found;
+    };
+    for (const parent of marks) {
+      if (await isHydrated(parent)) continue;
+      await tx.objectStore(HYDRATED_STORE).put({ id: parent, openedAt: 0 } satisfies HydratedMark);
+      hydrated.set(parent, true);
+    }
     for (const change of changes) {
+      // SPEC-011 §5.3 step 4: content of a parent no tab hydrated would be partial.
+      const parent = upsertParent(change, this.#contentByModel);
+      if (parent !== undefined && !(await isHydrated(parent))) continue;
       const store = tx.objectStore(rowStore(change.model));
       const id = changedId(change);
       const existing: unknown = await store.get(id);
       const record = recordFor(change, isStoredRecord(existing) ? existing : undefined);
       if (record) await store.put(record);
     }
+    await this.#dropContent(tx, gone, lastSyncId);
     const teamThrough = advanceTeamThrough(meta.teamThrough, teams, lastSyncId);
     const next: StoredMeta = {
       ...meta,
@@ -209,13 +304,76 @@ export class IndexedDbStorage implements SyncStorage {
     await tx.done;
   }
 
+  async writeContent(generation: string, write: ContentWrite): Promise<void> {
+    const models = [...new Set([...this.#content.map((ref) => ref.model), ...this.#parentModels])];
+    const tx = this.#write([...models.map((m) => this.#rowStore(m)), HYDRATED_STORE]);
+    await fence(tx, generation);
+    // A parent purged (or removed) before this answer is skipped, rows and all (E23).
+    const parents = new Set<string>();
+    for (const parent of write.parents) {
+      for (const model of this.#parentModels) {
+        const stored: unknown = await tx.objectStore(rowStore(model)).get(parent);
+        if (isStoredRecord(stored) && stored.row !== null) parents.add(parent);
+      }
+    }
+    for (const { model, row, archived } of write.rows) {
+      const ref = this.#contentByModel.get(model);
+      if (ref === undefined || !parents.has(String(row[ref.field]))) continue;
+      const store = tx.objectStore(rowStore(model));
+      const existing: unknown = await store.get(row.id);
+      if (!contentRowIsNewer(write.version, isStoredRecord(existing) ? existing : undefined)) {
+        continue;
+      }
+      await store.put({ id: row.id, version: write.version, archived, row } satisfies StoredRecord);
+    }
+    for (const parent of parents) {
+      const mark: HydratedMark = { id: parent, openedAt: write.openedAt };
+      await tx.objectStore(HYDRATED_STORE).put(mark);
+    }
+    await tx.done;
+  }
+
+  async readContent(generation: string, parent: string): Promise<ContentRead> {
+    const stores = this.#content.map((ref) => rowStore(ref.model));
+    const tx = this.#open().transaction([...stores, HYDRATED_STORE, META_STORE]);
+    const meta: unknown = await tx.objectStore(META_STORE).get(META_KEY);
+    if (!isStoredMeta(meta) || meta.generation !== generation) {
+      tx.done.catch(() => undefined);
+      throw new StorageFencedError();
+    }
+    const hydrated = (await tx.objectStore(HYDRATED_STORE).get(parent)) !== undefined;
+    const records: ContentRecord[] = [];
+    for (const ref of this.#content) {
+      const values: unknown[] = await tx
+        .objectStore(rowStore(ref.model))
+        .index(PARENT_INDEX)
+        .getAll(parent);
+      for (const value of values) {
+        if (!isStoredRecord(value) || value.row === null) continue;
+        const { version, archived, row } = value;
+        records.push({ model: ref.model, version, archived, row });
+      }
+    }
+    await tx.done;
+    return { hydrated, records };
+  }
+
+  async readHydrated(): Promise<readonly string[]> {
+    const keys = await this.#open().getAllKeys(HYDRATED_STORE);
+    return keys.filter((key): key is string => typeof key === 'string');
+  }
+
   async writePartialRows(generation: string, write: PartialWrite): Promise<void> {
     const models = partialWriteModels(write);
-    const tx = this.#write(models.map((m) => this.#rowStore(m)));
+    const tx = this.#write([...models.map((m) => this.#rowStore(m)), HYDRATED_STORE]);
     const meta = await fence(tx, generation);
     const read = await readAll(tx, models);
-    for (const { model, record } of planPartialWrite(write, read)) {
+    const puts = planPartialWrite(write, read);
+    for (const { model, record } of puts) {
       await tx.objectStore(rowStore(model)).put(record);
+    }
+    for (const issue of sweptIssues(write, puts)) {
+      await tx.objectStore(HYDRATED_STORE).delete(issue);
     }
     const teamThrough = advanceTeamThrough(meta.teamThrough, write.teams, write.through) ?? {};
     await tx.objectStore(META_STORE).put({ ...meta, teamThrough } satisfies StoredMeta, META_KEY);
@@ -224,9 +382,13 @@ export class IndexedDbStorage implements SyncStorage {
 
   async removeTeamRows(generation: string, removal: TeamRemoval): Promise<void> {
     const models = shapeModels(removal.shape);
-    const tx = this.#write(models.map((m) => this.#rowStore(m)));
+    const tx = this.#write([...models.map((m) => this.#rowStore(m)), HYDRATED_STORE]);
     const meta = await fence(tx, generation);
     const read = await readAll(tx, models);
+    // Kept issues (held through `user:`) lose their content and mark too (§5.7).
+    for (const issue of teamIssues(removal.shape.issue, removal.teams, read)) {
+      await tx.objectStore(HYDRATED_STORE).delete(issue);
+    }
     for (const { model, id } of planTeamRemoval(removal, read)) {
       await tx.objectStore(rowStore(model)).delete(id);
     }
@@ -304,8 +466,9 @@ export class IndexedDbStorage implements SyncStorage {
   }
 
   async clear(): Promise<void> {
-    const tx = this.#write([...this.#models].map(rowStore));
+    const tx = this.#write([...[...this.#models].map(rowStore), HYDRATED_STORE]);
     for (const model of this.#models) await tx.objectStore(rowStore(model)).clear();
+    await tx.objectStore(HYDRATED_STORE).clear();
     await tx.objectStore(META_STORE).delete(META_KEY);
     await tx.done;
   }
@@ -325,6 +488,30 @@ export class IndexedDbStorage implements SyncStorage {
   #open(): IDBPDatabase {
     if (this.#db === undefined) throw new StorageClosedError(this.#closedReason);
     return this.#db;
+  }
+
+  /** A change content rules apply to: a content row, or the deletion of a content parent. */
+  #isContent(change: StoredChange): boolean {
+    return (
+      this.#contentByModel.has(change.model) ||
+      (change.kind === 'delete' && this.#parentModels.has(change.model))
+    );
+  }
+
+  /** The content and marks of parents a batch deleted, as tombstones at `version` (§5.3 step 4). */
+  async #dropContent(tx: Tx, parents: ReadonlySet<string>, version: number): Promise<void> {
+    for (const parent of parents) {
+      await tx.objectStore(HYDRATED_STORE).delete(parent);
+      for (const ref of this.#content) {
+        const store = tx.objectStore(rowStore(ref.model));
+        const values: unknown[] = await store.index(PARENT_INDEX).getAll(parent);
+        for (const value of values) {
+          if (!isStoredRecord(value) || value.version >= version) continue;
+          const tombstone: StoredRecord = { id: value.id, version, archived: false, row: null };
+          await store.put(tombstone);
+        }
+      }
+    }
   }
 
   #rowStore(model: string): string {
@@ -376,6 +563,20 @@ function openUnblocked(
       },
     );
   });
+}
+
+/** Whether a content model's store has the parent index on the right field. */
+function hasParentIndex(
+  store: {
+    readonly indexNames: DOMStringList;
+    index(name: string): { readonly keyPath: string | string[] };
+  },
+  ref: ContentModelRef,
+): boolean {
+  return (
+    store.indexNames.contains(PARENT_INDEX) &&
+    store.index(PARENT_INDEX).keyPath === parentKeyPath(ref)
+  );
 }
 
 function storeKey(store: string): string {

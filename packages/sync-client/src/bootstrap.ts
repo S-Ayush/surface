@@ -86,9 +86,17 @@ export const DEFAULT_CHUNK_SIZE = 1000;
  * the deadline: a server that never answers would otherwise leave the store
  * `bootstrapping` for good, and block every later start or resync.
  */
-export async function request(
+export function request(
   options: Pick<BootstrapOptions, 'fetch' | 'baseUrl' | 'signal' | 'timers'>,
   query: BootstrapQuery,
+): Promise<Response> {
+  return requestNdjson(options, `${BOOTSTRAP_PATH}?${encodeBootstrapQuery(query)}`);
+}
+
+/** `GET` an NDJSON stream at `path` (with its query), under the same response deadline. */
+export async function requestNdjson(
+  options: Pick<BootstrapOptions, 'fetch' | 'baseUrl' | 'signal' | 'timers'>,
+  path: string,
 ): Promise<Response> {
   const timers = options.timers ?? globalTimers;
   const controller = new AbortController();
@@ -102,14 +110,11 @@ export async function request(
     controller.abort();
   }, BOOTSTRAP_RESPONSE_TIMEOUT_MS);
   try {
-    return await options.fetch(
-      `${options.baseUrl}${BOOTSTRAP_PATH}?${encodeBootstrapQuery(query)}`,
-      {
-        credentials: 'same-origin',
-        headers: { accept: 'application/x-ndjson' },
-        signal: controller.signal,
-      },
-    );
+    return await options.fetch(`${options.baseUrl}${path}`, {
+      credentials: 'same-origin',
+      headers: { accept: 'application/x-ndjson' },
+      signal: controller.signal,
+    });
   } catch (error) {
     if (!timedOut) throw error;
     throw new BootstrapFailedError(

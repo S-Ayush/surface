@@ -287,6 +287,9 @@ export const commentConvergence: Property = {
     const server = world.server;
     if (!isCommentServer(server)) throw new Error('The comment property needs the real server.');
     const comments = await server.comments();
+    // A tab holds comments only for issues open in it (SPEC-011 §5.4): open every issue in every
+    // tab, as a fresh look at each issue page would (PLAN-011 S5b).
+    await world.showEverywhere(world.issueIds);
     for (const tab of world.live) {
       expect(world.commentView(tab), tab.name).toEqual(comments);
     }

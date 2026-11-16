@@ -2,6 +2,9 @@
  * Warm start (SPEC-002 §3.2): if the stored replica is complete and matches
  * this client's schema, load it into the pool page by page. The worker reads
  * each page, so the main thread only receives finished rows.
+ *
+ * Not to be confused with content hydration (SPEC-011 §5.3, `content.ts`): this is the M0 replica
+ * load. It skips content models, whose rows are read per parent when an issue is opened.
  */
 import type { Persistence } from './persistence.js';
 import type { ObjectPool } from './pool.js';
@@ -35,7 +38,8 @@ export async function hydrate(
 
   const seen = new Map<string, Set<string>>();
   let rows = 0;
-  for (const def of pool.models) {
+  // Content rows are paged in per parent when it is opened (SPEC-011 §5.4, `content.ts`).
+  for (const def of pool.models.filter((model) => model.load !== 'content')) {
     const ids = new Set<string>();
     seen.set(def.name, ids);
     let after: string | undefined;

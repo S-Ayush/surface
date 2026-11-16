@@ -29,7 +29,9 @@ async function started() {
   await store.start();
   await eventually(() => hub.live.length > 0);
   await until(() => teamView(store).parts[id(501)] !== undefined);
-  // The note arrives as a live packet only while the issue's content is held (§5.3); put it in.
+  // Content is held only once the issue is opened (§5.3, §5.4): open it, then note 602 arrives live.
+  expect(await store.content.open(id(110)).ready).toBe('ready');
+  expect(teamView(store).notes).toEqual({ [id(601)]: id(110) });
   hub.putTaskNote(602, 110);
   await until(() => teamView(store).notes[id(602)] !== undefined);
   /** Every packet sent so far is applied, and stored. */
@@ -102,7 +104,7 @@ describe('group changes', () => {
     const view = teamView(store);
     expect(view.tasks[id(110)]).toMatchObject({ groups: [`team:${id(1)}`, `user:${USER_ID}`] });
     expect(view.parts).toEqual({ [id(501)]: id(110) });
-    expect(Object.keys(view.notes)).toEqual([id(602)]);
+    expect(Object.keys(view.notes)).toEqual([id(601), id(602)]);
   });
 
   it('removes the issue with its children on a lone D (purge)', async () => {

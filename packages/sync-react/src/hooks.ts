@@ -5,9 +5,11 @@
  * selected value changes. The rejection toast and the reload banner are store
  * options (`onRejected`, `onOutdated`), not hooks.
  */
+import type { ModelRow } from '@surface/domain/model';
 import type {
   BootstrapSnapshot,
   ConnectionSnapshot,
+  ContentLoadState,
   InspectorSnapshot,
   SyncStore,
   TeamLoadState,
@@ -77,6 +79,38 @@ export function useTeamLoadState(teamId: string): TeamLoadState {
   const source = useMemo(
     () => observe(() => (teamId === '' ? 'loading' : store.teamLoadState(teamId))),
     [store, teamId],
+  );
+  return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
+}
+
+/** An issue's content as `useIssueContent` shows it. */
+export interface IssueContent {
+  /** `loading` until paged in; `offline` when never loaded and the connection is down (E11). */
+  readonly state: ContentLoadState;
+  /** The issue's content rows in memory, per content model (`Comment`, `IssueContent`…), by id. */
+  readonly rows: Readonly<Record<string, readonly ModelRow[]>>;
+}
+
+/**
+ * An issue's content (SPEC-011 §5.3, §5.4; PLAN-011 S5b), opened while the component is mounted:
+ * paged in from the replica, or fetched, and kept live until it unmounts. Opening it subscribes
+ * the issue's team if needed (§5.7). `offline` means "Available when online" (E11).
+ */
+export function useIssueContent(issueId: string): IssueContent {
+  const store = useSyncStore();
+  useEffect(() => {
+    if (issueId === '') return undefined;
+    const handle = store.content.open(issueId);
+    return () => handle.release();
+  }, [store, issueId]);
+  const source = useMemo(
+    () =>
+      observe((): IssueContent =>
+        issueId === ''
+          ? { state: 'loading', rows: {} }
+          : { state: store.content.state(issueId), rows: store.content.rows(issueId) },
+      ),
+    [store, issueId],
   );
   return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
 }

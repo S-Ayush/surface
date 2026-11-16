@@ -172,6 +172,8 @@ describe('subscriptions', () => {
     store.openTeam(id(3));
     await until(() => store.teamLoadState(id(3)) === 'ready');
     hub.putPart(501, 131);
+    // Its content is held once the issue is opened (§5.4).
+    expect(await store.content.open(id(131)).ready).toBe('ready');
     hub.putTaskNote(601, 131);
     await until(() => teamView(store).notes[id(601)] !== undefined);
     expect(teamView(store).parts).toEqual({ [id(501)]: id(131) });

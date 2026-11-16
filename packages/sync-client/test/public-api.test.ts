@@ -15,6 +15,7 @@ it('exports only the store, read helpers, UI bindings and errors', () => {
     'BootstrapFailedError',
     'CLIENT_PROTOCOL_VERSION',
     'ClientOutdatedError',
+    'ContentUnavailableError',
     'InvalidInputError',
     'STATUS_GONE_MESSAGE',
     'StorageUnavailableError',

@@ -15,6 +15,7 @@ describe('IndexedDB replica', () => {
     const db = await openDB(name);
     expect([...db.objectStoreNames].sort()).toEqual([
       'clients',
+      'hydrated',
       'meta',
       'pending',
       'row:Card',
@@ -43,6 +44,7 @@ describe('IndexedDB replica', () => {
     const db = await openDB(name);
     expect([...db.objectStoreNames].sort()).toEqual([
       'clients',
+      'hydrated',
       'meta',
       'pending',
       'row:Board',

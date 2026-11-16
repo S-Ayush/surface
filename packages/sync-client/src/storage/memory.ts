@@ -6,6 +6,10 @@
 import type {
   BootstrapRecord,
   BootstrapStart,
+  ContentModelRef,
+  ContentRead,
+  ContentRecord,
+  ContentWrite,
   OnDemandTeams,
   PartialWrite,
   PendingRecord,
@@ -21,6 +25,14 @@ import type {
   SyncStorage,
   TeamRemoval,
 } from './types.js';
+import {
+  contentByModel,
+  contentRowIsNewer,
+  goneParents,
+  sweptIssues,
+  teamIssues,
+  upsertParent,
+} from './content-plan.js';
 import { planPartialWrite, planTeamRemoval } from './partial-plan.js';
 import {
   QueueFencedError,
@@ -48,9 +60,15 @@ export class MemoryStorage implements SyncStorage {
   readonly #pending = new Map<string, Map<number, PendingRecord>>();
   /** On-demand teams, most recently opened first; kept across bootstraps. */
   #onDemand: readonly string[] = [];
+  readonly #content: readonly ContentModelRef[];
+  readonly #contentByModel: ReadonlyMap<string, ContentModelRef>;
+  /** The hydrated set (SPEC-011 §5.4): parent id → last opened (epoch ms). */
+  readonly #hydrated = new Map<string, number>();
 
-  constructor(models: Iterable<string>) {
+  constructor(models: Iterable<string>, content: readonly ContentModelRef[] = []) {
     for (const model of models) this.#rows.set(model, new Map());
+    this.#content = content;
+    this.#contentByModel = contentByModel(content);
   }
 
   readMeta(): Promise<StoredMeta | undefined> {
@@ -60,6 +78,7 @@ export class MemoryStorage implements SyncStorage {
   beginBootstrap(start: BootstrapStart): Promise<string> {
     return settle(() => {
       for (const rows of this.#rows.values()) rows.clear();
+      this.#hydrated.clear();
       const generation = newGeneration();
       this.#meta = {
         ...start,
@@ -106,17 +125,25 @@ export class MemoryStorage implements SyncStorage {
     changes: readonly StoredChange[],
     lastSyncId: number,
     teams?: readonly string[],
+    hydrate?: readonly string[],
   ): Promise<void> {
     return settle(() => {
       const meta = this.#check(generation);
       // All or nothing, like the IndexedDB transaction: check every model first.
       for (const change of changes) this.#table(change.model);
+      for (const parent of hydrate ?? []) {
+        if (!this.#hydrated.has(parent)) this.#hydrated.set(parent, 0);
+      }
       for (const change of changes) {
+        // SPEC-011 §5.3 step 4: content of a parent no tab hydrated would be partial.
+        const parent = upsertParent(change, this.#contentByModel);
+        if (parent !== undefined && !this.#hydrated.has(parent)) continue;
         const table = this.#table(change.model);
         const id = changedId(change);
         const record = recordFor(change, table.get(id));
         if (record) table.set(id, record);
       }
+      this.#dropContent(goneParents(changes, this.#content), lastSyncId);
       const teamThrough = advanceTeamThrough(meta.teamThrough, teams, lastSyncId);
       this.#meta = {
         ...meta,
@@ -126,11 +153,46 @@ export class MemoryStorage implements SyncStorage {
     });
   }
 
+  writeContent(generation: string, write: ContentWrite): Promise<void> {
+    return settle(() => {
+      this.#check(generation);
+      const parents = new Set(write.parents.filter((parent) => this.#parentLive(parent)));
+      for (const { model, row, archived } of write.rows) {
+        const ref = this.#contentByModel.get(model);
+        if (ref === undefined || !parents.has(String(row[ref.field]))) continue;
+        const table = this.#table(model);
+        if (!contentRowIsNewer(write.version, table.get(row.id))) continue;
+        table.set(row.id, { id: row.id, version: write.version, archived, row });
+      }
+      for (const parent of parents) this.#hydrated.set(parent, write.openedAt);
+    });
+  }
+
+  readContent(generation: string, parent: string): Promise<ContentRead> {
+    return settle(() => {
+      this.#check(generation);
+      const records: ContentRecord[] = [];
+      for (const ref of this.#content) {
+        for (const record of this.#table(ref.model).values()) {
+          if (record.row === null || record.row[ref.field] !== parent) continue;
+          const { version, archived, row } = record;
+          records.push({ model: ref.model, version, archived, row });
+        }
+      }
+      return { hydrated: this.#hydrated.has(parent), records };
+    });
+  }
+
+  readHydrated(): Promise<readonly string[]> {
+    return settle(() => [...this.#hydrated.keys()]);
+  }
+
   writePartialRows(generation: string, write: PartialWrite): Promise<void> {
     return settle(() => {
       const meta = this.#check(generation);
       const puts = planPartialWrite(write, (model) => [...this.#table(model).values()]);
       for (const { model, record } of puts) this.#table(model).set(record.id, record);
+      for (const issue of sweptIssues(write, puts)) this.#hydrated.delete(issue);
       this.#meta = {
         ...meta,
         teamThrough: advanceTeamThrough(meta.teamThrough, write.teams, write.through) ?? {},
@@ -141,7 +203,11 @@ export class MemoryStorage implements SyncStorage {
   removeTeamRows(generation: string, removal: TeamRemoval): Promise<void> {
     return settle(() => {
       const meta = this.#check(generation);
-      const deletes = planTeamRemoval(removal, (model) => [...this.#table(model).values()]);
+      const read = (model: string) => [...this.#table(model).values()];
+      for (const issue of teamIssues(removal.shape.issue, removal.teams, read)) {
+        this.#hydrated.delete(issue);
+      }
+      const deletes = planTeamRemoval(removal, read);
       for (const { model, id } of deletes) this.#table(model).delete(id);
       this.#meta = { ...meta, teamThrough: dropTeamThrough(meta.teamThrough, removal.teams) };
     });
@@ -210,12 +276,35 @@ export class MemoryStorage implements SyncStorage {
   clear(): Promise<void> {
     return settle(() => {
       for (const rows of this.#rows.values()) rows.clear();
+      this.#hydrated.clear();
       this.#meta = undefined;
     });
   }
 
   close(): Promise<void> {
     return settle(() => undefined);
+  }
+
+  /** Whether a content parent's row is stored live (in any parent model). */
+  #parentLive(parent: string): boolean {
+    return this.#content.some((ref) => {
+      const record = this.#rows.get(ref.parent)?.get(parent);
+      return record !== undefined && record.row !== null;
+    });
+  }
+
+  /** The content and marks of parents a batch deleted, as tombstones at `version` (§5.3 step 4). */
+  #dropContent(parents: ReadonlySet<string>, version: number): void {
+    if (parents.size === 0) return;
+    for (const parent of parents) this.#hydrated.delete(parent);
+    for (const ref of this.#content) {
+      const table = this.#table(ref.model);
+      for (const record of table.values()) {
+        if (record.row === null || !parents.has(String(record.row[ref.field]))) continue;
+        if (record.version >= version) continue;
+        table.set(record.id, { id: record.id, version, archived: false, row: null });
+      }
+    }
   }
 
   #check(generation: string): StoredMeta {

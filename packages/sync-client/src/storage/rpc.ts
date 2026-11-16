@@ -4,7 +4,7 @@
  * responses are matched by id; errors keep their `name`, so a
  * `StorageFencedError` thrown in the worker is one on the main thread too.
  */
-import type { SyncStorage } from './types.js';
+import type { ContentModelRef, SyncStorage } from './types.js';
 import { QueueFencedError, StorageFencedError } from './types.js';
 
 /** The part of `MessagePort` / `Worker` / worker `self` used here. */
@@ -42,6 +42,9 @@ const STORAGE_METHODS = [
   'finishBootstrap',
   'readRows',
   'applyChanges',
+  'writeContent',
+  'readContent',
+  'readHydrated',
   'writePartialRows',
   'removeTeamRows',
   'readOnDemand',
@@ -87,7 +90,24 @@ function isResponse(value: unknown): value is Response {
   );
 }
 
-export type OpenStorage = (name: string, models: readonly string[]) => Promise<SyncStorage>;
+export type OpenStorage = (
+  name: string,
+  models: readonly string[],
+  content: readonly ContentModelRef[],
+) => Promise<SyncStorage>;
+
+function isContentModelRef(value: unknown): value is ContentModelRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'model' in value &&
+    typeof value.model === 'string' &&
+    'field' in value &&
+    typeof value.field === 'string' &&
+    'parent' in value &&
+    typeof value.parent === 'string'
+  );
+}
 
 /** Worker side: answer requests on `port`. The first request must be `open`. */
 export function serveStorage(port: MessagePortLike, open: OpenStorage): void {
@@ -95,15 +115,17 @@ export function serveStorage(port: MessagePortLike, open: OpenStorage): void {
 
   const handle = async (request: Request): Promise<unknown> => {
     if (request.method === 'open') {
-      const [name, models] = request.args;
+      const [name, models, content = []] = request.args;
       if (
         typeof name !== 'string' ||
         !Array.isArray(models) ||
-        !models.every((m) => typeof m === 'string')
+        !models.every((m) => typeof m === 'string') ||
+        !Array.isArray(content) ||
+        !content.every(isContentModelRef)
       ) {
-        throw new Error('open needs a database name and a list of model names');
+        throw new Error('open needs a database name, model names and content models');
       }
-      storage = open(name, models);
+      storage = open(name, models, content);
       return (await storage).kind;
     }
     if (storage === undefined) throw new Error('Storage is not open');
@@ -141,6 +163,7 @@ export async function connectStorage(
   name: string,
   models: readonly string[],
   options: ConnectOptions = {},
+  content: readonly ContentModelRef[] = [],
 ): Promise<SyncStorage> {
   let nextId = 0;
   let failure: StorageUnavailableError | undefined;
@@ -201,7 +224,7 @@ export async function connectStorage(
       port.postMessage({ id, method, args } satisfies Request);
     });
 
-  const kind = await call('open', [name, [...models]], OPEN_TIMEOUT_MS);
+  const kind = await call('open', [name, [...models], [...content]], OPEN_TIMEOUT_MS);
   if (kind !== 'indexeddb' && kind !== 'memory') {
     throw new StorageUnavailableError('Local storage did not start.');
   }
@@ -220,6 +243,9 @@ export async function connectStorage(
     finishBootstrap: typed('finishBootstrap'),
     readRows: typed('readRows'),
     applyChanges: typed('applyChanges'),
+    writeContent: typed('writeContent'),
+    readContent: typed('readContent'),
+    readHydrated: typed('readHydrated'),
     writePartialRows: typed('writePartialRows'),
     removeTeamRows: typed('removeTeamRows'),
     readOnDemand: typed('readOnDemand'),

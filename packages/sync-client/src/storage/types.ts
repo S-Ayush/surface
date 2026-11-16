@@ -130,6 +130,43 @@ export interface TeamRemoval {
   readonly keep: readonly string[];
 }
 
+/**
+ * A content model (SPEC-011 §5.3, §5.4): its rows are loaded per parent, not bootstrapped. `field`
+ * names the parent row of model `parent` (an Issue in production). Storage indexes the rows on it
+ * and keeps a row only while its parent is in the hydrated set. Plain data, for the worker RPC.
+ */
+export interface ContentModelRef {
+  readonly model: string;
+  readonly field: string;
+  readonly parent: string;
+}
+
+/**
+ * A content answer (SPEC-011 §5.3 step 3): the rows of `parents`, at version `version` (the
+ * answer's `lastSyncId`, `C`). A parent whose row storage doesn't hold, or holds as a tombstone,
+ * is skipped with its rows (E23). The others join the hydrated set, at `openedAt` (epoch ms).
+ */
+export interface ContentWrite {
+  readonly parents: readonly string[];
+  readonly rows: readonly BootstrapRecord[];
+  readonly version: number;
+  readonly openedAt: number;
+}
+
+/** A stored content row with the version that wrote it. */
+export interface ContentRecord {
+  readonly model: string;
+  readonly version: number;
+  readonly archived: boolean;
+  readonly row: ModelRow;
+}
+
+/** A parent's stored content (`readContent`): whether it is hydrated, and its live rows. */
+export interface ContentRead {
+  readonly hydrated: boolean;
+  readonly records: readonly ContentRecord[];
+}
+
 /** The on-demand teams after `touchOnDemand`: most recently opened first, and those dropped. */
 export interface OnDemandTeams {
   readonly teams: readonly string[];
@@ -215,7 +252,10 @@ export interface SyncStorage {
 
   readonly readMeta: () => Promise<StoredMeta | undefined>;
 
-  /** Remove every row and the meta, and start a new generation. Pending mutations are kept (E8). */
+  /**
+   * Remove every row, the hydrated set and the meta, and start a new generation. Pending
+   * mutations are kept (E8).
+   */
   readonly beginBootstrap: (start: BootstrapStart) => Promise<string>;
 
   /** Store bootstrap rows (version = the snapshot's `lastSyncId`). */
@@ -233,6 +273,12 @@ export interface SyncStorage {
   /**
    * Store delta changes and advance `lastSyncId` in one transaction (PLAN-002 S7),
    * so a crash never leaves `lastSyncId` ahead of the rows.
+   *
+   * Content (SPEC-011 §5.3 step 4, §5.4): `hydrate` (parents an `I` packet hydrated) joins the
+   * hydrated set first; a content upsert is kept only when its parent is in that set, which every
+   * tab shares (E18); a content delete is always stored, as a tombstone (E25). After the whole
+   * batch, the content and mark of each parent the batch leaves deleted go too (a `D`+`U` pair
+   * keeps them, E24).
    */
   readonly applyChanges: (
     generation: string,
@@ -240,7 +286,24 @@ export interface SyncStorage {
     lastSyncId: number,
     /** The public teams the writing tab follows and holds current: `teamThrough` moves to `lastSyncId`. */
     teams?: readonly string[],
+    hydrate?: readonly string[],
   ) => Promise<void>;
+
+  /**
+   * Store a content answer and mark its parents hydrated in one transaction (SPEC-011 §5.3 step
+   * 3, §5.4). A row is skipped when storage holds it at `version` or newer (a tombstone included).
+   */
+  readonly writeContent: (generation: string, write: ContentWrite) => Promise<void>;
+
+  /**
+   * A parent's stored content rows (by the per-parent index) and whether it is hydrated.
+   * `StorageFencedError` unless `generation` is the stored one: a tab pages in only from the
+   * generation it writes its own packets to, which holds all of them (PLAN-011 S5b).
+   */
+  readonly readContent: (generation: string, parent: string) => Promise<ContentRead>;
+
+  /** Every hydrated parent. */
+  readonly readHydrated: () => Promise<readonly string[]>;
 
   /**
    * Store a partial bootstrap answer (SPEC-011 §5.7, E30, E35) in one transaction. A row is
@@ -279,7 +342,7 @@ export interface SyncStorage {
   /** Apply `write` in one transaction; `QueueFencedError` if another tab owns the queue now. */
   readonly writeQueue: (write: QueueWrite) => Promise<void>;
 
-  /** Drop all rows and the meta (resync); keeps pending mutations. */
+  /** Drop all rows, the hydrated set and the meta (resync); keeps pending mutations. */
   readonly clear: () => Promise<void>;
 
   readonly close: () => Promise<void>;

@@ -84,6 +84,12 @@ export interface DispatchOptions {
    * kept across a reload: a mutation sent again from storage is reported.
    */
   readonly reportRejection?: () => boolean;
+  /**
+   * Called once the mutation has its `(clientId, seq)`, before its `optimistic` effect shows. A
+   * content mutation may wait for its parent first (SPEC-011 §5.3 step 6), so this can come after
+   * `dispatch` returns. For tests and tools that track mutations by key.
+   */
+  readonly onQueued?: (key: { readonly clientId: string; readonly seq: number }) => void;
 }
 
 /** A mutation the server rejected (SPEC-002 §3.5): for the toast, the inspector and forms. */
@@ -301,6 +307,7 @@ export class MutationQueue {
     if (refusal instanceof Error) throw refusal;
     this.#nextSeq += 1;
     this.#entries.set(seq, entry);
+    options.onQueued?.({ clientId: this.clientId, seq });
     this.#publish();
     this.#write({ nextSeq: this.#nextSeq, put: [record] }).then(
       () => {

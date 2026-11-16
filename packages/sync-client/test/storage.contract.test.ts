@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { PendingRecord, QueueClaim, StoredChange, SyncStorage } from '../src/storage/types.js';
 import { QueueFencedError, StorageFencedError } from '../src/storage/types.js';
-import { debugRow, id } from './support/models.js';
+import { debugRow, id, noteRow } from './support/models.js';
 import { BACKENDS, closePorts, uniqueName } from './support/storage.js';
 
 const MODELS = ['DebugItem', 'Card'];
@@ -413,5 +413,211 @@ describe.each(BACKENDS)('$name storage', (backend) => {
       expect((await storage.readQueue()).pending).toEqual([]);
       await storage.close();
     });
+  });
+});
+
+// SPEC-011 §5.3 steps 3–4, §5.4, E18, E23, E24, E25; PLAN-011 S5b: content rows and the hydrated set.
+describe.each(BACKENDS)('$name content storage', (backend) => {
+  const CONTENT_MODELS = ['DebugItem', 'Note'];
+  const REFS = [{ model: 'Note', field: 'itemId', parent: 'DebugItem' }];
+  const open = (name: string) => backend.open(name, CONTENT_MODELS, REFS);
+  const note = (version: number, n: number, item: number, body?: string): StoredChange => ({
+    kind: 'upsert',
+    model: 'Note',
+    version,
+    row: noteRow(n, item, body),
+  });
+  const noteGone = (version: number, n: number): StoredChange => ({
+    kind: 'delete',
+    model: 'Note',
+    version,
+    id: id(n),
+  });
+  /** A replica at id 10 holding items 1 and 2, nothing hydrated. */
+  async function seeded(name = uniqueName()) {
+    const storage = await open(name);
+    const generation = await storage.beginBootstrap(start());
+    await storage.writeBootstrapRows(generation, rows(1, 2));
+    await storage.finishBootstrap(generation);
+    return { storage, generation, name };
+  }
+  const answer = (version: number, parents: number[], notes: [number, number, string?][]) => ({
+    parents: parents.map(id),
+    rows: notes.map(([n, item, body]) => ({
+      model: 'Note',
+      row: noteRow(n, item, body),
+      archived: false,
+    })),
+    version,
+    openedAt: 1,
+  });
+  /** What the stored generation holds for `item`. */
+  const content = async (storage: SyncStorage, item: number) => {
+    const meta = await storage.readMeta();
+    if (meta === undefined) return { hydrated: false, rows: [] };
+    const read = await storage.readContent(meta.generation, id(item));
+    return {
+      hydrated: read.hydrated,
+      rows: read.records.map((r) => [r.row.id, r.row['body'], r.version]).sort(),
+    };
+  };
+
+  it('stores an answer’s rows and marks its parents hydrated together', async () => {
+    const { storage, generation } = await seeded();
+    await storage.writeContent(
+      generation,
+      answer(
+        12,
+        [1],
+        [
+          [11, 1],
+          [12, 1],
+        ],
+      ),
+    );
+    expect(await content(storage, 1)).toEqual({
+      hydrated: true,
+      rows: [
+        [id(11), 'Note 11', 12],
+        [id(12), 'Note 12', 12],
+      ],
+    });
+    expect(await storage.readHydrated()).toEqual([id(1)]);
+    expect(await content(storage, 2)).toEqual({ hydrated: false, rows: [] });
+    await storage.close();
+  });
+
+  it('writes neither rows nor marks for a fenced generation', async () => {
+    const { storage, generation, name } = await seeded();
+    const other = backend.name === 'memory' ? storage : await open(name);
+    const next = await other.beginBootstrap(start(20));
+    await other.writeBootstrapRows(next, rows(1));
+    await other.finishBootstrap(next);
+    await expect(
+      storage.writeContent(generation, answer(12, [1], [[11, 1]])),
+    ).rejects.toBeInstanceOf(StorageFencedError);
+    // Nor does it read another generation's content: it may lag the fenced tab (PLAN-011 S5b).
+    await expect(storage.readContent(generation, id(1))).rejects.toBeInstanceOf(StorageFencedError);
+    expect(await content(other, 1)).toEqual({ hydrated: false, rows: [] });
+    await storage.close();
+    if (other !== storage) await other.close();
+  });
+
+  it('skips a parent it doesn’t hold or holds as a tombstone, with its rows (E23)', async () => {
+    const { storage, generation } = await seeded();
+    await storage.applyChanges(generation, [change('delete', 11, 2)], 11);
+    await storage.writeContent(
+      generation,
+      answer(
+        12,
+        [1, 2, 3],
+        [
+          [11, 1],
+          [21, 2],
+          [31, 3],
+        ],
+      ),
+    );
+    expect(await storage.readHydrated()).toEqual([id(1)]);
+    expect(await content(storage, 2)).toEqual({ hydrated: false, rows: [] });
+    expect(await content(storage, 3)).toEqual({ hydrated: false, rows: [] });
+    await storage.close();
+  });
+
+  it('keeps content upserts only for hydrated parents (§5.3 step 4)', async () => {
+    const { storage, generation } = await seeded();
+    await storage.writeContent(generation, answer(11, [1], []));
+    await storage.applyChanges(generation, [note(12, 11, 1), note(13, 21, 2)], 13);
+    expect(await content(storage, 1)).toEqual({ hydrated: true, rows: [[id(11), 'Note 11', 12]] });
+    expect(await content(storage, 2)).toEqual({ hydrated: false, rows: [] });
+    await storage.close();
+  });
+
+  it('hydrates the parents a batch names, before its content (an Issue I, §5.3 step 5)', async () => {
+    const { storage, generation } = await seeded();
+    await storage.applyChanges(generation, [upsert(11, 3), note(12, 31, 3)], 12, undefined, [
+      id(3),
+    ]);
+    expect(await content(storage, 3)).toEqual({ hydrated: true, rows: [[id(31), 'Note 31', 12]] });
+    await storage.close();
+  });
+
+  it('stores a content D as a tombstone, so an older answer can’t bring the row back (E25)', async () => {
+    const { storage, generation } = await seeded();
+    await storage.applyChanges(generation, [noteGone(14, 11)], 14);
+    await storage.writeContent(
+      generation,
+      answer(
+        12,
+        [1],
+        [
+          [11, 1],
+          [12, 1],
+        ],
+      ),
+    );
+    expect(await content(storage, 1)).toEqual({ hydrated: true, rows: [[id(12), 'Note 12', 12]] });
+    await storage.close();
+  });
+
+  it('never lets an answer overwrite a newer row', async () => {
+    const { storage, generation } = await seeded();
+    await storage.writeContent(generation, answer(11, [1], []));
+    await storage.applyChanges(generation, [note(14, 11, 1, 'Newer')], 14);
+    await storage.writeContent(generation, answer(12, [1], [[11, 1, 'Older']]));
+    expect(await content(storage, 1)).toEqual({ hydrated: true, rows: [[id(11), 'Newer', 14]] });
+    await storage.close();
+  });
+
+  it('drops the content and mark of a parent a batch leaves deleted, and keeps them across D+U (E24)', async () => {
+    const { storage, generation } = await seeded();
+    await storage.writeContent(
+      generation,
+      answer(
+        11,
+        [1, 2],
+        [
+          [11, 1],
+          [21, 2],
+        ],
+      ),
+    );
+    await storage.applyChanges(generation, [change('delete', 12, 1), upsert(13, 1)], 13);
+    expect(await content(storage, 1)).toEqual({ hydrated: true, rows: [[id(11), 'Note 11', 11]] });
+    await storage.applyChanges(generation, [change('delete', 14, 2)], 14);
+    expect(await content(storage, 2)).toEqual({ hydrated: false, rows: [] });
+    expect(await storage.readHydrated()).toEqual([id(1)]);
+    await storage.close();
+  });
+
+  it('shares the hydrated set between tabs: one tab’s hydration keeps the other’s packets (E18)', async () => {
+    const { storage: tabA, generation, name } = await seeded();
+    const tabB = backend.name === 'memory' ? tabA : await open(name);
+    await tabA.writeContent(generation, answer(11, [1], [[11, 1]]));
+    await tabB.applyChanges(generation, [note(12, 12, 1)], 12);
+    expect(await content(tabA, 1)).toEqual({
+      hydrated: true,
+      rows: [
+        [id(11), 'Note 11', 11],
+        [id(12), 'Note 12', 12],
+      ],
+    });
+    expect(await tabB.readHydrated()).toEqual([id(1)]);
+    await tabA.close();
+    if (tabB !== tabA) await tabB.close();
+  });
+
+  it('clears the hydrated set and content on re-bootstrap and resync (§5.3 step 7)', async () => {
+    const { storage, generation } = await seeded();
+    await storage.writeContent(generation, answer(11, [1], [[11, 1]]));
+    const next = await storage.beginBootstrap(start(20));
+    await storage.writeBootstrapRows(next, rows(1));
+    await storage.finishBootstrap(next);
+    expect(await content(storage, 1)).toEqual({ hydrated: false, rows: [] });
+    await storage.writeContent(next, answer(21, [1], [[11, 1]]));
+    await storage.clear();
+    expect(await storage.readHydrated()).toEqual([]);
+    expect(await content(storage, 1)).toEqual({ hydrated: false, rows: [] });
+    await storage.close();
   });
 });

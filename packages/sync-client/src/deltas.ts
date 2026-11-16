@@ -10,19 +10,51 @@
  * - A `G` packet (sync groups changed) means a full re-bootstrap until M7.
  * - With partial issue loading (SPEC-011 §5.7, PLAN-011 S4c): an `I`, `U`, `A` or `V` whose Issue
  *   row is archived or deleted removes the Issue with a tombstone at the packet's id. After the
- *   whole batch, the eager children and content of every Issue the batch left absent are removed
- *   too, so a `D`+`U` group-change pair keeps them.
+ *   whole batch, the eager children of every Issue the batch left absent are removed too, so a
+ *   `D`+`U` group-change pair keeps them.
+ * - Content (SPEC-011 §5.3 step 4, PLAN-011 S5b; `ContentRouting`): a content upsert reaches the
+ *   pool only when its parent is paged in here; storage gets every content packet and keeps an
+ *   upsert only for a hydrated parent. A content `D` always applies (a tombstone). An `I` of a
+ *   parent hydrates it when its team is subscribed. After the whole batch, the content of every
+ *   parent the batch left absent goes (a `D`+`U` pair keeps it, E24).
  *
  * Every row is validated before anything is applied, so a message is all or
  * nothing.
  */
+import type { ModelRow } from '@surface/domain/model';
 import type { DeltaPacket, DeltasMessage } from '@surface/sync-protocol';
 import { ProtocolError } from '@surface/sync-protocol';
 import { decodeRow } from './bootstrap.js';
 import type { PartialRules } from './partial.js';
 import { isRemovedIssue } from './partial.js';
 import type { BaseChange, ObjectPool } from './pool.js';
-import type { StoredChange } from './storage/types.js';
+import type { ContentModelRef, StoredChange } from './storage/types.js';
+
+/** How this tab routes content packets (SPEC-011 §5.3 step 4); `content.ts` answers. */
+export interface ContentRouting {
+  /** The content models, by name. */
+  readonly models: ReadonlyMap<string, ContentModelRef>;
+  /** The models content hangs off (Issue in production). */
+  readonly parents: ReadonlySet<string>;
+  /** Whether this tab's pool takes content rows of `parent` now: paged in, and not loading. */
+  inPool(parent: string): boolean;
+  /** Whether the `I` of this parent row hydrates it here (its team is subscribed, step 5). */
+  hydratesOnInsert(model: string, row: ModelRow): boolean;
+  /** Whether a parent its `I` hydrates goes straight into the pool: it is open in this tab. */
+  wanted(parent: string): boolean;
+}
+
+/** A content packet of the batch, for loads in flight (`content.ts` buffers and replays them). */
+export interface ContentPacket {
+  readonly version: number;
+  readonly model: string;
+  readonly id: string;
+  /** The parent an upsert names; `undefined` for a `D`, which carries only the id. */
+  readonly parent: string | undefined;
+  readonly stored: StoredChange;
+  /** Whether the pool took it now. */
+  readonly inPool: boolean;
+}
 
 /** What an applied packet changed, without the row (the inspector, SPEC-002 §5.4). */
 export interface AppliedPacket {
@@ -49,6 +81,12 @@ export type DeltaPlan =
       readonly touched: readonly TouchedRow[];
       /** Issues the batch left absent: their children and content went with them. */
       readonly gone: readonly string[];
+      /** Content parents the batch left absent: their content and marks go (§5.3 step 4). */
+      readonly goneParents: readonly string[];
+      /** Content packets, in order. */
+      readonly content: readonly ContentPacket[];
+      /** Parents an `I` packet hydrated in this tab (§5.3 step 5). */
+      readonly hydrated: readonly string[];
     };
 
 export interface TouchedRow {
@@ -63,6 +101,7 @@ export function planDeltas(
   message: DeltasMessage,
   lastSyncId: number,
   rules?: PartialRules,
+  routing?: ContentRouting,
 ): DeltaPlan {
   if (message.prev > lastSyncId) return { kind: 'gap' };
   const fresh = message.packets.filter((packet) => packet.id > lastSyncId);
@@ -74,49 +113,136 @@ export function planDeltas(
   const stored: StoredChange[] = [];
   const applied: AppliedPacket[] = [];
   const touched: TouchedRow[] = [];
+  const content: ContentPacket[] = [];
+  const hydrated: string[] = [];
+  /** Parents hydrated by their `I` in this batch and open here: their content goes to the pool. */
+  const pagedNow = new Set<string>();
   const issueModels = new Set(
     rules ? [rules.issue, ...rules.shape.children, ...rules.shape.content].map(modelOf) : [],
   );
   for (const packet of fresh) {
     const change = toChange(pool, packet, rules);
     if (change === undefined) continue;
-    base.push(change.base);
     stored.push(change.stored);
     applied.push(change.applied);
     if (issueModels.has(change.applied.model)) {
       touched.push({ model: change.applied.model, id: change.applied.rowId, version: packet.id });
     }
+    const ref = routing?.models.get(change.applied.model);
+    if (routing !== undefined && ref !== undefined) {
+      const parent = change.base.kind === 'delete' ? undefined : String(change.base.row[ref.field]);
+      const inPool = parent === undefined || routing.inPool(parent) || pagedNow.has(parent);
+      if (inPool) base.push(change.base);
+      content.push({
+        version: packet.id,
+        model: change.applied.model,
+        id: change.applied.rowId,
+        parent,
+        stored: change.stored,
+        inPool,
+      });
+      continue;
+    }
+    base.push(change.base);
+    const inserted = change.base.kind === 'delete' ? undefined : change.base.row;
+    if (
+      routing !== undefined &&
+      packet.a === 'I' &&
+      inserted !== undefined &&
+      routing.parents.has(change.applied.model) &&
+      routing.hydratesOnInsert(change.applied.model, inserted)
+    ) {
+      hydrated.push(inserted.id);
+      if (routing.wanted(inserted.id)) pagedNow.add(inserted.id);
+    }
   }
-  const gone = rules ? removeChildren(pool, rules, base, stored, touched, last.id) : [];
-  return { kind: 'apply', base, stored, lastSyncId: last.id, applied, touched, gone };
+  const children = rules && [
+    ...rules.shape.children,
+    ...(routing === undefined ? rules.shape.content : []),
+  ];
+  const gone =
+    rules && children ? removeChildren(pool, rules, children, base, stored, touched, last.id) : [];
+  const goneParents = routing ? removeContent(pool, routing, base, stored, touched, last.id) : [];
+  return {
+    kind: 'apply',
+    base,
+    stored,
+    lastSyncId: last.id,
+    applied,
+    touched,
+    gone,
+    goneParents,
+    content,
+    hydrated,
+  };
 }
 
 const modelOf = (model: string | { readonly model: string }): string =>
   typeof model === 'string' ? model : model.model;
 
+/** The rows of `models` (by id) whose last change in `base` deletes them. */
+function deletedBy(base: readonly BaseChange[], models: ReadonlySet<string>): Set<string> {
+  const present = new Map<string, boolean>();
+  for (const change of base) {
+    if (!models.has(change.model)) continue;
+    present.set(change.kind === 'delete' ? change.id : change.row.id, change.kind !== 'delete');
+  }
+  return new Set([...present].filter(([, here]) => !here).map(([id]) => id));
+}
+
 /**
- * SPEC-011 §5.7 "eager children leave with their issue": once the whole batch is planned, the
- * Issues it leaves absent take their eager children and content with them, at the batch's last
- * id. Returns those Issues.
+ * SPEC-011 §5.3 step 4 "content is dropped when its parent is gone": once the whole batch is
+ * planned, the parents it leaves absent take their pool content with them, at the batch's last
+ * id. Storage does the same for the rows it holds (`applyChanges`). Returns those parents.
  */
-function removeChildren(
+function removeContent(
   pool: ObjectPool,
-  rules: PartialRules,
+  routing: ContentRouting,
   base: BaseChange[],
   stored: StoredChange[],
   touched: TouchedRow[],
   version: number,
 ): string[] {
-  const present = new Map<string, boolean>();
-  for (const change of base) {
-    if (change.model !== rules.issue) continue;
-    present.set(change.kind === 'delete' ? change.id : change.row.id, change.kind !== 'delete');
-  }
-  const gone = [...present].filter(([, here]) => !here).map(([id]) => id);
-  if (gone.length === 0) return gone;
-  const goneSet = new Set(gone);
+  const gone = deletedBy(base, routing.parents);
+  if (gone.size === 0) return [];
   const planned = [...base];
-  for (const child of [...rules.shape.children, ...rules.shape.content]) {
+  for (const [model, ref] of routing.models) {
+    const ids = new Set<string>();
+    for (const { row } of pool.baseRows(model)) {
+      if (gone.has(String(row[ref.field]))) ids.add(row.id);
+    }
+    for (const change of planned) {
+      if (change.model !== model || change.kind === 'delete') continue;
+      if (gone.has(String(change.row[ref.field]))) ids.add(change.row.id);
+    }
+    for (const id of ids) {
+      base.push({ kind: 'delete', model, id });
+      stored.push({ kind: 'delete', model, version, id });
+      touched.push({ model, id, version });
+    }
+  }
+  return [...gone];
+}
+
+/**
+ * SPEC-011 §5.7 "eager children leave with their issue": once the whole batch is planned, the
+ * Issues it leaves absent take their eager children with them, at the batch's last id (their
+ * content goes by `removeContent`; without content routing, by this). Returns those Issues.
+ */
+function removeChildren(
+  pool: ObjectPool,
+  rules: PartialRules,
+  children: readonly { readonly model: string; readonly field: string }[],
+  base: BaseChange[],
+  stored: StoredChange[],
+  touched: TouchedRow[],
+  version: number,
+): string[] {
+  const goneSet = deletedBy(base, new Set([rules.issue]));
+  const gone = [...goneSet];
+  if (gone.length === 0) return gone;
+  const planned = [...base];
+  for (const child of children) {
     const ids = new Set<string>();
     for (const { row } of pool.baseRows(child.model)) {
       if (goneSet.has(String(row[child.field]))) ids.add(row.id);
