@@ -21,7 +21,7 @@ const ids = (groups: ReturnType<typeof helpGroups>) =>
   groups.flatMap((group) => group.rows.map((row) => row.id));
 
 describe('AC-8: the help overlay', () => {
-  it('lists exactly the bindings available in this build, grouped in registry order', () => {
+  it('lists exactly the M0 bindings at the M0 milestone, grouped in registry order', () => {
     const groups = helpGroups([...SHORTCUTS, later], { platform: 'mac', milestone: 'M0' });
     expect(ids(groups).sort()).toEqual(
       SHORTCUTS.filter((entry) => entry.milestone === 'M0')
@@ -105,7 +105,7 @@ describe('SPEC-012: Mod+/ and platform-only keys', () => {
   });
 
   it('shows the macOS-only keys on macOS and hides them elsewhere', () => {
-    const mac = ids(helpGroups(SHORTCUTS, { platform: 'mac', milestone: 'M2' }));
+    const mac = ids(helpGroups(SHORTCUTS, { platform: 'mac', milestone: 'M1' }));
     const other = ids(helpGroups(SHORTCUTS, { platform: 'other', milestone: 'M1' }));
     for (const id of ['issuePage.comment', 'issuePage.focusDescription', 'issuePage.linkUrl']) {
       expect(mac).toContain(id);
@@ -115,7 +115,7 @@ describe('SPEC-012: Mod+/ and platform-only keys', () => {
   });
 
   it('shows every M1 binding for the platform in help once the build reaches M1', () => {
-    const shown = new Set(ids(helpGroups(SHORTCUTS, { platform: 'mac', milestone: 'M2' })));
+    const shown = new Set(ids(helpGroups(SHORTCUTS, { platform: 'mac', milestone: 'M1' })));
     for (const entry of SHORTCUTS) expect(shown.has(entry.id), entry.id).toBe(true);
   });
 });

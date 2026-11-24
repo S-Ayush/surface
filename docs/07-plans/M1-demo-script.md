@@ -41,45 +41,49 @@ Everything runs locally. Nothing here needs the internet except pulling the Post
 
 ### 0.3 Teams and the second user
 
-- [ ] **0.3.1** Name the first team **ENG** (key `ENG`, public). Settings (`Mod+,`) → Teams. Create a second public team **DES**. Create a **private** team **SEC** (use the private option in the create-team form; check what the form calls it and note it if the wording surprises you). Expected: all three show in the sidebar for the Admin.
+- [ ] **0.3.1** The setup wizard already created the first team: name it **ENG** (key `ENG`, public) there. Then create a second public team **DES** and a **private** team **SEC** (Settings → Teams → create; use the private option and note what the form calls it if the wording surprises you). PERF is created later, in 0.4. Expected: all teams show in the sidebar for the Admin.
 - [ ] **0.3.2** Settings → Members → invite a second person (role Member, member of **ENG** and **DES** only, **not** SEC). The link is shown **once**: copy it. (Without SMTP the app shows the link instead of emailing it.)
 - [ ] **0.3.3** Open the invite link in a **separate browser profile or a private window** (a second session must not replace the first, Q11). Fill in name, display name and **a password of your choosing**. Expected: the second user is signed in and sees ENG and DES, but not SEC. Call this user **User B** and the first **Admin**.
-- [ ] **0.3.4** Add a few labels in ENG (Settings → Teams → ENG → Labels): at least `Bug` and `Frontend`. Check the team has the default statuses (Backlog, Todo, In Progress, Done, Canceled).
+- [ ] **0.3.4** Add a few labels in ENG (Settings → Teams → ENG → Labels, the team's sub-page; if the path differs, note it): at least `Bug` and `Frontend`. Check the team has the default statuses (Backlog, Todo, In Progress, Done, Canceled).
 
 Keep two windows open from now on: **Window A** (Admin, main) and **Window B** (User B, private window or second profile).
 
-### 0.4 Seed 10,000 issues (for section 10)
+### 0.4 Seed issues for section 10
 
-There is no bulk-import tool in M1, so use the HTTP operation endpoint from the browser console. This goes through the normal operation path (`POST /api/ops/issue.create`), so sync and permissions behave as in real use. Do it in a **separate team** so the other sections stay readable: create a public team **PERF** first (Settings → Teams).
+There is no seed command or bulk import in M1, and writing SQL rows directly is not an option (it skips `sync_log`, so clients would never see the rows). The only supported path is the operation endpoint (`POST /api/ops/issue.create`), which sync, permissions and history treat like real use. Mutations are limited to **120 per minute per actor** (`executor/rate-limit.ts`, no setting), so 10,000 issues take about **85 minutes**. Start it first and do sections 1 to 9 meanwhile, in the other window. **Seed as User B** (Window B), not as the Admin: the limit is per actor, so seeding as the Admin would make your own demo actions hit 429s. Anyone can create issues in a public team.
 
-- [ ] **0.4.1** In Window A, signed in, open DevTools → Console on the Surface page and run:
+Create a public team **PERF** first (Settings → Teams), then:
+
+- [ ] **0.4.1** In a dedicated tab of Window B (User B, signed in), open DevTools → Console on the Surface page and run the loop below. It is sequential, waits out a 429 using the `retry-after` header (falling back to 550 ms), logs progress every 100 issues, and can resume: set `start` to the last logged number if it stops (a reload, a sleeping laptop). Keep the tab open and the computer awake.
 
   ```js
   (async () => {
+    const start = 0, total = 10000;               // resume: set start to the last logged number
     const csrf = document.cookie.split('; ').find((c) => c.startsWith('surface_csrf='))?.split('=')[1] ?? '';
-    const total = 10000, batch = 20;
-    let done = 0;
-    for (let start = 0; start < total; start += batch) {
-      const calls = [];
-      for (let i = start; i < Math.min(start + batch, total); i++) {
-        calls.push(fetch('/api/ops/issue.create', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
-          body: JSON.stringify({ input: { team: 'PERF', title: `Perf issue ${i + 1}`, priority: i % 5 } }),
-        }).then((r) => { if (!r.ok) throw new Error(`${r.status}`); }));
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (let i = start; i < total; ) {
+      const r = await fetch('/api/ops/issue.create', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
+        body: JSON.stringify({ input: { team: 'PERF', title: `Perf issue ${i + 1}`, priority: i % 5 } }),
+      });
+      if (r.status === 429) {
+        await sleep(Number(r.headers.get('retry-after')) * 1000 || 550);
+        continue;                                    // retry the same issue
       }
-      await Promise.all(calls);
-      done += calls.length;
-      if (done % 500 === 0) console.log(done);
+      if (!r.ok) { console.error('stopped at', i, r.status, await r.text()); return; }
+      i += 1;
+      if (i % 100 === 0) console.log('created', i);
     }
-    console.log('finished', done);
+    console.log('finished', total);
   })();
   ```
 
-  Expected: the counter reaches 10000 and prints "finished". If it stops with a 429 or another status, lower `batch` to 5 and start again from where it stopped (change the `start` value). This can take several minutes. Note any error here.
+  Expected: "created 100", "created 200", and so on, then "finished". A stop with another status prints the response: note it. Note the real time it took in the results.
 
-- [ ] **0.4.2** Reload. Expected: PERF's issue list loads. Leave it for section 10.
+- [ ] **0.4.2** **Practical size for AC-6.** You do not have to wait for all 10,000. Section 10 can run at **2,000** issues (about 17 minutes) as a first pass. **Record in the results which size you used** (2,000, 5,000 or 10,000). AC-6 is about 10,000, so run it again at 10,000 when seeding finishes, or mark AC-6 "partial" with the size.
+- [ ] **0.4.3** Reload and open PERF's list. Expected: it loads.
 
 ## 1. Core keyboard run (AC-14)
 
@@ -137,7 +141,7 @@ Use DevTools → Network → **Offline** (or turn off the network). Keep the tab
 
 PLAN-015 S4 left these for the browser. Archiving is automatic (a daily job), so make one archived issue first.
 
-- [ ] **4.1** In ENG, create an issue `Archive me` and set it to **Done**. Quit nothing yet.
+- [ ] **4.1** In ENG, create an issue `Archive me` and set it to **Done**.
 - [ ] **4.2** Back-date it. This is **dev-only data trickery** (it writes a synced table outside the repo layer, which the product never does); use it only on this throwaway database. In a terminal:
 
   ```sh
@@ -153,7 +157,14 @@ PLAN-015 S4 left these for the browser. Archiving is automatic (a daily job), so
 
   Expected: `UPDATE 1`. Also create and delete an issue `Delete me` in the app (for the Recently deleted tab).
 
-- [ ] **4.3** Run the auto-archive job. It runs daily at 03:29 and on worker start when the last run is older than 24 hours (SPEC-015 §5). Restart `pnpm dev` and wait a minute. Expected: `Archive me` leaves the ENG list. If it does not, check the server log for the `auto-archive` job and note what you see; the rest of this section needs an archived issue, so mark the dependent steps "not run" if it never archives.
+- [ ] **4.3** Run the auto-archive job. It runs daily at **03:29 UTC**. On a worker's start it also catches up, but **only when the last completed `auto-archive` run finished more than 24 hours ago** (`jobs/daily-batch.ts`, `catchUp`), so restarting alone does nothing if it ran today. Either wait for 03:29 UTC, or delete the last run so the catch-up fires. The job table is `pgboss.job` (pg-boss 12), filtered on `name`. In psql (same container as 4.2):
+
+  ```sql
+  select id, state, completed_on from pgboss.job where name = 'auto-archive' order by created_on desc limit 5;
+  delete from pgboss.job where name = 'auto-archive' and state = 'completed';
+  ```
+
+  Then restart `pnpm dev` and wait a minute or two. Expected: `Archive me` leaves the ENG list. If the first query shows other states (`created`, `active`), note them. If nothing archives, check the server log for the `auto-archive` job and note what you see; the rest of this section needs an archived issue, so mark dependent steps "not run" if it never archives. (The job table is pg-boss's own, not a synced table, so this edit does not touch `sync_log`.)
 - [ ] **4.4** `G` then `X`. Expected: the ENG archive page opens (route `/team/ENG/archive`). Check and note:
   - [ ] the page layout and the tabs (Archived and Recently deleted)
   - [ ] `Archive me` is listed in Archived; `Delete me` in Recently deleted, with its "purged after" date
@@ -164,8 +175,8 @@ PLAN-015 S4 left these for the browser. Archiving is automatic (a daily job), so
 - [ ] **4.6** Open the archived issue from the archive page. Expected: the page is **read-only**, says it is archived, and has `⋯` items **Restore** and **Delete**; no **Permanently delete…**. Press `#`. Expected: "Restoring…" → "Restored"; the issue is back in the live list and the archive page row goes.
 - [ ] **4.7** Open the deleted issue (Recently deleted tab). Expected: `⋯` shows **Restore** (until its purge date), not **Delete**. As the Admin it also shows **Permanently delete…**. Choose it. Expected: a confirm dialog with **focus on Cancel**. Press `Esc` and confirm nothing is deleted.
 - [ ] **4.8** Open **Permanently delete…** again and confirm. Expected: the issue is gone for good; its page now says "This issue was deleted permanently." (E5). An address that never existed says the plain not-found text instead (E9, D23). Compare the two and note both messages.
-- [ ] **4.9** Locked description: open an archived or deleted issue in Window A, and in Window B restore it and... no: instead, in Window A open a **live** issue and start typing in its description; in Window B delete that issue; stop typing in A. Expected: the save is refused and a toast offers **Copy text**; pressing it copies your text (D31/SPEC-015 E1). Note the toast wording.
-- [ ] **4.10** Settings → Teams → ENG → Automations: the purge switch. (SPEC-015 §3.2) Check what the page offers (auto-archive period 1/3/6/9/12 months, auto-close) and note anything that does not match the page described in SPEC-015 §3.6.
+- [ ] **4.9** Locked description: in Window A, open a **live** issue and type in its description. In Window B, delete that issue. Stop typing in A (wait for the save). Expected: the save is refused and a toast offers **Copy text**; pressing it copies your text (D31, SPEC-015 E1). Note the toast wording.
+- [ ] **4.10** Settings → Teams → ENG → Automations (the team's sub-page; if the path differs, note it): the purge switch. (SPEC-015 §3.2) Check what the page offers (auto-archive period 1/3/6/9/12 months, auto-close) and note anything that does not match the page described in SPEC-015 §3.6.
 - [ ] **4.11** After the milestone raise, `G X` works from anywhere (it needs the current team: route team, else home team, else first member team) and `#` works on an archive row, an archived page and a deleted page.
 
 ## 5. Comments and reactions
@@ -237,12 +248,12 @@ Use SEC (private; User B is **not** a member). Window A is the Admin, who is a m
 - [ ] **9.3** In Window B, paste the address `/issue/SEC-1`. Expected: the **plain not-found** page ("SEC-1 doesn't exist, or you don't have access to it."), identical to a number that never existed, **never** "forbidden" and never the title. Try `/issue/SEC-999` and compare.
 - [ ] **9.4** In Window B, the attachment's file address (`/files/<id>`, copy it from Window A) opens nothing (404-style, not a download).
 - [ ] **9.5** In Window A, delete `Secret plan` then check Window B: still invisible, including `/team/SEC/archive` (not found).
-- [ ] **9.6** Admin is added to SEC but then removed: as User B-as-Admin cannot test here. Skip, and note "covered by the leak suite" (permissions.md §5).
+- [ ] **9.6** Cases where a member is removed from a team are covered by the leak suite (permissions.md §5), not by hand. Write "covered by the leak suite" and go on.
 - [ ] **9.7** `Ctrl+Shift+1…9`: the digits follow the sidebar order of **the teams User B sees**. Press `Ctrl+Shift+1` in Window B: expected the first listed team's issues. Check the number does not map to SEC.
 
 ## 10. Performance (AC-6 and AC-23)
 
-Needs the PERF team from 0.4. Use Chrome (DevTools → Performance and Rendering → **Frame rendering stats**). Close other heavy tabs.
+Needs the PERF team from 0.4. **Write down the list size you are testing (2,000, 5,000 or 10,000)** and enter it in the results. Use Chrome (DevTools → Performance and Rendering → **Frame rendering stats**). Close other heavy tabs.
 
 - [ ] **10.1** Open PERF's issue list. Expected: it renders without a long freeze. Note the time from the click to the first rows.
 - [ ] **10.2** Scroll the whole list with `J` held down and with the scroll bar. Expected: the frame rate stays near 60 fps, the page never blanks, and the DOM holds only the visible rows plus a small overscan (Elements: count the rows, expect a few dozen, not thousands). The focused row stays mounted when you scroll far from it (AC-6).
@@ -337,7 +348,7 @@ These need the run above. Tick them only after the named steps pass.
 
 - [ ] **AC-14** (keyboard-only create, edit, rename, copy ID, next issue, `Esc` back; also from `Mod+K`): sections 1 and 2.
 - [ ] **AC-23** (hydrated issue under 100 ms, property change under 16 ms): step 10.5.
-- [ ] **AC-6, by hand** (10,000 issues, 60 fps, focused row stays mounted): steps 10.1 to 10.4.
+- [ ] **AC-6, by hand** (10,000 issues, 60 fps, focused row stays mounted): steps 10.1 to 10.4; say which list size you used.
 - [ ] **AC-13, by hand** (pending issue's address switches to the numbered one without losing focus or scroll; the old slug still opens): steps 1.7 and 3.7.
 - [ ] **AC-20, by hand** (375 px with no horizontal scroll): section 11.
 - [ ] **AC-17 and AC-18** (from PLAN-013 S5): step 5.11.
@@ -383,11 +394,12 @@ Fill this in during the run. Copy the finished table into the "As built" note of
 
 | Measure | Result | Budget |
 |---|---|---|
-| Scroll frame rate at 10,000 issues | | about 60 fps |
+| List size tested (2,000, 5,000 or 10,000) | | AC-6 says 10,000 |
+| Scroll frame rate at that size | | about 60 fps |
 | DOM rows while scrolling | | a few dozen |
 | Open a hydrated issue | | under 100 ms |
 | Property change paint (worst of 5) | | under 16 ms |
-| Tab memory at 10,000 issues | | note only |
+| Tab memory at that size | | note only |
 
 **Q16 matrix (section 12.2).** Write A (Surface handled it), B (browser took it, or both ran) or C (nothing happened). Expected: `Ctrl+Shift+1…9` is A everywhere; `Ctrl+L`, `Ctrl+M`, `Ctrl+Shift+I` are A on macOS and C elsewhere; `Mod+Shift+D` is A or B.
 

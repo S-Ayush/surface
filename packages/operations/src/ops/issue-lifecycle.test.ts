@@ -61,7 +61,11 @@ describe('issue.delete (§6.1, §6.2)', () => {
       purgeAfter: '2026-12-13T10:00:00.000Z',
     });
     expect(new Set(output.error?.issues.map((i) => i.path[0]))).toEqual(new Set(['issue']));
-    expect(issueDelete.ui).toMatchObject({ title: 'Delete issue', contexts: ['issue'] });
+    expect(issueDelete.ui).toMatchObject({
+      title: 'Delete issue',
+      contexts: ['issue'],
+      shortcut: 'Mod+Backspace',
+    });
   });
 
   it('removes a live or archived issue from the overlay, so it leaves every list at once (AC-13)', () => {
@@ -87,7 +91,11 @@ describe('issue.delete (§6.1, §6.2)', () => {
 describe('issue.restore (§6.1, §6.2)', () => {
   it('is a non-destructive mutation that returns the full issue', () => {
     expect(issueRestore).toMatchObject({ kind: 'mutation', domain: 'issue', destructive: false });
-    expect(issueRestore.ui).toMatchObject({ title: 'Restore issue', contexts: ['issue'] });
+    expect(issueRestore.ui).toMatchObject({
+      title: 'Restore issue',
+      contexts: ['issue'],
+      shortcut: '#',
+    });
   });
 
   it('predicts nothing: the row returns with the server’s V or U (AC-13, D17)', () => {

@@ -87,6 +87,27 @@ describe('AC-6: sequences', () => {
     expect(engine.pendingSequence).toBeNull();
   });
 
+  it('at the default build G then S still goes to settings, and the hint lists E, M, D, X and S', () => {
+    const { commands, press, hints } = setup();
+    const settings = vi.fn();
+    commands.register('nav:settings', { run: settings });
+
+    press(keys.letter('G'));
+    const [, next] = hints.sequence.mock.calls[0] ?? [];
+    const ids = next?.map((binding) => binding.id) ?? [];
+    for (const id of [
+      'nav.teamIssues',
+      'nav.myIssues',
+      'nav.drafts',
+      'nav.teamArchive',
+      'nav.settings',
+    ]) {
+      expect(ids).toContain(id);
+    }
+    expect(press(keys.letter('S'))).toEqual({ taken: true, prevented: true });
+    expect(settings).toHaveBeenCalledOnce();
+  });
+
   it('G alone shows the hint, then times out harmlessly', () => {
     const { commands, press, hints, engine } = setup();
     const settings = vi.fn();
