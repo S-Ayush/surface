@@ -5,7 +5,14 @@
 // drop in an editor, which is the editor's.
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clearToasts, mountAttachments, type AttachmentWorld } from './attachments-harness.js';
+import {
+  IMAGE_1,
+  clearToasts,
+  imageRow,
+  mountAttachments,
+  press,
+  type AttachmentWorld,
+} from './attachments-harness.js';
 import { around, field, focus, linkDialog, uploadRows } from './attachments-page.js';
 
 vi.mock('../src/features/comments/editor-host.js', () => import('./comment-editor-fake.js'));
@@ -56,6 +63,18 @@ describe('paste on the page (§3.1, §3.2)', () => {
     expect(linkDialog()).toBeUndefined();
   });
 
+  it('leaves a paste to an open overlay, such as the image viewer', async () => {
+    world = await mountAttachments({ attachments: [imageRow(IMAGE_1)] });
+    const title = [...document.querySelectorAll('[data-attachment-id] button')].find(
+      (b) => b.textContent === 'screenshot.png',
+    );
+    await press(title);
+    expect(document.querySelector('[role="dialog"] img')).not.toBeNull();
+    const event = await paste(document.body, { text: 'https://example.com/spec' });
+    expect(event.defaultPrevented).toBe(false);
+    expect(linkDialog()).toBeUndefined();
+  });
+
   it('ignores text that is more than one address', async () => {
     world = await mountAttachments();
     await paste(document.body, { text: 'see https://example.com/spec' });
@@ -82,11 +101,21 @@ async function drop(target: EventTarget, files: File[]): Promise<Event> {
 }
 
 describe('drop on the page (§3.1)', () => {
-  it('uploads files dropped on the page, but not those dropped in an editor', async () => {
+  it('uploads files dropped on the page, but leaves a drop in an editor to it', async () => {
     world = await mountAttachments({ around });
-    await drop(field('Comment'), [new File(['x'], 'a.pdf')]);
+    const inEditor = await drop(field('Rich text'), [new File(['x'], 'a.pdf')]);
+    expect(inEditor.defaultPrevented).toBe(false);
     expect(uploadRows()).toHaveLength(0);
     await drop(document.body, [new File(['x'], 'a.pdf'), new File(['y'], 'b.pdf')]);
     expect(uploadRows()).toHaveLength(2);
+  });
+
+  it('a file dropped on a plain field neither attaches nor lets the browser open it', async () => {
+    world = await mountAttachments({ around });
+    for (const label of ['Title', 'Comment']) {
+      const event = await drop(field(label), [new File(['x'], 'a.pdf')]);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    expect(uploadRows()).toHaveLength(0);
   });
 });

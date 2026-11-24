@@ -16,7 +16,8 @@ import {
   DESCRIPTION_OFFLINE_MESSAGE,
 } from '../src/features/issues/IssueDescription.js';
 import { descriptionAbandonedMessage } from '../src/features/issues/description-save.js';
-import { docOfText } from './comment-editor-fake.js';
+import { countFilePicker } from './attachments-page.js';
+import { docOfText, editorUploads } from './comment-editor-fake.js';
 import {
   FakeApp,
   inAct,
@@ -495,5 +496,33 @@ describe('leaving the tab', () => {
       baseVersion: 4,
       description: docOfText('Closed mid-sentence'),
     });
+  });
+});
+
+describe('Mod+Shift+U with focus in the description (SPEC-012 §3.6, SPEC-014 §3.3; PLAN-014 S5)', () => {
+  it("opens the description editor's chooser to insert inline; elsewhere it attaches", async () => {
+    editorUploads.chooserOpened.length = 0;
+    const picker = countFilePicker();
+    const content = contentWorld();
+    const app = new FakeApp({ issues: [issueRow(ISSUE_A, 42)], content: content.api });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    const field = editor();
+    if (field === null) throw new Error('no description editor');
+    await inAct(() => {
+      field.focus();
+    });
+    // jsdom's platform is "other": `Mod` is Control.
+    const modShiftU = { code: 'KeyU', shiftKey: true, ctrlKey: true };
+    await keydown(field, 'U', modShiftU);
+    expect(editorUploads.chooserOpened).toEqual(['Description']);
+    expect(picker.opened()).toBe(0);
+
+    await inAct(() => {
+      field.blur();
+    });
+    await keydown(document.body, 'U', modShiftU);
+    expect(picker.opened()).toBe(1);
+    expect(editorUploads.chooserOpened).toEqual(['Description']);
+    vi.restoreAllMocks();
   });
 });

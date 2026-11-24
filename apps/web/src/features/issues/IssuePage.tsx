@@ -11,6 +11,7 @@ import {
   IconButton,
   Menu,
   Skeleton,
+  usePlatform,
   type MenuEntry,
 } from '@surface/ui';
 import { issueUpdate } from '@surface/operations';
@@ -528,6 +529,9 @@ function IssueBody({
   const deleteHint = deleteKeys === undefined ? {} : { shortcut: deleteKeys };
   const restoreKeys = shortcutsFor('issue:restore')[0];
   const attachKeys = shortcutsFor('issue-page:attach-file')[0];
+  // `Ctrl+L` is bound on macOS only (SPEC-012 D31): no hint elsewhere.
+  const platform = usePlatform();
+  const linkKeys = platform === 'mac' ? shortcutsFor('issue-page:link-url')[0] : undefined;
   const restoreHint = restoreKeys === undefined ? {} : { shortcut: restoreKeys };
   // An archived issue can still be deleted (§3.4); a deleted one only restored or purged.
   const deletable = (editable || view.lifecycle === 'archived') && view.identifier !== null;
@@ -602,6 +606,7 @@ function IssueBody({
             type: 'item',
             label: 'Link any URL to issue…',
             icon: <LinkIcon />,
+            ...(linkKeys === undefined ? {} : { shortcut: linkKeys }),
             onSelect: () => {
               commands.run('issue-page:link-url');
             },

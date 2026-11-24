@@ -352,6 +352,47 @@ describe('the upload queue (§3.1, §3.6)', () => {
   });
 });
 
+describe('leaving the page (§3.1: progress rows are page state)', () => {
+  it('cancels running uploads and drops waiting ones: nothing starts or attaches afterwards', async () => {
+    const q = queueWith();
+    q.queue.add([file('a.pdf'), file('b.pdf'), file('c.pdf'), file('d.pdf')]);
+    expect(q.calls).toHaveLength(3);
+    q.queue.stop();
+    await flush();
+    expect(q.calls.map((call) => call.signal?.aborted)).toEqual([true, true, true]);
+    expect(q.calls).toHaveLength(3);
+    expect(q.queue.rows()).toEqual([]);
+    expect(q.attached).toEqual([]);
+  });
+
+  it('attaches nothing when an upload the abort missed finishes after leaving', async () => {
+    // An uploader whose answer wins the race with the abort: it ignores the signal.
+    let answer: ((result: UploadResult) => void) | undefined;
+    const attached: string[] = [];
+    const queue = new UploadQueue({
+      uploader: () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      online: () => true,
+      attach: (done) => attached.push(done.name),
+      toast: () => undefined,
+    });
+    queue.add([file()]);
+    queue.stop();
+    answer?.({ ok: true, answer: stored().result });
+    await flush();
+    expect(attached).toEqual([]);
+  });
+
+  it('works again after a remount (StrictMode stops and reuses the queue)', () => {
+    const q = queueWith();
+    q.queue.stop();
+    q.queue.add([file()]);
+    expect(q.calls).toHaveLength(1);
+  });
+});
+
 describe("the editor's inline upload (SPEC-013 §3.5, SPEC-014 §3.3)", () => {
   it('uploads with purpose=inline and inserts /files/<id>: images as images, others as files', async () => {
     const purposes: string[] = [];

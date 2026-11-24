@@ -18,17 +18,20 @@ export interface DragLike {
 export const carriesFiles = (event: Pick<DragLike, 'dataTransfer'>): boolean =>
   event.dataTransfer !== null && Array.from(event.dataTransfer.types).includes('Files');
 
-/** A drop inside an editor or a text field is that field's. */
+/** A drop inside an editor is the editor's: it inserts the file inline (SPEC-014 §3.3). */
 function inEditor(target: unknown): boolean {
-  return (
-    target instanceof Element &&
-    target.closest('[contenteditable="true"], input, textarea') !== null
-  );
+  return target instanceof Element && target.closest('[contenteditable="true"]') !== null;
+}
+
+/** A plain text field: a file dropped on it is neither the field's nor an attachment. */
+function inField(target: unknown): boolean {
+  return target instanceof Element && target.closest('input, textarea') !== null;
 }
 
 /** The files of a drop the page takes, or undefined when it isn't the page's. */
 export function droppedFiles(event: DragLike): File[] | undefined {
-  if (event.defaultPrevented || !carriesFiles(event) || inEditor(event.target)) return undefined;
+  if (event.defaultPrevented || !carriesFiles(event)) return undefined;
+  if (inEditor(event.target) || inField(event.target)) return undefined;
   const files = Array.from(event.dataTransfer?.files ?? []);
   return files.length === 0 ? undefined : files;
 }
@@ -61,12 +64,18 @@ export function DropZone({
       if (depth === 0) setShown(false);
     };
     const onOver = (event: DragEvent) => {
-      // Allows the drop; an editor under the pointer still handles its own.
+      // Allows the drop (and so stops the browser opening the file); an editor under the pointer
+      // still handles its own.
       if (carriesFiles(event) && !inEditor(event.target)) event.preventDefault();
     };
     const onDrop = (event: DragEvent) => {
       depth = 0;
       setShown(false);
+      // On a plain field: nothing happens, and the browser doesn't open the file either.
+      if (carriesFiles(event) && !inEditor(event.target) && inField(event.target)) {
+        event.preventDefault();
+        return;
+      }
       const files = droppedFiles(event);
       if (files === undefined) return;
       event.preventDefault();
@@ -90,7 +99,11 @@ export function DropZone({
     };
   }, []);
 
-  if (!shown) return null;
+  return shown ? <DropZoneLayer subject={subject} /> : null;
+}
+
+/** The layer shown while files are dragged over the page (exported for its story). */
+export function DropZoneLayer({ subject }: { subject: string }) {
   return (
     <div className={styles.dropZone} aria-hidden="true" data-testid="attachment-drop-zone">
       <div className={styles.dropMessage}>

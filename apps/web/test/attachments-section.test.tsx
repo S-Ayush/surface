@@ -11,6 +11,7 @@ import {
   IRIS,
   IMAGE_1,
   LINK_1,
+  ME,
   attachmentRow,
   clearToasts,
   imageRow,
@@ -28,6 +29,7 @@ import {
 import { ISSUE_A, issueRow, setValue } from './issue-fixtures.js';
 import { OFFLINE_UPLOAD_MESSAGE } from '../src/features/attachments/transport.js';
 import { REMOVED_MESSAGE } from '../src/features/attachments/actions.js';
+import { userActor } from '@surface/domain';
 import { runInAction } from 'mobx';
 
 Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true);
@@ -281,6 +283,39 @@ describe('Remove with Undo (§3.5, D8, E8)', () => {
     await settle();
     expect(rowTitles()).toEqual(['design.pdf']);
     expect(toasts()).toContain('ENG-42 was deleted. Restore it to edit it.');
+  });
+});
+
+describe('who may rename and remove (SPEC-014 §5, AC-9)', () => {
+  const outsider = userActor({
+    userId: ME,
+    role: 'member',
+    memberships: [{ teamId: uuidOf(77), private: false }],
+  });
+
+  it("offers neither to someone outside the issue's team who didn't add it", async () => {
+    const w = await mount({ actor: outsider, attachments: [attachmentRow(FILE_1)] });
+    expect(await openRowMenu('design.pdf')).toEqual(['Open', 'Download', 'Copy link']);
+    const title = document.querySelector<HTMLElement>(`[data-attachment-id="${FILE_1}"] a`);
+    await act(async () => {
+      title?.focus();
+      await Promise.resolve();
+    });
+    expect(w.registry?.isAvailable('attachment:rename')).toBe(false);
+    expect(w.registry?.isAvailable('attachment:remove')).toBe(false);
+    // Anyone who sees the issue may still attach (permissions §3.3).
+    expect(button('Attach file')).not.toBeNull();
+  });
+
+  it('offers both to the one who added it, and to an Admin', async () => {
+    const mine = attachmentRow(FILE_1, { creatorId: ME });
+    await mount({ actor: outsider, attachments: [mine] });
+    expect(await openRowMenu('design.pdf')).toContain('Remove');
+    await world?.unmount();
+    world = undefined;
+    const admin = userActor({ userId: ME, role: 'admin', memberships: [] });
+    await mount({ actor: admin, attachments: [attachmentRow(FILE_1)] });
+    expect(await openRowMenu('design.pdf')).toContain('Rename…');
   });
 });
 

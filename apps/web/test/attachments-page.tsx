@@ -16,6 +16,8 @@ export const uploadRows = () => document.querySelectorAll('[data-testid="upload-
 export const around = (
   <>
     <input aria-label="Title" />
+    {/* A rich-text editor's surface, as TipTap renders it (the comment fake is a textarea). */}
+    <div contentEditable suppressContentEditableWarning aria-label="Rich text" />
     <ComposerBox
       value={EMPTY_DOC}
       onChange={() => undefined}

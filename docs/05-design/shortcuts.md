@@ -206,6 +206,7 @@ Linear lists no keys to move through comments, edit or delete one, so Surface ha
 | `0–9` | Quick choose (where shown) |
 | `Mod+Enter` | Submit the modal (create issue, save) |
 | `Esc` | Close (asks before discarding dirty content) |
+| `←` / `→` | Previous / next image, in the image viewer (the issue's image attachments, SPEC-014 §7; M1) |
 
 ### 3.9 Reserved keys
 Linear's keys for commands Surface doesn't have yet. Nothing else is bound to them, so they are free when the command arrives (SPEC-012 §3.6). Where a row above gives a different key for the same command, the reserved key below is the one to use when the command arrives, and that row changes with it.

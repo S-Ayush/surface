@@ -269,12 +269,21 @@ export class AttachmentServer {
   }
 }
 
+/** The signed-in user by default: Ada, a member of ENG. */
+export const MEMBER: Actor = userActor({
+  userId: ME,
+  role: 'member',
+  memberships: [{ teamId: TEAM, private: false }],
+});
+
 class HarnessApp extends AppModel {
   readonly #store: SyncStore;
-  constructor(store: SyncStore) {
+  readonly #actor: Actor;
+  constructor(store: SyncStore, actor: Actor) {
     const unused = () => Promise.reject(new Error('unused'));
     super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
     this.#store = store;
+    this.#actor = actor;
   }
   override get store(): SyncStore | null {
     return this.#store;
@@ -282,8 +291,7 @@ class HarnessApp extends AppModel {
   override get session(): Session {
     return { userId: ME, workspaceId: 'w-1' };
   }
-  override actor = (): Actor | null =>
-    userActor({ userId: ME, role: 'member', memberships: [{ teamId: TEAM, private: false }] });
+  override actor = (): Actor | null => this.#actor;
 }
 
 /** Every binding, M1's included (the build is still M0). */
@@ -320,6 +328,8 @@ export async function mountAttachments(
     attachments?: readonly Row[];
     issue?: Row;
     platform?: Platform;
+    /** Who is signed in (Ada, a member of ENG, by default). */
+    actor?: Actor;
     /** The read-only view: the page provides the server's answer instead of the replica. */
     server?: ServerContent;
     /** More of the page around the section (a comment box, say). */
@@ -335,7 +345,7 @@ export async function mountAttachments(
     ]);
   });
   const uploader = new FakeUploader();
-  const app = new HarnessApp(server.asStore());
+  const app = new HarnessApp(server.asStore(), options.actor ?? MEMBER);
   const targets = new TargetStore();
   const holder: { registry?: CommandRegistry } = {};
   const host = document.createElement('div');

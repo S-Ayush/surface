@@ -5,11 +5,13 @@
 // A link is never fetched (D10): nothing here requests a URL, it only parses the typed text.
 import {
   attachmentTitleProblem,
+  bindPredicates,
   normalizeAttachmentTitle,
   parseAttachmentUrl,
+  type Actor,
 } from '@surface/domain';
 import { Attachment } from '@surface/domain/model';
-import type { AttachmentSummarySchema } from '@surface/operations';
+import { attachmentDelete, type AttachmentSummarySchema } from '@surface/operations';
 import type { z } from 'zod';
 
 export type AttachmentSummary = z.output<typeof AttachmentSummarySchema>;
@@ -192,4 +194,25 @@ export function loneUrl(text: string): string | undefined {
   if (trimmed === '' || /\s/.test(trimmed)) return undefined;
   const parsed = parseAttachmentUrl(trimmed);
   return parsed.ok ? parsed.url : undefined;
+}
+
+/** What the row's Rename and Remove act on. */
+export interface AttachmentChange {
+  readonly id: string;
+  /** The issue's team. */
+  readonly teamId: string;
+  readonly creatorId: string | null;
+}
+
+/**
+ * Whether `actor` may rename and remove the attachment (SPEC-014 §5, AC-9: its creator, members of
+ * its issue's team, or Admins). It asks `attachment.delete`'s own permission, as the command
+ * menu's pre-check does, so the row menu and the menu agree; `attachment.update` has the same one.
+ */
+export function mayChangeAttachment(actor: Actor | null, attachment: AttachmentChange): boolean {
+  if (actor === null) return false;
+  const refs = {
+    attachment: { id: attachment.id, teamId: attachment.teamId, creatorId: attachment.creatorId },
+  };
+  return attachmentDelete.permission(bindPredicates(actor).p, refs, { attachment: attachment.id });
 }

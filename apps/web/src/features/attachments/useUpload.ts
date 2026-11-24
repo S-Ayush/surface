@@ -45,6 +45,8 @@ export class UploadQueue {
   #jobs: Job[] = [];
   #rows: readonly UploadRow[] = [];
   #seq = 0;
+  /** Set by `stop()` (the page closed): nothing new starts until the next `add`. */
+  #stopped = false;
   readonly #listeners = new Set<() => void>();
 
   constructor(deps: UploadQueueDeps) {
@@ -72,6 +74,8 @@ export class UploadQueue {
       this.#deps.toast(OFFLINE_UPLOAD_MESSAGE);
       return false;
     }
+    // A StrictMode remount stops the queue and then uses it again.
+    this.#stopped = false;
     for (const file of files) {
       this.#seq += 1;
       this.#jobs.push({ key: `upload-${String(this.#seq)}`, file, progress: 0, state: 'waiting' });
@@ -102,15 +106,27 @@ export class UploadQueue {
     job.state = 'waiting';
     job.progress = 0;
     delete job.message;
+    this.#stopped = false;
     this.#pump();
   }
 
-  /** The page closed: running uploads stop. The queue can be used again (StrictMode remounts). */
+  /**
+   * The page closed: running uploads stop and waiting ones are dropped, so nothing attaches to an
+   * issue the person left. The next `add` uses the queue again (StrictMode remounts).
+   */
   stop(): void {
-    for (const job of this.#jobs) job.abort?.abort();
+    this.#stopped = true;
+    const running = this.#jobs.filter((job) => job.state === 'uploading');
+    this.#jobs = running;
+    for (const job of running) job.abort?.abort();
+    this.#emit();
   }
 
   #pump(): void {
+    if (this.#stopped) {
+      this.#emit();
+      return;
+    }
     const limit = this.#deps.parallel ?? PARALLEL_UPLOADS;
     let running = this.#jobs.filter((job) => job.state === 'uploading').length;
     for (const job of this.#jobs) {
@@ -137,9 +153,10 @@ export class UploadQueue {
     });
     delete job.abort;
     if (result.ok) {
-      // The progress row leaves as the optimistic row comes (§3.1 step 3).
+      // The progress row leaves as the optimistic row comes (§3.1 step 3); after `stop()` the
+      // page is gone and nothing attaches.
       this.#remove(job, false);
-      this.#deps.attach(result.answer);
+      if (!this.#stopped) this.#deps.attach(result.answer);
     } else if (result.aborted) {
       this.#remove(job, false);
     } else {

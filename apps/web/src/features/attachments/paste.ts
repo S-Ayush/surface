@@ -46,9 +46,17 @@ export function handlePagePaste(
   return true;
 }
 
-/** Listens for pastes on `doc` while the page is editable; returns the clean-up. */
-export function listenForPaste(doc: Document, actions: () => PasteActions): () => void {
+/**
+ * Listens for pastes on `doc` while the page is editable; returns the clean-up. While an overlay
+ * (a dialog, the viewer, a menu) is open the paste is the overlay's, not the page's.
+ */
+export function listenForPaste(
+  doc: Document,
+  actions: () => PasteActions,
+  overlayOpen: () => boolean,
+): () => void {
   const onPaste = (event: ClipboardEvent) => {
+    if (overlayOpen()) return;
     handlePagePaste(event, doc.activeElement, actions());
   };
   doc.addEventListener('paste', onPaste);

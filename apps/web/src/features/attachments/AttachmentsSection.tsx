@@ -14,7 +14,15 @@
 //
 // A link is never fetched or unfurled (D10): it opens in a new tab with `rel="noopener noreferrer"`.
 import { Attachment, User } from '@surface/domain/model';
-import { IconButton, Menu, ProgressBar, Tooltip, toast, type MenuEntry } from '@surface/ui';
+import {
+  IconButton,
+  Menu,
+  ProgressBar,
+  Tooltip,
+  overlayManager,
+  toast,
+  type MenuEntry,
+} from '@surface/ui';
 import {
   Copy,
   Download,
@@ -49,6 +57,7 @@ import {
   itemsFromRows,
   itemsFromSummaries,
   linkOf,
+  mayChangeAttachment,
   targetLabel,
   type AttachmentItem,
 } from './model.js';
@@ -84,13 +93,16 @@ function useLiveAttachments(issueId: string, enabled: boolean) {
   return useObserved(
     useCallback(() => {
       const store = app.readyStore;
-      if (!enabled || store === null) return { items: [], editable: false, subject: '' };
+      if (!enabled || store === null) {
+        return { items: [], editable: false, subject: '', teamId: null };
+      }
       const view = issueViewFromPool(store.pool, issueId);
       const name = (id: string) => store.pool.get(User, id)?.displayName;
       return {
         items: itemsFromRows(store.pool.findBy(Attachment, 'issueId', issueId), name),
         editable: view !== undefined && view.lifecycle === 'live',
         subject: view?.identifier ?? 'this issue',
+        teamId: view?.teamId ?? null,
       };
     }, [app, issueId, enabled]),
   );
@@ -105,6 +117,19 @@ export function AttachmentsSection({ issueId }: SlotProps) {
     [content.server, content.attachments, live.items],
   );
   const editable = !content.server && live.editable;
+  // Rename and Remove: the creator, the issue's team or Admins (SPEC-014 §5, AC-9).
+  const actor = useObserved(
+    useCallback(() => app.actor(), [app]),
+    Object.is,
+  );
+  const teamId = live.teamId;
+  const mayChange = useCallback(
+    (item: AttachmentItem) =>
+      editable &&
+      teamId !== null &&
+      mayChangeAttachment(actor, { id: item.id, teamId, creatorId: item.creatorId }),
+    [editable, teamId, actor],
+  );
   const store = useObserved(
     useCallback(() => app.readyStore, [app]),
     Object.is,
@@ -119,7 +144,15 @@ export function AttachmentsSection({ issueId }: SlotProps) {
     uploader,
     online,
     attach: (answer) => {
-      void actions?.attachFile(issueId, answer);
+      if (actions === null) {
+        // No replica to dispatch into (signed out meanwhile): say so rather than drop the file.
+        toast({
+          tone: 'danger',
+          message: "Couldn't attach the file. Reload the page and try again.",
+        });
+        return;
+      }
+      void actions.attachFile(issueId, answer);
     },
     toast: (message) => {
       toast({ message });
@@ -158,7 +191,11 @@ export function AttachmentsSection({ issueId }: SlotProps) {
   });
   useEffect(() => {
     if (!editable) return;
-    return listenForPaste(document, () => paste.current);
+    return listenForPaste(
+      document,
+      () => paste.current,
+      () => overlayManager.topLayer() !== undefined,
+    );
   }, [editable]);
 
   // The focused row is the command target (the `attachment` context, SPEC-014 §7).
@@ -244,14 +281,14 @@ export function AttachmentsSection({ issueId }: SlotProps) {
     () => {
       setRenaming(focused);
     },
-    { when: () => editable && focused !== undefined },
+    { when: () => focused !== undefined && mayChange(focused) },
   );
   useCommand(
     'attachment:remove',
     () => {
       if (focused !== undefined) remove(focused);
     },
-    { when: () => editable && focused !== undefined },
+    { when: () => focused !== undefined && mayChange(focused) },
   );
 
   // Read-only with nothing attached: nothing to show (SPEC-012 §3.4 item 8).
@@ -305,7 +342,7 @@ export function AttachmentsSection({ issueId }: SlotProps) {
               key={item.id}
               item={item}
               now={now}
-              editable={editable}
+              mayChange={mayChange(item)}
               onOpen={open}
               onCopyLink={copyLink}
               onRename={setRenaming}
@@ -374,10 +411,11 @@ function TypeIcon({ item }: { item: AttachmentItem }) {
   return <FileIcon />;
 }
 
-function AttachmentRowView({
+/** One attachment row (exported for its story). */
+export function AttachmentRowView({
   item,
   now,
-  editable,
+  mayChange,
   onOpen,
   onCopyLink,
   onRename,
@@ -385,7 +423,8 @@ function AttachmentRowView({
 }: {
   item: AttachmentItem;
   now: Date;
-  editable: boolean;
+  /** Rename and Remove are offered (the issue can change and the person may change this one). */
+  mayChange: boolean;
   onOpen: (item: AttachmentItem) => void;
   onCopyLink: (item: AttachmentItem) => void;
   onRename: (item: AttachmentItem) => void;
@@ -409,7 +448,7 @@ function AttachmentRowView({
         ]
       : []),
     { type: 'item', label: 'Copy link', icon: <Copy />, onSelect: () => onCopyLink(item) },
-    ...(editable
+    ...(mayChange
       ? ([
           { type: 'separator' },
           { type: 'item', label: 'Rename…', icon: <Pencil />, onSelect: () => onRename(item) },
@@ -482,7 +521,8 @@ function AttachmentTitle({
   return <span className={styles.title}>{item.title}</span>;
 }
 
-function ProgressRow({
+/** One upload's progress or failure row (exported for its story). */
+export function ProgressRow({
   row,
   onCancel,
   onRetry,
