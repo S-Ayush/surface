@@ -10,7 +10,11 @@ import {
   PURGE_STEPS,
 } from '../src/issues/purge-steps.js';
 import type { Repo } from '../src/sync/repo.js';
+import { ModelDb, ModelTx } from './files-bytes-model.js';
 import { recordingDb, scriptedDb, type Row } from './support/scripted-db.js';
+
+// The comment steps never touch `files`.
+const noFiles = () => new ModelTx(new ModelDb(), 1);
 
 const ISSUE = '0190f0c0-0000-7000-8000-000000000042';
 const NOW = new Date('2026-11-13T10:00:00.000Z');
@@ -41,7 +45,7 @@ describe('comment purge steps', () => {
     const { db, statements } = recordingDb();
     const repo = recordingRepo(log);
     for (const step of COMMENT_PURGE_STEPS) {
-      await step.step(db, repo, ISSUE);
+      await step.step(db, repo, ISSUE, noFiles());
       for (const s of statements.splice(0)) log.push(`sql: ${s.text} ${JSON.stringify(s.params)}`);
     }
     expect(COMMENT_PURGE_STEPS.map((s) => s.model)).toEqual([
@@ -87,7 +91,7 @@ describe('the comment step across a chunk boundary', () => {
 
   it('deletes a reply in a chunk before its root’s, so the RESTRICT key holds', async () => {
     const { db: tx, repo, rowsOf, statements } = db();
-    await commentStep?.step(tx, repo, ISSUE);
+    await commentStep?.step(tx, repo, ISSUE, noFiles());
     expect(rowsOf('comments').size).toBe(0);
     const deletes = statements.filter((s) => s.text.startsWith('delete from "comments"'));
     expect(deletes.map((s) => s.params[0])).toEqual([[id(3), id(1)], [id(2)]]);

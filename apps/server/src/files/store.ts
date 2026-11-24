@@ -61,10 +61,9 @@ export function fileReaderOf(
  * The SPEC-014 §4.2 predicate as one statement. `s` is the file whose owner decides: `f` itself,
  * or its source when `f` is a preview.
  *
- * S1 has the branches that need no `issues` table: the M0 avatar/logo rule and the unclaimed
- * upload. A claimed `attachment` or `inline` file, and every preview, match no branch yet.
- * PLAN-014 S4a adds the issue branch (`EXISTS (SELECT 1 FROM issues …)`); Postgres refuses to plan
- * a statement naming a missing table, so it can't ship before PLAN-011 S3.
+ * Three branches: the M0 avatar/logo rule, the unclaimed upload (its uploader's alone), and the
+ * owning issue's visibility (PLAN-014 S4a): a claimed `attachment` or `inline` file, and a preview
+ * of one, is visible to whoever sees its issue, in every lifecycle state.
  */
 export function visibleFileQuery(fileId: string, reader: FileReader): SQL {
   return sql`SELECT f.id, f.purpose, f.uploader_id AS "uploaderId", f.storage_key AS "storageKey",
@@ -96,10 +95,63 @@ export function fileVisibilityBranches(reader: FileReader): readonly SQL[] {
            AND s.uploader_id = ${reader.userId})`,
     );
   }
+  // An owned file is its issue's: visible to whoever sees the issue (archived and deleted
+  // included), never through being its uploader (D6, E16), and to nobody once detached (E8).
+  branches.push(
+    sql`(s.purpose IN ('attachment', 'inline')
+         AND s.issue_id IS NOT NULL
+         AND s.detached_at IS NULL
+         AND ${ownerIssueSeenBy(reader, sql`s.issue_id`)})`,
+  );
   return branches;
 }
 
 const dialect = new PgDialect();
+
+/**
+ * `EXISTS` an issue `issueId` names that `reader` sees: its sync groups meet the reader's (every
+ * lifecycle state), and a key limited to some teams sees only those teams' issues, public ones
+ * included (SPEC-011 §5.6).
+ */
+function ownerIssueSeenBy(reader: FileReader, issueId: SQL): SQL {
+  const keyTeams =
+    reader.keyTeamIds === null
+      ? sql``
+      : sql` AND i.team_id = ANY(${sql.param([...reader.keyTeamIds])}::uuid[])`;
+  return sql`EXISTS (SELECT 1 FROM issues i
+                      WHERE i.id = ${issueId}
+                        AND i.sync_groups && ${sql.param([...reader.groups])}::text[]${keyTeams})`;
+}
+
+/**
+ * The undo of a removal (SPEC-014 §3.5, D28): a detached `attachment` file of an issue `reader`
+ * sees. Nobody can read it (§4.2: detached is `404` for everyone), but `attachment.createFile`
+ * may name it again within 24 hours, so the `FileRef` resolver accepts it too. Only the resolver
+ * calls this; downloads never do.
+ */
+export function reattachableFileQuery(fileId: string, reader: FileReader): SQL {
+  return sql`SELECT f.id, f.purpose, f.uploader_id AS "uploaderId"
+               FROM files f
+              WHERE f.id = ${fileId}
+                AND f.purpose = 'attachment'
+                AND f.issue_id IS NOT NULL
+                AND f.detached_at IS NOT NULL
+                AND ${ownerIssueSeenBy(reader, sql`f.issue_id`)}`;
+}
+
+/** A detached attachment file `reader` may re-attach, else undefined (`reattachableFileQuery`). */
+export async function reattachableFile(
+  db: Pick<Queryable, 'query'>,
+  fileId: string,
+  reader: FileReader,
+): Promise<Pick<VisibleFile, 'id' | 'purpose' | 'uploaderId'> | undefined> {
+  const query = dialect.sqlToQuery(reattachableFileQuery(fileId, reader));
+  const { rows } = await db.query<{ id: string; purpose: FilePurpose; uploaderId: string }>(
+    query.sql,
+    query.params,
+  );
+  return rows[0];
+}
 
 interface VisibleRow {
   id: string;

@@ -209,6 +209,75 @@ describe('the history write of a change', () => {
     });
   });
 
+  describe('attachments (SPEC-014 §6.3, AC-11)', () => {
+    const shot = { id: 'a-1', kind: 'file' as const, title: 'login.png' };
+    const doc = { id: 'a-2', kind: 'link' as const, title: 'Login flow' };
+
+    it('writes an added or removed attachment as its own updated entry after the window', () => {
+      const write = historyWrite(
+        input({
+          now: at(CREATOR_FOLD_MS + 1),
+          diff: { attachments: { added: [shot], removed: [] } },
+        }),
+      );
+      expect(write).toEqual({
+        action: 'insert',
+        changes: { attachments: { added: [shot], removed: [] } },
+      });
+    });
+
+    it('folds the creator’s attachments into created, netting one added then removed', () => {
+      const created = entry({
+        kind: 'created',
+        changes: {
+          ...createdChanges(bare, defaults),
+          attachments: { added: [shot, doc], removed: [] },
+        },
+      });
+      const write = historyWrite(
+        input({ latest: created, diff: { attachments: { added: [], removed: [shot] } } }),
+      );
+      expect(write).toEqual({
+        action: 'fold',
+        id: 'h-1',
+        changes: {
+          title: { to: 'Fix the login loop' },
+          attachments: { added: [doc], removed: [] },
+        },
+      });
+    });
+
+    it('drops the field when nothing is left, and never folds an attachment into a description entry', () => {
+      const created = entry({
+        kind: 'created',
+        changes: { ...createdChanges(bare, defaults), attachments: { added: [shot], removed: [] } },
+      });
+      const write = historyWrite(
+        input({ latest: created, diff: { attachments: { added: [], removed: [shot] } } }),
+      );
+      expect(write).toEqual({
+        action: 'fold',
+        id: 'h-1',
+        changes: { title: { to: 'Fix the login loop' } },
+      });
+      const described = entry({ kind: 'updated', changes: { description: true } });
+      const next = historyWrite(
+        input({
+          latest: described,
+          now: at(CREATOR_FOLD_MS + 1),
+          diff: { attachments: { added: [doc], removed: [] } },
+        }),
+      );
+      expect(next.action).toBe('insert');
+    });
+
+    it('reads stored attachment changes back', () => {
+      expect(
+        parseHistoryChanges({ attachments: { added: [shot], removed: [] } }).attachments,
+      ).toEqual({ added: [shot], removed: [] });
+    });
+  });
+
   describe('description fold (rule 2, E21)', () => {
     const descriptionEntry = (fields: Partial<HistoryEntryFacts> = {}) =>
       entry({

@@ -117,10 +117,19 @@ describe('the partial bootstrap (SPEC-011 §5.7)', () => {
     expect(res.statusCode).toBe(200);
     expect(metaOf(frames)).toMatchObject({ groups: [teamGroup(DES)], rows: 0 });
     expect(frames.at(-1)).toEqual({ t: 'end', rows: 0 });
-    // Issue alone (it has no eager child yet: Attachment comes with PLAN-014), live ones only.
-    expect(counted(statements)).toEqual([['issues', [teamGroup(DES)]]]);
-    expect(statements.find(({ text }) => text.startsWith('DECLARE'))?.text).toContain(
-      'archived_at IS NULL AND deleted_at IS NULL',
+    // Issue and its eager child Attachment (PLAN-014 S4a), of live issues only.
+    expect(counted(statements)).toEqual([
+      ['issues', [teamGroup(DES)]],
+      ['attachments', [teamGroup(DES)]],
+    ]);
+    const declares = statements.filter(({ text }) => text.startsWith('DECLARE'));
+    expect(declares.map(({ text }) => /FROM "?(\w+)"?/.exec(text)?.[1])).toEqual([
+      'issues',
+      'attachments',
+    ]);
+    expect(declares[0]?.text).toContain('archived_at IS NULL AND deleted_at IS NULL');
+    expect(declares[1]?.text).toContain(
+      'i.id = "attachments"."issue_id" AND i.archived_at IS NULL AND i.deleted_at IS NULL',
     );
     expect(statements[0]?.text).toContain('FROM teams t');
     expect(statements.map(({ text }) => text.split(' ')[0])).toContain('BEGIN');
@@ -129,7 +138,11 @@ describe('the partial bootstrap (SPEC-011 §5.7)', () => {
   it('follows several teams at once, keeping the ones the user may follow', async () => {
     const { frames, statements } = await bootstrap(partial(ENG, OPS, SEC));
     expect(metaOf(frames)?.groups).toEqual([teamGroup(ENG), teamGroup(SEC)]);
-    expect(counted(statements)).toEqual([['issues', [teamGroup(ENG), teamGroup(SEC)]]]);
+    const groups = [teamGroup(ENG), teamGroup(SEC)];
+    expect(counted(statements)).toEqual([
+      ['issues', groups],
+      ['attachments', groups],
+    ]);
   });
 
   it('answers a private team the user isn’t in exactly as an unknown team (AC-28, E32)', async () => {
@@ -149,7 +162,10 @@ describe('the partial bootstrap (SPEC-011 §5.7)', () => {
     expect(hidden.frames.map((f) => f.t)).toEqual(['meta', 'end']);
     // Neither reads a row of any group: the hidden team's never reaches a query but the check.
     for (const { statements } of [hidden, unknown]) {
-      expect(counted(statements)).toEqual([['issues', []]]);
+      expect(counted(statements)).toEqual([
+        ['issues', []],
+        ['attachments', []],
+      ]);
     }
     expect(JSON.stringify(hidden.statements.slice(1))).not.toContain(OPS);
   });
@@ -234,6 +250,7 @@ describe('archived and deleted issues (AC-26, AC-29 server part)', () => {
     expect(label && rowsWhere(label)).toBe('sync_groups && $1::text[]');
     expect(registry.models.filter((m) => m.issueRows !== undefined).map((m) => m.name)).toEqual([
       'Issue',
+      'Attachment',
     ]);
   });
 });

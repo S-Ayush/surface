@@ -17,6 +17,7 @@
  * never stores what one of its viewers can't see.
  */
 import {
+  type AttachmentChange,
   historyEntryFor,
   historyWrite,
   type Actor,
@@ -274,6 +275,9 @@ export async function writeCreatedHistory(
  *   one is empty.
  * - `options.defaultStatusId`: the team's default status, for the creator fold of a status change
  *   (a status equal to it leaves the `created` entry). Without it, a status is never a default.
+ * - `options.attachments`: attachments added or removed (SPEC-014 §6.3; PLAN-014 S4a), with their
+ *   titles as they are now. They fold into `created` like any field (the creator's, within 3
+ *   minutes), and never into a description-only entry.
  *
  * Returns the written or folded entry, or undefined when nothing was written.
  */
@@ -284,9 +288,12 @@ export async function writeUpdatedHistory(
   options: {
     readonly description?: { readonly empty: boolean } | undefined;
     readonly defaultStatusId?: string | undefined;
+    readonly attachments?: AttachmentChange | undefined;
   } = {},
 ): Promise<IssueHistoryRow | undefined> {
-  const diff = await namedDiff(ctx.access, changes, options.description);
+  const fields = await namedDiff(ctx.access, changes, options.description);
+  const diff: HistoryDiff =
+    options.attachments === undefined ? fields : { ...fields, attachments: options.attachments };
   const latest = await ctx.access.latestHistory(issue.id);
   const write = historyWrite({
     latest: latest === undefined ? undefined : entryFacts(latest),

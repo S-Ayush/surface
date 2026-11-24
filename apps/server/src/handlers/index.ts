@@ -70,6 +70,11 @@ import {
 } from './comments/resolve.js';
 import commentUpdate from './comments/update.js';
 import reactionSet from './reactions/set.js';
+import attachmentCreateFile from './attachment/create-file.js';
+import attachmentCreateLink from './attachment/create-link.js';
+import attachmentDelete from './attachment/delete.js';
+import attachmentSetPreview from './attachment/set-preview.js';
+import attachmentUpdate from './attachment/update.js';
 import labelUsage from './labels/usage.js';
 
 /** Every server handler, one per operation in the registry (checked at executor creation). */
@@ -142,4 +147,9 @@ export const HANDLERS: readonly Handler[] = [
   reactionSet,
   labelUsage,
   issueUpdateDescription,
+  attachmentCreateFile,
+  attachmentCreateLink,
+  attachmentUpdate,
+  attachmentDelete,
+  attachmentSetPreview,
 ];

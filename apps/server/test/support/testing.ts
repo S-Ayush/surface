@@ -125,6 +125,41 @@ export interface CommentRow {
   readonly syncGroups: readonly string[];
 }
 
+/**
+ * A stored attachment (PLAN-014 S4a), timestamps as ISO strings, with `fileIssueId`: the issue its
+ * `files` row belongs to (null for a link), so the sync suite checks a claim landed on the issue.
+ */
+export interface AttachmentRow {
+  readonly id: string;
+  readonly issueId: string;
+  readonly teamId: string;
+  readonly kind: string;
+  readonly title: string;
+  readonly url: string | null;
+  readonly fileId: string | null;
+  readonly fileName: string | null;
+  readonly mimeType: string | null;
+  readonly size: number | null;
+  readonly imageWidth: number | null;
+  readonly imageHeight: number | null;
+  readonly previewFileId: string | null;
+  readonly creatorId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly syncGroups: readonly string[];
+  readonly fileIssueId: string | null;
+}
+
+/** An unclaimed `attachment` upload of one user (PLAN-014 S4a), as the upload route answers. */
+export interface TestUpload {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly size: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 /** A stored reaction (PLAN-013 S4), timestamps as ISO strings. */
 export interface ReactionRow {
   readonly id: string;
@@ -195,6 +230,20 @@ export interface TestServer {
   reactionCount(): Promise<number>;
   /** Every `reactions` row, by id (PLAN-013 S4). */
   reactions(): Promise<ReactionRow[]>;
+  /** Every `attachments` row, by id (PLAN-014 S4a). */
+  attachments(): Promise<AttachmentRow[]>;
+  /**
+   * `count` unclaimed `attachment` uploads (640×480 PNGs) for each user, by user id (PLAN-014
+   * S4a): `files` rows only, as the upload route leaves them, without bytes (nothing here reads
+   * them). `files` is server-only and unsynced, so the rows log nothing.
+   */
+  seedUploads(count: number): Promise<Record<string, readonly TestUpload[]>>;
+  /**
+   * What the `files-preview` job does for a file attachment (PLAN-014 S4a; the job is S4b): a
+   * `preview` row for its file, then `attachment.setPreview` as the system actor. Resolves false
+   * for a link or a gone attachment, or when the operation refused.
+   */
+  previewAttachment(attachmentId: string): Promise<boolean>;
   /** Every `issue_content` row, by id (PLAN-011 S6). */
   issueContents(): Promise<IssueContentRow[]>;
   /** Every `issue_history` row, by id (PLAN-011 S6). */
@@ -329,6 +378,27 @@ const ReactionDbRow = z.object({
   sync_groups: z.array(z.string()),
 });
 
+const AttachmentDbRow = z.object({
+  id: z.string(),
+  issue_id: z.string(),
+  team_id: z.string(),
+  kind: z.string(),
+  title: z.string(),
+  url: z.string().nullable(),
+  file_id: z.string().nullable(),
+  file_name: z.string().nullable(),
+  mime_type: z.string().nullable(),
+  size: z.number().nullable(),
+  image_width: z.number().nullable(),
+  image_height: z.number().nullable(),
+  preview_file_id: z.string().nullable(),
+  creator_id: z.string(),
+  created_at: z.date().transform((value) => value.toISOString()),
+  updated_at: z.date().transform((value) => value.toISOString()),
+  sync_groups: z.array(z.string()),
+  file_issue_id: z.string().nullable(),
+});
+
 const IssueContentDbRow = z.object({
   id: z.string(),
   issue_id: z.string(),
@@ -424,6 +494,19 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
         publicUrl: config.publicUrl,
         syncedModels: serverSyncRegistry({ syncFixtures: true }).models.map((m) => m.name),
         clock: () => new Date(Date.now() + 13 * 30 * 24 * 60 * 60 * 1000),
+      }));
+    // The same on the real clock, for the system-only operations a job runs now (PLAN-014 S4a:
+    // `attachment.setPreview`, as the `files-preview` job will).
+    let now: Executor | undefined;
+    const systemExecutor = (): Executor =>
+      (now ??= createExecutor({
+        pool: db,
+        registry,
+        handlers: HANDLERS,
+        log: logger,
+        allowInternal: true,
+        publicUrl: config.publicUrl,
+        syncedModels: serverSyncRegistry({ syncFixtures: true }).models.map((m) => m.name),
       }));
     return {
       get url() {
@@ -552,6 +635,97 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
             syncGroups: r.sync_groups,
           };
         });
+      },
+      attachments: async () => {
+        // `size` is bigint (§4.2), which pg returns as a string; the suite's files are small.
+        const { rows } = await db.query(
+          `SELECT a.id, a.issue_id, a.team_id, a.kind, a.title, a.url, a.file_id, a.file_name,
+                  a.mime_type, a.size::int AS size, a.image_width, a.image_height,
+                  a.preview_file_id, a.creator_id, a.created_at, a.updated_at, a.sync_groups,
+                  f.issue_id AS file_issue_id
+             FROM attachments a LEFT JOIN files f ON f.id = a.file_id
+            ORDER BY a.id`,
+        );
+        return rows.map((row) => {
+          const a = AttachmentDbRow.parse(row);
+          return {
+            id: a.id,
+            issueId: a.issue_id,
+            teamId: a.team_id,
+            kind: a.kind,
+            title: a.title,
+            url: a.url,
+            fileId: a.file_id,
+            fileName: a.file_name,
+            mimeType: a.mime_type,
+            size: a.size,
+            imageWidth: a.image_width,
+            imageHeight: a.image_height,
+            previewFileId: a.preview_file_id,
+            creatorId: a.creator_id,
+            createdAt: a.created_at,
+            updatedAt: a.updated_at,
+            syncGroups: a.sync_groups,
+            fileIssueId: a.file_issue_id,
+          };
+        });
+      },
+      seedUploads: async (count) => {
+        const byUser: Record<string, TestUpload[]> = {};
+        for (const user of users) {
+          const uploads: TestUpload[] = [];
+          for (let n = 1; n <= count; n += 1) {
+            const upload = {
+              id: uuidv7(),
+              name: `screen-${n}.png`,
+              mimeType: 'image/png',
+              size: 4096 * n,
+              width: 640,
+              height: 480,
+            };
+            await db.query(
+              `INSERT INTO files (id, storage_key, purpose, name, mime_type, size, uploader_id,
+                                  width, height)
+               VALUES ($1, $2, 'attachment', $3, $4, $5, $6, $7, $8)`,
+              [
+                upload.id,
+                `sha256/00/${upload.id}`,
+                upload.name,
+                upload.mimeType,
+                upload.size,
+                user.id,
+                upload.width,
+                upload.height,
+              ],
+            );
+            uploads.push(upload);
+          }
+          byUser[user.id] = uploads;
+        }
+        return byUser;
+      },
+      previewAttachment: async (attachmentId) => {
+        const { rows } = await db.query<{ file_id: string; uploader_id: string }>(
+          `SELECT a.file_id, f.uploader_id
+             FROM attachments a JOIN files f ON f.id = a.file_id
+            WHERE a.id = $1`,
+          [attachmentId],
+        );
+        const source = rows[0];
+        if (source === undefined) return false;
+        const previewId = uuidv7();
+        await db.query(
+          `INSERT INTO files (id, storage_key, purpose, name, mime_type, size, uploader_id,
+                              width, height, preview_of)
+           VALUES ($1, $2, 'preview', 'preview.webp', 'image/webp', 512, $3, 320, 240, $4)`,
+          [previewId, `sha256/00/${previewId}`, source.uploader_id, source.file_id],
+        );
+        const result = await systemExecutor().execute(
+          'attachment.setPreview',
+          { attachment: attachmentId, previewFile: previewId },
+          systemActor(),
+        );
+        return result.ok;
       },
       issueContents: async () => {
         const { rows } = await db.query(

@@ -32,7 +32,9 @@ const COLUMN_TYPES: Readonly<Record<FieldKind, readonly string[]>> = {
   uuid: ['PgUUID'],
   string: ['PgText'],
   enum: ['PgText'],
-  int: ['PgInteger'],
+  // `int()` is a safe integer (2^53 − 1), so a `bigint` column read in number mode fits it
+  // (Attachment.size: files over 2 GB, SPEC-014 §4.2).
+  int: ['PgInteger', 'PgBigInt53'],
   bool: ['PgBoolean'],
   timestamp: ['PgTimestamp'],
   day: ['PgDateString'],

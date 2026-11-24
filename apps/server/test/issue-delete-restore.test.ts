@@ -3,8 +3,8 @@
 // server, with a fake clock), AC-12 (one `deleted` and one `restored` history entry, never more),
 // AC-21 (restore logs the issue's Attachment rows again after the Issue's `V`/`U`, through
 // `updateWhere` with an empty patch and `touchUpdatedAt: false`, at most 100, none for a no-op or
-// an issue without attachments; checked with fake Attachment rows until PLAN-014 S4a adds the
-// model), E3 and E15 (two fake transactions on one issue run one after the other under the row
+// an issue without attachments; the rules run with fake Attachment rows, and the registered step
+// reads the `attachments` table, PLAN-014 S4a), E3 and E15 (two fake transactions on one issue run one after the other under the row
 // lock), E4. The rules run on the in-memory workspace (`support/memory-issues.ts`); the SQL of
 // the lock is `issue-lock.test.ts`'s.
 import { randomUUID } from 'node:crypto';
@@ -249,21 +249,27 @@ describe('restore logs the Attachment rows again (AC-21, §5.1)', () => {
     expect(m.writes.map((w) => w.action)).toEqual(['unarchive']);
   });
 
-  it('has no registered step until PLAN-014 S4a adds the Attachment model', () => {
-    expect(RESTORE_RELOG_STEPS).toEqual([]);
+  it('registers one step, for the Attachment model (PLAN-014 S4a)', () => {
+    expect(RESTORE_RELOG_STEPS.map((step) => step.model)).toEqual(['Attachment']);
   });
 
-  it('reads a model’s rows of the issue in ascending id, at most the limit (relogByIssueId)', async () => {
+  it('reads the issue’s Attachment ids in ascending id, at most the limit', async () => {
     const ISSUE = '0190f0c0-0000-7000-8000-000000000001';
     const { db, statements } = recordingDb(() => [['b'], ['c']]);
-    // `issue_content` stands in for PLAN-014 S4a's `attachments`: both have `id` and `issue_id`.
-    const step = relogByIssueId('IssueContent', issueContent);
-    expect(Object.keys(getTableColumns(issueContent))).toContain('issueId');
-    await expect(step.ids(db, ISSUE, 100)).resolves.toEqual(['b', 'c']);
+    const [step] = RESTORE_RELOG_STEPS;
+    await expect(step?.ids(db, ISSUE, 100)).resolves.toEqual(['b', 'c']);
     expect(statements[0]?.text).toBe(
-      'select "id" from "issue_content" where "issue_content"."issue_id" = $1 order by "issue_content"."id" asc limit $2',
+      'select "id" from "attachments" where "attachments"."issue_id" = $1 order by "attachments"."id" asc limit $2',
     );
     expect(statements[0]?.params).toEqual([ISSUE, 100]);
+  });
+
+  it('builds a step for any table with `id` and `issue_id` (relogByIssueId)', async () => {
+    const { db, statements } = recordingDb(() => []);
+    const step = relogByIssueId('IssueContent', issueContent);
+    expect(Object.keys(getTableColumns(issueContent))).toContain('issueId');
+    await expect(step.ids(db, 'x', 5)).resolves.toEqual([]);
+    expect(statements[0]?.text).toContain('from "issue_content"');
   });
 });
 

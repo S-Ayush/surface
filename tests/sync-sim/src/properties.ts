@@ -2,15 +2,18 @@
  * The two properties' checks (SPEC-002 AC-2, AC-3), shared by the fake hub's
  * suite (`pnpm test`, `pnpm sim`) and the real server's (`pnpm test:int`).
  */
+import { MAX_ATTACHMENTS_PER_ISSUE } from '@surface/domain';
 import { Issue, Label, Team, WorkflowStatus } from '@surface/domain/model';
 import { expect } from 'vitest';
 import {
+  isAttachmentServer,
   isCommentServer,
   isDescriptionServer,
   isIssueServer,
   isLifecycleServer,
   isWorkflowServer,
   type WorkflowState,
+  type AttachmentState,
   type CommentState,
   type IssueFixtures,
   type IssueRecord,
@@ -416,6 +419,71 @@ export const reactionConvergence: Property = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Attachments (PLAN-014 S4a, SPEC-014 AC-6, AC-17, §4.1, §6.2).
+
+/**
+ * The stored attachments keep SPEC-014 §4.2's rules: at most 100 per issue, a link has a URL and
+ * no file, a file attachment names a file claimed for its own issue and no other attachment
+ * names that file, and only a file attachment has a preview.
+ */
+function checkAttachments(
+  attachments: Readonly<Record<string, AttachmentState>>,
+  fileIssues: Readonly<Record<string, string | null>>,
+): void {
+  const perIssue = new Map<string, number>();
+  const files = new Set<string>();
+  for (const [id, a] of Object.entries(attachments)) {
+    const issue = String(a.issueId);
+    perIssue.set(issue, (perIssue.get(issue) ?? 0) + 1);
+    if (a.kind === 'link') {
+      expect(typeof a.url, `${id}: a link without a URL`).toBe('string');
+      expect(a.fileId, `${id}: a link with a file`).toBeNull();
+      expect(a.previewFileId, `${id}: a link with a preview`).toBeNull();
+      continue;
+    }
+    expect(a.kind, id).toBe('file');
+    expect(a.url, `${id}: a file with a URL`).toBeNull();
+    const fileId = String(a.fileId);
+    expect(files.has(fileId), `${id}: a second attachment of file ${fileId}`).toBe(false);
+    files.add(fileId);
+    expect(fileIssues[id], `${id}: its file belongs to another issue`).toBe(a.issueId);
+  }
+  for (const [issue, n] of perIssue) {
+    expect(n, `${issue}: attachments`).toBeLessThanOrEqual(MAX_ATTACHMENTS_PER_ISSUE);
+  }
+}
+
+/**
+ * SPEC-014 AC-6 and AC-17 for the sync suite (PLAN-014 S4a): links and files attached, renamed and
+ * deleted from every tab, with previews set by the system, in any interleaving with the faults,
+ * converge: every tab holds exactly the server's attachments, every field (Attachment is eager,
+ * so no tab has to open an issue for them), and the stored ones keep §4.2's rules.
+ */
+export const attachmentConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    await issueConvergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isAttachmentServer(server)) {
+      throw new Error('The attachment property needs the real server.');
+    }
+    const attachments = await server.attachments();
+    for (const tab of world.live) {
+      expect(world.attachmentView(tab), tab.name).toEqual(attachments);
+    }
+    checkAttachments(attachments, await server.attachmentFileIssues());
+    // And a fresh bootstrap shows the same.
+    const fresh = world.users.map((user) => world.open(user, { fresh: true }));
+    await world.quiesce();
+    expect(world.problems).toEqual([]);
+    for (const tab of fresh) {
+      expect(world.attachmentView(tab), tab.name).toEqual(attachments);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
 // The workflow (PLAN-010 S5, SPEC-010 AC-19, E3, E16, E17).
 
 /** What a tab shows of SIM's workflow: its default, its statuses and the labels it can use. */
@@ -542,7 +610,7 @@ export const workflowConvergence: Property = {
 // ---------------------------------------------------------------------------------------------
 // The issue lifecycle (PLAN-015 S2, SPEC-015 AC-13, §5.1)
 
-/** Comments or reactions, by id: each names its issue. */
+/** Comments, reactions or attachments, by id: each names its issue. */
 type ContentRows = Readonly<Record<string, { readonly issueId: unknown }>>;
 
 /** The ids of the issues a dispatched `op` named, whatever its outcome. */
@@ -563,6 +631,8 @@ function namedBy(outcome: Outcome, op: string): Set<string> {
  * - with every live issue open in every tab (PLAN-011 S5b: a tab holds an issue's content only
  *   while the issue is open), every tab holds content (comments, reactions) of live issues only,
  *   each as stored; for an issue nobody deleted, exactly what is stored;
+ * - every tab holds exactly the live issues' attachments, open or not (eager, re-logged by a
+ *   restore; PLAN-014 S4a), and the stored ones keep SPEC-014 §4.2's rules;
  * - nothing stored names a purged issue, a confirmed purge left no row, and the numbers left stay
  *   rising in commit order;
  * - every user's freshly bootstrapped tab holds the same issues as the streamed ones.
@@ -585,6 +655,14 @@ export const lifecycleConvergence: Property = {
     );
     const comments = await server.comments();
     const reactions = await server.reactions();
+    if (!isAttachmentServer(server)) {
+      throw new Error('The lifecycle property needs the real server.');
+    }
+    const attachments = await server.attachments();
+    checkAttachments(attachments, await server.attachmentFileIssues());
+    const liveAttachments = Object.fromEntries(
+      Object.entries(attachments).filter(([, a]) => live[String(a.issueId)] !== undefined),
+    );
     // Archived like deleted: its content returns only when the issue is opened again (§5.3).
     const deleted = new Set([
       ...namedBy(outcome, 'issue.delete'),
@@ -613,10 +691,14 @@ export const lifecycleConvergence: Property = {
             .sort();
         expect(kept(held), `${tab.name} ${kind}s of issues nobody deleted`).toEqual(kept(stored));
       }
+      // Attachments are eager (SPEC-014 §4.1): a tab holds exactly the live issues' ones, with no
+      // page open, and a restore's re-logged rows bring them back (PLAN-014 S4a).
+      expect(world.attachmentView(tab), `${tab.name} attachments`).toEqual(liveAttachments);
     }
     const stored: [string, ContentRows][] = [
       ['comment', comments],
       ['reaction', reactions],
+      ['attachment', attachments],
     ];
     for (const [kind, rows] of stored) {
       for (const [id, row] of Object.entries(rows)) {
@@ -643,6 +725,7 @@ export const lifecycleConvergence: Property = {
     expect(world.problems).toEqual([]);
     for (const tab of fresh) {
       expect(world.issueView(tab), tab.name).toEqual(asSeenBy(live, tab.user.id));
+      expect(world.attachmentView(tab), `${tab.name} attachments`).toEqual(liveAttachments);
       for (const other of streamed.filter((t) => t.user === tab.user)) {
         expect(world.issueView(other), other.name).toEqual(world.issueView(tab));
       }

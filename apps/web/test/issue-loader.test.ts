@@ -44,6 +44,7 @@ const OUTPUT: IssueOutput = {
   startedAt: null,
   canceledAt: null,
   reactions: [],
+  attachments: [],
   description: { markdown: '', json: { type: 'doc', content: [{ type: 'paragraph' }] } },
   version: 1,
 };

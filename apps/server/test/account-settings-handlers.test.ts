@@ -676,10 +676,13 @@ describe('SessionRef and FileRef (SPEC-003 §4; PLAN-001 S6)', () => {
     const [text, params] = found.calls[0] ?? [];
     expect(text).toContain('JOIN files s ON s.id = coalesce(f.preview_of, f.id)');
     expect(text).toContain('s.issue_id IS NULL AND s.uploader_id = $3');
-    expect(params).toEqual([FILE, ADA, ADA]);
-    await expect(lookup('FileRef', FILE, at(db([]), 'avatar'))).rejects.toMatchObject({
+    // The file, the reader twice (uploader branches), and its groups (the issue branch, PLAN-014 S4a).
+    expect(params).toEqual([FILE, ADA, ADA, ['workspace']]);
+    // Then the detached-file lookup (SPEC-014 D28), which finds nothing either.
+    const none = db([]);
+    await expect(lookup('FileRef', FILE, at(none, 'avatar'))).rejects.toMatchObject({
       code: 'NOT_FOUND',
-      message: `File "${FILE}" not found. Upload the image with POST /files/upload and use the id it returns.`,
+      message: `File "${FILE}" not found. That upload has expired or isn't yours. Upload the file again.`,
     });
   });
 

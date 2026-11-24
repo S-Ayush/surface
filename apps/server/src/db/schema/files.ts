@@ -9,6 +9,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
+import { issues } from './issues.js';
 import { instant, users } from './workspace.js';
 
 /**
@@ -48,10 +49,10 @@ export const files = pgTable(
       .references(() => users.id),
     /**
      * The owner: the issue an `attachment` or `inline` file belongs to, null while unclaimed and
-     * for previews (they follow `preview_of`). Never changes once set. A plain uuid until
-     * `issues` exists: PLAN-014 S4a adds the foreign key.
+     * for previews (they follow `preview_of`). Never changes once set. RESTRICT, never cascade:
+     * purge deletes an issue's files under the byte protocol (SPEC-014 §4.7; PLAN-014 S4a).
      */
-    issueId: uuid(),
+    issueId: uuid().references(() => issues.id, { onDelete: 'restrict' }),
     /** `attachment` only: set when its Attachment is deleted; readable by nobody (§4.2). */
     detachedAt: instant(),
     /** Raster images only. */

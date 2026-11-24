@@ -22,7 +22,7 @@ import {
 import { and, asc, eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { AnyPgColumn, PgTable } from 'drizzle-orm/pg-core';
-import { issues, teams } from '../db/schema/index.js';
+import { attachments, issues, teams } from '../db/schema/index.js';
 import type { HandlerContext } from '../executor/context.js';
 import { refNotFound } from '../executor/refs/resolve.js';
 import { SurfaceError } from '../executor/errors.js';
@@ -97,13 +97,7 @@ export interface RestoreRelogStep {
   ids(tx: NodePgDatabase, issueId: string, limit: number): Promise<string[]>;
 }
 
-/**
- * The registered steps. Empty until PLAN-014 S4a adds the Attachment model and appends its step
- * here (append-only, like the purge steps of PLAN-015 S2).
- */
-export const RESTORE_RELOG_STEPS: readonly RestoreRelogStep[] = [];
-
-/** A step for a model whose table has an `issue_id` column, for PLAN-014 S4a's Attachment. */
+/** A step for a model whose table has an `issue_id` column (Attachment, PLAN-014 S4a). */
 export function relogByIssueId(
   model: ModelName,
   table: { readonly id: AnyPgColumn; readonly issueId: AnyPgColumn } & PgTable,
@@ -121,6 +115,14 @@ export function relogByIssueId(
     },
   };
 }
+
+/**
+ * The registered steps (append-only, like the purge steps): the issue's Attachment rows
+ * (SPEC-014 §4.1, PLAN-014 S4a), at most `RESTORE_RELOG_LIMIT` (SPEC-014 D20).
+ */
+export const RESTORE_RELOG_STEPS: readonly RestoreRelogStep[] = [
+  relogByIssueId('Attachment', attachments),
+];
 
 // ---------------------------------------------------------------------------------------------
 // History of lifecycle transitions (SPEC-015 §4.8)

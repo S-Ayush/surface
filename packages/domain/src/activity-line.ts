@@ -31,6 +31,10 @@ function names(labels: readonly { readonly name: string }[]): string {
   return labels.map((l) => l.name).join(', ');
 }
 
+function titles(attachments: readonly { readonly title: string }[]): string {
+  return attachments.map((a) => a.title).join(', ');
+}
+
 function priorityName(value: number): string {
   return PRIORITIES.find((p) => p.value === value)?.label ?? String(value);
 }
@@ -96,5 +100,19 @@ export function activityLines(entry: ActivityEntry, actorName: string): string[]
     lines.push(to === null ? `${who} removed the due date` : `${who} set the due date to ${to}`);
   }
   if (changes.description) lines.push(`${who} updated the description`);
+  // SPEC-014 §6.3: titles as they were when the entry was written.
+  if (changes.attachments) {
+    const { added, removed } = changes.attachments;
+    if (added.length > 0) {
+      lines.push(
+        `${who} added ${added.length === 1 ? 'attachment' : 'attachments'} ${titles(added)}`,
+      );
+    }
+    if (removed.length > 0) {
+      lines.push(
+        `${who} removed ${removed.length === 1 ? 'attachment' : 'attachments'} ${titles(removed)}`,
+      );
+    }
+  }
   return lines.length > 0 ? lines : [`${who} updated the issue`];
 }

@@ -9,6 +9,9 @@
  *   the description is `description: true`, never its text.
  * - A `created` entry holds `{ to }` for each field set at creation that differs from its default,
  *   and `description: true` when the description isn't empty.
+ * - Attachments (SPEC-014 §6.3) are `attachments: { added, removed }`, each `{ id, kind, title }`
+ *   with the title as it was; a creator fold keeps the net change (an attachment added and removed
+ *   within the window leaves nothing).
  * - `deleted`, `restored` and `archived` entries have empty `changes`, and are never folded.
  *
  * **Folds** (FR-ISS-05, Q10) run in the updating transaction, after the issue row lock, and fold
@@ -19,6 +22,7 @@
  *    entry is a description-only `updated` entry at most 10 minutes old (from its `updatedAt`).
  */
 import { z } from 'zod';
+import { ATTACHMENT_KINDS, type HistoryAttachment } from './attachment.js';
 import type { HistoryActorKind, IssueHistoryKind } from './issue.js';
 import { STATUS_CATEGORIES, type StatusCategory } from './status-category.js';
 
@@ -75,7 +79,17 @@ export type HistoryDiff = {
     readonly from: HistoryFieldValues[K];
     readonly to: HistoryFieldValues[K];
   };
-} & { readonly description?: { readonly empty: boolean } };
+} & {
+  readonly description?: { readonly empty: boolean };
+  /** Attachments added or removed (SPEC-014 §6.3), with their titles at the time. */
+  readonly attachments?: AttachmentChange;
+};
+
+/** An entry's attachment change (SPEC-014 §6.3). */
+export interface AttachmentChange {
+  readonly added: readonly HistoryAttachment[];
+  readonly removed: readonly HistoryAttachment[];
+}
 
 /** An entry's `changes` as stored (JSON). Later kinds may add fields this type doesn't name. */
 export type HistoryChanges = Readonly<Record<string, unknown>>;
@@ -169,7 +183,43 @@ export function updatedChanges(diff: HistoryDiff): HistoryChanges {
     changes[field] = { from: change.from, to: change.to };
   }
   if (diff.description !== undefined) changes['description'] = true;
+  const attachments = diff.attachments;
+  if (attachments !== undefined && attachments.added.length + attachments.removed.length > 0) {
+    changes['attachments'] = { added: [...attachments.added], removed: [...attachments.removed] };
+  }
   return changes;
+}
+
+const HistoryAttachmentSchema = z.object({
+  id: z.string(),
+  kind: z.enum(ATTACHMENT_KINDS),
+  title: z.string(),
+});
+/** A stored attachment change, as the creator fold and the activity line read it. */
+const AttachmentChangeSchema = z.object({
+  added: z.array(HistoryAttachmentSchema),
+  removed: z.array(HistoryAttachmentSchema),
+});
+
+/**
+ * The net of a stored attachment change and a new one (the creator fold): an attachment added and
+ * then removed within the window leaves nothing; undefined when nothing is left.
+ */
+function foldAttachments(stored: unknown, change: AttachmentChange): AttachmentChange | undefined {
+  const parsed = AttachmentChangeSchema.safeParse(stored);
+  let added: HistoryAttachment[] = parsed.success ? [...parsed.data.added] : [];
+  const removed: HistoryAttachment[] = parsed.success ? [...parsed.data.removed] : [];
+  for (const attachment of change.added) {
+    if (!added.some((a) => a.id === attachment.id)) added.push(attachment);
+  }
+  for (const attachment of change.removed) {
+    if (added.some((a) => a.id === attachment.id)) {
+      added = added.filter((a) => a.id !== attachment.id);
+    } else if (!removed.some((r) => r.id === attachment.id)) {
+      removed.push(attachment);
+    }
+  }
+  return added.length + removed.length > 0 ? { added, removed } : undefined;
 }
 
 /**
@@ -191,6 +241,11 @@ export function foldIntoCreated(
   if (diff.description !== undefined) {
     if (diff.description.empty) delete changes['description'];
     else changes['description'] = true;
+  }
+  if (diff.attachments !== undefined) {
+    const folded = foldAttachments(changes['attachments'], diff.attachments);
+    if (folded === undefined) delete changes['attachments'];
+    else changes['attachments'] = folded;
   }
   return changes;
 }
@@ -235,7 +290,11 @@ export function sameHistoryActor(a: HistoryActorFacts, b: HistoryActorFacts): bo
 
 /** True when the diff changes the description and nothing else. */
 export function isDescriptionOnly(diff: HistoryDiff): boolean {
-  return diff.description !== undefined && HISTORY_FIELDS.every((f) => diff[f] === undefined);
+  return (
+    diff.description !== undefined &&
+    diff.attachments === undefined &&
+    HISTORY_FIELDS.every((f) => diff[f] === undefined)
+  );
 }
 
 /** True for an `updated` entry whose changes are `{ description: true }` alone. */
@@ -339,6 +398,7 @@ export const HistoryChangesSchema = z.looseObject({
   estimate: change(z.number().nullable()).catch(undefined),
   dueDate: change(z.string().nullable()).catch(undefined),
   description: z.literal(true).optional().catch(undefined),
+  attachments: AttachmentChangeSchema.optional().catch(undefined),
 });
 
 export type ParsedHistoryChanges = z.infer<typeof HistoryChangesSchema>;

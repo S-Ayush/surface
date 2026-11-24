@@ -17,6 +17,7 @@ import {
 } from '../src/issues/purge-steps.js';
 import { SYNCED_MODELS } from '../src/sync/models.js';
 import type { Repo } from '../src/sync/repo.js';
+import { ModelDb, ModelTx } from './files-bytes-model.js';
 import { recordingDb } from './support/scripted-db.js';
 
 const ISSUE = '0190f0c0-0000-7000-8000-000000000042';
@@ -72,9 +73,6 @@ function tableOf(step: PurgeStep): string {
 const UNKEYED_ISSUE_COLUMNS: Readonly<Record<string, string>> = {
   // On purpose: a draft must not block a purge, nor tell whether an issue exists (SPEC-012 §4.3).
   drafts: 'SPEC-012 §4.3',
-  // PLAN-014 S4a adds the key, and the purge step for the issue's files (`deleteFiles`), in one
-  // change: then this entry goes and the guard above holds it.
-  files: 'PLAN-014 S4a',
 };
 
 describe('the purge-step registry (SPEC-015 §4.5)', () => {
@@ -151,7 +149,9 @@ describe('the content steps (PLAN-015 S2)', () => {
       changes: () => [],
     };
     const { db, statements } = recordingDb();
-    for (const step of ISSUE_CONTENT_PURGE_STEPS) await step.step(db, repo, ISSUE);
+    for (const step of ISSUE_CONTENT_PURGE_STEPS) {
+      await step.step(db, repo, ISSUE, new ModelTx(new ModelDb(), 1));
+    }
     expect(calls).toEqual([
       `IssueHistory.issueId in [${ISSUE}] log=false`,
       `IssueContent.issueId in [${ISSUE}] log=false`,

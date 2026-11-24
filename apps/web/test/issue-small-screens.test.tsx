@@ -106,6 +106,7 @@ describe('the issue page layout (AC-20)', () => {
     startedAt: null,
     canceledAt: null,
     reactions: [],
+    attachments: [],
     description: { markdown: '', json: { type: 'doc', content: [{ type: 'paragraph' }] } },
     version: 1,
   } satisfies IssueOutput);

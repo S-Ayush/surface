@@ -15,6 +15,7 @@ import type { Logger } from 'pino';
 import type { z } from 'zod';
 import type { SessionSelection } from '../auth/store.js';
 import type { Queryable } from '../db/pool.js';
+import type { FileTx } from '../files/bytes.js';
 import type { EmailJob } from '../mail/job.js';
 import type { HandlerLinks } from '../mail/link-tokens.js';
 import { SYNCED_MODELS, type ModelName, type ModelRow } from '../sync/models.js';
@@ -70,6 +71,11 @@ export interface HandlerContext {
   /** The operation's transaction, for reads. Writes to synced tables go through `repo`. */
   readonly tx: NodePgDatabase;
   readonly repo: Repo;
+  /**
+   * The byte protocol (SPEC-014 §4.5, `files/bytes.ts`) on this operation's connection: the only
+   * way a handler inserts or deletes `files` rows (purge, PLAN-014 S4a).
+   */
+  readonly files: FileTx;
   readonly query: QueryHelpers;
   /** Buffers a domain event; the executor writes it to `event_outbox` before commit. */
   emit(event: DomainEvent): void;

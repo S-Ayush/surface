@@ -28,6 +28,7 @@ export const REF_TYPES = [
   'SessionRef',
   'FileRef',
   'CommentRef',
+  'AttachmentRef',
 ] as const;
 
 export type RefType = (typeof REF_TYPES)[number];
@@ -37,9 +38,8 @@ export function isRefType(value: unknown): value is RefType {
 }
 
 /**
- * Reference types whose entities exist (M0's, `IssueRef` from PLAN-011 S3 and `CommentRef` from
- * PLAN-013 S3). The others are
- * declared for docs and lint.
+ * Reference types whose entities exist (M0's, `IssueRef` from PLAN-011 S3, `CommentRef` from
+ * PLAN-013 S3 and `AttachmentRef` from PLAN-014 S4a). The others are declared for docs and lint.
  */
 export const AVAILABLE_REF_TYPES: ReadonlySet<RefType> = new Set([
   'TeamRef',
@@ -51,6 +51,7 @@ export const AVAILABLE_REF_TYPES: ReadonlySet<RefType> = new Set([
   'SessionRef',
   'FileRef',
   'CommentRef',
+  'AttachmentRef',
 ]);
 
 /** First milestone where an unavailable reference type can be resolved. */
@@ -69,6 +70,7 @@ export const REF_AVAILABLE_FROM: Readonly<Record<RefType, string>> = {
   SessionRef: 'M0',
   FileRef: 'M0',
   CommentRef: 'M1',
+  AttachmentRef: 'M1',
 };
 
 /**
@@ -292,6 +294,17 @@ export const CommentRef = refString(
   'Comment id, from comment.list',
   parseIdRef,
   'Use a comment id from comment.list',
+);
+
+/**
+ * An attachment, by id only (SPEC-014 §6.2, PLAN-014 S4a): resolved to an attachment of an issue
+ * the caller can see; anything else is NOT_FOUND, worded as for an attachment that doesn't exist.
+ */
+export const AttachmentRef = refString(
+  'AttachmentRef',
+  'Attachment id, from issue.get',
+  parseIdRef,
+  'Use an attachment id from issue.get',
 );
 
 export const CycleRef = z

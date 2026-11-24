@@ -9,6 +9,7 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import {
+  Attachment,
   Comment,
   DebugItem,
   Draft,
@@ -29,6 +30,7 @@ import { Network } from './network.js';
 import type { Random } from './random.js';
 import { seededRandom, uuidFrom } from './random.js';
 import type {
+  AttachmentState,
   CommentState,
   DraftState,
   IssueContentState,
@@ -110,6 +112,8 @@ export class World {
   readonly issueIds: string[] = [];
   /** Ids of every comment a step created (PLAN-013 S3), refused ones included. */
   readonly commentIds: string[] = [];
+  /** Ids of every attachment a step created (PLAN-014 S4a), refused ones included. */
+  readonly attachmentIds: string[] = [];
   readonly #problems: string[] = [];
   readonly #webLocks: boolean;
   readonly #states = new Map<Tab, TabState>();
@@ -446,6 +450,31 @@ export class World {
         userId: r.userId,
         emoji: r.emoji,
         createdAt: r.createdAt,
+      },
+    ]);
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  /** The attachments a live tab holds, by id: base plus overlay (PLAN-014 S4a). */
+  attachmentView(tab: Tab): Record<string, AttachmentState> {
+    const entries = tab.store.pool.all(Attachment).map((a): [string, AttachmentState] => [
+      a.id,
+      {
+        issueId: a.issueId,
+        teamId: a.teamId,
+        kind: a.kind,
+        title: a.title,
+        url: a.url,
+        fileId: a.fileId,
+        fileName: a.fileName,
+        mimeType: a.mimeType,
+        size: a.size,
+        imageWidth: a.imageWidth,
+        imageHeight: a.imageHeight,
+        previewFileId: a.previewFileId,
+        creatorId: a.creatorId,
+        createdAt: a.createdAt,
+        updatedAt: a.updatedAt,
       },
     ]);
     return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));

@@ -66,6 +66,13 @@ import {
   commentUpdate,
 } from './comment.js';
 import { reactionSet } from './reaction.js';
+import {
+  attachmentCreateFile,
+  attachmentCreateLink,
+  attachmentDelete,
+  attachmentSetPreview,
+  attachmentUpdate,
+} from './attachment.js';
 
 export * from './debug.js';
 export * from './preferences.js';
@@ -83,6 +90,7 @@ export * from './issue-lifecycle.js';
 export * from './draft.js';
 export * from './comment.js';
 export * from './reaction.js';
+export * from './attachment.js';
 
 /**
  * Every operation, listed explicitly (no filesystem globbing) so the client bundle can
@@ -179,6 +187,13 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   labelUsage,
   // ENG-2's description, still at version 1 (SPEC-011 §6.1; PLAN-011 S6).
   issueUpdateDescription,
+  // Attach the seed's upload and a link to ENG-1, rename the seed's link, then remove the seed's
+  // file attachment (SPEC-014 §6.2). System only, no seed example runs: setPreview (the job's).
+  attachmentCreateFile,
+  attachmentCreateLink,
+  attachmentUpdate,
+  attachmentDelete,
+  attachmentSetPreview,
 ];
 
 /** The registry the executor, the HTTP surfaces and the client dispatch read from. */

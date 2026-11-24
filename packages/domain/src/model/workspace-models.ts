@@ -14,6 +14,7 @@ import { array, bool, enumOf, int, json, str, timestamp, uuid } from './fields.j
 import { Issue, IssueContent, IssueHistory } from './issue-models.js';
 import { Draft } from './draft.js';
 import { Comment, Reaction } from './comment-models.js';
+import { Attachment } from './attachment-models.js';
 
 const audit = { createdAt: timestamp(), updatedAt: timestamp() };
 
@@ -177,4 +178,5 @@ export const PRODUCTION_MODELS = [
   Draft,
   Comment,
   Reaction,
+  Attachment,
 ] as const;

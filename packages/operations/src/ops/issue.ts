@@ -6,7 +6,7 @@
  * the issue's own team (`scopedTo(…, 'issue')`), never a team named elsewhere.
  *
  * `IssueOutput` carries the description (Markdown and editor JSON, Q12) and its `version` since S6,
- * and no `attachments` until PLAN-014, which adds them additively. `reactions` came with PLAN-013
+ * `attachments` since PLAN-014 S4a (SPEC-014 §6.2, additive). `reactions` came with PLAN-013
  * S4. `issue.create` and `issue.updateDescription` take the description as editor JSON or as a
  * Markdown string of at most 200 KB: this package can't import the editor, so the server converts
  * and validates it (`validateDoc`), and optimistic code predicts nothing for Markdown (§6.2).
@@ -49,6 +49,7 @@ import { z } from 'zod';
 import { defineOperation } from '../define.js';
 import { connectionOf, countInput, CountOutput, listInput } from '../list.js';
 import type { OptimisticStore, StoreRow } from '../optimistic.js';
+import { AttachmentSummarySchema } from './attachment.js';
 import { ReactionSummariesSchema } from './reaction.js';
 import { Timestamp } from './shared.js';
 
@@ -139,6 +140,8 @@ export const IssueOutputSchema = IssueSummarySchema.extend({
   version: z.int().min(1),
   /** The reactions on the issue itself, not its comments' (SPEC-013 §4.2; PLAN-013 S4). */
   reactions: ReactionSummariesSchema,
+  /** Its attachments, oldest first (SPEC-014 §6.2; PLAN-014 S4a). */
+  attachments: z.array(AttachmentSummarySchema),
 });
 
 export const ISSUE_GROUPINGS = ['status', 'assignee', 'priority', 'label'] as const;

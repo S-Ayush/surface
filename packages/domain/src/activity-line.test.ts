@@ -65,6 +65,23 @@ describe('activity lines (§4.4 table)', () => {
     expect(activityLines(viaMcp, 'Ada')).toEqual(['Ada via MCP moved from Todo to In Progress']);
   });
 
+  it('attachments added and removed, by their stored titles (SPEC-014 §6.3, AC-11)', () => {
+    const shot = { id: 'a-1', kind: 'file', title: 'login.png' };
+    const doc = { id: 'a-2', kind: 'link', title: 'Login flow' };
+    const lines = (added: unknown[], removed: unknown[]) =>
+      activityLines(
+        byAda({ kind: 'updated', changes: { attachments: { added, removed } } }),
+        'Ada',
+      );
+    expect(lines([shot], [])).toEqual(['Ada added attachment login.png']);
+    expect(lines([shot, doc], [])).toEqual(['Ada added attachments login.png, Login flow']);
+    expect(lines([], [doc])).toEqual(['Ada removed attachment Login flow']);
+    expect(lines([shot], [doc])).toEqual([
+      'Ada added attachment login.png',
+      'Ada removed attachment Login flow',
+    ]);
+  });
+
   it('the description: "updated the description" (Q18), never its text', () => {
     const entry = byAda({ kind: 'updated', changes: { description: true } });
     expect(activityLines(entry, 'Ada')).toEqual(['Ada updated the description']);

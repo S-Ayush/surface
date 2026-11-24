@@ -20,7 +20,7 @@ import { startRealServer } from '../src/real-server.js';
 import type { SimServer } from '../src/server.js';
 import { simulate } from '../src/simulate.js';
 import type { Case } from '../src/steps.js';
-import { lifecycleCase } from '../src/steps.js';
+import { lifecycleCase, UPLOADS_PER_USER } from '../src/steps.js';
 
 function lifecycleServers() {
   let latest: RealServer | undefined;
@@ -31,6 +31,8 @@ function lifecycleServers() {
       users,
     });
     await latest.seedIssueFixtures();
+    // PLAN-014 S4a: uploads for the attachment steps.
+    await latest.seedUploads(UPLOADS_PER_USER);
     return latest;
   };
   return { server, last: () => latest };

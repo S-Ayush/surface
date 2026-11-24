@@ -98,11 +98,15 @@ describe('issue.purge on a deleted issue (AC-4)', () => {
     expect(deletes.map((w) => w.model)).toEqual([
       'Reaction',
       'Comment',
+      'Attachment',
       'IssueHistory',
       'IssueContent',
     ]);
     for (const write of deletes) {
-      expect(write).toMatchObject({ ids: [issue.id], fields: ['issueId'], log: false });
+      // Content rows unlogged; Attachment rows are logged, one `D` each (PLAN-014 S4a), so the
+      // client drops them even if it missed the Issue's.
+      const log = write.model === 'Attachment';
+      expect(write).toMatchObject({ ids: [issue.id], fields: ['issueId'], log });
     }
     // The Issue's own delete comes last, and is the one logged write.
     expect(m.writes.at(-1)).toEqual({ action: 'purge', ids: [issue.id], fields: [] });
@@ -316,6 +320,7 @@ describe('the issue.purge handler on SQL', () => {
     expect(writes).toEqual([
       'deleteWhere Reaction log=false',
       'deleteWhere Comment log=false',
+      'deleteWhere Attachment log=true',
       'deleteWhere IssueHistory log=false',
       'deleteWhere IssueContent log=false',
       'purge Issue',
@@ -325,7 +330,7 @@ describe('the issue.purge handler on SQL', () => {
 });
 
 describe('the purge on the real repo (AC-4: D counts)', () => {
-  it('logs one D, for the Issue, and none for its content rows, and flush accepts it', async () => {
+  it('logs one D for the Issue and each Attachment, none for its content rows, and flush accepts it', async () => {
     const ISSUE = '0190f0c0-0000-7000-8000-000000000042';
     const TEAM = '0190f0c0-0000-7000-8000-0000000000e1';
     const groups = [`team:${TEAM}`];
@@ -347,6 +352,7 @@ describe('the purge on the real repo (AC-4: D counts)', () => {
         ],
         issue_history: [child(id(4)), child(id(5))],
         issue_content: [child(ISSUE)],
+        attachments: [child(id(6)), child(id(7))],
       },
       { now: NOW, restrict: [{ table: 'comments', column: 'parent_comment_id' }] },
     );
@@ -365,10 +371,21 @@ describe('the purge on the real repo (AC-4: D counts)', () => {
     // `comment-purge-step.test.ts`'s.
     const steps = PURGE_STEPS.filter((s) => !s.model.startsWith('table:'));
     await purgeIssue({ ...m.purge({ steps }), tx: db, repo }, ISSUE);
-    for (const table of ['issues', 'reactions', 'comments', 'issue_history', 'issue_content']) {
+    for (const table of [
+      'issues',
+      'reactions',
+      'comments',
+      'attachments',
+      'issue_history',
+      'issue_content',
+    ]) {
       expect(rowsOf(table).size, table).toBe(0);
     }
-    expect(repo.changes().map((c) => [c.action, c.model, c.id])).toEqual([['D', 'Issue', ISSUE]]);
+    expect(repo.changes().map((c) => [c.action, c.model, c.id])).toEqual([
+      ['D', 'Attachment', id(6)],
+      ['D', 'Attachment', id(7)],
+      ['D', 'Issue', ISSUE],
+    ]);
     expect(repo.unloggedDeletes().map((u) => [u.model, u.ids.length])).toEqual([
       ['Reaction', 1],
       ['Comment', 2],

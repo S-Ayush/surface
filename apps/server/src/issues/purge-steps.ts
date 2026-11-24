@@ -8,6 +8,9 @@
  * (`purge-steps.test.ts` reads the Drizzle schema and fails otherwise). The one exception is the
  * server-only `issue_search_text`, whose key cascades (D19).
  *
+ * Attachments are eager rows, deleted with a logged `D` each; the issue's `files` rows go through
+ * the byte protocol (PLAN-014 S4a).
+ *
  * Content rows (IssueContent, IssueHistory, Comment, Reaction: parent `Issue`) are deleted with
  * `repo.deleteWhere(…, { log: LOG_CONTENT_DELETES })` (ADR-0022): the purge logs the issue's own
  * `D`, which drops its content on every client, so the content rows log nothing. The repo refuses
@@ -15,8 +18,10 @@
  * issue is not deleted, with a logged `D`, in the same transaction. Server-only tables are plain
  * deletes.
  */
-import { sql } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { files } from '../db/schema/index.js';
+import { deleteFiles, type FileTx } from '../files/bytes.js';
 import type { ModelName } from '../sync/models.js';
 import type { Repo } from '../sync/repo.js';
 
@@ -26,8 +31,12 @@ export const LOG_CONTENT_DELETES = false;
 export interface PurgeStep {
   /** The synced model the step deletes, or a server-only table's name. */
   readonly model: ModelName | `table:${string}`;
-  /** Deletes the issue's rows of `model`, inside the purge's transaction. */
-  step(tx: NodePgDatabase, repo: Repo, issueId: string): Promise<void>;
+  /**
+   * Deletes the issue's rows of `model`, inside the purge's transaction. `files` is the byte
+   * protocol on that transaction's connection (SPEC-014 §4.5), for the step that deletes the
+   * issue's `files` rows.
+   */
+  step(tx: NodePgDatabase, repo: Repo, issueId: string, files: FileTx): Promise<void>;
 }
 
 /**
@@ -86,13 +95,48 @@ export const ISSUE_CONTENT_PURGE_STEPS: readonly PurgeStep[] = [
 ];
 
 /**
+ * SPEC-014 §4.7 (PLAN-014 S4a): the issue's attachments, then every `files` row it owns.
+ *
+ * - Attachments are eager rows: one logged `D` each (SPEC-015 §5.1), so a client that still holds
+ *   one drops it. They go before the files their RESTRICT keys name.
+ * - The files: every row with this `issue_id` (attachments, detached or not, and inline files),
+ *   and their previews (`issue_id` null, found by `preview_of`), through the byte protocol's
+ *   `deleteFiles` (§4.5 step 4): the rows and previews locked `FOR UPDATE`, after the issue lock
+ *   the purge took first, then every key; previews deleted before their sources; the keys into
+ *   `blob_release`. No bytes are unlinked here: `files-cleanup` drains the keys after commit, and
+ *   keeps bytes another row still names. Server-only rows: nothing is logged.
+ */
+export const ATTACHMENT_PURGE_STEPS: readonly PurgeStep[] = [
+  {
+    model: 'Attachment',
+    step: async (_tx, repo, issueId) => {
+      await repo.deleteWhere('Attachment', 'issueId', [issueId]);
+    },
+  },
+  {
+    model: 'table:files',
+    step: async (tx, _repo, issueId, fileTx) => {
+      const owned = await tx
+        .select({ id: files.id })
+        .from(files)
+        .where(eq(files.issueId, issueId))
+        .orderBy(asc(files.id));
+      if (owned.length > 0)
+        await deleteFiles(
+          fileTx,
+          owned.map((row) => row.id),
+        );
+    },
+  },
+];
+
+/**
  * Every registered step, in the order the purge runs them (SPEC-015 §4.5): reactions and comments,
  * then attachments and the issue's `files` rows, then history and content. A step runs before the
  * step of any table it references (`purge-steps.test.ts`).
  */
 export const PURGE_STEPS: readonly PurgeStep[] = [
   ...COMMENT_PURGE_STEPS,
-  // PLAN-014 S4a: the Attachment step (logged, one `D` each) and the issue's `files` rows
-  // (`deleteFiles`, keys into `blob_release`) go here, in the change that adds them.
+  ...ATTACHMENT_PURGE_STEPS,
   ...ISSUE_CONTENT_PURGE_STEPS,
 ];

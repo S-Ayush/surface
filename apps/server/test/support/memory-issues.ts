@@ -40,6 +40,7 @@ import type { LifecycleHistoryKind } from '../../src/issues/lifecycle.js';
 import type { PurgeContext } from '../../src/issues/purge.js';
 import type { PurgeStep } from '../../src/issues/purge-steps.js';
 import type { AuditLine } from '../../src/auth/audit.js';
+import { ModelDb, ModelTx } from '../files-bytes-model.js';
 import { recordingDb } from './scripted-db.js';
 
 export const NOW = new Date('2026-11-13T10:00:00.000Z');
@@ -104,7 +105,7 @@ export interface MemoryIssues {
   /** History entries the lifecycle handlers wrote, in order (SPEC-015 §4.8). */
   readonly history: { readonly kind: LifecycleHistoryKind; readonly issueId: string }[];
   /**
-   * Fake Attachment rows per issue id (the model arrives with PLAN-014 S4a), which a restore
+   * Fake Attachment rows per issue id, which a restore
    * logs again (SPEC-015 §5.1); kept in ascending id like the real step's query.
    */
   readonly attachments: Map<string, string[]>;
@@ -439,6 +440,8 @@ export function memoryIssues(): MemoryIssues {
           identifier: (issue) => Promise.resolve(identifierOf(issue)),
         },
         tx: recordingDb().db,
+        // No step by default; a test that passes the files step brings its own model.
+        files: new ModelTx(new ModelDb(), 1),
         repo,
         actor,
         now,
@@ -454,8 +457,7 @@ export function memoryIssues(): MemoryIssues {
           identifier: (issue) => Promise.resolve(identifierOf(issue)),
           relogRows(issueId) {
             const ids = attachments.get(issueId) ?? [];
-            // The test stands in for PLAN-014 S4a's model: no Attachment ModelName exists yet.
-            const model = 'Attachment' as ModelName;
+            const model: ModelName = 'Attachment';
             return Promise.resolve(ids.length === 0 ? [] : [{ model, ids: [...ids].sort() }]);
           },
         },

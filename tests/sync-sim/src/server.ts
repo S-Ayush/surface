@@ -203,6 +203,57 @@ export function isCommentServer(server: SimServer): server is CommentServer {
   return isIssueServer(server) && 'comments' in server;
 }
 
+/**
+ * What a client should end up showing for one attachment (PLAN-014 S4a): every synced field.
+ * Timestamps are ISO strings, as on the wire.
+ */
+export interface AttachmentState {
+  readonly issueId: unknown;
+  readonly teamId: unknown;
+  readonly kind: unknown;
+  readonly title: unknown;
+  readonly url: unknown;
+  readonly fileId: unknown;
+  readonly fileName: unknown;
+  readonly mimeType: unknown;
+  readonly size: unknown;
+  readonly imageWidth: unknown;
+  readonly imageHeight: unknown;
+  readonly previewFileId: unknown;
+  readonly creatorId: unknown;
+  readonly createdAt: unknown;
+  readonly updatedAt: unknown;
+}
+
+/** An unclaimed upload a user's tabs may attach (PLAN-014 S4a), as the upload route answers. */
+export interface SimUpload {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly size: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A server the attachment steps run against (PLAN-014 S4a): the real one, with comments. */
+export interface AttachmentServer extends CommentServer {
+  /** The database's attachments, by id. */
+  attachments(): Promise<Record<string, AttachmentState>>;
+  /** For each file attachment, the issue its `files` row was claimed for (SPEC-014 §4.2). */
+  attachmentFileIssues(): Promise<Record<string, string | null>>;
+  /** Each user's seeded uploads, by user id (empty until `seedUploads`). */
+  readonly uploads: Readonly<Record<string, readonly SimUpload[]>>;
+  /**
+   * The `files-preview` job for one attachment: a preview row, then `attachment.setPreview` as
+   * the system. Queued behind the other server calls; does nothing for a link or a gone one.
+   */
+  previewAttachment(attachmentId: string): void;
+}
+
+export function isAttachmentServer(server: SimServer): server is AttachmentServer {
+  return isCommentServer(server) && 'attachments' in server;
+}
+
 /** The stored workflow (PLAN-010 S5): teams' defaults, statuses and labels. */
 export interface WorkflowState {
   readonly teams: readonly { id: string; key: string; defaultStatusId: string }[];

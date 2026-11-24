@@ -25,6 +25,8 @@ import {
   type FileDb,
   type NewFile,
 } from '../src/files/bytes.js';
+import { seedTeamWorkflow, teamWorkflow } from '../src/handlers/teams/seed.js';
+import { newIssuePosition } from '../src/issues/numbering.js';
 import { cleanupFiles } from '../src/jobs/files.js';
 import { syncRepo } from '../src/sync/repo.js';
 import { createTestDatabase, type TestDatabase } from './db.js';
@@ -51,9 +53,45 @@ beforeAll(async () => {
       displayName: 'Ada',
       syncGroups: [],
     });
+    // PLAN-014 S4a: `files.issue_id` references `issues`, so files name real issues.
+    const teamId = randomUUID();
+    const workflow = teamWorkflow(teamId);
+    await repo.insert('Team', {
+      id: teamId,
+      key: 'ENG',
+      name: 'Engineering',
+      defaultStatusId: workflow.defaultStatusId,
+      syncGroups: [],
+    });
+    await seedTeamWorkflow(repo, workflow);
+    for (let n = 0; n < ISSUE_POOL; n++) {
+      const { number, sortOrder } = await newIssuePosition(
+        drizzle({ client, casing: 'snake_case' }),
+        teamId,
+      );
+      const issue = await repo.insert('Issue', {
+        id: randomUUID(),
+        teamId,
+        number,
+        title: `Files ${n}`,
+        statusId: workflow.defaultStatusId,
+        sortOrder,
+        creatorId: ada,
+      });
+      issuePool.push(issue.id);
+    }
     await repo.flush({});
   });
 });
+
+/** Issues the tests' files belong to, each used once (`files.issue_id` has its foreign key). */
+const ISSUE_POOL = 8;
+const issuePool: string[] = [];
+function newIssueId(): string {
+  const id = issuePool.shift();
+  if (id === undefined) throw new Error('Raise ISSUE_POOL: the tests use more issues.');
+  return id;
+}
 afterAll(async () => {
   await db.drop();
   await rm(root, { recursive: true, force: true });
@@ -159,7 +197,7 @@ describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
     expect(source.key).toBe(deleted.key);
     const deleter = await openTx();
     await deleteFiles(deleter.tx, [deleted.id]);
-    const file = fileOf({ key: source.key, size: 3 }, 'inline', { issueId: randomUUID() });
+    const file = fileOf({ key: source.key, size: 3 }, 'inline', { issueId: newIssueId() });
     const copy = files.transaction((tx) =>
       insertCopies(tx, blobs, { claims: [], copies: [{ sourceId: source.id, file }] }, silent),
     );
@@ -175,10 +213,10 @@ describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
   });
 
   it('saves a document’s claim and copies in one transaction, and refuses one naming a file it can’t use (§4.3, E24)', async () => {
-    const issueId = randomUUID();
+    const issueId = newIssueId();
     const pasted = await upload('save pasted', 'inline');
-    const first = await upload('save first', 'attachment', { issueId: randomUUID() });
-    const second = await upload('save second', 'inline', { issueId: randomUUID() });
+    const first = await upload('save first', 'attachment', { issueId: newIssueId() });
+    const second = await upload('save second', 'inline', { issueId: newIssueId() });
     const copies = [first, second].map((source) => ({
       sourceId: source.id,
       file: fileOf({ key: source.key, size: 3 }, 'inline', { issueId }),
@@ -262,7 +300,7 @@ describe('the byte protocol on Postgres (SPEC-014 §4.5, AC-14)', () => {
   });
 
   it('deletes previews before their source and releases both keys; a preview waits for a deleter (E21)', async () => {
-    const source = await upload('e21 source', 'attachment', { issueId: randomUUID() });
+    const source = await upload('e21 source', 'attachment', { issueId: newIssueId() });
     const previewTemp = await blobs.putStream(body('e21 preview'));
     await files.transaction((tx) =>
       insertPreview(tx, blobs, previewTemp, {
@@ -313,7 +351,7 @@ describe('files-cleanup on Postgres (SPEC-014 §4.6)', () => {
   it('applies the 24-hour rules, skips rows other transactions hold, and is safe twice at once', async () => {
     const backdate = (id: string, column: 'created_at' | 'detached_at') =>
       db.pool.query(`UPDATE files SET ${column} = now() - interval '25 hours' WHERE id = $1`, [id]);
-    const issueId = randomUUID();
+    const issueId = newIssueId();
     const unclaimed = await upload('cleanup unclaimed', 'inline');
     const young = await upload('cleanup young', 'inline');
     const detached = await upload('cleanup detached', 'attachment', { issueId });

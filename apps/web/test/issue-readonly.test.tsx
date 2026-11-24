@@ -55,6 +55,7 @@ function output(extra: Partial<IssueOutput> = {}): IssueOutput {
     startedAt: null,
     canceledAt: null,
     reactions: [],
+    attachments: [],
     description: { markdown: 'Steps to reproduce', json: doc('Steps to reproduce') },
     version: 2,
     ...extra,

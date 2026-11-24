@@ -246,6 +246,22 @@ describe('a client row', () => {
   });
 });
 
+// PLAN-014 S4a: `pg` reads a `bigint` (Attachment `size`) as a string, which the client's `int()`
+// refuses, so a fresh bootstrap failed on any file attachment (found by the sync property suite).
+describe('bootstrap of integers', () => {
+  const models = syncRegistry({ includeFixtures: false }).models;
+  const attachment = models.find((m) => m.name === 'Attachment');
+  const issue = models.find((m) => m.name === 'Issue');
+
+  it('selects every int field as float8, bigint and integer columns alike', () => {
+    if (!attachment || !issue) throw new Error('Attachment or Issue is not in the registry');
+    const select = selectRows(attachment);
+    expect(select).toContain('"size"::float8 AS "size"');
+    expect(select).toContain('"image_width"::float8 AS "imageWidth"');
+    expect(selectRows(issue)).toContain('"number"::float8 AS "number"');
+  });
+});
+
 // PLAN-011 S3: a calendar date (`day()`, the Issue's `dueDate`) leaves bootstrap as `YYYY-MM-DD`.
 // `pg` parses a `date` into a `Date` at the server's local midnight, which `clientRow` would send
 // as an instant; the select casts it to text instead.

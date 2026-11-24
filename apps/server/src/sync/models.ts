@@ -5,6 +5,7 @@
  */
 import { teamGroup, userGroup, WORKSPACE_GROUP } from '@surface/domain';
 import {
+  Attachment,
   Comment,
   DebugItem,
   Draft,
@@ -25,6 +26,7 @@ import { eq, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import {
+  attachments,
   comments,
   debugItems,
   issueContent,
@@ -353,6 +355,18 @@ export const SYNCED_MODELS = {
     groupsOf: groupsOfIssueChild,
     groupFields: ['issueId', 'teamId'],
     teamColumn: reactions.teamId,
+  },
+  // PLAN-014 S4a (SPEC-014 §4.1, §5): an eager issue child. `team:<teamId>` only, never the
+  // issue's `user:` groups, with `teamId` from the issue row; the client drops an issue's rows with
+  // it (`EAGER_ISSUE_CHILDREN`), and bootstrap leaves out those of archived and deleted issues.
+  Attachment: {
+    table: attachments,
+    def: Attachment,
+    fixture: false,
+    issueChild: true,
+    groupsOf: groupsOfIssueChild,
+    groupFields: ['issueId', 'teamId'],
+    teamColumn: attachments.teamId,
   },
 } as const satisfies Record<
   string,

@@ -45,6 +45,19 @@ import { deleteIssue, restoreIssue } from '../src/handlers/issues/lifecycle-core
 import { autoArchiveIssue, autoCloseIssue } from '../src/handlers/issues/auto-core.js';
 import { memoryAuto } from './support/memory-auto.js';
 import { purgeIssue } from '../src/issues/purge.js';
+import {
+  createFileAttachment,
+  createLinkAttachment,
+  deleteAttachment,
+  renameAttachment,
+  setAttachmentPreview,
+  type AttachmentTarget,
+  type AttachmentWriteContext,
+} from '../src/handlers/attachment/core.js';
+import { cleanupFiles } from '../src/jobs/files.js';
+import { insertUpload } from '../src/files/bytes.js';
+import { body, MODEL_HOUR, ModelDb, modelBlobStore } from './files-bytes-model.js';
+import { attachmentId, memoryAttachments } from './support/memory-attachments.js';
 import { memoryComments } from './support/memory-comments.js';
 import { ADA_ID, memoryIssues, NOW, type MemoryIssues } from './support/memory-issues.js';
 import { recordingDb, scriptedDb, type Statement } from './support/scripted-db.js';
@@ -199,6 +212,68 @@ const labelDeleteCase: Case = async (m, issue) => {
   return deleteLabel(access, repo, { label: { id: label.id, teamId: label.teamId } });
 };
 
+/**
+ * An attachment rule run on `issue` (PLAN-014 S4a): Ada's unclaimed upload, and a file attachment
+ * of the issue whose file has a preview. The issue lock goes through `m`'s access, so `m` records
+ * its mode; each Attachment write lands in `m.writes` and `m.calls`.
+ */
+function attachmentCase(
+  rule: (
+    ctx: AttachmentWriteContext,
+    t: AttachmentTarget & { readonly upload: string; readonly preview: string },
+  ) => Promise<unknown>,
+): Case {
+  return (m, issue) => {
+    const a = memoryAttachments(m);
+    const upload = a.addFile({ id: attachmentId() });
+    const attached = a.addFile({ id: attachmentId(), issueId: issue.id });
+    const preview = a.addFile({ id: attachmentId(), purpose: 'preview', previewOf: attached.id });
+    const row = a.addAttachment({
+      issueId: issue.id,
+      kind: 'file',
+      url: null,
+      fileId: attached.id,
+    });
+    return rule(a.ctx(), {
+      attachmentId: row.id,
+      issueId: issue.id,
+      ref: row.id,
+      upload: upload.id,
+      preview: preview.id,
+    });
+  };
+}
+
+/**
+ * `files-cleanup` on an attachment file of `issue` detached a day ago: the job deletes it whatever
+ * the issue's state, takes no issue lock and writes no issue row (SPEC-014 §4.6). Its delete is
+ * recorded in `m.writes` so the table reads it as the cascade's "applies, keeps state".
+ */
+const filesCleanupCase: Case = async (m, issue) => {
+  const db = new ModelDb();
+  const blobs = modelBlobStore(db);
+  const id = attachmentId();
+  const temp = await blobs.putStream(body('bytes'));
+  await db.transaction((tx) =>
+    insertUpload(tx, blobs, temp, {
+      id,
+      purpose: 'attachment',
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      size: temp.size,
+      uploaderId: ADA_ID,
+      issueId: issue.id,
+    }),
+  );
+  await db.modelTransaction((tx) => tx.detach(id));
+  db.clock += 25 * MODEL_HOUR;
+  const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
+  const counts = await cleanupFiles({ db, blobs, log: quiet, now: () => new Date(db.clock) });
+  if (counts.detached === 1 && !db.rows.has(id)) {
+    m.writes.push({ action: 'purge', model: 'table:files', ids: [id], fields: [] });
+  }
+};
+
 const commentBody = {
   type: 'doc',
   content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Looks good' }] }],
@@ -259,7 +334,37 @@ const CASES: Readonly<Record<string, Case>> = {
     setReaction(ctx, { subject: { kind: 'comment', target: t }, emoji: '👍', reacted: true }),
   ),
   'label.delete': labelDeleteCase,
+  // PLAN-014 S4a.
+  'attachment.createFile': attachmentCase((ctx, t) =>
+    createFileAttachment(ctx, {
+      id: attachmentId(),
+      issueId: t.issueId,
+      fileRef: t.upload,
+      fileId: t.upload,
+      title: undefined,
+      creatorId: ADA_ID,
+    }),
+  ),
+  'attachment.createLink': attachmentCase((ctx, t) =>
+    createLinkAttachment(ctx, {
+      id: attachmentId(),
+      issueId: t.issueId,
+      url: 'https://example.com/spec',
+      title: undefined,
+      creatorId: ADA_ID,
+    }),
+  ),
+  'attachment.update': attachmentCase((ctx, t) => renameAttachment(ctx, t, 'Login spec')),
+  'attachment.delete': attachmentCase((ctx, t) => deleteAttachment(ctx, t)),
+  'attachment.setPreview': attachmentCase((ctx, t) => setAttachmentPreview(ctx, t, t.preview)),
+  'files-cleanup': filesCleanupCase,
 };
+
+/**
+ * Rows that take no issue lock at all: `files-cleanup` locks only `files` rows (SPEC-014 §4.5),
+ * so the issue's state can't refuse it. Its case checks that it ran and the issue stayed as it was.
+ */
+const NO_ISSUE_LOCK = new Set(['files-cleanup']);
 
 /** What happened, in the table's words. */
 function outcome(
@@ -303,14 +408,7 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
     const pending = Object.fromEntries(
       rows.flatMap(([name, rule]) => (rule.pending === undefined ? [] : [[name, rule.pending]])),
     );
-    expect(pending).toEqual({
-      'attachment.createFile': 'PLAN-014 S4a',
-      'attachment.createLink': 'PLAN-014 S4a',
-      'attachment.update': 'PLAN-014 S4a',
-      'attachment.delete': 'PLAN-014 S4a',
-      'attachment.setPreview': 'PLAN-014 S4b',
-      'files-cleanup': 'PLAN-014 S4a',
-    });
+    expect(pending).toEqual({});
   });
 
   it('has a case for every built row, and each names a registered operation with a handler', () => {
@@ -335,7 +433,8 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
       'locks in its mode before any write and gives the listed result on a %s issue',
       async (state) => {
         const { m, result } = await run(name, state);
-        expect(m.lockModes[0]).toBe(rule.mode);
+        if (NO_ISSUE_LOCK.has(name)) expect(m.lockModes).toEqual([]);
+        else expect(m.lockModes[0]).toBe(rule.mode);
         const firstWrite = m.calls.findIndex((c) => c.startsWith('write:'));
         if (firstWrite >= 0) expect(m.calls.indexOf('lockIssue')).toBeLessThan(firstWrite);
         const listed = rule[state];
@@ -383,6 +482,10 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
 const COMMENT_ID = '0190f0c0-0000-7000-8000-0000000000c1';
 /** The label `label.delete` names, an ENG label that ENG-1 carries. */
 const LABEL_ID = '0190f0c0-0000-7000-8000-0000000000b1';
+/** A file attachment on ENG-1, and the upload `attachment.createFile` names (PLAN-014 S4a). */
+const ATTACHMENT_ID = '0190f0c0-0000-7000-8000-0000000000a1';
+const FILE_ID = '0190f0c0-0000-7000-8000-0000000000f1';
+const PREVIEW_ID = '0190f0c0-0000-7000-8000-0000000000f2';
 
 /** The input each built operation's registered handler runs with on ENG-1. */
 const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
@@ -398,7 +501,18 @@ const HANDLER_INPUTS: Readonly<Record<string, Record<string, unknown>>> = {
   'comment.reopen': { comment: COMMENT_ID },
   'reaction.set': { comment: COMMENT_ID, emoji: '👍', reacted: true },
   'label.delete': { label: LABEL_ID },
+  'attachment.createFile': { issue: 'ENG-1', file: FILE_ID },
+  'attachment.createLink': { issue: 'ENG-1', url: 'https://example.com/spec' },
+  'attachment.update': { attachment: ATTACHMENT_ID, title: 'Login spec' },
+  'attachment.delete': { attachment: ATTACHMENT_ID },
+  'attachment.setPreview': { attachment: ATTACHMENT_ID, previewFile: PREVIEW_ID },
 };
+
+/**
+ * Cascade rows whose handler locks one issue row itself (`lockIssueForWrite` in `cascade` mode)
+ * rather than through the repo's bulk path: they get the lock-first check of the edit rows.
+ */
+const ROW_LOCK_CASCADES = new Set(['attachment.setPreview']);
 
 /**
  * The jobs' operations read the team's settings and a status `FOR SHARE` before the issue lock
@@ -455,6 +569,25 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
       workflow_statuses: { id: issue.statusId, name: 'Backlog', category: 'backlog' },
       users: { id: ADA_ID, name: 'Ada' },
       issue_content: { description: { type: 'doc', content: [{ type: 'paragraph' }] }, version: 1 },
+      attachments: snakeRow({
+        id: ATTACHMENT_ID,
+        issueId: issue.id,
+        teamId: issue.teamId,
+        kind: 'file',
+        title: 'notes.txt',
+        url: null,
+        fileId: FILE_ID,
+        fileName: 'notes.txt',
+        mimeType: 'text/plain',
+        size: 5,
+        imageWidth: null,
+        imageHeight: null,
+        previewFileId: null,
+        creatorId: ADA_ID,
+        syncGroups: [`team:${issue.teamId}`],
+        createdAt: EARLIER,
+        updatedAt: EARLIER,
+      }),
       comments: snakeRow({
         id: COMMENT_ID,
         issueId: issue.id,
@@ -505,6 +638,8 @@ async function runHandler(name: string, state: IssueLifecycle): Promise<Statemen
       issue: { id: issue.id, teamId: issue.teamId, key: 'ENG-1' },
       comment: { id: COMMENT_ID, issueId: issue.id, teamId: issue.teamId, parentCommentId: null },
       label: { id: LABEL_ID, teamId: issue.teamId, name: 'Flaky' },
+      attachment: { id: ATTACHMENT_ID, issueId: issue.id, teamId: issue.teamId },
+      file: { id: FILE_ID },
     },
     now: () => NOW,
     emit: () => undefined,
@@ -529,7 +664,9 @@ describe('each built row’s registered handler locks the issue first (AC-1, SPE
   describe.each(
     built.filter(
       ([name, rule]) =>
-        rule.kind === 'operation' && rule.mode !== 'cascade' && !OWN_SQL_TEST.has(name),
+        rule.kind === 'operation' &&
+        (rule.mode !== 'cascade' || ROW_LOCK_CASCADES.has(name)) &&
+        !OWN_SQL_TEST.has(name),
     ),
   )('%s', (name) => {
     it.each(ISSUE_LIFECYCLES)(
@@ -549,30 +686,32 @@ describe('each built row’s registered handler locks the issue first (AC-1, SPE
   // A cascade row's handler locks the issues in the repo's bulk path (`updateWhere` locks them in
   // ascending id, SPEC-011 §5.1), after the scope and label rows; its plain read of the ids comes
   // first, under the label lock, which makes that set final (SPEC-010 §4.4).
-  describe.each(built.filter(([, rule]) => rule.kind === 'operation' && rule.mode === 'cascade'))(
-    '%s',
-    (name) => {
-      it.each(ISSUE_LIFECYCLES)(
-        'writes issues only through updateWhere, after its row locks (%s issue)',
-        async (state) => {
-          const statements = await runHandler(name, state);
-          const texts = statements.map((statement) => statement.text);
-          const read = texts.findIndex((text) => text.includes('from "issues"'));
-          const lastLock = texts.reduce(
-            (at, text, i) => (text.endsWith(' for update') && !text.includes('"issues"') ? i : at),
-            -1,
-          );
-          expect(lastLock, texts.join('\n')).toBeGreaterThanOrEqual(0);
-          expect(read).toBeGreaterThan(lastLock);
-          expect(texts[read]).not.toMatch(/archived_at|deleted_at/);
-          const writes = texts.filter((text) => text.startsWith('repo.'));
-          expect(writes).toContain('repo.updateWhere');
-          expect(writes).not.toContain('repo.update');
-          expect(texts.indexOf('repo.updateWhere')).toBeGreaterThan(read);
-        },
-      );
-    },
-  );
+  describe.each(
+    built.filter(
+      ([name, rule]) =>
+        rule.kind === 'operation' && rule.mode === 'cascade' && !ROW_LOCK_CASCADES.has(name),
+    ),
+  )('%s', (name) => {
+    it.each(ISSUE_LIFECYCLES)(
+      'writes issues only through updateWhere, after its row locks (%s issue)',
+      async (state) => {
+        const statements = await runHandler(name, state);
+        const texts = statements.map((statement) => statement.text);
+        const read = texts.findIndex((text) => text.includes('from "issues"'));
+        const lastLock = texts.reduce(
+          (at, text, i) => (text.endsWith(' for update') && !text.includes('"issues"') ? i : at),
+          -1,
+        );
+        expect(lastLock, texts.join('\n')).toBeGreaterThanOrEqual(0);
+        expect(read).toBeGreaterThan(lastLock);
+        expect(texts[read]).not.toMatch(/archived_at|deleted_at/);
+        const writes = texts.filter((text) => text.startsWith('repo.'));
+        expect(writes).toContain('repo.updateWhere');
+        expect(writes).not.toContain('repo.update');
+        expect(texts.indexOf('repo.updateWhere')).toBeGreaterThan(read);
+      },
+    );
+  });
 });
 
 describe('cascades write archived and deleted issues and keep their state (AC-2, E11)', () => {

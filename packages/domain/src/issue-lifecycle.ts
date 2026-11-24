@@ -323,10 +323,10 @@ export const ISSUE_LIFECYCLE_RULES: Readonly<Record<string, LifecycleRule>> = {
   'comment.resolve': { ...EDIT, spec: 'SPEC-013' },
   'comment.reopen': { ...EDIT, spec: 'SPEC-013' },
   'reaction.set': { ...EDIT, spec: 'SPEC-013' },
-  'attachment.createFile': { ...EDIT, spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
-  'attachment.createLink': { ...EDIT, spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
-  'attachment.update': { ...EDIT, spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
-  'attachment.delete': { ...EDIT, spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
+  'attachment.createFile': { ...EDIT, spec: 'SPEC-014' },
+  'attachment.createLink': { ...EDIT, spec: 'SPEC-014' },
+  'attachment.update': { ...EDIT, spec: 'SPEC-014' },
+  'attachment.delete': { ...EDIT, spec: 'SPEC-014' },
   'issue.delete': {
     kind: 'operation',
     mode: 'lifecycle',
@@ -357,13 +357,11 @@ export const ISSUE_LIFECYCLE_RULES: Readonly<Record<string, LifecycleRule>> = {
   // Through `removeLabelFromIssues` (`repo.updateWhere`, `touchUpdatedAt: false`), which locks
   // the issues in ascending id after the scope and label rows (PLAN-010 S5).
   'label.delete': { ...CASCADE, kind: 'operation', spec: 'SPEC-010' },
-  'attachment.setPreview': {
-    ...CASCADE,
-    kind: 'operation',
-    spec: 'SPEC-014',
-    pending: 'PLAN-014 S4b',
-  },
-  'files-cleanup': { ...CASCADE, kind: 'job', spec: 'SPEC-014', pending: 'PLAN-014 S4a' },
+  // The preview job's write (PLAN-014 S4a builds the operation, S4b the job that runs it).
+  'attachment.setPreview': { ...CASCADE, kind: 'operation', spec: 'SPEC-014' },
+  // Deletes detached attachment files on any issue; it writes no issue row and takes no issue lock
+  // (its row locks are the `files` rows', SPEC-014 §4.5), so its "lock" is the cascade's in name only.
+  'files-cleanup': { ...CASCADE, kind: 'job', spec: 'SPEC-014' },
   // The job runs `issue.purge` as the system actor for each issue it selects (SPEC-015 §6.3), so
   // its row is that operation's: it selects only deleted issues past `purgeAfter`, and one
   // restored meanwhile is a CONFLICT the job counts as skipped (D20).

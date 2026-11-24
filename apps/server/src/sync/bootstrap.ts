@@ -142,14 +142,18 @@ const ARCHIVED_ALIAS = '__archived';
  * Exported for tests.
  */
 export function selectRows(model: SyncModel): string {
-  const fields = [...model.columns].map(([field, column]) =>
+  const fields = [...model.columns].map(([field, column]) => {
+    const kind = model.def.fields[field]?.kind;
     // A calendar date goes out as `YYYY-MM-DD`: `pg` would parse a `date` into a `Date` at the
     // server's local midnight, which `clientRow` would turn into an instant (a due date off by
     // the offset).
-    model.def.fields[field]?.kind === 'day'
-      ? `${quote(column)}::text AS ${quote(field)}`
-      : `${quote(column)} AS ${quote(field)}`,
-  );
+    if (kind === 'day') return `${quote(column)}::text AS ${quote(field)}`;
+    // An integer goes out as a number: `pg` reads a `bigint` (an attachment's `size`, SPEC-014
+    // §4.2) as a string, which the client's `int()` refuses. `float8` is exact up to 2^53, the
+    // range `int()` accepts, and changes nothing for an `integer` column (PLAN-014 S4a).
+    if (kind === 'int') return `${quote(column)}::float8 AS ${quote(field)}`;
+    return `${quote(column)} AS ${quote(field)}`;
+  });
   // Read even when the model has no `groups` field: cheap, and `clientRow` decides.
   fields.push(`sync_groups AS ${quote(GROUPS_ALIAS)}`);
   fields.push(

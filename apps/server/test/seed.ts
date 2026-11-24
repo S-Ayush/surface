@@ -29,6 +29,12 @@
  *
  * PLAN-013 S4: Iris's reactions on that first thread (👍) and on ENG-1 itself (🎉).
  *
+ * PLAN-014 S4a: the actor's unclaimed `attachment` upload (`SEED_FILES.upload`), which
+ * `attachment.createFile`'s example attaches to ENG-1; on ENG-1, a file attachment
+ * (`SEED_ATTACHMENTS.file`, its file `SEED_FILES.attached` with a preview `SEED_FILES.preview`),
+ * which `attachment.delete`'s example removes, and a link (`SEED_ATTACHMENTS.link`), which
+ * `attachment.update`'s example renames. The `files` rows are server-only (plain SQL); no bytes.
+ *
  * PLAN-001 S6 (session E, agreed with A): the actor's password and a second session of theirs.
  * `session.revoke`'s example ends that session, and `user.changePassword`'s example changes the
  * password from `SEED_PASSWORD`.
@@ -72,6 +78,19 @@ export const SEED_COMMENTS = {
  * only: it never ships (this file is outside `src/`), and it guards nothing.
  */
 export const SEED_PASSWORD = 'seed-password-not-secret';
+
+/** The files the attachment examples name (`packages/operations/src/ops/attachment.ts`). */
+export const SEED_FILES = {
+  upload: '01930000-0000-7000-8000-000000000801',
+  attached: '01930000-0000-7000-8000-000000000802',
+  preview: '01930000-0000-7000-8000-000000000805',
+} as const;
+
+/** The attachments on ENG-1 the attachment examples name. */
+export const SEED_ATTACHMENTS = {
+  link: '01930000-0000-7000-8000-000000000803',
+  file: '01930000-0000-7000-8000-000000000804',
+} as const;
 /** argon2id of `SEED_PASSWORD`, computed once so seeding does no hashing. */
 const SEED_PASSWORD_HASH =
   '$argon2id$v=19$m=19456,t=2,p=1$ILoquvZtUDFkYznV2ZZTVQ$vmKgU2G0VG8bHpy7GgrQJQrob4gcMjEAK3amW3vJvaQ';
@@ -264,6 +283,50 @@ async function seed(db: TestDatabase): Promise<SeedFixture> {
         emoji,
       });
     }
+    // PLAN-014 S4a: the files first (plain SQL, server-only), then the attachments that name them.
+    for (const [id, purpose, name, mimeType, issueId, previewOf] of [
+      [SEED_FILES.upload, 'attachment', 'redirect-loop.png', 'image/png', null, null],
+      [SEED_FILES.attached, 'attachment', 'har-export.json', 'application/json', eng1, null],
+      [SEED_FILES.preview, 'preview', 'preview.webp', 'image/webp', null, SEED_FILES.attached],
+    ] as const) {
+      await client.query(
+        `INSERT INTO files (id, storage_key, purpose, name, mime_type, size, uploader_id, issue_id, preview_of)
+         VALUES ($1, $2, $3, $4, $5, 1024, $6, $7, $8)`,
+        [id, `sha256/00/${id}`, purpose, name, mimeType, users.me, issueId, previewOf],
+      );
+    }
+    await repo.insert('Attachment', {
+      id: SEED_ATTACHMENTS.link,
+      issueId: eng1,
+      teamId: teams.eng,
+      kind: 'link',
+      title: 'Login flow',
+      url: 'https://www.figma.com/file/abc123/Login-flow',
+      fileId: null,
+      fileName: null,
+      mimeType: null,
+      size: null,
+      imageWidth: null,
+      imageHeight: null,
+      previewFileId: null,
+      creatorId: users.me,
+    });
+    await repo.insert('Attachment', {
+      id: SEED_ATTACHMENTS.file,
+      issueId: eng1,
+      teamId: teams.eng,
+      kind: 'file',
+      title: 'har-export.json',
+      url: null,
+      fileId: SEED_FILES.attached,
+      fileName: 'har-export.json',
+      mimeType: 'application/json',
+      size: 1024,
+      imageWidth: null,
+      imageHeight: null,
+      previewFileId: null,
+      creatorId: users.me,
+    });
     await repo.flush({});
     // Server-only, so plain SQL. The id is the one `invite.revoke`'s example names.
     await client.query(

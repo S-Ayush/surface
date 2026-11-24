@@ -4,8 +4,10 @@
 // issue owns (no uploader exception), a detached file, a preview of an unclaimed file, and an API
 // key's team limit. Each on `GET`, `HEAD`, `GET` with a matching `If-None-Match`, and
 // `?download=1`; every 404 is identical to a missing file's apart from `correlationId`. PLAN-014
-// S4a adds the cells that need a real issue (private team, archived, deleted, a preview of an
-// invisible source).
+// S4a: owned files belong to real issues (`files.issue_id` has its foreign key), which adds the
+// cells that need one: a public team's issue (live, archived, deleted), a private team's issue
+// (its uploader outside the team gets nothing, E16), a preview of a visible and of an invisible
+// source, a key limited to other teams, and FileRef's detached-file lookup (D28).
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -38,6 +40,13 @@ const users = {
   ada: randomUUID(), // uploads everything below; member of ENG
   ben: randomUUID(), // another member of ENG
   sam: randomUUID(), // the only member of private team SEC
+} as const;
+/** ENG (public) issues, live, archived and deleted, and a SEC (private) issue. */
+const issues = {
+  eng: uuidv7(),
+  archived: uuidv7(),
+  deleted: uuidv7(),
+  sec: uuidv7(),
 } as const;
 type Who = keyof typeof users;
 
@@ -74,6 +83,45 @@ beforeAll(async () => {
     await member(h.teams.eng, users.ada);
     await member(h.teams.eng, users.ben);
     await member(h.teams.sec, users.sam);
+    await repo.flush({});
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    client.release();
+    throw error;
+  }
+  // The issues, through the real operation (PLAN-014 S4a: files name real issues).
+  const { executor } = testExecutor(h.pool);
+  const publicTeams = [h.teams.eng];
+  const adaActor = actorFor({
+    id: users.ada,
+    memberships: [{ teamId: h.teams.eng, private: false }],
+    publicTeams,
+  });
+  const samActor = actorFor({
+    id: users.sam,
+    memberships: [{ teamId: h.teams.sec, private: true }],
+    publicTeams,
+  });
+  for (const [id, team, actor] of [
+    [issues.eng, 'ENG', adaActor],
+    [issues.archived, 'ENG', adaActor],
+    [issues.deleted, 'ENG', adaActor],
+    [issues.sec, 'SEC', samActor],
+  ] as const) {
+    const result = await executor.execute('issue.create', { id, team, title: 'Files' }, actor);
+    if (!result.ok) throw new Error(result.error.message);
+  }
+
+  try {
+    await client.query('BEGIN');
+    const repo = syncRepo(drizzle({ client, casing: 'snake_case' }), new Date());
+    const workspaceId = (await client.query<{ id: string }>('SELECT id FROM workspace LIMIT 1'))
+      .rows[0]?.id;
+    if (workspaceId === undefined) throw new Error('no workspace');
+    // Archived and deleted, through the repo like the jobs and `issue.delete` write them.
+    await repo.update('Issue', issues.archived, { archivedAt: new Date() });
+    await repo.update('Issue', issues.deleted, { deletedAt: new Date(), deletedById: users.ada });
 
     // Distinct bytes per file, so each has its own key and ETag.
     const file = async (
@@ -103,11 +151,19 @@ beforeAll(async () => {
     };
     await file('unclaimedAttachment', 'attachment');
     await file('unclaimedInline', 'inline');
-    // `files.issue_id` has no foreign key until PLAN-014 S4a: an issue nobody here can see.
-    await file('ownedAttachment', 'attachment', { issueId: randomUUID() });
-    await file('ownedInline', 'inline', { issueId: randomUUID() });
-    await file('detached', 'attachment', { issueId: randomUUID(), detached: true });
+    // Ada's uploads, claimed by issues: a public team's (live, archived, deleted) and SEC's.
+    await file('engAttachment', 'attachment', { issueId: issues.eng });
+    await file('engInline', 'inline', { issueId: issues.eng });
+    await file('archivedAttachment', 'attachment', { issueId: issues.archived });
+    await file('deletedAttachment', 'attachment', { issueId: issues.deleted });
+    await file('secAttachment', 'attachment', { issueId: issues.sec });
+    await file('secInline', 'inline', { issueId: issues.sec });
+    await file('detached', 'attachment', { issueId: issues.eng, detached: true });
+    await file('secDetached', 'attachment', { issueId: issues.sec, detached: true });
     await file('previewOfUnclaimed', 'preview', { previewOf: ids['unclaimedAttachment'] ?? '' });
+    await file('previewOfEng', 'preview', { previewOf: ids['engAttachment'] ?? '' });
+    await file('previewOfSec', 'preview', { previewOf: ids['secAttachment'] ?? '' });
+    await file('previewOfDetached', 'preview', { previewOf: ids['detached'] ?? '' });
     await file('unusedAvatar', 'avatar');
     await file('unusedLogo', 'logo');
     await repo.update('User', users.ada, { avatarFileId: await file('avatar', 'avatar') });
@@ -230,14 +286,10 @@ describe('the SPEC-014 §4.2 matrix, cells without an issue (AC-5)', () => {
     }
   });
 
-  it('a file an issue owns gives its uploader nothing (E16), nor anyone outside the issue (E5)', async () => {
-    for (const label of ['ownedAttachment', 'ownedInline']) {
+  it('a detached file is readable by nobody, its uploader and its issue’s readers included (E8)', async () => {
+    for (const label of ['detached', 'secDetached', 'previewOfDetached']) {
       for (const who of ['ada', 'ben', 'sam'] as const) await expectHidden(who, label);
     }
-  });
-
-  it('a detached file is readable by nobody, its uploader included', async () => {
-    for (const who of ['ada', 'ben', 'sam'] as const) await expectHidden(who, 'detached');
   });
 
   it('a preview of an unclaimed upload is readable by nobody, its source’s uploader included', async () => {
@@ -258,6 +310,30 @@ describe('the SPEC-014 §4.2 matrix, cells without an issue (AC-5)', () => {
       await expectHidden('ben', label);
       await expectHidden('sam', label);
     }
+  });
+});
+
+describe('the SPEC-014 §4.2 matrix, cells with an issue (AC-5, PLAN-014 S4a)', () => {
+  it('a public team’s issue: everyone who sees the issue, whatever its lifecycle state', async () => {
+    for (const label of ['engAttachment', 'engInline', 'archivedAttachment', 'deletedAttachment']) {
+      // Ben and Sam never uploaded it; Sam isn't a member of ENG, which is public.
+      for (const who of ['ada', 'ben', 'sam'] as const) await expectVisible(who, label);
+    }
+  });
+
+  it('a private team’s issue: its members only; its uploader outside the team gets nothing (E5, E16)', async () => {
+    for (const label of ['secAttachment', 'secInline']) {
+      await expectVisible('sam', label);
+      await expectHidden('ada', label);
+      await expectHidden('ben', label);
+    }
+  });
+
+  it('a preview follows its source: visible with a visible one, hidden with a hidden one', async () => {
+    for (const who of ['ada', 'ben', 'sam'] as const) await expectVisible(who, 'previewOfEng');
+    await expectVisible('sam', 'previewOfSec');
+    await expectHidden('ada', 'previewOfSec');
+    await expectHidden('ben', 'previewOfSec');
   });
 });
 
@@ -305,13 +381,26 @@ describe('FileRef resolves by the same rule (permissions.md §4)', () => {
       return { code, message: message.replace(ids[label] ?? MISSING, '<id>') };
     }
   };
+  // Every user sees public team ENG (SPEC-011 §5.6), as the session store says.
   const ada = () =>
-    actorFor({ id: users.ada, memberships: [{ teamId: h.teams.eng, private: false }] });
+    actorFor({
+      id: users.ada,
+      memberships: [{ teamId: h.teams.eng, private: false }],
+      publicTeams: [h.teams.eng],
+    });
   const ben = () =>
-    actorFor({ id: users.ben, memberships: [{ teamId: h.teams.eng, private: false }] });
+    actorFor({
+      id: users.ben,
+      memberships: [{ teamId: h.teams.eng, private: false }],
+      publicTeams: [h.teams.eng],
+    });
   const key = (teamIds: string[]) => () =>
     actorFor(
-      { id: users.ada, memberships: [{ teamId: h.teams.eng, private: false }] },
+      {
+        id: users.ada,
+        memberships: [{ teamId: h.teams.eng, private: false }],
+        publicTeams: [h.teams.eng],
+      },
       {
         kind: 'api',
         apiKey: { id: randomUUID(), scope: 'read_write', teamIds, allowDestructive: false },
@@ -321,15 +410,36 @@ describe('FileRef resolves by the same rule (permissions.md §4)', () => {
   const hidden = async (label: string, actor: Actor) =>
     expect(await resolve(label, actor)).toEqual(await resolve('missing', actor));
 
+  const sam = () =>
+    actorFor({
+      id: users.sam,
+      memberships: [{ teamId: h.teams.sec, private: true }],
+      publicTeams: [h.teams.eng],
+    });
+
   it('matches GET for a session, cell by cell', async () => {
     expect(await resolve('unclaimedAttachment', ada())).toBe(ids['unclaimedAttachment']);
     await hidden('unclaimedAttachment', ben());
-    for (const label of ['ownedAttachment', 'ownedInline', 'detached', 'previewOfUnclaimed']) {
+    for (const label of ['engAttachment', 'engInline', 'archivedAttachment', 'previewOfEng']) {
+      expect(await resolve(label, ben())).toBe(ids[label]);
+    }
+    for (const label of ['secAttachment', 'secInline', 'previewOfSec', 'previewOfUnclaimed']) {
       await hidden(label, ada());
     }
+    expect(await resolve('secAttachment', sam())).toBe(ids['secAttachment']);
     expect(await resolve('avatar', ben())).toBe(ids['avatar']);
     expect(await resolve('logo', ben())).toBe(ids['logo']);
     await hidden('unusedAvatar', ben());
+  });
+
+  it('resolves a detached attachment file only for its issue’s readers, for the undo (D28)', async () => {
+    // Unreadable as ever (GET above); `attachment.createFile` can name it again within 24 hours.
+    expect(await resolve('detached', ben())).toBe(ids['detached']);
+    expect(await resolve('secDetached', sam())).toBe(ids['secDetached']);
+    await hidden('secDetached', ada());
+    await hidden('secDetached', ben());
+    await hidden('previewOfDetached', ben());
+    await hidden('detached', key([h.teams.sec])());
   });
 
   it('a key limited to some teams reads no unclaimed upload, but the M0 rule still applies', async () => {
@@ -338,15 +448,23 @@ describe('FileRef resolves by the same rule (permissions.md §4)', () => {
     await hidden('unclaimedInline', narrowed);
     expect(await resolve('avatar', narrowed)).toBe(ids['avatar']);
     expect(await resolve('unusedAvatar', narrowed)).toBe(ids['unusedAvatar']);
+    expect(await resolve('engAttachment', narrowed)).toBe(ids['engAttachment']);
     // A key for every team reads like its owner's session.
     expect(await resolve('unclaimedAttachment', key([])())).toBe(ids['unclaimedAttachment']);
+  });
+
+  it('a key limited to other teams reads none of an issue’s files, public team included', async () => {
+    const elsewhere = key([h.teams.sec])();
+    for (const label of ['engAttachment', 'engInline', 'previewOfEng', 'deletedAttachment']) {
+      await hidden(label, elsewhere);
+    }
   });
 
   it('answers a hidden file exactly like an unknown id', async () => {
     expect(await resolve('missing', ben())).toEqual({
       code: 'NOT_FOUND',
       message:
-        'File "<id>" not found. Upload the image with POST /files/upload and use the id it returns.',
+        'File "<id>" not found. That upload has expired or isn\'t yours. Upload the file again.',
     });
   });
 

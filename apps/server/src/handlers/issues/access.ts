@@ -29,6 +29,7 @@ import { claimInlineFiles } from '../../files/claim.js';
 import { historyAccess } from '../../issues/history.js';
 import { lockIssueForWrite } from '../../issues/lifecycle.js';
 import { newIssuePosition } from '../../issues/numbering.js';
+import { attachmentsByIssue } from '../attachment/access.js';
 import type { IssueAccess, IssueRow, IssueTeam, IssueWriteContext } from './core.js';
 
 type IssueOutput = z.input<typeof IssueOutputSchema>;
@@ -125,7 +126,7 @@ const iso = (value: Date | null): string | null => (value === null ? null : valu
 /** An issue's output without its reactions: everything `issue.list`'s summaries carry and more. */
 export type IssueOutputWithoutReactions = Omit<
   IssueOutput,
-  'reactions' | 'description' | 'version'
+  'reactions' | 'description' | 'version' | 'attachments'
 >;
 
 /**
@@ -269,6 +270,11 @@ export async function issueOutputs(
       ),
     );
   const contents = new Map(contentRows.map((c) => [c.issueId, c]));
+  // SPEC-014 §6.2: an issue's attachments, oldest first (at most 100, D20).
+  const attachmentLists = await attachmentsByIssue(
+    ctx,
+    rows.map((r) => r.id),
+  );
   const viewerId = ctx.actor.userId ?? null;
   return outputs.map((output) => {
     const content = contents.get(output.id);
@@ -285,6 +291,7 @@ export async function issueOutputs(
         json: { ...content.description },
       },
       version: content.version,
+      attachments: attachmentLists.get(output.id) ?? [],
       reactions: summariseReactions(
         reactionRows.filter((r) => r.issueId === output.id),
         viewerId,

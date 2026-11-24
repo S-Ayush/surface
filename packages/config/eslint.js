@@ -39,6 +39,7 @@ export const SYNCED_TABLES = [
   { identifier: 'drafts', name: 'drafts' },
   { identifier: 'comments', name: 'comments' },
   { identifier: 'reactions', name: 'reactions' },
+  { identifier: 'attachments', name: 'attachments' },
   { identifier: 'syncLog', name: 'sync_log' },
   { identifier: 'syncState', name: 'sync_state' },
 ];

@@ -2,7 +2,15 @@
  * Command-menu contexts an operation applies to (command-menu.md §3.3). `global` is the
  * "nothing selected" context. New contexts are added as features need them (additive only).
  */
-export const UI_CONTEXTS = ['global', 'team', 'issue', 'issues', 'project', 'comment'] as const;
+export const UI_CONTEXTS = [
+  'global',
+  'team',
+  'issue',
+  'issues',
+  'project',
+  'comment',
+  'attachment',
+] as const;
 
 export type UiContext = (typeof UI_CONTEXTS)[number];
 

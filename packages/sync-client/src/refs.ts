@@ -42,6 +42,7 @@ export const REF_MODELS = {
   LabelRef: 'Label',
   IssueRef: 'Issue',
   CommentRef: 'Comment',
+  AttachmentRef: 'Attachment',
 } as const satisfies Partial<Record<RefType, string>>;
 
 const NOT_FOUND: RefLookup = { status: 'notFound' };
@@ -95,6 +96,11 @@ export function createClientRefResolver(
           const ref = parseIdRef(value);
           return found(ref?.by === 'id' ? byId(REF_MODELS.CommentRef, ref.id) : undefined);
         }
+        // By id only, among the attachments the replica holds (PLAN-014 S4a).
+        case 'AttachmentRef': {
+          const ref = parseIdRef(value);
+          return found(ref?.by === 'id' ? byId(REF_MODELS.AttachmentRef, ref.id) : undefined);
+        }
         // Invites are never in the replica: the server resolves them (PLAN-001 S5).
         case 'InviteRef':
           return NOT_FOUND;
@@ -102,7 +108,7 @@ export function createClientRefResolver(
         case 'SessionRef':
           return NOT_FOUND;
         // Their models arrive with later milestones; until then nothing matches. Files are
-        // server-only in M0 (avatars, the logo: PLAN-001 S6) and may sync with attachments (M1).
+        // server-only (SPEC-014 D15): the server resolves them.
         case 'FileRef':
         case 'ProjectRef':
         case 'CycleRef':

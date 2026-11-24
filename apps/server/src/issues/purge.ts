@@ -28,6 +28,7 @@ import {
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { DomainEvent, HandlerContext } from '../executor/context.js';
 import { SurfaceError } from '../executor/errors.js';
+import type { FileTx } from '../files/bytes.js';
 import type { Repo } from '../sync/repo.js';
 import type { LockedIssue } from './lifecycle.js';
 import { PURGE_STEPS, type PurgeStep } from './purge-steps.js';
@@ -44,6 +45,8 @@ export interface PurgeContext {
   readonly access: PurgeAccess;
   /** The transaction the steps run their server-only deletes in. */
   readonly tx: NodePgDatabase;
+  /** The byte protocol on the same transaction's connection, for the issue's files (SPEC-014 §4.7). */
+  readonly files: FileTx;
   readonly repo: Repo;
   readonly actor: Actor;
   readonly now: Date;
@@ -85,7 +88,9 @@ export async function purgeIssue(ctx: PurgeContext, issueId: string): Promise<Pu
     }
   }
 
-  for (const purge of ctx.steps ?? PURGE_STEPS) await purge.step(ctx.tx, repo, issue.id);
+  for (const purge of ctx.steps ?? PURGE_STEPS) {
+    await purge.step(ctx.tx, repo, issue.id, ctx.files);
+  }
   await repo.purge('Issue', issue.id);
 
   const purged: PurgedIssue = { id: issue.id, teamId: issue.teamId, number: issue.number };

@@ -6,6 +6,10 @@
  */
 import fc from 'fast-check';
 import {
+  attachmentCreateFile,
+  attachmentCreateLink,
+  attachmentDelete,
+  attachmentUpdate,
   commentCreate,
   commentDelete,
   commentReopen,
@@ -34,7 +38,12 @@ import {
 import { Comment, Issue, IssueContent } from '@surface/domain/model';
 import type { Faults } from './network.js';
 import type { Random } from './random.js';
-import { isIssueServer, isLifecycleServer, type IssueFixtures } from './server.js';
+import {
+  isAttachmentServer,
+  isIssueServer,
+  isLifecycleServer,
+  type IssueFixtures,
+} from './server.js';
 import type { Tab, World } from './world.js';
 
 /**
@@ -175,6 +184,7 @@ export type Step =
   | { readonly t: 'setDefaultStatus'; readonly tab: number; readonly status: WorkflowPick }
   | { readonly t: 'labelDelete'; readonly tab: number; readonly label: LabelPick }
   | LifecycleStep
+  | AttachmentStep
   | { readonly t: 'wait'; readonly ms: number }
   | { readonly t: 'faults'; readonly faults: Faults }
   | { readonly t: 'disconnect'; readonly tab: number }
@@ -802,6 +812,13 @@ export async function apply(world: World, step: Step, options: RunOptions = {}):
       }
       return;
     }
+    case 'attachmentLink':
+    case 'attachmentFile':
+    case 'attachmentRename':
+    case 'attachmentDelete':
+    case 'attachmentPreview':
+      applyAttachment(world, step);
+      return;
     case 'issueDelete':
     case 'issueRestore':
     case 'issuePurge':
@@ -972,4 +989,172 @@ function applyLifecycle(world: World, step: LifecycleStep): void {
   const issue = pick(world.issueIds, step.issue);
   if (issue === undefined) return;
   world.dispatch(target, step.t === 'issueRestore' ? issueRestore : issuePurge, { issue });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Attachments (PLAN-014 S4a, SPEC-014 AC-6, AC-17)
+
+/**
+ * `attachment.createLink` and `attachment.createFile` on an issue the tab shows (wrapped around
+ * them), `attachment.update` (a rename) and `attachment.delete` of an attachment an earlier step
+ * created (wrapped around them, refused ones included: NOT_FOUND), and the `files-preview` job's
+ * `attachment.setPreview`, run by the system on the server. A file step attaches one of the tab's
+ * user's seeded uploads (`seedUploads`): one already attached is refused (the claim matches
+ * nothing, §6.2), and a deleted one goes back to its own issue only (SPEC-014 D28).
+ */
+export type AttachmentStep =
+  | {
+      readonly t: 'attachmentLink';
+      readonly tab: number;
+      readonly issue: number;
+      readonly url: number;
+      readonly title?: number | undefined;
+    }
+  | {
+      readonly t: 'attachmentFile';
+      readonly tab: number;
+      readonly issue: number;
+      readonly upload: number;
+    }
+  | {
+      readonly t: 'attachmentRename';
+      readonly tab: number;
+      readonly attachment: number;
+      readonly title: number;
+    }
+  | { readonly t: 'attachmentDelete'; readonly tab: number; readonly attachment: number }
+  | { readonly t: 'attachmentPreview'; readonly attachment: number };
+
+/** Links as people paste them; the last is stored as the parser writes it (`https://example.com/`). */
+export const ATTACHMENT_URLS = [
+  'https://www.figma.com/file/abc123/Login-flow',
+  'https://status.example.com/incidents/42',
+  'HTTPS://Example.COM',
+] as const;
+
+/** Titles as people type them; the second is stored normalised (`Spec v2`). */
+export const ATTACHMENT_TITLES = ['Login flow', '  Spec\nv2 ', '日本語', 'Done ✅'] as const;
+
+/** How many uploads `seedUploads` gives each user: few, so tabs race to attach the same one. */
+export const UPLOADS_PER_USER = 3;
+
+/** The attachment steps with their weights, for `attachmentCase` and `lifecycleCase`. */
+function attachmentSteps(weights: {
+  readonly link: number;
+  readonly file: number;
+  readonly rename: number;
+  readonly remove: number;
+  readonly preview: number;
+}): { weight: number; arbitrary: fc.Arbitrary<Step> }[] {
+  const titlePick = fc.nat(ATTACHMENT_TITLES.length - 1);
+  return [
+    {
+      weight: weights.link,
+      arbitrary: fc.record({
+        t: fc.constant('attachmentLink'),
+        tab,
+        issue: index,
+        url: fc.nat(ATTACHMENT_URLS.length - 1),
+        title: fc.option(titlePick, { nil: undefined, freq: 2 }),
+      }),
+    },
+    {
+      weight: weights.file,
+      arbitrary: fc.record({
+        t: fc.constant('attachmentFile'),
+        tab,
+        issue: index,
+        upload: fc.nat(UPLOADS_PER_USER - 1),
+      }),
+    },
+    {
+      weight: weights.rename,
+      arbitrary: fc.record({
+        t: fc.constant('attachmentRename'),
+        tab,
+        attachment: index,
+        title: titlePick,
+      }),
+    },
+    {
+      weight: weights.remove,
+      arbitrary: fc.record({ t: fc.constant('attachmentDelete'), tab, attachment: index }),
+    },
+    {
+      weight: weights.preview,
+      arbitrary: fc.record({ t: fc.constant('attachmentPreview'), attachment: index }),
+    },
+  ];
+}
+
+/**
+ * Attachments (SPEC-014 AC-6, AC-17; PLAN-014 S4a): links and files attached to two issues,
+ * renamed and deleted from every tab, and previews set by the system, with `commentCase`'s faults:
+ * crashes and late users bootstrap the attachments (an eager model, no page to open). Compaction
+ * stays out for the issue property's numbering check, as in `commentCase`.
+ */
+export function attachmentCase(): fc.Arbitrary<Case> {
+  const step = fc.oneof(
+    ...attachmentSteps({ link: 4, file: 4, rename: 3, remove: 2, preview: 2 }),
+    ...faultSteps.map((arbitrary) => ({
+      weight: 1,
+      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
+    })),
+  );
+  return caseOf(step).map((c) => ({ ...c, steps: [...COMMENT_ISSUES, ...c.steps] }));
+}
+
+function applyAttachment(world: World, step: AttachmentStep): void {
+  const server = world.server;
+  if (step.t === 'attachmentPreview') {
+    const attachment = pick(world.attachmentIds, step.attachment);
+    if (attachment !== undefined && isAttachmentServer(server)) {
+      server.previewAttachment(attachment);
+    }
+    return;
+  }
+  const target = pick(readyTabs(world.live), step.tab);
+  if (target === undefined) return;
+  if (step.t === 'attachmentRename' || step.t === 'attachmentDelete') {
+    const attachment = pick(world.attachmentIds, step.attachment);
+    if (attachment === undefined) return;
+    if (step.t === 'attachmentDelete') {
+      world.dispatch(target, attachmentDelete, { attachment });
+      return;
+    }
+    const title = ATTACHMENT_TITLES[step.title % ATTACHMENT_TITLES.length];
+    if (title !== undefined) world.dispatch(target, attachmentUpdate, { attachment, title });
+    return;
+  }
+  // An issue on screen, as the issue page's attachment section adds to the open issue.
+  const shown = world.issueIds.filter((id) => target.store.pool.get(Issue, id) !== undefined);
+  const issue = pick(shown, step.issue);
+  if (issue === undefined) return;
+  if (step.t === 'attachmentLink') {
+    const url = ATTACHMENT_URLS[step.url % ATTACHMENT_URLS.length];
+    if (url === undefined) return;
+    const title = step.title === undefined ? undefined : ATTACHMENT_TITLES[step.title];
+    const id = uuidV7From(world.random);
+    const input = { id, issue, url, ...(title === undefined ? {} : { title }) };
+    if (world.dispatch(target, attachmentCreateLink, input)) world.attachmentIds.push(id);
+    return;
+  }
+  const uploads = isAttachmentServer(server) ? server.uploads[target.user.id] : undefined;
+  const upload = pick(uploads ?? [], step.upload);
+  if (upload === undefined) return;
+  const id = uuidV7From(world.random);
+  // As the web client does: the upload's answer rides along, so the row is predicted (§6.2).
+  const input = {
+    id,
+    issue,
+    file: upload.id,
+    upload: {
+      name: upload.name,
+      mimeType: upload.mimeType,
+      size: upload.size,
+      width: upload.width,
+      height: upload.height,
+    },
+  };
+  if (world.dispatch(target, attachmentCreateFile, input)) world.attachmentIds.push(id);
 }

@@ -8,6 +8,7 @@
  * Candidates sort with `COLLATE "C"` so their order doesn't depend on the database locale.
  */
 import {
+  ATTACHMENT_MESSAGES,
   parseIdRef,
   parseIssueRef,
   parseLabelRef,
@@ -21,7 +22,7 @@ import {
   type RefType,
 } from '@surface/domain';
 import type { Queryable } from '../../db/pool.js';
-import { fileReaderOf, visibleFile } from '../../files/store.js';
+import { fileReaderOf, reattachableFile, visibleFile } from '../../files/store.js';
 import { SurfaceError, type ErrorCandidate } from '../errors.js';
 
 /** What resolution needs from the actor: `me`, the groups for visibility, and key narrowing. */
@@ -63,6 +64,8 @@ export async function lookup(
       return lookupIssue(stringValue(value), ctx);
     case 'CommentRef':
       return lookupComment(stringValue(value), ctx);
+    case 'AttachmentRef':
+      return lookupAttachment(stringValue(value), ctx);
     case 'CycleRef':
     case 'ProjectRef':
     case 'InitiativeRef':
@@ -122,11 +125,14 @@ export function refNotFound(
       case 'SessionRef':
         return `Session "${value}" not found. Use a session id from session.list.`;
       case 'FileRef':
-        return `File "${value}" not found. Upload the image with POST /files/upload and use the id it returns.`;
+        // SPEC-014 §6.4: the same words for an unknown file and one `createFile` can't take.
+        return `File "${value}" not found. ${ATTACHMENT_MESSAGES.fileNotFound}`;
       case 'IssueRef':
         return `Issue "${value}" not found. Use an issue identifier like ENG-123, or an issue id.`;
       case 'CommentRef':
         return `Comment "${value}" not found. Use a comment id from comment.list.`;
+      case 'AttachmentRef':
+        return `Attachment "${value}" not found. Use an attachment id from issue.get.`;
       case 'CycleRef':
       case 'ProjectRef':
       case 'InitiativeRef':
@@ -324,16 +330,22 @@ async function lookupSession(value: string, ctx: LookupContext): Promise<RefEnti
  * else's upload that nothing uses yet doesn't. Seeing isn't owning: handlers that store a file id
  * also check `uploaderId` (`user.updateProfile`, `workspace.update`; SPEC-003 §4), so another
  * user's file can't be borrowed. An actor without a user (the system) reads no file here.
+ *
+ * One addition to the download rule (SPEC-014 D28): a detached attachment file of an issue the
+ * actor sees resolves too, unreadable as ever, so `attachment.createFile` can undo a removal
+ * (§3.5). `detached: true` tells the handlers; every other handler refuses such a file.
  */
 async function lookupFile(value: string, ctx: LookupContext): Promise<RefEntity> {
   const ref = parseIdRef(value);
   const reader = fileReaderOf(ctx.actor);
-  const file =
-    ref?.by === 'id' && reader !== undefined
-      ? await visibleFile(ctx.db, ref.id, reader)
-      : undefined;
-  if (file === undefined) throw refNotFound('FileRef', value, ctx.path);
-  return { id: file.id, purpose: file.purpose, uploaderId: file.uploaderId };
+  if (ref?.by !== 'id' || reader === undefined) throw refNotFound('FileRef', value, ctx.path);
+  const file = await visibleFile(ctx.db, ref.id, reader);
+  if (file !== undefined) {
+    return { id: file.id, purpose: file.purpose, uploaderId: file.uploaderId };
+  }
+  const detached = await reattachableFile(ctx.db, ref.id, reader);
+  if (detached === undefined) throw refNotFound('FileRef', value, ctx.path);
+  return { ...detached, detached: true };
 }
 
 async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRow> {
@@ -464,6 +476,48 @@ async function lookupComment(value: string, ctx: LookupContext): Promise<Comment
   const [comment] = rows;
   if (!comment) throw refNotFound('CommentRef', value, ctx.path);
   return comment;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Attachments (PLAN-014 S4a)
+
+interface AttachmentRow extends RefEntity {
+  issueId: string;
+  teamId: string;
+  teamName: string;
+  creatorId: string;
+  kind: string;
+  fileId: string | null;
+}
+
+/**
+ * An attachment by id, of an issue the actor can see (SPEC-014 §6.2, §5): the issue row and the
+ * attachment row must both meet the actor's visible groups, and a key limited to some teams sees
+ * no attachment of another team. A missing attachment, one of a private team's issue the actor
+ * can't see and one outside the key's teams are the same `NOT_FOUND` (permissions.md §5).
+ * `teamName` words a refusal ("members of Engineering").
+ */
+async function lookupAttachment(value: string, ctx: LookupContext): Promise<AttachmentRow> {
+  const ref = parseIdRef(value);
+  const groups = groupsFilter(ctx.actor);
+  const keyTeams = ctx.actor.apiKey?.teamIds.length ? ctx.actor.apiKey.teamIds : null;
+  const { rows } =
+    ref?.by === 'id'
+      ? await ctx.db.query<AttachmentRow>(
+          `SELECT a.id, a.issue_id AS "issueId", a.team_id AS "teamId", t.name AS "teamName",
+                  a.creator_id AS "creatorId", a.kind, a.file_id AS "fileId"
+             FROM attachments a
+             JOIN issues i ON i.id = a.issue_id
+             JOIN teams t ON t.id = a.team_id
+            WHERE a.id = $1
+              AND ($2::text[] IS NULL OR (i.sync_groups && $2::text[] AND a.sync_groups && $2::text[]))
+              AND ($3::uuid[] IS NULL OR a.team_id = ANY($3::uuid[]))`,
+          [ref.id, groups, keyTeams],
+        )
+      : { rows: [] };
+  const [attachment] = rows;
+  if (!attachment) throw refNotFound('AttachmentRef', value, ctx.path);
+  return attachment;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -8,7 +8,16 @@ import { issueTeamOf } from './shared.js';
 export default handler(issuePurge, async (ctx) => {
   const { access, repo, actor, now, emit } = lifecycleContext(ctx);
   await purgeIssue(
-    { access, tx: ctx.tx, repo, actor, now, emit, audit: (...line) => ctx.audit(...line) },
+    {
+      access,
+      tx: ctx.tx,
+      files: ctx.files,
+      repo,
+      actor,
+      now,
+      emit,
+      audit: (...line) => ctx.audit(...line),
+    },
     issueTeamOf(ctx).id,
   );
   const output: { readonly purged: true } = { purged: true };

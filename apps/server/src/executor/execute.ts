@@ -81,6 +81,7 @@ import { nearestNames } from './suggest.js';
 import { inTransaction, isRetryable, jitterBackoff, postgresCode } from './transaction.js';
 import { NO_EMAIL, type EmailOutbox } from '../jobs/email.js';
 import { handlerLinks } from '../mail/link-tokens.js';
+import { pgFileTx } from '../files/bytes.js';
 import type { AttemptStore } from '../auth/attempts.js';
 
 const NO_ATTEMPT_STORE: AttemptStore = {
@@ -350,6 +351,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       refs,
       tx,
       repo,
+      files: pgFileTx(client),
       query: queryHelpers(tx, client, viewer, now),
       emit: (event) => void events.push(event),
       audit: (event, fields, message) => void audits.push({ event, fields, message }),

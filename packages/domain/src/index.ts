@@ -31,3 +31,4 @@ export * from './reaction.js';
 export * from './emoji.js';
 export * from './issue-history.js';
 export * from './activity-line.js';
+export * from './attachment.js';

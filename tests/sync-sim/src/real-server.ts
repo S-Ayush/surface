@@ -40,6 +40,8 @@ import type { SocketConnection, SocketHandlers } from '@surface/sync-client';
 import { CSRF_HEADER, computeSchemaHash } from '@surface/sync-protocol';
 import { addRealEvents, trackRealWork } from './clock.js';
 import type {
+  AttachmentServer,
+  AttachmentState,
   CommentServer,
   CommentState,
   DescriptionServer,
@@ -53,6 +55,7 @@ import type {
   LifecycleServer,
   IssueState,
   ItemState,
+  SimUpload,
   WorkflowServer,
   WorkflowState,
 } from './server.js';
@@ -160,7 +163,7 @@ interface RealSocket {
 }
 
 export class RealServer
-  implements CommentServer, WorkflowServer, LifecycleServer, DescriptionServer
+  implements CommentServer, WorkflowServer, LifecycleServer, DescriptionServer, AttachmentServer
 {
   readonly users: readonly string[];
   readonly models = REAL_MODELS;
@@ -175,6 +178,8 @@ export class RealServer
    */
   refusedMidBatch = 0;
   issueFixtures: IssueFixtures | undefined;
+  /** Each user's unclaimed uploads (PLAN-014 S4a), from `seedUploads`. */
+  uploads: Readonly<Record<string, readonly SimUpload[]>> = {};
   readonly #entry: TestServer;
   /** Ids `autoArchive` archived (PLAN-015 S3), not those it was merely asked about. */
   readonly #archived = new Set<string>();
@@ -471,6 +476,61 @@ export class RealServer
         ]),
       );
     });
+  }
+
+  /**
+   * PLAN-014 S4a: `count` unclaimed attachment uploads per user, as the upload route leaves them,
+   * so the tabs have files to attach.
+   */
+  seedUploads(count: number): Promise<void> {
+    return this.#serially('seed the uploads', async () => {
+      this.uploads = await this.#entry.seedUploads(count);
+    });
+  }
+
+  attachments(): Promise<Record<string, AttachmentState>> {
+    return this.#serially('read the attachments', async () => {
+      const rows = await this.#entry.attachments();
+      return Object.fromEntries(
+        rows.map((row): [string, AttachmentState] => [
+          row.id,
+          {
+            issueId: row.issueId,
+            teamId: row.teamId,
+            kind: row.kind,
+            title: row.title,
+            url: row.url,
+            fileId: row.fileId,
+            fileName: row.fileName,
+            mimeType: row.mimeType,
+            size: row.size,
+            imageWidth: row.imageWidth,
+            imageHeight: row.imageHeight,
+            previewFileId: row.previewFileId,
+            creatorId: row.creatorId,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          },
+        ]),
+      );
+    });
+  }
+
+  attachmentFileIssues(): Promise<Record<string, string | null>> {
+    return this.#serially('read the attachment files', async () =>
+      Object.fromEntries(
+        (await this.#entry.attachments())
+          .filter((row) => row.fileId !== null)
+          .map((row): [string, string | null] => [row.id, row.fileIssueId]),
+      ),
+    );
+  }
+
+  /** PLAN-014 S4a: the `files-preview` job's write for one attachment, as the system. */
+  previewAttachment(attachmentId: string): void {
+    void this.#serially('preview an attachment', () =>
+      this.#entry.previewAttachment(attachmentId),
+    ).catch(() => undefined);
   }
 
   /** The server's `event_outbox` events of `type`, oldest first, with their data (PLAN-013 S4). */

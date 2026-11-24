@@ -77,6 +77,7 @@ export function teamIdOf(type: RefType, row: RefEntity): string | null {
     case 'CycleRef':
     case 'IssueRef':
     case 'CommentRef':
+    case 'AttachmentRef':
       return typeof row.teamId === 'string' ? row.teamId : null;
     case 'UserRef':
     case 'InviteRef':
