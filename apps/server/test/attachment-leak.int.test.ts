@@ -641,6 +641,27 @@ describe('documents referencing SEC files (SPEC-014 §4.3, AC-8 leak half, E17)'
     expect(copy.rows).toEqual([
       { purpose: 'inline', issue_id: engIssue, storage_key: `sha256/00/${secFile}` },
     ]);
+
+    // Saved again with the SEC file's id (an editor that kept it): the same copy, no new row.
+    const count = async () =>
+      (
+        await h.pool.query<{ n: string }>(
+          'SELECT count(*) AS n FROM files WHERE issue_id = $1 AND storage_key = $2',
+          [engIssue, `sha256/00/${secFile}`],
+        )
+      ).rows[0]?.n;
+    const before = await count();
+    const again = (await ok(
+      'comment.create',
+      { issue: engIssue, body: docWith(secFile) },
+      samActor,
+    )) as { id: string };
+    const second = await h.pool.query<{ body: unknown }>(
+      'SELECT body FROM comments WHERE id = $1',
+      [again.id],
+    );
+    expect(JSON.stringify(second.rows[0]?.body)).toContain(`/files/${copyId ?? ''}`);
+    expect(await count()).toBe(before);
   });
 });
 

@@ -27,7 +27,7 @@ import type { ActorResolver } from './http/ops.js';
 import { emailOutbox } from './jobs/email.js';
 import { previewOutbox } from './jobs/preview-queue.js';
 import { startJobs, type Jobs } from './jobs/index.js';
-import { Lifecycle } from './lifecycle.js';
+import { Lifecycle, startUnlessDraining } from './lifecycle.js';
 import { createLogger } from './logger.js';
 import { installProcessHandlers } from './shutdown.js';
 import { StartupError } from './startup-error.js';
@@ -239,18 +239,22 @@ export async function startServer(
     // `all` and `worker` run the jobs; `web` starts the queue only to queue previews (SPEC-014
     // §4.4) and email (PLAN-001 S4), so every role starts it.
     if (appExecutor === undefined) throw new Error('The app built no executor for the jobs');
-    jobs = await startJobs({
-      databaseUrl: config.databaseUrl,
-      pool,
-      blobs,
-      executor: appExecutor,
-      ...(appMetrics ? { metrics: appMetrics } : {}),
-      log: logger,
-      work: config.role !== 'web',
-      ...(config.smtp === null
-        ? {}
-        : { mail: { smtp: config.smtp, sessionSecret: config.sessionSecret } }),
-    });
+    const executor = appExecutor;
+    // A shutdown while pg-boss starts finds no `jobs` to stop: stop it once it has started.
+    jobs = await startUnlessDraining(lifecycle, () =>
+      startJobs({
+        databaseUrl: config.databaseUrl,
+        pool,
+        blobs,
+        executor,
+        ...(appMetrics ? { metrics: appMetrics } : {}),
+        log: logger,
+        work: config.role !== 'web',
+        ...(config.smtp === null
+          ? {}
+          : { mail: { smtp: config.smtp, sessionSecret: config.sessionSecret } }),
+      }),
+    );
 
     lifecycle.markReady();
     // A shutdown that started during startup leaves us draining: don't claim ready.

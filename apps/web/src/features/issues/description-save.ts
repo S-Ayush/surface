@@ -21,7 +21,11 @@
 //   base could otherwise overwrite the other person's text).
 // - A remote save while the user has unsaved text keeps the text (E5); the next save gets the
 //   conflict. Without unsaved text the editor takes the remote text and version.
+// - A save that referenced another issue's file is stored pointing at this issue's copy (SPEC-014
+//   §4.3). Once the replica holds that save, the saver takes the copies' ids, in its base and in
+//   the text typed since, so later saves send them and don't copy again (PLAN-014 S4b review).
 import { DESCRIPTION_MESSAGES, sameDocJson, type DocNodeJSON } from '@surface/domain';
+import { fileSrcRenames, renameFileSrcs } from '@surface/editor/schema';
 
 /** SPEC-012 §3.4 item 3: the idle time before a save. */
 export const DESCRIPTION_IDLE_MS = 2000;
@@ -427,6 +431,7 @@ export class DescriptionSaver {
       if (!dirty) this.#doc = server.doc;
     }
     this.#seen.clear();
+    this.#adoptFileRenames();
     if (this.#queued) {
       this.#queued = false;
       if (this.#dirty()) {
@@ -454,6 +459,20 @@ export class DescriptionSaver {
       if (this.#seen.has(key) && message !== DESCRIPTION_MESSAGES.stale) return message;
     }
     return undefined;
+  }
+
+  /**
+   * The replica holds the save this saver's text is based on, stored with its files renamed to
+   * this issue's copies (§4.3) and otherwise as sent: take the stored ids. Only the srcs change,
+   * so the editor updates those nodes in place (the cursor and later typing stay).
+   */
+  #adoptFileRenames(): void {
+    const remote = this.#remote;
+    if (remote.version !== this.#base.version || remote.doc === this.#base.doc) return;
+    const renamed = fileSrcRenames(this.#base.doc, remote.doc);
+    if (renamed === undefined || renamed.size === 0) return;
+    this.#base = remote;
+    this.#doc = renameFileSrcs(this.#doc, renamed);
   }
 
   /** Without unsaved text, follow the replica (E5's other half). */

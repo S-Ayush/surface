@@ -9,7 +9,8 @@
  * - an `inline` file this issue already owns: kept;
  * - an attached file, or a preview of one, whose issue the actor sees (§4.2's issue branch, after
  *   key narrowing): copied into a new `inline` row of this issue on the same bytes, and the `src`
- *   rewritten to the copy (D1), so removing the attachment never breaks the document (E19);
+ *   rewritten to the copy (D1), so removing the attachment never breaks the document (E19). When
+ *   this issue already holds such a copy (same bytes, name and type), the `src` names it instead;
  * - anything else (unknown, someone else's upload, detached, an issue the actor or its key can't
  *   see, an avatar or logo, the actor's own unclaimed `attachment` upload): the one refusal.
  *
@@ -22,16 +23,21 @@ import { type Actor, type DocNodeJSON } from '@surface/domain';
 import {
   DOC_MESSAGES,
   docFileIds,
-  fileIdOfSrc,
-  fileSrc,
   MAX_FILE_REFERENCES,
+  renameFileSrcs,
 } from '@surface/editor/schema';
 import { uuidv7 } from '../db/uuidv7.js';
 import type { HandlerContext } from '../executor/context.js';
 import { SurfaceError } from '../executor/errors.js';
 import type { BlobStore } from './blob-store.js';
 import { insertCopies, type FileLog, type FileTx, type InlineCopy } from './bytes.js';
-import { documentFiles, fileReaderOf, type DocumentFile, type FileReader } from './store.js';
+import {
+  documentFiles,
+  fileReaderOf,
+  issueCopies,
+  type DocumentFile,
+  type FileReader,
+} from './store.js';
 
 /** The issue the document belongs to, as its handler locked it. */
 export interface ClaimTarget {
@@ -43,6 +49,8 @@ export interface ClaimTarget {
 export interface ClaimStore {
   /** The referenced rows that exist, each with whether the reader may copy it (§4.2). */
   documentFiles(ids: readonly string[], reader: FileReader): Promise<DocumentFile[]>;
+  /** For copyable `sourceIds` only: the `inline` copy `issueId` already holds of each, if any. */
+  issueCopies(issueId: string, sourceIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   readonly files: FileTx;
   readonly blobs: Pick<BlobStore, 'stat'>;
   readonly log: Pick<FileLog, 'error'>;
@@ -56,6 +64,7 @@ export function claimStore(
 ): ClaimStore {
   return {
     documentFiles: (ids, reader) => documentFiles(ctx.tx, ids, reader),
+    issueCopies: (issueId, sourceIds) => issueCopies(ctx.tx, issueId, sourceIds),
     files: ctx.files,
     blobs: ctx.blobs,
     log: ctx.log,
@@ -96,24 +105,6 @@ export function planClaims(
   return { claims, kept, copies };
 }
 
-/** `doc` with every image and file `src` naming a key of `renamed` pointed at its value. */
-export function rewriteFileSrcs(
-  doc: DocNodeJSON,
-  renamed: ReadonlyMap<string, string>,
-): DocNodeJSON {
-  const visit = (node: DocNodeJSON): DocNodeJSON => {
-    let next = node;
-    if ((node.type === 'image' || node.type === 'file') && node.attrs !== undefined) {
-      const src = node.attrs['src'];
-      const id = typeof src === 'string' ? fileIdOfSrc(src) : null;
-      const to = id === null ? undefined : renamed.get(id);
-      if (to !== undefined) next = { ...node, attrs: { ...node.attrs, src: fileSrc(to) } };
-    }
-    return next.content === undefined ? next : { ...next, content: next.content.map(visit) };
-  };
-  return visit(doc);
-}
-
 function refusal(field: string, message: string): SurfaceError {
   return new SurfaceError('INVALID_INPUT', message, { issues: [{ path: [field], message }] });
 }
@@ -146,24 +137,39 @@ export async function claimInlineFiles(
   if (plan === undefined) throw unusable();
   if (plan.claims.length === 0 && plan.copies.length === 0) return doc;
 
-  const copies: InlineCopy[] = plan.copies.map((source) => ({
-    sourceId: source.id,
-    file: {
-      id: store.newId(),
-      purpose: 'inline',
-      name: source.name,
-      mimeType: source.mimeType,
-      size: source.size,
-      // Who uploaded these bytes; nothing reads it for an owned file (D6).
-      uploaderId: source.uploaderId,
-      issueId: issue.id,
-      width: source.width,
-      height: source.height,
-    },
-  }));
+  // A source this issue already holds a copy of (an earlier save of the same document, before
+  // the editor took the stored `src`) names that copy: no new row each autosave. Asked only for
+  // copyable sources, so its answer tells nothing about the others.
+  const held =
+    plan.copies.length === 0
+      ? new Map<string, string>()
+      : await store.issueCopies(
+          issue.id,
+          plan.copies.map((source) => source.id),
+        );
+  const renamed = new Map(held);
+  const copies: InlineCopy[] = plan.copies
+    .filter((source) => !held.has(source.id))
+    .map((source) => ({
+      sourceId: source.id,
+      file: {
+        id: store.newId(),
+        purpose: 'inline',
+        name: source.name,
+        mimeType: source.mimeType,
+        size: source.size,
+        // Who uploaded these bytes; nothing reads it for an owned file (D6).
+        uploaderId: source.uploaderId,
+        issueId: issue.id,
+        width: source.width,
+        height: source.height,
+      },
+    }));
   const claims = plan.claims.map((id) => ({ id, issueId: issue.id, uploaderId: reader.userId }));
-  const result = await insertCopies(store.files, store.blobs, { claims, copies }, store.log);
-  if (result.unusable.length > 0) throw unusable();
-  if (copies.length === 0) return doc;
-  return rewriteFileSrcs(doc, new Map(copies.map((copy) => [copy.sourceId, copy.file.id])));
+  if (claims.length > 0 || copies.length > 0) {
+    const result = await insertCopies(store.files, store.blobs, { claims, copies }, store.log);
+    if (result.unusable.length > 0) throw unusable();
+  }
+  for (const copy of copies) renamed.set(copy.sourceId, copy.file.id);
+  return renameFileSrcs(doc, renamed);
 }

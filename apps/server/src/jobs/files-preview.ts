@@ -11,8 +11,9 @@
  * - **Job:** finds the attachment that names the file. Gone, or with a preview already: nothing.
  *   A preview row of the file already there (a re-attach after a removal): named again. Else
  *   sharp makes an 800 px WebP from the file on disk (`previewMaker`, the process's shared decode
- *   limiter), the row is inserted with `insertPreview` (source `FOR SHARE`, then the key lock and
- *   the rename, §4.5), and `attachment.setPreview` names it, as the system actor through the
+ *   limiter), the row is inserted with `insertPreview` (the source `FOR UPDATE`, its previews read
+ *   again under that lock so an expired run and its retry never both insert, then the key lock
+ *   and the rename, §4.5), and `attachment.setPreview` names it, as the system actor through the
  *   executor (CLAUDE.md rule 1). An image over 25 MP, or one that can't be decoded, gets none
  *   and logs `file preview failed`; that is not a job failure.
  */
@@ -123,10 +124,20 @@ export async function makePreview(deps: PreviewJobDeps, fileId: string): Promise
 
   const temp = await blobs.putStream(Readable.from([image.bytes]));
   const previewId = (deps.newId ?? uuidv7)();
-  let inserted = false;
+  let made:
+    { readonly kind: 'inserted' | 'gone' } | { readonly kind: 'exists'; readonly id: string } = {
+    kind: 'gone',
+  };
   try {
-    inserted = await files.transaction((tx) =>
-      insertPreview(tx, blobs, temp, {
+    made = await files.transaction(async (tx) => {
+      // A run whose job expired can overlap its retry (`stately` starts the retry then): the
+      // source's row lock serialises them, and the later one names the earlier one's row
+      // instead of adding a second. Source, then its previews, then the key: §4.5's order.
+      const [source] = await tx.lockFiles([fileId], 'update');
+      if (source === undefined) return { kind: 'gone' };
+      const [existing] = await tx.lockPreviews([fileId]);
+      if (existing !== undefined) return { kind: 'exists', id: existing.id };
+      const inserted = await insertPreview(tx, blobs, temp, {
         id: previewId,
         purpose: 'preview',
         name: previewName(target.name),
@@ -138,14 +149,16 @@ export async function makePreview(deps: PreviewJobDeps, fileId: string): Promise
         width: image.width,
         height: image.height,
         previewOf: fileId,
-      }),
-    );
+      });
+      return { kind: inserted ? 'inserted' : 'gone' };
+    });
   } finally {
     // Committed: the rename moved it, and discarding a moved file does nothing.
-    if (!inserted) await blobs.discard(temp.tempPath);
+    if (made.kind !== 'inserted') await blobs.discard(temp.tempPath);
   }
   // The source was deleted meanwhile (E21): no preview.
-  if (!inserted) return 'gone';
+  if (made.kind === 'gone') return 'gone';
+  if (made.kind === 'exists') return name(deps, target.attachmentId, made.id, 'reused');
   return name(deps, target.attachmentId, previewId, 'made');
 }
 

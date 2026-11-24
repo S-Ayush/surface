@@ -96,6 +96,24 @@ export class Lifecycle {
   }
 }
 
+/**
+ * Starts, during startup, a resource that a `resources` shutdown hook stops (the job queue). A
+ * shutdown that began meanwhile ran that hook with nothing to stop yet, so the resource is
+ * stopped here and nothing is returned; one that began before the start skips it.
+ */
+export async function startUnlessDraining<T extends { stop(): Promise<unknown> }>(
+  lifecycle: Pick<Lifecycle, 'state'>,
+  start: () => Promise<T>,
+): Promise<T | undefined> {
+  // A call each time: the state changes while `start` runs.
+  const draining = () => lifecycle.state === 'draining';
+  if (draining()) return undefined;
+  const started = await start();
+  if (!draining()) return started;
+  await started.stop();
+  return undefined;
+}
+
 export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);

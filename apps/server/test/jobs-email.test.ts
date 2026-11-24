@@ -23,6 +23,11 @@ const EMAIL: EmailJob = {
   link: 'https://surface.example.com/auth/magic?token=magic-token-5f0c2a9e7b1d4c3a',
 };
 
+/** A pg-boss batch handler, as `registerJobs` passes it to `work`. */
+function isWorker(value: unknown): value is (jobs: readonly object[]) => Promise<unknown> {
+  return typeof value === 'function';
+}
+
 /** Records what a role sets up on pg-boss. */
 function recordingQueue() {
   const created: string[] = [];
@@ -109,6 +114,17 @@ describe('registerJobs', () => {
       { pollingIntervalSeconds: 2, batchSize: 1 },
       expect.any(Function),
     );
+  });
+
+  it('hands one job’s data at a time to the preview job, whose payload check runs first', async () => {
+    const r = recordingQueue();
+    await registerJobs(r.queue, base);
+    const call = vi.mocked(r.queue.work).mock.calls.find(([name]) => name === PREVIEW_QUEUE.name);
+    const worker: unknown = call?.[2];
+    if (!isWorker(worker)) throw new Error('no preview worker');
+    // An empty batch, and a payload without a file id: nothing runs, nothing reaches the pool.
+    await expect(worker([])).resolves.toBeUndefined();
+    await expect(worker([{ id: 'job-1', data: { file: 'x' } }])).resolves.toBeUndefined();
   });
 
   it('runs the file jobs one at a time across replicas (ADR-0024)', async () => {

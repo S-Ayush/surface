@@ -8,12 +8,12 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import type { HandlerRef } from './blockKeys.js';
 import { BubbleMenu } from './bubbleMenu.js';
-import { toContent } from './content.js';
+import { showValue, toContent } from './content.js';
 import { applyEmoji } from './emoji/autocomplete.js';
 import type { Emoji } from './emoji/data.js';
 import { webEditorOptions, webExtensions } from './extensions.web.js';
 import type { EditorMode, KeyHandlers } from './keymap.js';
-import { nodeJSON, schema } from './schema/schema.js';
+import { nodeJSON } from './schema/schema.js';
 import { validateDoc } from './schema/validate.js';
 import { applySlash, type SlashItem } from './slash.js';
 import { optionId, SuggestionList } from './slashMenu.js';
@@ -196,12 +196,11 @@ export function RichTextEditor({ ref, ...props }: RichTextEditorProps) {
     if (live(editor)) editor.setEditable(!readOnly);
   }, [editor, readOnly]);
 
-  // A `value` that differs from what the editor holds replaces it (a sync, a discard, a reset).
+  // A `value` that differs from what the editor holds replaces it (a sync, a discard, a reset),
+  // or, when only file srcs differ, renames them in place (`showValue`).
   useEffect(() => {
     if (!live(editor)) return;
-    const next = contentOf(value);
-    if (schema.nodeFromJSON(next).eq(editor.state.doc)) return;
-    editor.commands.setContent(toContent(next), { emitUpdate: false });
+    showValue(editor, contentOf(value));
   }, [editor, value]);
 
   // Name the highlighted option for screen readers.

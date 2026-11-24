@@ -685,3 +685,80 @@ describe('the store goes away (the session changed, or another tab took the queu
     expect(sent).toEqual([]);
   });
 });
+
+// SPEC-014 §4.3 (PLAN-014 S4b review): a save naming another issue's file is stored pointing at
+// this issue's copy. The saver takes the copy's id, so later autosaves don't copy again.
+describe('taking the ids of the copies the server made', () => {
+  const SOURCE = '01940000-0000-7000-8000-00000000000a';
+  const COPY = '01940000-0000-7000-8000-0000000000aa';
+  const withImage = (text: string, fileId: string): DocNodeJSON => ({
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text }] },
+      { type: 'image', attrs: { src: `/files/${fileId}`, alt: null } },
+    ],
+  });
+
+  it('keeps the text typed while the save was in flight, with the copy’s id, and saves it from there', async () => {
+    const { sent, saver, answer, timers } = world();
+    saver.edit(withImage('Pasted', SOURCE));
+    saver.blur();
+    saver.edit(withImage('Pasted, and more', SOURCE));
+    await answer({ kind: 'confirmed' }, { saved: { doc: withImage('Pasted', COPY), version: 4 } });
+
+    expect(saver.getState().doc).toEqual(withImage('Pasted, and more', COPY));
+    expect(saver.getState().dirty).toBe(true);
+    timers.advance(DESCRIPTION_IDLE_MS);
+    expect(sent.at(-1)).toEqual({
+      baseVersion: 4,
+      description: withImage('Pasted, and more', COPY),
+    });
+    expect(JSON.stringify(sent.slice(1))).not.toContain(SOURCE);
+  });
+
+  it('shows the stored document and saves nothing more when nothing was typed since', async () => {
+    const { sent, saver, answer, timers } = world();
+    saver.edit(withImage('Pasted', SOURCE));
+    saver.blur();
+    await answer({ kind: 'confirmed' }, { saved: { doc: withImage('Pasted', COPY), version: 4 } });
+    expect(saver.getState()).toMatchObject({ doc: withImage('Pasted', COPY), dirty: false });
+    timers.advance(DESCRIPTION_IDLE_MS);
+    saver.blur();
+    expect(sent).toHaveLength(1);
+  });
+
+  it('takes the ids when the stored row reaches the replica after the confirmation', async () => {
+    const { saver, answer, remote } = world();
+    saver.edit(withImage('Pasted', SOURCE));
+    saver.blur();
+    // The confirmation first; the replica still holds the version before it.
+    await answer({ kind: 'confirmed' }, { saved: { doc: doc('First'), version: 3 } });
+    saver.edit(withImage('Pasted!', SOURCE));
+    expect(saver.getState().doc).toEqual(withImage('Pasted!', SOURCE));
+    remote({ doc: withImage('Pasted', COPY), version: 4 });
+    expect(saver.getState().doc).toEqual(withImage('Pasted!', COPY));
+  });
+
+  it('sends the queued save with the copy’s id', async () => {
+    const { sent, saver, answer } = world();
+    saver.edit(withImage('Pasted', SOURCE));
+    saver.blur();
+    saver.edit(withImage('Pasted, then', SOURCE));
+    saver.blur();
+    expect(sent).toHaveLength(1);
+    await answer({ kind: 'confirmed' }, { saved: { doc: withImage('Pasted', COPY), version: 4 } });
+    expect(sent.at(-1)).toEqual({ baseVersion: 4, description: withImage('Pasted, then', COPY) });
+  });
+
+  it('takes nothing from a stored row that differs in more than file ids (someone else’s save)', async () => {
+    const { saver, answer } = world();
+    saver.edit(withImage('Pasted', SOURCE));
+    saver.blur();
+    saver.edit(withImage('Pasted, and more', SOURCE));
+    await answer(
+      { kind: 'confirmed' },
+      { saved: { doc: withImage('Other text', COPY), version: 4 } },
+    );
+    expect(saver.getState().doc).toEqual(withImage('Pasted, and more', SOURCE));
+  });
+});

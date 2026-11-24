@@ -6,13 +6,18 @@
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { systemActor, type Actor, type DocNodeJSON } from '@surface/domain';
-import { DOC_MESSAGES, docFileIds, MAX_FILE_REFERENCES } from '@surface/editor/schema';
+import {
+  DOC_MESSAGES,
+  docFileIds,
+  MAX_FILE_REFERENCES,
+  renameFileSrcs,
+} from '@surface/editor/schema';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 import { SurfaceError } from '../src/executor/errors.js';
 import { FileBytesMissing } from '../src/files/bytes.js';
-import { claimInlineFiles, planClaims, rewriteFileSrcs } from '../src/files/claim.js';
-import { documentFilesQuery, type DocumentFile } from '../src/files/store.js';
+import { claimInlineFiles, planClaims } from '../src/files/claim.js';
+import { documentFilesQuery, issueCopiesQuery, type DocumentFile } from '../src/files/store.js';
 import { actorFor } from './helpers.js';
 import { claimFileId, memoryClaims } from './support/memory-claims.js';
 
@@ -118,10 +123,77 @@ describe('claimInlineFiles (SPEC-014 §4.3, AC-8)', () => {
       previewOf: null,
     });
     // Everything but the src is kept: removing the attachment never breaks the document (E19).
-    expect(saved).toEqual(rewriteFileSrcs(doc, new Map([[attached.id, copyId ?? '']])));
+    expect(saved).toEqual(renameFileSrcs(doc, new Map([[attached.id, copyId ?? '']])));
     expect(JSON.stringify(saved)).not.toContain(attached.id);
     // The source locked FOR SHARE, then the one key lock, then the row.
-    expect(w.calls).toEqual(['read', `share ${attached.id}`, 'keys 1', `insert ${copyId}`]);
+    expect(w.calls).toEqual([
+      'read',
+      'copies',
+      `share ${attached.id}`,
+      'keys 1',
+      `insert ${copyId}`,
+    ]);
+  });
+
+  it('names the copy an earlier save made instead of copying again, so autosaves add no rows', async () => {
+    const w = world();
+    const attached = await w.addFile({
+      id: claimFileId(),
+      purpose: 'attachment',
+      uploaderId: BEN,
+      issueId: OTHER,
+      name: 'design.png',
+    });
+    const doc = docOf(image(attached.id));
+    const first = await claimInlineFiles(w.store, doc, target, ada);
+    const [copyId] = docFileIds(first);
+    const rowsAfterFirst = w.rows.size;
+    w.calls.length = 0;
+
+    // The editor still holds the source's src and saves again (a later autosave).
+    const second = await claimInlineFiles(w.store, doc, target, ada);
+    expect(second).toEqual(first);
+    expect(docFileIds(second)).toEqual([copyId]);
+    expect(w.rows.size).toBe(rowsAfterFirst);
+    // No lock, no insert: only the two reads.
+    expect(w.calls).toEqual(['read', 'copies']);
+  });
+
+  it('copies again into another issue: a copy is reused only by the issue that holds it', async () => {
+    const w = world();
+    const attached = await w.addFile({
+      id: claimFileId(),
+      purpose: 'attachment',
+      uploaderId: BEN,
+      issueId: OTHER,
+    });
+    const doc = docOf(image(attached.id));
+    const [inIssue] = docFileIds(await claimInlineFiles(w.store, doc, target, ada));
+    const [inOther] = docFileIds(
+      await claimInlineFiles(w.store, doc, { id: OTHER, teamId: ENG }, ada),
+    );
+    expect(inOther).not.toBe(inIssue);
+    expect(w.rows.get(inOther ?? '')?.issueId).toBe(OTHER);
+  });
+
+  it('asks for held copies only once every reference is usable, so it adds no oracle', async () => {
+    const w = world();
+    const secret = await w.addFile({
+      id: claimFileId(),
+      purpose: 'attachment',
+      uploaderId: BEN,
+      issueId: SECRET,
+    });
+    // This issue even holds a copy of the SEC file's bytes (someone who sees SEC saved it here).
+    await w.addFile({
+      id: claimFileId(),
+      uploaderId: BEN,
+      issueId: ISSUE,
+      storageKey: secret.storageKey,
+      name: secret.name,
+    });
+    await refusal(claimInlineFiles(w.store, docOf(image(secret.id)), target, ada));
+    expect(w.calls).toEqual(['read']);
   });
 
   it('copies an inline file of another issue (E7) and a preview of a visible attachment', async () => {
@@ -185,6 +257,7 @@ describe('claimInlineFiles (SPEC-014 §4.3, AC-8)', () => {
     expect([keptId, uploadId]).toEqual([kept.id, upload.id]);
     expect(w.calls).toEqual([
       'read',
+      'copies',
       `share ${first.id}`,
       `claim ${upload.id}`,
       `share ${last.id}`,
@@ -372,7 +445,7 @@ describe('claimInlineFiles (SPEC-014 §4.3, AC-8)', () => {
       );
       expect(error.message).toBe(DOC_MESSAGES.badFile);
       // The claim made before is rolled back with the transaction the refusal fails.
-      expect(w.calls).toEqual(['read', `claim ${upload.id}`, `share ${source.id}`]);
+      expect(w.calls).toEqual(['read', 'copies', `claim ${upload.id}`, `share ${source.id}`]);
     });
 
     it('fails INTERNAL, logging the new file’s id only, when a copy’s bytes are missing', async () => {
@@ -454,6 +527,15 @@ describe('the statements (AC-21)', () => {
     expect(text).not.toContain('s.uploader_id');
     expect(text).not.toContain('avatar');
     expect(text).not.toContain('i.team_id');
+  });
+
+  it('looks up held copies on the same bytes, name and type, inline rows of this issue only', () => {
+    const query = dialect.sqlToQuery(issueCopiesQuery(ISSUE, ['a']));
+    const text = query.sql.replace(/\s+/g, ' ');
+    expect(text).toContain('c.storage_key = s.storage_key AND c.name = s.name');
+    expect(text).toContain('c.mime_type = s.mime_type');
+    expect(text).toContain("c.purpose = 'inline'");
+    expect(query.params).toEqual([['a'], ISSUE]);
   });
 
   it('narrows the issue branch to a key’s teams', () => {

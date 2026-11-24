@@ -20,7 +20,11 @@ export const PREVIEW_QUEUE = {
   expireInSeconds: 10 * 60,
 } as const;
 
-/** Creates the queue: every role that queues previews needs it, `web` included (§4.4). */
+/**
+ * Creates the queue: every role that queues previews needs it, `web` included (§4.4). pg-boss's
+ * `createQueue` leaves an existing queue as it is, so a change to `PREVIEW_QUEUE`'s options
+ * reaches an installed database only through `updateQueue` (the policy can't change at all).
+ */
 export async function createPreviewQueue(boss: Pick<PgBoss, 'createQueue'>): Promise<void> {
   const { name, ...options } = PREVIEW_QUEUE;
   await boss.createQueue(name, options);

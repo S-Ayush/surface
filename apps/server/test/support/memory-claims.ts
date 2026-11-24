@@ -1,6 +1,7 @@
 /**
  * An in-memory `ClaimStore` (PLAN-014 S4b): `files` rows, the issues that own them, and a
- * `FileTx` that records the byte protocol's statements in order. `documentFiles` applies the
+ * `FileTx` that records the byte protocol's statements in order (`read` and `copies` for the two
+ * reads). `documentFiles` applies the
  * SPEC-014 §4.2 issue branch in TypeScript (the SQL itself runs in `attachment-leak.int.test.ts`):
  * a claimed `attachment` or `inline` file, or a preview of one, not detached, whose issue's team
  * group the reader holds, within a key's teams.
@@ -160,6 +161,28 @@ export function memoryClaims(): MemoryClaims {
         });
       }
       return Promise.resolve(found);
+    },
+    issueCopies(issueId, sourceIds) {
+      calls.push('copies');
+      const held = new Map<string, string>();
+      for (const sourceId of sourceIds) {
+        const source = rows.get(sourceId);
+        if (source === undefined) continue;
+        const [copy] = [...rows.values()]
+          .filter(
+            (row) =>
+              row.id !== sourceId &&
+              row.issueId === issueId &&
+              row.purpose === 'inline' &&
+              row.storageKey === source.storageKey &&
+              row.name === source.name &&
+              row.mimeType === source.mimeType,
+          )
+          .map((row) => row.id)
+          .sort();
+        if (copy !== undefined) held.set(sourceId, copy);
+      }
+      return Promise.resolve(held);
     },
     files,
     blobs,

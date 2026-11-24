@@ -10,6 +10,6 @@ export type { DocPath, DocProblem, ValidateDocResult } from './validate.js';
 export { normalize } from './normalize.js';
 export { docToText } from './text.js';
 export { docToMarkdown, markdownToDoc } from './markdown.js';
-export { docFileIds } from './files.js';
+export { docFileIds, fileSrcRenames, renameFileSrcs } from './files.js';
 export { fileIdOfSrc, fileSrc, isAllowedHref } from './links.js';
 export { isSingleEmoji } from './emoji.js';

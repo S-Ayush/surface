@@ -216,6 +216,40 @@ export async function documentFiles(
   return rows.map((row) => DocumentFileRow.parse(row));
 }
 
+/**
+ * For each of `sourceIds` (files the reader may copy, never anything else: this answers about
+ * copyable files only, so it tells nothing about the rest), the oldest `inline` row `issueId`
+ * already owns on the same bytes, name and type: the copy an earlier save of the same document
+ * made. One statement.
+ */
+export function issueCopiesQuery(issueId: string, sourceIds: readonly string[]): SQL {
+  return sql`SELECT DISTINCT ON (s.id) s.id AS "sourceId", c.id AS "copyId"
+               FROM files s
+               JOIN files c ON c.storage_key = s.storage_key AND c.name = s.name
+                           AND c.mime_type = s.mime_type
+              WHERE s.id = ANY(${sql.param([...sourceIds])}::uuid[])
+                AND c.issue_id = ${issueId} AND c.purpose = 'inline' AND c.id <> s.id
+              ORDER BY s.id, c.id`;
+}
+
+const IssueCopyRow = z.object({ sourceId: z.string(), copyId: z.string() });
+
+/** `issueCopiesQuery` on the operation's transaction: source id → the issue's copy. */
+export async function issueCopies(
+  tx: Pick<NodePgDatabase, 'execute'>,
+  issueId: string,
+  sourceIds: readonly string[],
+): Promise<Map<string, string>> {
+  if (sourceIds.length === 0) return new Map();
+  const { rows } = await tx.execute(issueCopiesQuery(issueId, sourceIds));
+  return new Map(
+    rows.map((row) => {
+      const { sourceId, copyId } = IssueCopyRow.parse(row);
+      return [sourceId, copyId];
+    }),
+  );
+}
+
 interface VisibleRow {
   id: string;
   purpose: FilePurpose;

@@ -246,6 +246,8 @@ interface JobState {
   readonly made: string[];
   target: PreviewTarget | undefined;
   sourceGone: boolean;
+  /** A preview row another run committed after this one's read (an expired job's retry). */
+  raced: string | null;
   answer: ExecuteResult;
 }
 type JobWorld = JobState & { readonly deps: PreviewJobDeps };
@@ -272,6 +274,7 @@ async function jobWorld(
       existingPreviewId: null,
     },
     sourceGone: false,
+    raced: null,
     answer: { ok: true, result: {} },
   };
   const unexpected = () => Promise.reject(new Error('Not a statement a preview makes.'));
@@ -289,8 +292,14 @@ async function jobWorld(
       world.inserted.push(file);
       return Promise.resolve();
     },
+    lockPreviews(ids) {
+      world.statements.push(`previews ${ids.join(',')}`);
+      const raced = world.raced;
+      return Promise.resolve(
+        raced === null ? [] : [{ id: raced, storageKey: 'sha256/00/raced', previewOf: FILE }],
+      );
+    },
     claimInline: unexpected,
-    lockPreviews: unexpected,
     deleteFiles: unexpected,
     releaseKeys: unexpected,
     keyInUse: unexpected,
@@ -340,8 +349,15 @@ describe('the files-preview job (AC-12, E21)', () => {
     expect(await makePreview(w.deps, FILE)).toBe('made');
     // Read from its path on the volume, never loaded whole.
     expect(w.made).toEqual([w.blobs.localPath(w.target?.storageKey ?? '')]);
-    // The source FOR SHARE, then the key, then the row (§4.5 step 3).
-    expect(w.statements).toEqual([`share ${FILE}`, 'keys 1', `insert ${NEW_PREVIEW}`]);
+    // The source FOR UPDATE (one run at a time per file), its previews, then FOR SHARE, the key
+    // and the row (§4.5 step 3).
+    expect(w.statements).toEqual([
+      `update ${FILE}`,
+      `previews ${FILE}`,
+      `share ${FILE}`,
+      'keys 1',
+      `insert ${NEW_PREVIEW}`,
+    ]);
     const [row] = w.inserted;
     expect(row?.storageKey).toMatch(/^sha256\//);
     expect(row).toEqual({
@@ -406,6 +422,22 @@ describe('the files-preview job (AC-12, E21)', () => {
     ]);
   });
 
+  it('names the row of a run that committed first instead of adding a second (an expired job’s retry)', async () => {
+    const w = await jobWorld();
+    w.raced = OLD_PREVIEW;
+    expect(await makePreview(w.deps, FILE)).toBe('reused');
+    expect(w.statements).toEqual([`update ${FILE}`, `previews ${FILE}`]);
+    expect(w.inserted).toEqual([]);
+    expect(await temps(w.blobs)).toEqual([]);
+    expect(w.executed).toEqual([
+      {
+        op: 'attachment.setPreview',
+        input: { attachment: ATTACHMENT, previewFile: OLD_PREVIEW },
+        kind: 'system',
+      },
+    ]);
+  });
+
   it('makes none for a file that isn’t a raster image', async () => {
     const w = await jobWorld();
     w.target = w.target && { ...w.target, mimeType: 'application/pdf' };
@@ -417,7 +449,7 @@ describe('the files-preview job (AC-12, E21)', () => {
     const w = await jobWorld();
     w.sourceGone = true;
     expect(await makePreview(w.deps, FILE)).toBe('gone');
-    expect(w.statements).toEqual([`share ${FILE}`]);
+    expect(w.statements).toEqual([`update ${FILE}`]);
     expect(w.inserted).toEqual([]);
     expect(w.executed).toEqual([]);
     expect(await temps(w.blobs)).toEqual([]);
