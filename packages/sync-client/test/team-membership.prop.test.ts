@@ -187,7 +187,8 @@ it('shows the memberships the server will hold after the pending membership muta
         expect(shown(pool).some((m) => m.startsWith('SEC/'))).toBe(false);
       }
     }),
-    propertyParameters({ seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS }),
+    // A leak property: every case in every tier (SPEC-004 D12).
+    propertyParameters({ seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS }, { full: true }),
   );
 });
 
@@ -200,6 +201,7 @@ it('predicts the same on a rebuild, mutation by mutation', () => {
       rebuilt.engine.rebuild(ops.map(overlayMutation));
       expect(shown(pushed.pool)).toEqual(shown(rebuilt.pool));
     }),
-    propertyParameters({ seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS }),
+    // A leak property: every case in every tier (SPEC-004 D12).
+    propertyParameters({ seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS }, { full: true }),
   );
 });

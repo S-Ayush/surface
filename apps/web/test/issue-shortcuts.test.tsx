@@ -153,10 +153,15 @@ describe('the issue keys on a list act on the focused row (AC-8)', () => {
   it('Mod+. copies the ID of the focused row', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    mounted = await mountLists(new IssueApp([alpha, bravo]), '/team/ENG/issues');
-    startEngine(mounted.commands);
-    await keydown(await focusRow('Bravo'), '.', { code: 'Period', metaKey: true });
-    expect(writeText).toHaveBeenCalledWith('ENG-2');
+    try {
+      mounted = await mountLists(new IssueApp([alpha, bravo]), '/team/ENG/issues');
+      startEngine(mounted.commands);
+      await keydown(await focusRow('Bravo'), '.', { code: 'Period', metaKey: true });
+      expect(writeText).toHaveBeenCalledWith('ENG-2');
+    } finally {
+      // jsdom has no clipboard: the stub goes, so later tests and files see none.
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
   });
 
   it('Shift+R opens the issue with the title in edit mode', async () => {

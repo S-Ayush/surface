@@ -4,6 +4,9 @@
   "tasks": {
     "test": {
       "dependsOn": ["transit", "build"]
+    },
+    "test:deep": {
+      "dependsOn": ["transit", "build"]
     }
   }
 }

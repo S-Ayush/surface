@@ -125,7 +125,8 @@ describe('an issue’s groups (SPEC-011 §5.7)', () => {
           else expect(groups).toContain(userGroup(ADA));
         },
       ),
-      propertyParameters({ seed: 4242, numRuns: 200 }),
+      // Private-team visibility: every case in every tier (SPEC-004 D12).
+      propertyParameters({ seed: 4242, numRuns: 200 }, { full: true }),
     );
   });
 

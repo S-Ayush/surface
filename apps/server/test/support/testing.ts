@@ -16,7 +16,9 @@
  * part of the build (`tsconfig.build.json` includes `src` only).
  */
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { systemActor } from '@surface/domain';
 import { registry } from '@surface/operations';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -441,7 +443,9 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
   }
   const logger = options.logger ?? pino({ level: 'silent' });
   const setupToken = randomBytes(24).toString('hex');
-  const config = testServerConfig(options.databaseUrl, setupToken);
+  // Its own DATA_DIR, so servers running at once (sync-sim's parallel files) never share uploads.
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'surface-test-server-'));
+  const config = testServerConfig(options.databaseUrl, setupToken, dataDir);
   // Reads and sign-ins outlive restarts, so they get a pool of their own, built like the server's
   // (an idle connection that fails is logged, not an uncaught 'error').
   const db = createPool(options.databaseUrl, logger, { max: 2 });
@@ -855,12 +859,14 @@ export async function startTestServer(options: TestServerOptions): Promise<TestS
           await shutdown();
         } finally {
           await db.end();
+          await rm(dataDir, { recursive: true, force: true });
         }
       },
     };
   } catch (error) {
     await shutdown().catch(() => undefined);
     await db.end().catch(() => undefined);
+    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -900,7 +906,7 @@ export function errorLogger(onError: (summary: string) => void): Logger {
 }
 
 /** A role-`web` server: the hub and HTTP, no job worker and no SMTP. */
-function testServerConfig(databaseUrl: string, setupToken: string): Config {
+function testServerConfig(databaseUrl: string, setupToken: string, dataDir: string): Config {
   // `loadConfig` validates a plain object here; it reads `process.env` only by default.
   const config = loadConfig({
     SURFACE_URL: 'http://127.0.0.1',
@@ -917,7 +923,7 @@ function testServerConfig(databaseUrl: string, setupToken: string): Config {
   });
   // Port 0 (any free port) is outside `PORT`'s range check, so it is set after validation.
   // DATA_DIR must exist and be writable (SPEC-004 E5).
-  return { ...config, port: 0, webDir: '/nonexistent-web-dir', dataDir: tmpdir() };
+  return { ...config, port: 0, webDir: '/nonexistent-web-dir', dataDir };
 }
 
 /**

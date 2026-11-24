@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-// `pnpm test:deep [turbo options]` (plans README §6, "Test tiers"): what the gate leaves out.
-// - every property at its full case count, all with one fresh seed, printed before and after
-//   the run so a failure can be replayed;
-// - the wall-clock budgets (`*.perf.test.ts`, the server's `*.perf.int.test.ts`) and the full
-//   ordering stress (`sync-ordering.stress.int.test.ts`, 20 × 500). The server's part needs Docker.
+// `pnpm test:deep [turbo options]` (plans README §6, "Test tiers"; SPEC-004 D12): what the gate
+// leaves out, in two phases.
+// 1. `turbo run test:deep`: every property at its full case count, all with one fresh seed,
+//    printed before and after the run so a failure can be replayed; and the full ordering stress
+//    (`sync-ordering.stress.int.test.ts`, 20 × 500). The server's part needs Docker.
+// 2. `turbo run test:timing --concurrency=1`: the wall-clock budgets (`*.perf.test.ts`, the
+//    server's `*.perf.int.test.ts`), one package at a time with one worker, after everything else
+//    has finished, so the machine's load is the budgets' own.
 //
 // Replay a run:    SURFACE_PROPERTY_SEED=<seed> pnpm test:deep
 // One package:     SURFACE_PROPERTY_SEED=<seed> pnpm test:deep --filter @surface/sync-client
@@ -26,32 +29,69 @@ if (!Number.isSafeInteger(seed)) {
 const replay = `SURFACE_PROPERTY_SEED=${seed} pnpm test:deep`;
 process.stdout.write(`\ntest:deep: property seed ${seed} (replay: ${replay})\n\n`);
 
-const child = spawn('turbo', ['run', 'test:deep', ...process.argv.slice(2)], {
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    SURFACE_PROPERTY_SEED: String(seed),
-    SURFACE_VITEST_WORKERS: process.env.SURFACE_VITEST_WORKERS || WORKERS,
-  },
-});
+const env = {
+  ...process.env,
+  SURFACE_PROPERTY_SEED: String(seed),
+  SURFACE_VITEST_WORKERS: process.env.SURFACE_VITEST_WORKERS || WORKERS,
+};
+const extra = process.argv.slice(2);
 
-let timedOut = false;
+let child;
+let stopping = false;
+
+/**
+ * Sends `signal` to the running phase's whole process group: Turbo, pnpm, Vitest and its
+ * workers. The child leads its own group (`detached`), so nothing it started outlives the run.
+ */
+function signalGroup(signal) {
+  if (child?.pid === undefined || child.exitCode !== null) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    // The group has already gone.
+  }
+}
+
+/** Runs one phase; resolves with whether it passed. */
+function phase(args) {
+  return new Promise((resolve) => {
+    child = spawn('turbo', args, { stdio: 'inherit', env, detached: true });
+    child.on('error', (error) => {
+      process.stderr.write(`test:deep: couldn't start turbo: ${error.message}\n`);
+      resolve(false);
+    });
+    child.on('exit', (code) => resolve(code === 0));
+  });
+}
+
+function finish(ok, why) {
+  const outcome = ok ? 'passed' : `FAILED (${why})`;
+  process.stdout.write(`\ntest:deep: ${outcome}, property seed ${seed} (replay: ${replay})\n`);
+  process.exit(ok ? 0 : 1);
+}
+
 const timer = setTimeout(() => {
-  timedOut = true;
+  stopping = true;
   process.stderr.write(`\ntest:deep: stopped after ${HARD_TIMEOUT_MS / 60_000} minutes.\n`);
-  // Turbo passes SIGINT on to the tasks; SIGKILL follows if they don't stop.
-  child.kill('SIGINT');
-  setTimeout(() => child.kill('SIGKILL'), 15_000).unref();
+  signalGroup('SIGINT');
+  setTimeout(() => signalGroup('SIGKILL'), 15_000).unref();
 }, HARD_TIMEOUT_MS);
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => child.kill(signal));
+  process.on(signal, () => {
+    stopping = true;
+    signalGroup(signal);
+    setTimeout(() => signalGroup('SIGKILL'), 15_000).unref();
+  });
 }
 
-child.on('exit', (code, signal) => {
-  clearTimeout(timer);
-  const ok = code === 0 && !timedOut;
-  const outcome = ok ? 'passed' : `FAILED (${signal ?? `exit ${code}`})`;
-  process.stdout.write(`\ntest:deep: ${outcome}, property seed ${seed} (replay: ${replay})\n`);
-  process.exit(ok ? 0 : 1);
-});
+// `--continue`: one package's failure doesn't hide the others' with the same seed.
+const properties = await phase(['run', 'test:deep', '--continue', ...extra]);
+if (stopping) finish(false, 'stopped');
+const timing = await phase(['run', 'test:timing', '--concurrency=1', '--continue', ...extra]);
+clearTimeout(timer);
+if (stopping) finish(false, 'stopped');
+finish(
+  properties && timing,
+  [!properties && 'properties phase', !timing && 'timing phase'].filter(Boolean).join(', '),
+);

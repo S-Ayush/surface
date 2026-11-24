@@ -328,7 +328,7 @@ No data is moved. M0 file rows keep working: their `issue_id` is null and their 
 | AC-1 | `server/test/files-upload.test.ts` (S2): size limit from `Content-Length`, memory bound by a counting stream, avatars still buffered |
 | AC-2 | `server/test/files-sniff.test.ts` (S2) |
 | AC-3 | `server/test/files-download.test.ts` (S2) |
-| AC-4 | `server/test/files-names.test.ts` (S2) |
+| AC-4 | `server/test/files-names.test.ts` (S2) + `server/test/files-names.perf.test.ts` (the 1 s budget for a long run of spaces, moved out of the gate on 2026-11-24; runs in `pnpm test:deep`) |
 | AC-5 | `server/test/files-visibility.test.ts` (S1, unit builder) + `server/test/files-leak.int.test.ts` (S1, extended in S4a; leak suite, not held) |
 | AC-6 | `server/test/attachment-leak.int.test.ts` (S4a; leak suite, not held) + the Attachment model in the sync property suite (S4a) |
 | AC-7 | `server/test/attachment-handlers.test.ts` + `domain/src/model/attachment.test.ts` (S4a) |

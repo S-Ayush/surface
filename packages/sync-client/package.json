@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:deep": "SURFACE_TEST_TIER=deep vitest run"
+    "test:deep": "SURFACE_TEST_TIER=deep vitest run",
+    "test:timing": "SURFACE_TEST_TIER=timing vitest run"
   },
   "dependencies": {
     "@surface/domain": "workspace:*",

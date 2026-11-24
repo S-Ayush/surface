@@ -3,7 +3,7 @@
 # Built now (PLAN-004 S6, minimal by decision of 2026-11-06, SPEC-004 §14 D4):
 #   1. Static   frozen install, lint (ESLint, package boundaries, Prettier), typecheck,
 #               and the PR title as a Conventional Commit
-#   2. Unit     Vitest across packages
+#   2. Unit     Vitest across packages; on main also the deep tier (`pnpm test:deep`, D12)
 #   4. Build    server and web, plus the Docker image (amd64, not pushed)
 # Deferred until the app is up: 3 integration (Postgres service container),
 # 5 e2e, 6 install smoke, the no-egress / log-scan / image checks, multi-arch,
@@ -57,6 +57,28 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+  # SPEC-004 D12: the gate above runs a share of each property's cases with fixed seeds; main
+  # also runs every case with a fresh seed (printed: replay it with SURFACE_PROPERTY_SEED), the
+  # timing budgets and the full ordering stress. The server's part uses Postgres in Docker
+  # (Testcontainers), which the runner has.
+  deep:
+    name: Deep tier (full property counts, timing budgets)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm build
+      - name: Deep tests
+        run: pnpm test:deep
 
   pr-title:
     name: PR title is a Conventional Commit
