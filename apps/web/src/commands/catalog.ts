@@ -58,7 +58,7 @@ export const COMMANDS = {
   'issue-page:comment': { title: 'Comment on issue' },
   'issue-page:focus-description': { title: 'Focus description' },
   'issue-page:attach-file': { title: 'Attach file' },
-  'issue-page:link-url': { title: 'Link URL to the issue' },
+  'issue-page:link-url': { title: 'Link any URL to issue…' },
   'comment:reply': { title: 'Reply to comment' },
   'comment:send': { title: 'Send comment' },
   // The comment-context operations' menu entries (SPEC-013 §6.1); their handlers are PLAN-013 S5's.
@@ -73,6 +73,15 @@ export const COMMANDS = {
   'comment:new-issue': { title: 'New issue from comment…' },
   // PLAN-013 S4: "Add reaction…" (contexts comment and issue); S5 registers the handler.
   'reaction:add': { title: 'Add reaction…' },
+  // The `attachment` context (SPEC-014 §7, command-menu.md §3.3; PLAN-014 S5): the focused row.
+  'attachment:open': { title: 'Open attachment' },
+  'attachment:download': { title: 'Download attachment' },
+  'attachment:copy-link': { title: 'Copy link to attachment' },
+  'attachment:rename': { title: 'Rename attachment…' },
+  'attachment:remove': { title: 'Remove attachment' },
+  // The image viewer (SPEC-014 §7): ← and → between the issue's image attachments.
+  'viewer:previous': { title: 'Previous image' },
+  'viewer:next': { title: 'Next image' },
   'editor:bold': { title: 'Bold' },
   'editor:italic': { title: 'Italic' },
   'editor:underline': { title: 'Underline' },

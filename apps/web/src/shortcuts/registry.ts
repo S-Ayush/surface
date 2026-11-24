@@ -182,6 +182,26 @@ export const SHORTCUTS: readonly Shortcut[] = [
     milestone: 'M0',
     shadows: ['editor.toggleChecklistItem'],
   }),
+  // SPEC-014 §7: the image viewer steps between the issue's image attachments. Only the viewer
+  // registers the commands; in any other dialog the keys keep their own meaning (`quiet`).
+  shortcut({
+    id: 'viewer.previous',
+    keys: 'ArrowLeft',
+    scope: 'modal',
+    command: 'viewer:previous',
+    group: 'Dialogs and pickers',
+    milestone: 'M1',
+    quiet: true,
+  }),
+  shortcut({
+    id: 'viewer.next',
+    keys: 'ArrowRight',
+    scope: 'modal',
+    command: 'viewer:next',
+    group: 'Dialogs and pickers',
+    milestone: 'M1',
+    quiet: true,
+  }),
   // SPEC-012 §3.6: the M1 key map (Linear's keys). Handlers arrive with the screens (PLAN-012 S3 to S6).
   shortcut({
     id: 'global.helpSlash',

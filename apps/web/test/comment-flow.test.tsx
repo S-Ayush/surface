@@ -6,7 +6,7 @@
 import { overlayManager } from '@surface/ui';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { docOfText } from './comment-editor-fake.js';
+import { docOfText, editorUploads } from './comment-editor-fake.js';
 import {
   IRIS,
   ME,
@@ -785,11 +785,15 @@ describe('reactions (SPEC-013 §3.4, S4 hand-off)', () => {
   });
 });
 
-describe('attachments (SPEC-013 §3.1, PLAN-014 S5)', () => {
-  it('says "Attachments are not available yet." until uploads exist', async () => {
+describe('attachments (SPEC-013 §3.1, §3.5, PLAN-014 S5)', () => {
+  it("the box's attach button opens the editor's file chooser, to insert the file inline", async () => {
+    editorUploads.chooserOpened.length = 0;
     await mount();
     await inAct(() => button('Attach file')?.click());
-    expect(toasts()).toContain('Attachments are not available yet.');
+    expect(editorUploads.chooserOpened).toHaveLength(1);
+    expect(toasts()).toEqual([]);
+    // The box gives its editor the inline upload (SPEC-013 §3.5).
+    expect(editorUploads.uploadFile).toBeTypeOf('function');
   });
 });
 

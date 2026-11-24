@@ -63,6 +63,11 @@ export type IssueView = {
    * (SPEC-015 §3.4; PLAN-015 S4).
    */
   readonly deletedAt?: string;
+  /**
+   * Its attachments, only on an `issue.get` answer (the read-only view; PLAN-014 S5). The live page
+   * reads the replica's Attachment rows.
+   */
+  readonly attachments?: IssueOutput['attachments'];
 };
 
 export function isColorHue(value: string): value is ColorHue {
@@ -161,6 +166,7 @@ export function issueViewFromOutput(output: IssueOutput, pool?: ReadonlyPool): I
           },
     ...(isDocJson(output.description.json) ? { description: output.description.json } : {}),
     ...(output.deletedAt === null ? {} : { deletedAt: output.deletedAt }),
+    attachments: output.attachments,
   };
 }
 

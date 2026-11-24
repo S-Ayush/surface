@@ -5,9 +5,11 @@
 // The page asks again when the window regains focus.
 import { isDocJson, type DocNodeJSON } from '@surface/domain';
 import { IssueContent, type ModelRow } from '@surface/domain/model';
+import type { AttachmentSummarySchema } from '@surface/operations';
 import type { ContentPeek } from '@surface/sync-client';
 import { useIssueContent } from '@surface/sync-react';
 import { createContext, use, useEffect, useState } from 'react';
+import type { z } from 'zod';
 
 /** An issue's content as the page's activity, comments and reactions read it. */
 export interface ContentView {
@@ -19,6 +21,11 @@ export interface ContentView {
 /** The server-backed content of one issue, for the slots under it. */
 export interface ServerContent extends ContentView {
   readonly issueId: string;
+  /**
+   * The issue's attachments from `issue.get` (Attachment is an eager model, not content, so the
+   * content answer has none). The page adds them from its answer (PLAN-014 S5).
+   */
+  readonly attachments?: readonly z.output<typeof AttachmentSummarySchema>[];
 }
 
 const NO_ROWS: ContentView['rows'] = {};
@@ -73,13 +80,21 @@ export const ServerContentContext = createContext<ServerContent | null>(null);
  * replica doesn't hold the issue, so nothing is opened or hydrated), else the replica's, opened
  * while mounted (`useIssueContent`, which also hydrates on open, SPEC-012 §3.4 item 10).
  */
-export function useIssueContentView(issueId: string): ContentView & { readonly server: boolean } {
+export function useIssueContentView(issueId: string): ContentView & {
+  readonly server: boolean;
+  /** Only in the read-only view: `issue.get`'s attachments (the live page reads the replica). */
+  readonly attachments?: ServerContent['attachments'];
+} {
   const server = use(ServerContentContext);
   const fromServer = server !== null && server.issueId === issueId;
   const live = useIssueContent(fromServer ? '' : issueId);
-  return fromServer
-    ? { state: server.state, rows: server.rows, server: true }
-    : { state: live.state, rows: live.rows, server: false };
+  if (!fromServer) return { state: live.state, rows: live.rows, server: false };
+  return {
+    state: server.state,
+    rows: server.rows,
+    server: true,
+    ...(server.attachments === undefined ? {} : { attachments: server.attachments }),
+  };
 }
 
 /** The issue's description and version, from its `IssueContent` row (undefined without one). */

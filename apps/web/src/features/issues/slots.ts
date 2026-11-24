@@ -6,6 +6,7 @@
 // and hides every write control (SPEC-012 §3.4 item 8: reactions and the comment box are hidden).
 // `teamId` is '' there when the replica doesn't hold the team.
 import type { ComponentType } from 'react';
+import { AttachmentsSection } from '../attachments/AttachmentsSection.js';
 import { CommentsSection } from '../comments/CommentsSection.js';
 import { IssueReactions } from '../comments/IssueReactions.js';
 
@@ -26,6 +27,6 @@ export const ISSUE_PAGE_SLOTS: {
   readonly comments: IssuePageSlot | null;
 } = {
   reactions: IssueReactions,
-  attachments: null,
+  attachments: AttachmentsSection,
   comments: CommentsSection,
 };

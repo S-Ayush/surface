@@ -14,6 +14,8 @@ const MENU_COMMANDS: readonly {
   issue?: true;
   /** Acts on the focused comment (SPEC-013 §7): offered only with a comment as the target. */
   comment?: true;
+  /** Acts on the focused attachment row (SPEC-014 §7): only with an attachment as the target. */
+  attachment?: true;
 }[] = [
   { id: 'toggle:theme', section: 'settings', keywords: ['dark mode', 'light mode', 'appearance'] },
   { id: 'toggle:sidebar', section: 'settings', keywords: ['hide sidebar', 'show sidebar'] },
@@ -50,25 +52,45 @@ const MENU_COMMANDS: readonly {
     keywords: ['create issue', 'turn into issue'],
     comment: true,
   },
+  // The attachment context (command-menu.md §3.3, PLAN-014 S5); Rename and Remove are operations.
+  { id: 'attachment:open', section: 'settings', keywords: ['view', 'preview'], attachment: true },
+  {
+    id: 'attachment:download',
+    section: 'settings',
+    keywords: ['save file', 'file'],
+    attachment: true,
+  },
+  {
+    id: 'attachment:copy-link',
+    section: 'settings',
+    keywords: ['url', 'clipboard'],
+    attachment: true,
+  },
 ];
 
 export function appSource(commands: CommandRegistry): CommandSource {
   return () =>
-    MENU_COMMANDS.map(({ id, section, keywords, issue, comment }) => ({
-      id,
-      title: commandTitle(id),
-      section,
-      keywords,
-      shortcuts: shortcutsFor(id),
-      when: (ctx) =>
-        commands.isAvailable(id) &&
-        (issue !== true || ctx.target.kind === 'issue') &&
-        (comment !== true || ctx.target.kind === 'comment'),
-      ...(issue === true
-        ? { appliesTo: (ctx: CommandContext) => ctx.target.kind === 'issue' }
-        : comment === true
-          ? { appliesTo: (ctx: CommandContext) => ctx.target.kind === 'comment' }
-          : {}),
-      run: () => commands.invoke(id),
-    }));
+    MENU_COMMANDS.map(({ id, section, keywords, issue, comment, attachment }) => {
+      const kind =
+        issue === true
+          ? 'issue'
+          : comment === true
+            ? 'comment'
+            : attachment === true
+              ? 'attachment'
+              : undefined;
+      return {
+        id,
+        title: commandTitle(id),
+        section,
+        keywords,
+        shortcuts: shortcutsFor(id),
+        when: (ctx: CommandContext) =>
+          commands.isAvailable(id) && (kind === undefined || ctx.target.kind === kind),
+        ...(kind === undefined
+          ? {}
+          : { appliesTo: (ctx: CommandContext) => ctx.target.kind === kind }),
+        run: () => commands.invoke(id),
+      };
+    });
 }

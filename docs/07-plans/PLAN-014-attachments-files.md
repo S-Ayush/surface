@@ -206,7 +206,7 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **R
   - `apps/server/test/attachment-handlers.test.ts` (extend): one preview job enqueued for an image, none for other types.
   - `apps/server/test/attachment-leak.int.test.ts` (extend): a document referencing an invisible file gets the same answer as an unknown id (AC-8 leak half).
 
-### S5: Attachments UI · M
+### S5: Attachments UI · M · ✅ Done 2026-11-24
 - **What:** the Attachments section, upload progress, drop and paste, the link form with its shortcut, the image viewer, Remove with Undo, and the command-menu entries. Layout belongs to SPEC-012; the editor's inline upload hook belongs to SPEC-013.
 - **Needs:** PLAN-012 S4 (the issue page and its sections), PLAN-012 S1 (shortcut engine: platform-literal `Ctrl`, `isTypingTarget`), PLAN-013 S2 (the editor's `uploadFile` callback; this slice supplies the implementation).
 - **Where:**
@@ -227,6 +227,38 @@ Implements: [SPEC-014](../06-specs/SPEC-014-attachments-files.md) · Status: **R
   - `apps/web/test/command-operations.test.ts` extended: the `attachment` target and entries pass `checkOperationCommands`: AC-22.
   - `apps/web/test/image-viewer.test.tsx` (jsdom): Esc, arrows, focus trap and restore: AC-19 (unit part).
   - E2E (pick, paste, drop, preview, open, download, rename, remove, undo, by keyboard) ⏸ held: checked by hand at the end of the slice and at the M1 demo (PLAN-012 S7b).
+
+> **As built (2026-11-24, branch `p014-s5-attachments-ui`):**
+> - **Section** (`features/attachments/AttachmentsSection.tsx`) in the page's `attachments` slot (`issues/slots.ts`). Rows come from the replica (`pool.findBy(Attachment, 'issueId', …)`, oldest first). In the read-only view (archived, deleted, or not in the replica) they come from `issue.get`'s `attachments`: `IssueView.attachments` → `ServerSlots` → `ServerContent.attachments` → `useIssueContentView(…).attachments`. Read-only rows offer Open, Download and Copy link only; a read-only issue with no attachments shows no section. An editable page always shows the header with its "Attach file" and "Link any URL to issue" buttons.
+> - **Uploads** (`transport.ts`, `useUpload.ts`): `XMLHttpRequest` for upload progress, the CSRF header from the cookie and one resend after `CSRF_INVALID` (session renewed). A 5xx or unreadable answer says `UNREACHABLE`; a refusal says the server's message inline on the row, with Retry and Dismiss. The `UploadQueue` is page state (`useSyncExternalStore`). It runs at most 3 uploads at once, the server's per-user limit (§4.6); the rest show "Waiting…". Uploads still running are canceled when the page unmounts. On success the row goes and `attachment.createFile` is dispatched with S4a's `upload` echo (D29), so the optimistic row takes its place. A refusal rolls back and toasts the reason (E1). Tests inject an `Uploader` through `UploaderContext`.
+> - **Actions** (`actions.ts`): every dispatch toasts its own refusal (`reportRejection: () => false`, synchronous `OptimisticRefusal` included). Remove toasts "Attachment removed" with **Undo** (8 s). Undo of a file runs `createFile` on the same file with its title and `upload` echo (D28); undo of a link runs `createLink` with the same URL and title.
+> - **Link form and rename** are small Dialogs (`LinkForm.tsx`, `RenameDialog.tsx`) checked with the domain's `parseAttachmentUrl` / `attachmentTitleProblem` before dispatch. **Paste** (`paste.ts`): a document listener, only while the page is editable. It ignores a paste whose target or focused element `isTypingTarget`; files upload; a lone URL opens the link form filled in. **Drop** (`DropZone.tsx`): document drag listeners with a depth counter, an overlay "Drop files to attach them to ENG-42". A drop inside an editor or input is left to it.
+> - **Image viewer** (`ImageViewer.tsx`): the design system's `Dialog` (focus trap, `Esc`, focus restored by the overlay layer). **Deviation:** `←`/`→` are registry bindings `viewer.previous` / `viewer.next` in the `modal` scope (`quiet`, M1) with app commands `viewer:previous` / `viewer:next`, not keydown listeners (web-ui rule). They step through the issue's raster images only (png, jpeg, gif, webp: `INLINE_IMAGE_TYPES`); other files download.
+> - **Editor upload** (`editor-upload.ts`): `useEditorUpload()` is passed as `onUploadFile` to the description editor (`IssueDescription.tsx`) and every `ComposerBox`. It uploads with `purpose=inline`, returns `/files/<id>` as an image (raster types) or file chip, and throws the offline message offline. The PLAN-013 S5 stub ("Attachments are not available yet.") is gone: the box's paperclip calls `openFileChooser()`. `ComposerBox` now keeps its own editor handle and exposes it through `editorRef` (`useImperativeHandle`).
+> - **Keys:** `issue-page:attach-file` and `issue-page:link-url` are registered by the section at level `page` while editable. The description and every comment box register `issue-page:attach-file` at level `overlay` while focus is inside them, so `Mod+Shift+U` inserts inline there and attaches everywhere else (one binding; focus decides). Both bindings are M1 (`BUILD_MILESTONE` is still M0), so they fire in the app once the M1 acceptance PR raises the build milestone. **Deviation:** `attachment.createFile`'s `ui.shortcut` is `null`, not `Mod+Shift+U`, because `checkOperationCommands` refuses a hint for a binding the build doesn't have. Set it when the build reaches M1.
+> - **Command menu:** the four operations' `ui` (contexts `issue` and `attachment`), with `ATTACHMENT_COMMANDS` (`features/attachments/commands.ts`). These open the section's app commands (`issue-page:attach-file`, `issue-page:link-url`, `attachment:rename`, `attachment:remove`), with refs from the replica's row (`teamId`, `creatorId`) for the pre-check. App commands for a focused attachment: "Open attachment", "Download attachment", "Copy link to attachment" (`MENU_COMMANDS` gains an `attachment` flag). A focused row pushes the `attachment` target, with chip "Attachment: design.pdf". The issue page's ⋯ menu gains "Attach file…" and "Link any URL to issue…" while editable.
+> - **Deviation (SPEC-014 D31):** no client-side size check before an upload (E3 said the client checks first). The client doesn't know `UPLOAD_MAX_MB`, since no route exposes it, so the server's `413` message shows on the row. Proposed for the user to accept or override.
+> - **Tests:**
+>   - `attachments-section.test.tsx` (19): rows, progress, Cancel and Retry, 3 at once, offline refusal, E1, Remove and Undo for a file and a link (E8), rename, the link form, read-only.
+>   - `attachments-paste.test.tsx` (5): AC-22, E23, files, drop.
+>   - `attachments-shortcuts.test.tsx` (7): the platform flag, typing, inline precedence, AC-23 with a failing `fetch`/XHR.
+>   - `image-viewer.test.tsx` (1).
+>   - `attachments-commands.test.ts` (4): the target and entries with the real registry and permission pre-check (AC-22's menu half). `command-operations.test.ts`'s real-registry check covers the entries without edits.
+>   - `attachments-units.test.ts` (17): row text, link form, transport over a fake XHR, the queue, the editor upload.
+>   - The shared world is `attachments-harness.tsx`: a replica that runs S4a's real `optimistic` and rolls back refusals. `attachments-page.tsx` holds the shared page helpers.
+>   - The operations test now checks the four `ui` blocks.
+>   - `comment-flow.test.tsx`: the stub test becomes "the attach button opens the editor's chooser". `comment-editor-fake.tsx` records `openFileChooser` and `onUploadFile`. `issue-page.test.tsx` gains the `TooltipProvider` the app's `OverlayProvider` gives.
+> - **For PLAN-012 S7b (browser checks):**
+>   - real XHR progress and abort;
+>   - a 413 on a too-large file: a browser may report the closed connection as a network error, which would show "unreachable" instead of the size message;
+>   - drag-over overlay and drop outside and inside the editors;
+>   - paste of an image from the clipboard;
+>   - viewer focus restore and arrow keys;
+>   - Download keeps the original name;
+>   - `Mod+Shift+U` in the description and in a reply box inserts inline;
+>   - `Ctrl+L` on macOS (after the M1 build milestone);
+>   - thumbnails appear when S4b's preview lands;
+>   - dark theme of the rows, drop zone and viewer.
 
 ---
 
@@ -281,11 +313,11 @@ No data is moved. M0 file rows keep working: their `issue_id` is null and their 
 | AC-19 | ⏸ held (e2e) `e2e/attachments.spec.ts` (checked by hand in S5). Unit parts: `web/test/attachments-section.test.tsx`, `web/test/image-viewer.test.tsx` |
 | AC-20 | ⏸ held (perf), measured by hand in a 512 MB container at the end of S2 (D10 measurement repeated) |
 | AC-21 | `server/test/attachment-claim.test.ts` (S4b, statement builder and fake store) + ⏸ held (migration test, integration): the FK actions checked by hand when S1 and S4a migrations run on a scratch database |
-| AC-22 | `web/test/attachments-paste.test.tsx` + `web/test/command-operations.test.ts` (S5) |
-| AC-23 | `web/test/attachments-shortcuts.test.ts` (S5; fake network, platform flag) |
+| AC-22 | `web/test/attachments-paste.test.tsx` + `web/test/attachments-commands.test.ts` (S5; `command-operations.test.ts`'s real-registry check covers the entries) |
+| AC-23 | `web/test/attachments-shortcuts.test.tsx` (S5; fake network, platform flag) |
 | E1 | `server/test/attachment-handlers.test.ts` (S4a) + `web/test/attachments-section.test.tsx` (S5) |
 | E2 | `server/test/files-bytes.prop.test.ts` (S3, one copy on disk, two rows) |
-| E3 | `server/test/files-upload.test.ts` (S2) |
+| E3 | `server/test/files-upload.test.ts` (S2); no client pre-check (SPEC-014 D31) |
 | E4 | `server/test/files-sniff.test.ts` and `files-download.test.ts` (S2) |
 | E5, E16 | `server/test/files-leak.int.test.ts` (S1; leak suite) |
 | E6 | Leak suite cells in `files-leak.int.test.ts` run again when move-team (M3) and team privacy (M7) land; the invariant has a unit test on the repo's group rewrite in PLAN-011 S3 |

@@ -260,9 +260,10 @@ export const attachmentCreateFile = defineOperation({
   permission: (p) => p.any(),
   destructive: false,
   examples: [{ issue: 'ENG-1', file: SEED_UPLOAD, title: 'Redirect loop screenshot' }],
-  // Picking the file opens the browser's picker; the operation runs after the upload (§3.1).
-  // `ui` comes with its command entry in PLAN-014 S5 (the web gate needs both together):
-  // { title: 'Attach file…', icon: 'paperclip', contexts: ['issue'], shortcut: null }.
+  // Picking the file opens the browser's picker; the operation runs after the upload (§3.1). The
+  // web client's entry opens that picker (`issue-page:attach-file`, bound to `Mod+Shift+U` on every
+  // platform). No hint here: the menu shows one only once the M1 key map is in the build.
+  ui: { title: 'Attach file…', icon: 'paperclip', contexts: ['issue'], shortcut: null },
   optimistic: (store, input) => {
     if (input.id === undefined) return;
     const issue = writableIssue(store, input.issue);
@@ -308,9 +309,9 @@ export const attachmentCreateLink = defineOperation({
     { issue: 'ENG-1', url: 'https://www.figma.com/file/abc123/Login-flow', title: 'Login flow' },
     { issue: 'ENG-1', url: 'https://status.example.com/incidents/42' },
   ],
-  // `ui` comes with its command entry in PLAN-014 S5: { title: 'Link any URL to issue…',
-  // icon: 'link', contexts: ['issue'], shortcut: null } (Copy Linear, D9: the literal Control
-  // key, on macOS only; the client binds it there).
+  // Copy Linear (D9): `Ctrl+L`, the literal Control key, on macOS only. The client binds it there;
+  // no hint here, since the menu's hint isn't per platform and the key is the address bar elsewhere.
+  ui: { title: 'Link any URL to issue…', icon: 'link', contexts: ['issue'], shortcut: null },
   optimistic: (store, input) => {
     if (input.id === undefined) return;
     const parsed = parseAttachmentUrl(input.url);
@@ -342,8 +343,7 @@ export const attachmentUpdate = defineOperation({
   permission: (p, refs) => mayChange(p, refs),
   destructive: false,
   examples: [{ attachment: SEED_LINK, title: 'Login flow (v2)' }],
-  // `ui` comes with its command entry in PLAN-014 S5:
-  // { title: 'Rename attachment…', icon: 'pencil', contexts: ['attachment'], shortcut: null }.
+  ui: { title: 'Rename attachment…', icon: 'pencil', contexts: ['attachment'], shortcut: null },
   optimistic: (store, input) => {
     const found = changeable(store, input.attachment);
     if (found === undefined) return;
@@ -368,8 +368,8 @@ export const attachmentDelete = defineOperation({
   permission: (p, refs) => mayChange(p, refs),
   destructive: true,
   examples: [{ attachment: SEED_FILE_ATTACHMENT }],
-  // `ui` comes with its command entry in PLAN-014 S5:
-  // { title: 'Remove attachment', icon: 'trash', contexts: ['attachment'], shortcut: null }.
+  // Runs at once, with an Undo toast in the web client (D8).
+  ui: { title: 'Remove attachment', icon: 'trash', contexts: ['attachment'], shortcut: null },
   optimistic: (store, input) => {
     const found = changeable(store, input.attachment);
     if (found !== undefined) store.remove('Attachment', found.id);

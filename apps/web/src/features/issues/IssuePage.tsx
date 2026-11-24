@@ -25,10 +25,11 @@ import {
   Link as LinkIcon,
   MoreHorizontal,
   PanelRight,
+  Paperclip,
   Trash2,
   WifiOff,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { parseIssueRef, type DocNodeJSON } from '@surface/domain';
 import type { ContentPeek } from '@surface/sync-client';
 import { SyncStoreProvider, usePrefetchContent } from '@surface/sync-react';
@@ -526,6 +527,7 @@ function IssueBody({
   const deleteKeys = shortcutsFor('issue:delete')[0];
   const deleteHint = deleteKeys === undefined ? {} : { shortcut: deleteKeys };
   const restoreKeys = shortcutsFor('issue:restore')[0];
+  const attachKeys = shortcutsFor('issue-page:attach-file')[0];
   const restoreHint = restoreKeys === undefined ? {} : { shortcut: restoreKeys };
   // An archived issue can still be deleted (§3.4); a deleted one only restored or purged.
   const deletable = (editable || view.lifecycle === 'archived') && view.identifier !== null;
@@ -583,6 +585,29 @@ function IssueBody({
         },
       })),
     },
+    // SPEC-014 §3.1, §3.2: the Attachments section registers both while the issue can change.
+    ...(editable
+      ? ([
+          { type: 'separator' },
+          {
+            type: 'item',
+            label: 'Attach file…',
+            icon: <Paperclip />,
+            ...(attachKeys === undefined ? {} : { shortcut: attachKeys }),
+            onSelect: () => {
+              commands.run('issue-page:attach-file');
+            },
+          },
+          {
+            type: 'item',
+            label: 'Link any URL to issue…',
+            icon: <LinkIcon />,
+            onSelect: () => {
+              commands.run('issue-page:link-url');
+            },
+          },
+        ] satisfies MenuEntry[])
+      : []),
     ...(lifecycleItems.length === 0 ? [] : [{ type: 'separator' } satisfies MenuEntry]),
     ...lifecycleItems,
   ];
@@ -742,8 +767,14 @@ function StoreProvided({ children }: { children: ReactNode }) {
  * A slot reads `content.server` to know it is read-only.
  */
 function ServerSlots({ view, server }: { view: IssueView; server: ServerContent }) {
+  // `issue.get`'s attachments join the content answer: Attachment isn't a content model (PLAN-014 S5).
+  const attachments = view.attachments;
+  const value = useMemo(
+    () => (attachments === undefined ? server : { ...server, attachments }),
+    [server, attachments],
+  );
   return (
-    <ServerContentContext value={server}>
+    <ServerContentContext value={value}>
       <Slots view={view} teamId={view.teamId ?? ''} part="under-description" />
       <Slots view={view} teamId={view.teamId ?? ''} part="comments" />
     </ServerContentContext>

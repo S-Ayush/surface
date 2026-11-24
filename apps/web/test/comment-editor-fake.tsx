@@ -5,7 +5,7 @@
 import { EMPTY_DOC, type DocNodeJSON } from '@surface/domain';
 import type { DocViewProps, RichTextEditorProps } from '@surface/editor';
 import type { PickerEmoji } from '@surface/ui';
-import { useImperativeHandle, useRef } from 'react';
+import { useEffect, useImperativeHandle, useRef } from 'react';
 
 export const textOf = (doc: DocNodeJSON): string =>
   (doc.content ?? [])
@@ -26,6 +26,15 @@ export const docOfText = (text: string): DocNodeJSON =>
           ),
       };
 
+/**
+ * What the fake saw of the editor's upload contract (PLAN-014 S5): each `openFileChooser` call, by
+ * the editor's label, and the latest `onUploadFile` it was given.
+ */
+export const editorUploads: {
+  chooserOpened: string[];
+  uploadFile: RichTextEditorProps['onUploadFile'];
+} = { chooserOpened: [], uploadFile: undefined };
+
 export function CommentEditor({
   value,
   onChange,
@@ -34,12 +43,18 @@ export function CommentEditor({
   ariaLabel,
   placeholder,
   autofocus,
+  onUploadFile,
   ref,
 }: RichTextEditorProps) {
   const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    editorUploads.uploadFile = onUploadFile;
+  });
   useImperativeHandle(ref, () => ({
     focus: () => field.current?.focus(),
-    openFileChooser: () => undefined,
+    openFileChooser: () => {
+      editorUploads.chooserOpened.push(ariaLabel ?? '');
+    },
   }));
   return (
     <textarea

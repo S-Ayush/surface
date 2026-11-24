@@ -293,9 +293,34 @@ describe('the attachment operations (AC-18)', () => {
     expect('optimistic' in attachmentSetPreview).toBe(false);
   });
 
-  it('adds the attachment context, and leaves the menu entries to S5', () => {
+  it('offers attach and link on an issue, rename and remove on an attachment (§7, PLAN-014 S5)', () => {
     expect(UI_CONTEXTS).toContain('attachment');
-    // PLAN-014 S5 adds `ui` with the command entries (the web gate checks both together).
-    for (const op of ops) expect(op.ui, op.name).toBeUndefined();
+    // The web client's command entries are checked against these by its own gate.
+    expect(Object.fromEntries(ops.map((op) => [op.name, op.ui]))).toEqual({
+      'attachment.createFile': {
+        title: 'Attach file…',
+        icon: 'paperclip',
+        contexts: ['issue'],
+        shortcut: null,
+      },
+      'attachment.createLink': {
+        title: 'Link any URL to issue…',
+        icon: 'link',
+        contexts: ['issue'],
+        shortcut: null,
+      },
+      'attachment.update': {
+        title: 'Rename attachment…',
+        icon: 'pencil',
+        contexts: ['attachment'],
+        shortcut: null,
+      },
+      'attachment.delete': {
+        title: 'Remove attachment',
+        icon: 'trash',
+        contexts: ['attachment'],
+        shortcut: null,
+      },
+    });
   });
 });

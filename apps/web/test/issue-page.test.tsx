@@ -13,6 +13,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router';
+import { TooltipProvider } from '@surface/ui';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/AppModel.js';
@@ -132,7 +133,10 @@ async function render(
       <ShellContext value={new ShellStore(null)}>
         <TargetContext value={new TargetStore()}>
           <ShortcutProvider>
-            <RouterProvider router={router} />
+            {/* The app's OverlayProvider gives the page its tooltips (the Attachments buttons). */}
+            <TooltipProvider>
+              <RouterProvider router={router} />
+            </TooltipProvider>
           </ShortcutProvider>
         </TargetContext>
       </ShellContext>

@@ -20,6 +20,7 @@ import type { AppModel } from '../../app/AppModel.js';
 import { structurallyEqual } from '../../app/equal.js';
 import { useApp } from '../../app/context.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
+import { useEditorUpload } from '../attachments/editor-upload.js';
 import { CommentDoc, CommentEditor } from '../comments/editor-host.js';
 import { hasContent } from '../comments/model.js';
 import { copyText } from '../members/reset-link.js';
@@ -202,7 +203,21 @@ function EditableDescription({
   }, [saver]);
   const state = useSyncExternalStore(saver.subscribe, saver.getState, saver.getState);
   const editor = useRef<RichTextEditorHandle>(null);
+  const section = useRef<HTMLElement>(null);
+  const uploadFile = useEditorUpload();
 
+  // SPEC-012 §3.6, SPEC-014 §3.3: `Mod+Shift+U` with focus in the description inserts the file
+  // inline; elsewhere the Attachments section answers it (this one is level `overlay`, so it wins).
+  useCommand(
+    'issue-page:attach-file',
+    () => {
+      editor.current?.openFileChooser();
+    },
+    {
+      level: 'overlay',
+      when: () => section.current?.contains(document.activeElement) === true,
+    },
+  );
   useCommand('issue-page:save-description', () => {
     saver.saveNow();
   });
@@ -221,7 +236,7 @@ function EditableDescription({
   };
 
   return (
-    <section aria-label="Description" className={pageStyles.description}>
+    <section ref={section} aria-label="Description" className={pageStyles.description}>
       {state.conflict && (
         <div role="alert" className={pageStyles.conflict}>
           <p className={pageStyles.conflictMessage}>
@@ -253,6 +268,10 @@ function EditableDescription({
         }}
         placeholder="Add description…"
         ariaLabel="Description"
+        onUploadFile={uploadFile}
+        onError={(message) => {
+          toast({ tone: 'danger', message });
+        }}
       />
     </section>
   );
