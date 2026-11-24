@@ -250,6 +250,9 @@ The file jobs run where jobs run: in `SURFACE_ROLE=all` (the default) or in a `w
 container. A `worker` must mount the **same** `uploads` volume as the `web` containers, at the
 same `DATA_DIR`. With a volume of its own, the jobs clean that one instead, and the real uploads
 volume fills up with bytes nothing removes.
+The `files-preview` job also reads originals from that volume, so without it image attachments get
+no preview and show their type icon. A `web` container queues previews but never makes them: with
+no `all` or `worker` container running, previews wait in the queue.
 
 ### Leftover empty volumes
 

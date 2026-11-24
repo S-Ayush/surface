@@ -175,6 +175,17 @@ packages/sync-react/    React hooks (useConnectionState, usePendingCount, …) a
 
 *Changed 2026-11-12 (SPEC-012 Q3):* the replica database is deleted on an explicit sign-out (§3.7); nothing else deletes it.
 
+*As built in M1 (2026-11-24; routed from the M1 coordination log):*
+- **New modules:** `content.ts` (content hydration, cache and eviction, SPEC-011 §5.3–§5.4), `prefetch.ts` (content prefetch), `partial.ts` and `subscriptions.ts` (team subscriptions and the partial bootstrap, SPEC-011 §5.7), `status-gone.ts` (the refusal message for a status deleted meanwhile, SPEC-010 §3.1).
+- **Additive store API:**
+  - `SyncStore.queueLost` (PLAN-012 S4b): true once another tab took this tab's unsent changes over (lease mode). Nothing this store dispatched before is answered here, and nothing more is sent until a reload. Unlike a failed resync, which retries, it stays. Observable.
+  - `PendingView.input` and `PendingView.clientId` (PLAN-012 S4b): a pending mutation's dispatched input and the `clientId` it was queued under (with `seq`, its key, as the dispatch's `onQueued` gives it), so a page can tell whose change is still unconfirmed. The input is never sent or stored from there.
+  - `Rejection.clientId` (PLAN-012 S4b): the `clientId` a rejected mutation was queued under, since an adopted queue's id may differ from the store's.
+  - `SyncStore.destroy()` and `countPending()` (PLAN-012 S7a): sign-out deletes the replica database, and the unsent count covers every tab's queue (§3.7).
+  - `seenDeleted(model, id)` (PLAN-010 S5): the session's memory of deleted WorkflowStatus rows, for the refusal message above.
+  - `followedTeams` (PLAN-011 S4c) and `AppliedPacket.teamId` (PLAN-015 S4): the subscribed teams, and the team of an applied upsert, read from the packet so the archive page can refresh per team.
+- **`OptimisticRefusal`** (PLAN-010 S5): see §3.3 and SPEC-003 §8.
+
 ### 5.2 Base vs overlay
 - `base: Map<id, Row>` holds only server data. It is persisted to IDB.
 - `overlay` is computed by running the pending mutations' `optimistic()` against a **draft** of the touched rows.

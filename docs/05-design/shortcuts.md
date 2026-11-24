@@ -70,7 +70,7 @@ The **M** column is the milestone in which a shortcut ships. Shortcuts arrive wi
 |---|---|---|
 | `G` `I` | Inbox | M4 |
 | `G` `M` | My issues (opens Assigned) | M1 |
-| `G` `D` | Drafts | M1 |
+| `G` `D` | Drafts (also "Go to Drafts" in `Mod+K`, command-menu §2) | M1 |
 | `G` `T` | Team triage | M4 |
 | `G` `A` | Team active issues | M2 |
 | `G` `B` | Team backlog | M2 |
@@ -149,6 +149,8 @@ The **M** column is the milestone in which a shortcut ships. Shortcuts arrive wi
 |---|---|---|
 | `R` | Reply to the focused comment | M1 |
 | `Enter` / `Mod+Enter` | Send the comment, reply or edit in this box (`Shift+Enter` is a new line; shadows `issue-page` `Mod+Enter`) | M1 |
+
+*As built (PLAN-013 S5, 2026-11-16; SPEC-013 D28):* the `Enter` binding is `quiet`, so `Enter` on a link, a checklist box or a button inside a comment keeps its own action, and only a text field sends. When its command is unavailable, a quiet binding lets the key through to the page and shows no "not available here" hint.
 
 Linear lists no keys to move through comments, edit or delete one, so Surface has none: those run from the comment menu.
 

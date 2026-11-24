@@ -163,6 +163,8 @@ Cascades and system writes also leave `updatedAt` alone and write no per-issue h
 
 A new operation that writes an issue or its children **must** add a row here, and its spec must cite it. The registry lint can't check this, so the table has a unit test per row (AC-1).
 
+*As built (2026-11-24):* the table lives in `packages/domain/src/issue-lifecycle.ts` (`ISSUE_LIFECYCLE_RULES`), and every row above is built. The attachment rows came with PLAN-014 S4a, which also made restore log the issue's Attachment rows again (§5.1) and made purge delete them and their files (§4.5). `apps/server/test/issue-lifecycle-table.test.ts` fails while any row is still marked pending (PLAN-015 S5).
+
 ### 4.4 `lockIssueForWrite`
 
 SPEC-011 §4.8 defines the helper, its lock and the lock order; this section defines its modes from the §4.3 table. Every issue write and every child write takes the issue's row lock before any child row lock and before reading its lifecycle (only workspace, team, status and label locks come earlier, per SPEC-011 §4.8). Without it, a comment can read "live", a delete can commit, and the comment then lands on a deleted issue. A purge can also fail on a foreign key to a comment inserted after its child delete.

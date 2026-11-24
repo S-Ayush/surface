@@ -148,7 +148,7 @@ All configuration is through environment variables, validated at startup with a 
 | `UPLOAD_MAX_MB` | | 25 | The largest attachment or inline upload. Avatars and logos stay at 2 MB. Uploads are also refused when they would leave less than 1 GB free on the uploads volume (`507`, E6; SPEC-014 §4.6) |
 | `MCP_ENABLED` | | true | Effective in M6 |
 | `SURFACE_SETUP_TOKEN` | | random | Fixed setup token, 16–128 characters (SPEC-001 §3.1, Q4). Set it when more than one container serves HTTP |
-| `SURFACE_ROLE` | | all | all \| web \| worker |
+| `SURFACE_ROLE` | | all | all \| web \| worker. `all` and `worker` run the jobs; every role starts pg-boss to queue jobs (§8 step 6). A `worker` mounts the same uploads volume as `web` |
 | `LOG_LEVEL` | | info | |
 | `METRICS_ENABLED` | | false | Exposes `/metrics` |
 | `TRUST_PROXY` | | true | Trust the one reverse proxy in front, if it connects from a loopback, private or link-local address: the client address is the last `X-Forwarded-For` entry (the one that proxy added), and the scheme and host are the last `X-Forwarded-Proto`/`-Host` entries. Set `false` when Surface is reachable without a proxy (D6). |
@@ -173,6 +173,7 @@ All configuration is through environment variables, validated at startup with a 
    - run **migrations**. A failed migration exits non-zero, with the DB unchanged by it (each migration runs in its own transaction). History is kept in `schema_migrations`, including the Surface version that applied each migration (used for E7).
 5. If setup is incomplete, generate or log the setup token (SPEC-001).
 6. Start the job worker (by role), HTTP, and WebSocket. `/readyz` turns ready.
+   *Changed 2026-11-24 (PLAN-014 S4b, SPEC-014 §4.4):* pg-boss starts in **every** role, `web` included, as a producer: `attachment.createFile` queues its preview in its own transaction, and email is queued from any role when SMTP is set. Only `all` and `worker` run jobs, schedules and pg-boss maintenance. This adds up to 4 database connections to a `web` process. If shutdown starts while pg-boss is starting, it is stopped again (`startUnlessDraining`). The preview job reads originals from the uploads volume, so a `worker` mounts the same `uploads` volume as the `web` containers ([troubleshooting](../ops/troubleshooting.md)).
 
 **Shutdown** (SIGTERM / SIGINT):
 1. `/readyz` → 503, and new connections are refused.

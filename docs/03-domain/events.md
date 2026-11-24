@@ -6,6 +6,8 @@ Status: **Draft v0.1** · Date: 2026-11-06 · Related: [domain-model](domain-mod
 
 *Changed 2026-11-16 (PLAN-011 S6, SPEC-011 D17): a description save emits `issue.updated` with `data: { description: true, version }` and no `changes`.*
 
+*Changed 2026-11-24 (M1 docs catch-up, as built in PLAN-013 S4, PLAN-014 S4a and PLAN-015 S2): the payloads of `reaction.added`/`removed`, `attachment.created`/`deleted` and `issue.purged` are written out below.*
+
 Every committed operation emits one or more **domain events**, inside the same DB transaction (an outbox table). One event stream feeds every consumer, so history, notifications, webhooks, and audit can never disagree.
 
 ```
@@ -41,15 +43,15 @@ Consumer legend: **H** History · **S** Subscriptions · **N** Notifications · 
 | ↳ description mentions added | new @mention | ✓ | mentioned users | mentioned users | — | — |
 | `issue.moved_team` | Team move | ✓ | — | subscribers | ✓ | — |
 | `issue.deleted` / `issue.restored` | Delete (to Recently deleted) / restore from archived or deleted | ✓ | — | — | ✓ | — |
-| `issue.purged` | Permanent delete (Admin, or the `trash-purge` job) | — | — | — | ✓ | ✓ |
+| `issue.purged` | Permanent delete (Admin, or the `trash-purge` job). `data: { teamId, number }`. The audit line is SPEC-001 §10's `issue.purged` | — | — | — | ✓ | ✓ |
 | `issue.archived` | ⚙️ the auto-archive job only (`issue.autoArchive`) | ✓ | — | creator (M4) | ✓ | — |
 | `issue.triaged` | Accept / decline / duplicate | ✓ | — | creator | ✓ | — |
 | `relation.created` / `relation.deleted` | Relation change | ✓ (both issues) | — | assignee of the *blocked* issue (on `blocks`) | ✓ | — |
 | `comment.created` | New comment or reply | — | commenter, mentioned | subscribers + mentioned (not the actor) | ✓ | — |
 | `comment.updated` / `comment.deleted` | Edit / delete | — | newly mentioned | newly mentioned | ✓ | — |
 | `comment.resolved` / `comment.reopened` | `comment.resolve` / `comment.reopen`, only when the thread's state changes | — | — | — | ✓ | — |
-| `reaction.added` / `reaction.removed` | `reaction.set`, only when the state changes. The payload names the issue and the comment, if any. | — | — | — (no notification in v1) | ✓ | — |
-| `attachment.created` / `attachment.deleted` | Attachment change | ✓ | — | — | ✓ | — |
+| `reaction.added` / `reaction.removed` | `reaction.set`, only when the state changes. Subject `{type: "reaction", id}` (the derived `reactionId`); `data: { issueId, commentId, emoji }`, with `commentId` null for a reaction on the issue itself. | — | — | — (no notification in v1) | ✓ | — |
+| `attachment.created` / `attachment.deleted` | `attachment.createFile` or `createLink` / `attachment.delete`. Subject `{type: "attachment", id}`; `data: { issueId, kind }` (`file` or `link`). A rename (`attachment.update`) and `attachment.setPreview` emit nothing and write no history (SPEC-014 §6.3). | ✓ | — | — | ✓ | — |
 | `cycle.started` / `cycle.completed` | ⚙️ cycle job | — | — | — | ✓ | — |
 | `cycle.rolled_over` | ⚙️ an issue moved to the next cycle | ✓ | — | — | — | — |
 | `project.created` / `project.updated` / `project.deleted` | Project change | — | lead, members | lead (on assignment), members (status → completed) | ✓ | — |

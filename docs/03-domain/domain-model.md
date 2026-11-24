@@ -214,7 +214,7 @@ The description is not on the Issue row: it is the content model **IssueContent*
 | userId | User | Author. For `api` and `mcp`, the key's owner. |
 | actorKind | `user` \| `api` \| `mcp` | Shown as "via API" or "via MCP". A `system` kind is deferred. |
 | body | doc | Editor JSON, at most 50 KB. Its search text is server-only (§1). |
-| version | int | Starts at 1, +1 on every body change. `comment.update` takes `baseVersion` and is `CONFLICT` when it differs. |
+| version | int | Starts at 1, +1 on every `comment.update` (even when the stored body comes out the same, SPEC-013 §4.3) and on a soft delete. `comment.update` takes `baseVersion` and is `CONFLICT` when it differs. |
 | editedAt, deletedAt | | A deleted comment that has replies shows as "deleted" |
 | resolvedAt, resolvedById | timestamptz?, User? | Top-level comments only (a resolved thread). Set by `comment.resolve`, cleared by `comment.reopen`, always together (INV-23). |
 
@@ -289,7 +289,7 @@ The other project entities:
 - **ViewDefault:** (`viewKey`), with the shared default display for built-in views ("set as default for everyone").
 - **Favorite:** `userId`, `targetType`, `targetId`, `sortOrder`.
 - **Subscription:** (`userId`, `targetType` ∈ {issue, project}, `targetId`), unique. Also holds `reason` (`creator` | `assignee` | `mention` | `commenter` | `manual` | `lead` | `member`) and `active` (false = explicitly unsubscribed, so auto-subscribe does not re-add the user).
-- **Draft** (user-scoped, synced in `user:<id>` only): `userId` (the owner, set by the server), `kind` (`composer` | `comment`), `teamId?` (composer: one draft per user and team), `issueId?` (comment: one draft per user and issue), `data` (json), `updatedAt`. At most 50 comment drafts per user (SPEC-012 §4.3).
+- **Draft** (user-scoped, synced in `user:<id>` only): `userId` (the owner, set by the server), `kind` (`composer` | `comment`), `teamId?` (composer: one draft per user and team), `issueId?` (comment: one draft per user and issue), `data` (json), `createdAt`, `updatedAt`. At most 50 drafts of each kind per user: saving a 51st deletes that kind's oldest (SPEC-012 §4.3, D24, D27; changed 2026-11-13, PLAN-012 S5). No foreign keys to teams or issues, and `teamId`, `issueId` and the ids in `data` are stored without being resolved (`opaqueIds`, [ADR-0025](../04-architecture/adr/0025-opaque-draft-ids.md)).
 - **Notification:** `userId`, `type` (see [events.md](events.md)), `issueId?`, `projectId?`, `projectUpdateId?`, `commentId?`, `actorId?`, `data` (json), `groupKey` (e.g. `issue:<id>`), `readAt?`, `snoozedUntil?`, `deletedAt?`.
 
 ### 4.16 Identity, platform & audit (server-only unless noted)

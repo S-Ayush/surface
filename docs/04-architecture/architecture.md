@@ -105,7 +105,7 @@ surface/
 | **Operation executor** | Authenticate → scope check → resolve references → permission check → run handler in a DB transaction → append sync log and event outbox → commit |
 | **Sync hub** | One WebSocket per tab. Sends catch-up deltas, then live deltas filtered by the user's sync groups. Also relays ephemeral presence messages. |
 | **MCP endpoint** | `/mcp`: `search_operations` (MiniSearch over the registry) and `execute_operation` (calls the operation executor) |
-| **Job worker** | pg-boss queues ([ADR-0024](adr/0024-job-queues.md)): cycle transitions, rollover, notification fan-out, emails, webhooks, auto-archive and auto-close, trash purge, file previews, file clean-up and sweep, update reminders, backups, sync-log and idempotency pruning |
+| **Job worker** | pg-boss queues ([ADR-0024](adr/0024-job-queues.md)): cycle transitions, rollover, notification fan-out, emails, webhooks, auto-archive and auto-close, trash purge, file previews, file clean-up and sweep, update reminders, backups, sync-log and idempotency pruning <br>*As built in M1:* `all` and `worker` run the jobs. Every role starts pg-boss as a producer, `web` too, because `attachment.createFile` queues `files-preview` in its own transaction (SPEC-014 §4.4, SPEC-004 §8). `files-preview` is a `stately` queue keyed by file id (one queued and one running per file), 3 retries with backoff and a 10-minute expiry. The daily lifecycle jobs (`trash-purge`, `auto-archive`, `auto-close`) share `jobs/daily-batch.ts`: batches of 100, at most 5,000 a run, a `singletonKey`, an expiry, and a catch-up run after downtime (SPEC-015 §6.3). |
 | **Outbox consumers** | Turn domain events into history, notifications, webhooks, and audit entries ([events.md](../03-domain/events.md)) |
 
 `SURFACE_ROLE` = `all` (default) | `web` | `worker` allows the components to be split into separate containers later. A single process is the default.
@@ -144,7 +144,7 @@ sequenceDiagram
 `execute_operation` and `POST /api/ops/:name` call the **same executor**. Deltas reach every open client exactly as if the change had been made in the UI. The actor is recorded as `mcp` or `api`.
 
 ### 5.4 Time-based automation
-The cycle job runs hourly: complete, roll over, activate, generate (idempotent steps), all through the executor with `actor = system`.
+The cycle job runs hourly: complete, roll over, activate, generate (idempotent steps), all through the executor with `actor = system`. *Added 2026-11-24 (M1):* the issue lifecycle jobs `auto-close` (03:17 UTC), `auto-archive` (03:29) and `trash-purge` (03:53) run daily the same way: each issue is one operation (`issue.autoClose`, `issue.autoArchive`, `issue.purge`) through the executor as `system`, re-checked under the issue lock on the app clock (SPEC-015 §6.3).
 
 ---
 
@@ -206,7 +206,7 @@ React components ──observe──► MobX object pool (models by id, computed
 |---|---|
 | **Domain unit** | Invariants, state machines, filter engine, fractional indexing |
 | **Operation contract** | Each operation's examples validate and run against a seeded DB. Permission matrix tests. |
-| **Sync simulation** | An in-process server plus N simulated clients with a controllable network (delay, drop, reorder, disconnect). **Property test (fast-check):** after random operations and network chaos, every client's store converges to the server state. Pending mutations are never lost or applied twice. |
+| **Sync simulation** | An in-process server plus N simulated clients with a controllable network (delay, drop, reorder, disconnect). **Property test (fast-check):** after random operations and network chaos, every client's store converges to the server state. Pending mutations are never lost or applied twice. <br>*As built in M1:* the real-server harness (`tests/sync-sim`) judges "caught up" per user: a socket has caught up when it has seen the newest `sync_log` row its user may see (`headFor(userId)`), since `Draft` rows reach only their owner (PLAN-012 S5). Content models are covered by `packages/sync-client/test/content.prop.test.ts` (fake hub) and the sim's comment, reaction, description, attachment and lifecycle cases. `pnpm sim:deep` runs the 1,000-case suite (PLAN-011 S8). |
 | **Isolation** | The private-team leak checklist ([permissions §5](../03-domain/permissions.md#5-leak-checklist-must-be-covered-by-tests)) |
 | **E2E (Playwright)** | PRD journeys J1–J8, keyboard-driven, with two browsers for real-time checks |
 | **Performance** | A seeded reference-scale workspace (NFR-10). Budgets are asserted in CI: interaction p95, warm start, bootstrap time, sync lag. |
@@ -236,3 +236,4 @@ React components ──observe──► MobX object pool (models by id, computed
 |---|---|
 | 2026-11-12 | M1 acceptance gate. §1, §5.1, §7: issues load per subscribed team, and archived and deleted issues are not stored on the client ([ADR-0020](adr/0020-partial-issue-sync.md)); prefetch is per subscribed team, with no current cycle until M3. §6: the repo layer's rule (rule 2), its bulk writes, groups from the locked issue row, and its two stated exceptions ([ADR-0022](adr/0022-purge-content-unlogged.md) purge, [ADR-0023](adr/0023-document-migration-unlogged.md) document migrations). §7: BroadcastChannel is a later optimisation; content eviction uses Web Locks (SPEC-011 Q16). §2, §4: files follow [ADR-0021](adr/0021-issue-files.md), and queues [ADR-0024](adr/0024-job-queues.md). §8: `INSUFFICIENT_STORAGE`. |
 | 2026-11-12 | PLAN-011 S1. §6: `sync/bulk.ts` builds the repo's bulk statements; only `repo.ts` imports it. |
+| 2026-11-24 | M1 docs catch-up. §4: pg-boss produces in every role, the `files-preview` queue policy and the shared daily lifecycle batch (PLAN-014 S4b, PLAN-015 S2/S3). §5.4: the lifecycle jobs. §9: the sync sim's per-user "caught up" (PLAN-012 S5) and where the content properties live. |
