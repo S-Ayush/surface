@@ -476,6 +476,21 @@ describe('the lifecycle rule table, row by row (AC-1, AC-2)', () => {
       expect(error instanceof SurfaceError && error.message).toBe(message);
     },
   );
+
+  // PLAN-015 S5 edge sweep: E2's comment typed while the job archives the issue, and E17's
+  // reaction on an archived issue's comment, get the same wording and write nothing.
+  it.each([
+    ['comment.create', 'a comment on an archived issue (E2)'],
+    ['reaction.set', 'a reaction to a comment on an archived issue (E17)'],
+  ] as const)('refuses %s: %s, with the §4.2 wording', async (name, _what) => {
+    const { m, error } = await run(name, 'archived');
+    expect(error).toBeInstanceOf(SurfaceError);
+    expect(error instanceof SurfaceError && error.code).toBe('CONFLICT');
+    expect(error instanceof SurfaceError && error.message).toBe(
+      'ENG-1 is archived. Restore it to edit it.',
+    );
+    expect(m.writes).toEqual([]);
+  });
 });
 
 /** The comment the comment handlers' inputs name, a top-level comment on ENG-1 by Ada. */

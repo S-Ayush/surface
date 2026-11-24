@@ -264,3 +264,70 @@ describe('a content load that fails in a restart (SPEC-011 D14)', () => {
     expect(refusals).toEqual(['user-2/tab-2: comment.create']);
   });
 });
+
+/**
+ * PLAN-015 S5 (AC-13 with attachments, AC-21): Alpha has a link and a file and Beta a link. The
+ * job archives Alpha and a restore brings it back (`V`, then the Attachment re-log); Beta is
+ * deleted and the Admin purges it with its attachment (Attachment `D`, Issue `D`). Every tab, and
+ * a fresh bootstrap, then holds Alpha with both attachments and nothing of Beta.
+ */
+const attachmentsThroughLifecycle: Case = {
+  seed: 5,
+  users: 2,
+  lateUsers: 0,
+  webLocks: true,
+  steps: [
+    { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+    { t: 'issueCreate', tab: 1, title: 'Beta', status: 'default', labels: [] },
+    { t: 'wait', ms: 3_000 },
+    { t: 'attachmentLink', tab: 0, issue: 0, url: 0 },
+    { t: 'attachmentFile', tab: 1, issue: 0, upload: 0 },
+    { t: 'attachmentLink', tab: 1, issue: 1, url: 1 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueAutoArchive', issue: 0 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueRestore', tab: 1, issue: 0 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueDelete', tab: 1, issue: 1 },
+    { t: 'wait', ms: 2_000 },
+    { t: 'issuePurge', tab: 0, issue: 1, admin: true },
+    { t: 'wait', ms: 3_000 },
+  ],
+};
+
+describe('attachments through archive, restore and purge (AC-13, AC-21)', () => {
+  it('brings an archived issue’s attachments back on restore and purges a deleted one’s, equal to a fresh bootstrap', async () => {
+    const servers = lifecycleServers();
+    const result = await simulate(
+      attachmentsThroughLifecycle,
+      { ...lifecycleConvergence.options, server: servers.server },
+      async (outcome) => {
+        await lifecycleConvergence.check(outcome);
+        const server = servers.last();
+        const stored = Object.values((await server?.attachments()) ?? {});
+        return {
+          outcomes: outcome.world.dispatched
+            .filter((d) => d.op !== 'issue.create')
+            .map((d) => `${d.op} ${String(d.outcome?.status)}`),
+          archivedEvents: ((await server?.events('issue.archived')) ?? []).length,
+          issues: Object.keys((await server?.issues()) ?? {}).length,
+          attachments: stored.map((a) => String(a.kind)).sort(),
+        };
+      },
+    );
+    expect(result).toEqual({
+      outcomes: [
+        'attachment.createLink confirmed',
+        'attachment.createFile confirmed',
+        'attachment.createLink confirmed',
+        'issue.restore confirmed',
+        'issue.delete confirmed',
+        'issue.purge confirmed',
+      ],
+      archivedEvents: 1,
+      // Alpha, with its two attachments; Beta and its link are gone.
+      issues: 1,
+      attachments: ['file', 'link'],
+    });
+  });
+});
