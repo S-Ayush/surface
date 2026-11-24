@@ -267,7 +267,7 @@ One migration, in S5 (next migration number): the `drafts` table with its partia
 | AC-24 | `ui/test/property-picker.test.tsx` (`Space` and `Enter`), `web/test/composer.test.tsx` (E20), `web/test/draft-adapter.test.ts` (rejected comment text) (S2, S5, S6) |
 | AC-25 | `web/test/issue-list-model.test.ts` (the `archived` and `deleted` variants, date column), `issue-commands-context.test.ts` (S3, S6). The routes and `Restore` are PLAN-015 S4 |
 | AC-26 | `web/test/issue-readonly.test.tsx`, `sync-client/test/content-peek.test.ts` (S4b) + story `PropertiesPanel.stories.tsx` (ReadOnly) |
-| AC-27 | `web/test/issue-list-team-load.test.tsx` (S3) + PLAN-011 S4c `sync-react/test/team-load-state.test.tsx`, `my-issues-page.test.tsx` (offline) |
+| AC-27 | `web/test/issue-list-team-load.test.tsx` (S3) + PLAN-011 S4c `sync-react/test/team-load-state.test.tsx`, `web/test/issue-list-page.test.tsx` ("renders Assigned from the replica, offline too"; the plan's `my-issues-page.test.tsx` was folded into it, noted 2026-11-24) |
 | AC-28 | `web/test/issue-loader.test.ts` (S4) + `sync-client/test/subscriptions.test.ts` (the link open on the fake hub, S4b) + `web/test/command-sources.test.ts` (identifier not held, S3) |
 | AC-29 | `sync-client/test/sign-out.test.ts` (fake-indexeddb) + `web/test/sign-out.test.tsx` (S7a) |
 | AC-30 | PLAN-015 S4 `web/test/archived-count-footer.test.tsx` (the footer is built there) |

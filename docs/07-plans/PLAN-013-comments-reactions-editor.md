@@ -267,12 +267,12 @@ Held rows are marked ⏸ per [README §6](README.md#6-testing-hold-e2e-smoke-and
 | AC-16 no outbound request, ESLint ban | `packages/editor/test/no-network.test.tsx` (editor, `DocView`; S2) + `packages/ui/test/emoji-picker-no-network.test.tsx` and `apps/web/test/editor-picker-no-network.test.tsx` (picker; S4); lint rule check in `packages/config` test | S2, S4 |
 | AC-17 keyboard only, screen reader names | ⏸ e2e; checked by hand in S5 "As built". Axe in Storybook for card, chip, editor | S5 |
 | AC-18 cross-tab < 150 ms | ⏸ e2e perf; checked by hand | S5 |
-| AC-19 `Mod+Enter` and `Shift+Enter` | `test/enter-modes.test.tsx` (editor + engine); reply and edit keys in `comment-flow.test.tsx` | S2, S5 |
+| AC-19 `Mod+Enter` and `Shift+Enter` | `apps/web/src/editor-keys.test.tsx` (editor + engine; the plan's `test/enter-modes.test.tsx`, placed in `apps/web` by the boundary rules, noted 2026-11-24); reply and edit keys in `comment-flow.test.tsx` | S2, S5 |
 | AC-20 drafts, rejection, queued edits | `apps/web/test/comment-flow.test.tsx` (fake server, in-memory store); E22 in `comment.test.ts` | S3, S5 |
 | AC-21 resolve and reopen | `comment-ops.test.ts`; UI collapse in `comment-flow.test.tsx` | S3, S5 |
 | AC-22 issue reactions | `reaction-set.test.ts`, `reactions-real-server.int.test.ts` | S4 |
 | AC-23 keys and input rules | `packages/editor/test/keys.test.tsx` | S2 |
-| AC-24 `Enter` modes, IME, checklist | `test/enter-modes.test.tsx` | S2 |
+| AC-24 `Enter` modes, IME, checklist | `apps/web/src/editor-keys.test.tsx` (noted 2026-11-24) | S2 |
 | AC-25 underline | `markdown.prop.test.ts` (underline in the arbitrary) | S1 |
 | Leak checklist (permissions §5): `/sync/content`, live deltas, `comment.list`, `CommentRef` NOT_FOUND worded as missing, API key with other `teamIds`, reactions, soft-deleted placeholder, `sync_log` rows | `comment-leak.int.test.ts`, mutation-checked as in PLAN-001 S1 (with every team public, tests fail) | S3, S4 |
 | E1, E15, E17, E21 client rollback | `comment-flow.test.tsx` | S5 |
