@@ -4,7 +4,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import type { IssueShape, StoredChange, SyncStorage } from '../src/storage/types.js';
 import type { SyncStore } from '../src/store.js';
 import { FakeHub } from './support/hub.js';
-import { eventually, teamStore, teamView, until } from './support/live.js';
+import { eventually, keptMemoryStorage, teamStore, teamView, until } from './support/live.js';
 import { OTHER_USER, USER_ID, id } from './support/models.js';
 import { BACKENDS, closePorts, uniqueName } from './support/storage.js';
 
@@ -195,6 +195,42 @@ describe.each(BACKENDS)('$name storage, partial writes', (backend) => {
     expect(await ids(storage, 'TaskPart')).toEqual([id(31)]);
   });
 
+  it('keeps a child stored before its task, and sweeps a team child whose task stays absent (SPEC-014 D30)', async () => {
+    const { storage, generation } = await replica();
+    // Live parts of squad B that came while its load was pending, above the answer's id (20).
+    const teamPart = (n: number, issue: number) => ({ ...part(n, issue), teamId: SQUAD_B });
+    await storage.applyChanges(
+      generation,
+      [upsert('TaskPart', 21, teamPart(33, 11)), upsert('TaskPart', 22, teamPart(34, 12))],
+      22,
+    );
+    await storage.writePartialRows(generation, {
+      shape: SHAPE,
+      teams: [SQUAD_B],
+      version: 20,
+      through: 22,
+      // The answer brings task 11; task 12 was archived before it (a stray `setPreview` part).
+      rows: [{ model: 'Task', row: task(11, SQUAD_B), archived: false }],
+    });
+    expect(await ids(storage, 'Task')).toEqual([id(1), id(11)]);
+    expect(await ids(storage, 'TaskPart')).toEqual([id(33)]);
+    // The sweep's tombstone is at the swept row's version: the same packet can't bring it back.
+    await storage.applyChanges(generation, [upsert('TaskPart', 22, teamPart(34, 12))], 22);
+    expect(await ids(storage, 'TaskPart')).toEqual([id(33)]);
+  });
+
+  it("removes a team's child whose task isn't stored on unsubscribe (SPEC-014 D30)", async () => {
+    const { storage, generation } = await replica();
+    const teamPart = { ...part(33, 11), teamId: SQUAD_B };
+    await storage.applyChanges(generation, [upsert('TaskPart', 11, teamPart)], 11);
+    await storage.removeTeamRows(generation, {
+      shape: SHAPE,
+      teams: [SQUAD_B],
+      keep: ['workspace', `team:${SQUAD_A}`],
+    });
+    expect(await ids(storage, 'TaskPart')).toEqual([]);
+  });
+
   it('keeps the on-demand teams most recent first, at most `limit`, across a new bootstrap', async () => {
     const { storage } = await replica();
     expect(await storage.readOnDemand()).toEqual([]);
@@ -243,5 +279,66 @@ describe('store: a partial answer never undoes a live packet above it (E30)', ()
     expect(Object.keys(view.tasks).sort()).toEqual([id(132), id(134)]);
     expect(view.tasks[id(132)]).toMatchObject({ title: 'Renamed' });
     expect(view.parts).toEqual({});
+  });
+});
+
+describe("store: an eager child waits for its team's load (SPEC-014 D30, amended 2026-11-24)", () => {
+  const stores: SyncStore[] = [];
+  afterEach(async () => {
+    for (const store of stores.splice(0)) await store.close();
+  });
+
+  /** Squad 3 (public, not a member) with live task 133 and archived task 135; held answer. */
+  async function loading() {
+    const hub = new FakeHub().withTeams();
+    hub.addSquad(1);
+    hub.addSquad(3);
+    hub.join(USER_ID, 1);
+    hub.putTask(133, 3, { creatorId: OTHER_USER });
+    hub.putTask(135, 3, { creatorId: OTHER_USER });
+    hub.archiveTask(135);
+    const kept = keptMemoryStorage();
+    const { store } = teamStore(hub, { connectStorage: kept.connect });
+    stores.push(store);
+    await store.start();
+    await eventually(() => hub.live.length > 0);
+    hub.holdPartial = true;
+    store.openTeam(id(3));
+    await eventually(() => hub.partialRequests.length === 1);
+    /** Every packet sent so far is applied, and stored. */
+    const settled = async () => {
+      const sent = hub.last.sent;
+      await until(() => (store.position?.lastSyncId ?? 0) >= sent);
+      await eventually(async () => (await kept.lastSyncId()) >= sent);
+    };
+    return { hub, store, kept, settled };
+  }
+
+  it('keeps a part of a live task that arrives before the answer whose snapshot predates it', async () => {
+    const { hub, store, kept, settled } = await loading();
+    hub.putPart(501, 133);
+    await settled();
+    hub.releasePartial();
+    await until(() => store.teamLoadState(id(3)) === 'ready');
+    expect(teamView(store).parts).toEqual({ [id(501)]: id(133) });
+    await settled();
+    await eventually(async () => (await kept.stored('TaskPart')).length === 1);
+    expect(await kept.stored('TaskPart')).toEqual([id(501)]);
+  });
+
+  it('sweeps a part of an archived task that arrived while the team loaded, from pool and storage', async () => {
+    const { hub, store, kept, settled } = await loading();
+    // Like `attachment.setPreview` on an archived issue: logged under the team, never live here.
+    hub.putPart(502, 135);
+    await settled();
+    hub.releasePartial();
+    await until(() => store.teamLoadState(id(3)) === 'ready');
+    expect(teamView(store).parts).toEqual({});
+    await eventually(async () => (await kept.stored('TaskPart')).length === 0);
+    // A part arriving once the team is loaded is dropped at once (D30).
+    hub.putPart(503, 135);
+    await settled();
+    expect(teamView(store).parts).toEqual({});
+    expect(await kept.stored('TaskPart')).toEqual([]);
   });
 });

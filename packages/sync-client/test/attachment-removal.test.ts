@@ -206,6 +206,44 @@ describe('Attachment rows leave and return with their issue (SPEC-014 §4.1)', (
     expect(plan.lastSyncId).toBe(13);
   });
 
+  it('keeps an Attachment U for an issue not held yet while its team’s load is pending (D30, amended)', () => {
+    // A team subscribed a moment ago streams before its partial answer: the issue's `I` was logged
+    // before this replica followed the team, so the answer, not the log, brings the issue.
+    const pool = replica();
+    const NEW = '0192f0c1-7e5a-7b3c-9d4e-0000000000b4';
+    const OPS = '0192f0c1-7e5a-7b3c-9d4e-0000000000e2';
+    const A4 = '0192f0c1-7e5a-7b3c-9d4e-000000000a04';
+    const A5 = '0192f0c1-7e5a-7b3c-9d4e-000000000a05';
+    const plan = planDeltas(
+      pool,
+      {
+        t: 'deltas',
+        prev: 10,
+        packets: [
+          { id: 11, a: 'I', m: 'Attachment', d: attachmentRow(A4, NEW) },
+          // Another team, loaded here: its orphan still goes at once.
+          { id: 12, a: 'I', m: 'Attachment', d: { ...attachmentRow(A5, NEW), teamId: OPS } },
+        ],
+        ack: [],
+      },
+      10,
+      rules,
+      undefined,
+      (team) => team === ENG,
+    );
+    if (plan.kind !== 'apply') throw new Error('expected an apply plan');
+    pool.applyBase(plan.base);
+    expect(
+      pool
+        .all('Attachment')
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual([A1, A2, A3, A4]);
+    expect(plan.stored.filter((c) => c.kind === 'delete')).toEqual([
+      { kind: 'delete', model: 'Attachment', version: 12, id: A5 },
+    ]);
+  });
+
   it('keeps an attachment whose issue arrives earlier in the same batch', () => {
     const pool = replica();
     const NEW = '0192f0c1-7e5a-7b3c-9d4e-0000000000b3';

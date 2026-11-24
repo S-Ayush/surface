@@ -909,6 +909,7 @@ export class SyncStore {
         position.lastSyncId,
         this.#rules,
         this.#content.enabled ? this.#content.routing : undefined,
+        this.#teams && ((teamId) => this.#teams?.loadPending(teamId) === true),
       );
     } catch (error) {
       if (!(error instanceof ProtocolError)) throw error;

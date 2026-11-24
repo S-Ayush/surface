@@ -379,6 +379,16 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
             { kind: 'releaseAcks' },
           ],
         ],
+        // SPEC-014 D30 (amended 2026-11-24): a part put on a task of a team just joined reaches
+        // the tab before the team's partial answer, whose snapshot predates it. The part is kept
+        // until the load brings its task, not dropped as an orphan (PLAN-011 S8's 1,000-case run).
+        [
+          [
+            { kind: 'join', squad: 5 },
+            { kind: 'yield', turns: 3 },
+            { kind: 'part', n: 4 },
+          ],
+        ],
       ],
     },
   );

@@ -174,6 +174,15 @@ export class TeamSubscriptions {
     return [...this.#current].filter((team) => this.#accepted.has(team));
   }
 
+  /**
+   * Whether `teamId`'s partial bootstrap is pending: its packets already arrive, but rows logged
+   * before the subscription may still be missing. SPEC-014 D30 keeps an eager child whose Issue
+   * is absent until then; `#applyAnswer` sweeps it if the answer doesn't bring the Issue.
+   */
+  loadPending(teamId: string): boolean {
+    return this.#loading.has(teamId);
+  }
+
   /** Observable; see `TeamLoadState`. */
   loadState(teamId: string): TeamLoadState {
     if (!this.#prepared.get() || this.#host.appliedId() === undefined) return 'loading';
@@ -583,6 +592,25 @@ export class TeamSubscriptions {
         for (const { row } of pool.baseRows(child.model)) {
           if (!parents.has(String(row[child.field]))) continue;
           if (answered.has(key(child.model, row.id)) || newer(child.model, row.id)) continue;
+          changes.push({ kind: 'delete', model: child.model, id: row.id });
+        }
+      }
+      // SPEC-014 D30 (amended 2026-11-24): the teams are complete now. A child kept while they
+      // loaded (it came before its Issue's rows) whose Issue is still absent was never live here:
+      // a fresh bootstrap leaves it out. Storage applies the same sweep (`planPartialWrite`).
+      const issueAfter = new Map<string, boolean>();
+      const removed = new Set<string>();
+      for (const change of changes) {
+        const id = change.kind === 'delete' ? change.id : change.row.id;
+        if (change.model === rules.issue) issueAfter.set(id, change.kind !== 'delete');
+        if (change.kind === 'delete') removed.add(key(change.model, id));
+      }
+      const issueHeld = (id: string) =>
+        issueAfter.get(id) ?? pool.baseOf(rules.issue, id) !== undefined;
+      for (const child of rules.shape.children) {
+        for (const { row } of pool.baseRows(child.model)) {
+          if (!teamSet.has(teamOf(row) ?? '') || removed.has(key(child.model, row.id))) continue;
+          if (issueHeld(String(row[child.field]))) continue;
           changes.push({ kind: 'delete', model: child.model, id: row.id });
         }
       }

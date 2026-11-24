@@ -94,6 +94,31 @@ export function planPartialWrite(write: PartialWrite, read: ReadRecords): Record
       if (parents.has(String(record.row[child.field]))) tombstone(child.model, record.id);
     }
   }
+  // SPEC-014 D30 (amended 2026-11-24): the teams are complete now. A child of theirs stored while
+  // they loaded (it came before its Issue's rows) whose Issue is still absent was never live
+  // here: a fresh bootstrap leaves it out. Its tombstone is never older than the row it ends.
+  const issueAfter = new Map<string, boolean>();
+  const written = new Set<string>();
+  for (const { model, record } of puts) {
+    if (model === shape.issue) issueAfter.set(record.id, record.row !== null);
+    written.add(`${model}\u0000${record.id}`);
+  }
+  const issueHeld = (id: string) =>
+    issueAfter.get(id) ?? (stored(shape.issue).get(id)?.row ?? null) !== null;
+  for (const child of shape.children) {
+    for (const record of stored(child.model).values()) {
+      if (record.row === null || written.has(`${child.model}\u0000${record.id}`)) continue;
+      const team = teamOf(record.row);
+      if (team === undefined || !teams.has(team) || issueHeld(String(record.row[child.field]))) {
+        continue;
+      }
+      const at = Math.max(record.version, version);
+      puts.push({
+        model: child.model,
+        record: { id: record.id, version: at, archived: false, row: null },
+      });
+    }
+  }
   // The answer carries no content: only the swept issues' content goes.
   for (const content of shape.content) {
     for (const record of stored(content.model).values()) {
@@ -120,7 +145,11 @@ export function planTeamRemoval(removal: TeamRemoval, read: ReadRecords): Record
   }
   for (const child of [...shape.children, ...shape.content]) {
     for (const record of read(child.model)) {
-      if (record.row !== null && ofTeams.has(String(record.row[child.field]))) {
+      if (record.row === null) continue;
+      // A child of the team whose Issue isn't stored (kept while the team loaded, SPEC-014 D30)
+      // goes too: every child of a team carries its `teamId` when its model has one.
+      const team = teamOf(record.row);
+      if (ofTeams.has(String(record.row[child.field])) || (team !== undefined && teams.has(team))) {
         deletes.push({ model: child.model, id: record.id });
       }
     }

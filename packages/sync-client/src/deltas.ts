@@ -12,7 +12,8 @@
  *   row is archived or deleted removes the Issue with a tombstone at the packet's id. After the
  *   whole batch, the eager children of every Issue the batch left absent are removed too, so a
  *   `D`+`U` group-change pair keeps them. So is an eager child upsert whose Issue the replica
- *   doesn't hold (SPEC-014 D30).
+ *   doesn't hold, unless its team's partial load is still pending (SPEC-014 D30, amended
+ *   2026-11-24): the load's answer may yet bring the Issue, and it sweeps the child otherwise.
  * - Content (SPEC-011 §5.3 step 4, PLAN-011 S5b; `ContentRouting`): a content upsert reaches the
  *   pool only when its parent is paged in here; storage gets every content packet and keeps an
  *   upsert only for a hydrated parent. A content `D` always applies (a tombstone). An `I` of a
@@ -118,6 +119,8 @@ export function planDeltas(
   lastSyncId: number,
   rules?: PartialRules,
   routing?: ContentRouting,
+  /** Whether a team's partial load is pending in this tab (`TeamSubscriptions.loadPending`). */
+  loadPending?: (teamId: string) => boolean,
 ): DeltaPlan {
   if (message.prev > lastSyncId) return { kind: 'gap' };
   const fresh = message.packets.filter((packet) => packet.id > lastSyncId);
@@ -177,7 +180,9 @@ export function planDeltas(
     ...(routing === undefined ? rules.shape.content : []),
   ];
   const gone =
-    rules && children ? removeChildren(pool, rules, children, base, stored, touched, last.id) : [];
+    rules && children
+      ? removeChildren(pool, rules, children, base, stored, touched, last.id, loadPending)
+      : [];
   const goneParents = routing ? removeContent(pool, routing, base, stored, touched, last.id) : [];
   return {
     kind: 'apply',
@@ -248,8 +253,14 @@ function removeContent(
  * SPEC-014 §4.4 (D30): an upsert of an eager child whose Issue is held neither in the pool nor
  * by the batch is dropped the same way. The server may log a child of an Issue no replica holds
  * (`attachment.setPreview` on an archived or deleted issue); bootstrap leaves such rows out, so
- * keeping it would make this replica differ from a fresh one. An Issue's `I` always precedes its
- * children in log order, so a live Issue is never missing here.
+ * keeping it would make this replica differ from a fresh one.
+ *
+ * D30 as amended (2026-11-24): only once the child's team (its `teamId`) is loaded here. A team
+ * subscribed a moment ago streams packets before its partial answer arrives, so a live Issue's
+ * child can come first: the Issue's `I` was logged before this replica followed the team. That
+ * child stays, and when the load completes `TeamSubscriptions` (pool) and `planPartialWrite`
+ * (storage) sweep the team's children whose Issue is still absent. A child with no `teamId`
+ * goes at once, as before.
  */
 function removeChildren(
   pool: ObjectPool,
@@ -259,6 +270,7 @@ function removeChildren(
   stored: StoredChange[],
   touched: TouchedRow[],
   version: number,
+  loadPending: ((teamId: string) => boolean) | undefined,
 ): string[] {
   const goneSet = deletedBy(base, new Set([rules.issue]));
   const gone = [...goneSet];
@@ -271,6 +283,12 @@ function removeChildren(
   }
   const held = (issue: string): boolean =>
     inBatch.get(issue) ?? pool.baseOf(rules.issue, issue) !== undefined;
+  /** D30: an orphan child goes unless its team's load may still bring its Issue. */
+  const orphanGoes = (row: Readonly<Record<string, unknown>>, issue: string): boolean => {
+    if (held(issue)) return false;
+    const { teamId } = teamOf(row);
+    return teamId === undefined || loadPending?.(teamId) !== true;
+  };
   const eager = new Set(rules.shape.children.map(modelOf));
   for (const child of children) {
     const ids = new Set<string>();
@@ -283,7 +301,17 @@ function removeChildren(
     for (const change of planned) {
       if (change.model !== child.model || change.kind === 'delete') continue;
       const issue = String(change.row[child.field]);
-      if (goneSet.has(issue) || (orphansGo && !held(issue))) ids.add(change.row.id);
+      if (goneSet.has(issue) || (orphansGo && orphanGoes(change.row, issue))) {
+        ids.add(change.row.id);
+      }
+    }
+    // Storage keeps a version only if it grows, so a delete at the batch's last id can't end an
+    // upsert this batch stored at that same id (the batch's last packet): those upserts are not
+    // stored at all, and the delete alone leaves the tombstone.
+    for (let at = stored.length - 1; at >= 0; at -= 1) {
+      const change = stored[at];
+      if (change?.model !== child.model || change.kind === 'delete') continue;
+      if (ids.has(change.row.id)) stored.splice(at, 1);
     }
     for (const id of ids) {
       base.push({ kind: 'delete', model: child.model, id });
