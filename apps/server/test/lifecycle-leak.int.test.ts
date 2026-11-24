@@ -389,11 +389,6 @@ function expectNoSec(text: string, context: string) {
   for (const mark of secMarks()) expect(text, `${context}: ${mark}`).not.toContain(mark);
 }
 
-async function logLength(): Promise<number> {
-  const { rows } = await h.pool.query<{ n: number }>('SELECT count(*)::int AS n FROM sync_log');
-  return rows[0]?.n ?? 0;
-}
-
 /** The failure of `operation`, with `hidden` replaced, so two answers can be compared. */
 async function failure(operation: string, input: object, actor: Actor, hidden: string[]) {
   const result = await executor.execute(operation, input, actor);
@@ -410,10 +405,16 @@ async function failure(operation: string, input: object, actor: Actor, hidden: s
 // ---------------------------------------------------------------------------------------------
 // Operations (AC-11, E12, E13)
 
-/** Every operation that names an issue, its comment or its attachment, as `refs` fill it. */
+/** A preview file id for `attachment.setPreview`; it never exists. */
+const PREVIEW_FILE = uuidv7();
+
+/**
+ * Every operation that names an issue, its comment, its attachment or its team, as `refs` fill
+ * it.
+ */
 const OPERATIONS: readonly [
   string,
-  (r: { issue: string; comment: string; attachment: string }) => object,
+  (r: { issue: string; comment: string; attachment: string; team: string }) => object,
 ][] = [
   ['issue.get', (r) => ({ issue: r.issue })],
   ['issue.delete', (r) => ({ issue: r.issue })],
@@ -421,34 +422,80 @@ const OPERATIONS: readonly [
   ['issue.purge', (r) => ({ issue: r.issue })],
   ['issue.update', (r) => ({ issue: r.issue, title: 'Leaked' })],
   ['issue.updateDescription', (r) => ({ issue: r.issue, baseVersion: 1, description: 'Leaked' })],
+  ['issue.list', (r) => ({ team: r.team, includeArchived: true })],
+  ['comment.list', (r) => ({ issue: r.issue })],
   ['comment.create', (r) => ({ issue: r.issue, body: 'Leaked' })],
   ['comment.update', (r) => ({ comment: r.comment, baseVersion: 1, body: 'Leaked' })],
   ['comment.delete', (r) => ({ comment: r.comment })],
+  ['comment.resolve', (r) => ({ comment: r.comment })],
+  ['comment.reopen', (r) => ({ comment: r.comment })],
   ['reaction.set', (r) => ({ comment: r.comment, emoji: '👍', reacted: true })],
   ['reaction.set', (r) => ({ issue: r.issue, emoji: '👍', reacted: true })],
   ['attachment.createLink', (r) => ({ issue: r.issue, url: 'https://example.com/leak' })],
   ['attachment.update', (r) => ({ attachment: r.attachment, title: 'Leaked' })],
   ['attachment.delete', (r) => ({ attachment: r.attachment })],
+  ['attachment.setPreview', (r) => ({ attachment: r.attachment, previewFile: PREVIEW_FILE })],
 ];
 
+/**
+ * `attachment.setPreview` is `systemOnly`: for anyone else it doesn't exist (SPEC-003 §6 step 2),
+ * so it answers `UNKNOWN_OPERATION` before reading its input, the same for a hidden attachment as
+ * for an unknown one.
+ */
+const EXPECTED_CODE: Readonly<Record<string, string>> = {
+  'attachment.setPreview': 'UNKNOWN_OPERATION',
+};
+
+/** What an operation could write for the issues of `teamId`, to compare before and after. */
+async function writable(teamId: string) {
+  const { rows } = await h.pool.query<{ counts: string; updated: string | null }>(
+    `SELECT concat_ws(' ',
+              (SELECT count(*) FROM sync_log),
+              (SELECT count(*) FROM issue_history),
+              (SELECT count(*) FROM comments),
+              (SELECT count(*) FROM attachments)) AS counts,
+            (SELECT string_agg(id || ' ' || updated_at::text, ', ' ORDER BY id)
+               FROM issues WHERE team_id = $1) AS updated`,
+    [teamId],
+  );
+  return rows[0];
+}
+
 /** Each operation on `issue` by identifier and by id, against the same on unknown refs. */
-async function expectAllUnknown(issue: Locked, unknownIdentifier: string, actor: Actor) {
-  const before = await logLength();
-  for (const [issueRef, unknownIssue] of [
-    [issue.identifier, unknownIdentifier],
-    [issue.id, uuidv7()],
+async function expectAllUnknown(
+  issue: Locked,
+  team: { readonly key: string; readonly id: string },
+  unknownIdentifier: string,
+  actor: Actor,
+) {
+  const before = await writable(team.id);
+  for (const [issueRef, unknownIssue, teamRef, unknownTeam] of [
+    [issue.identifier, unknownIdentifier, team.key, 'ZZZ'],
+    [issue.id, uuidv7(), team.id, randomUUID()],
   ] as const) {
-    const real = { issue: issueRef, comment: issue.comment, attachment: issue.fileAttachment };
-    const none = { issue: unknownIssue, comment: uuidv7(), attachment: uuidv7() };
+    const real = {
+      issue: issueRef,
+      comment: issue.comment,
+      attachment: issue.fileAttachment,
+      team: teamRef,
+    };
+    const none = {
+      issue: unknownIssue,
+      comment: uuidv7(),
+      attachment: uuidv7(),
+      team: unknownTeam,
+    };
     for (const [operation, input] of OPERATIONS) {
-      const hidden = Object.values(real);
-      const answer = await failure(operation, input(real), actor, hidden);
+      const answer = await failure(operation, input(real), actor, Object.values(real));
       const missing = await failure(operation, input(none), actor, Object.values(none));
-      expect(answer, `${operation} ${issueRef}`).toMatchObject({ code: 'NOT_FOUND' });
+      expect(answer, `${operation} ${issueRef}`).toMatchObject({
+        code: EXPECTED_CODE[operation] ?? 'NOT_FOUND',
+      });
       expect(answer, `${operation} ${issueRef}`).toEqual(missing);
     }
   }
-  expect(await logLength()).toBe(before);
+  // No log row, history entry, comment or attachment, and no issue of the team touched.
+  expect(await writable(team.id)).toEqual(before);
 }
 
 describe.each(STATES)('a %s SEC issue, named by someone outside SEC', (state) => {
@@ -458,7 +505,7 @@ describe.each(STATES)('a %s SEC issue, named by someone outside SEC', (state) =>
   ] as const)(
     'is NOT_FOUND for %s from every operation, like an issue that doesn’t exist, and writes nothing',
     async (_who, actor) => {
-      await expectAllUnknown(sec[state], 'SEC-999', actor());
+      await expectAllUnknown(sec[state], { key: 'SEC', id: h.teams.sec }, 'SEC-999', actor());
     },
   );
 
@@ -481,7 +528,7 @@ describe.each(STATES)('a %s SEC issue, named by someone outside SEC', (state) =>
   });
 
   it('is NOT_FOUND for an API key limited to ENG on the same OPS issue (E13)', async () => {
-    await expectAllUnknown(opsIssues[state], 'OPS-999', engKeyActor);
+    await expectAllUnknown(opsIssues[state], { key: 'OPS', id: ops }, 'OPS-999', engKeyActor);
     // Zoe herself sees it: the key's teams are what hid it.
     expect(await ok('issue.get', { issue: opsIssues[state].id }, zoeActor)).toMatchObject({
       id: opsIssues[state].id,
