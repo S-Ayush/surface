@@ -26,7 +26,7 @@ import {
 } from '../../db/schema/index.js';
 import type { HandlerContext } from '../../executor/context.js';
 import { SurfaceError } from '../../executor/errors.js';
-import { claimInlineFiles } from '../../files/claim.js';
+import { claimInlineFiles, claimStore } from '../../files/claim.js';
 import { lockIssueForWrite } from '../../issues/lifecycle.js';
 import { resolved } from '../teams/shared.js';
 import type {
@@ -74,7 +74,7 @@ export function commentAccess(ctx: HandlerContext): CommentAccess {
         .values({ commentId, text })
         .onConflictDoUpdate({ target: commentSearchText.commentId, set: { text } });
     },
-    claimFiles: (doc, issue) => claimInlineFiles(tx, doc, issue, ctx.actor),
+    claimFiles: (doc, issue) => claimInlineFiles(claimStore(ctx), doc, issue, ctx.actor),
     reactionsOn: (issueId, commentId) =>
       tx
         .select()

@@ -1,8 +1,9 @@
 /**
  * Background jobs on pg-boss (ADR-0010): a queue stored in Postgres, in its own `pgboss` schema,
  * which pg-boss creates and migrates itself under its own advisory lock. The `all` and `worker`
- * roles run the jobs (SPEC-004 §7); with SMTP configured the `web` role starts it too, only to
- * queue email (PLAN-001 S4). Every job is idempotent, except sending email (at least once).
+ * roles run the jobs (SPEC-004 §7). Every role starts it as a producer: the `web` role queues
+ * previews (`attachment.createFile`, SPEC-014 §4.4) and, with SMTP configured, email (PLAN-001
+ * S4). Every job is idempotent, except sending email (at least once).
  */
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgBoss } from 'pg-boss';
@@ -14,6 +15,7 @@ import { loggableError } from '../executor/log-error.js';
 import type { Executor } from '../executor/execute.js';
 import type { BlobStore } from '../files/blob-store.js';
 import { pgFileDb } from '../files/bytes.js';
+import { previewMaker, type LoadSharp } from '../files/image.js';
 import { createEmailQueue, startEmailWorker } from '../mail/job.js';
 import type { SmtpSettings } from '../mail/smtp.js';
 import { pruneSyncLog, SYNC_LOG_RETENTION_DAYS } from '../sync/repo.js';
@@ -21,6 +23,8 @@ import { registerDailyJob } from './daily-batch.js';
 import { autoArchiveJob, autoArchiveMetrics, pgAutoArchiveDb } from './auto-archive.js';
 import { autoCloseJob, autoCloseMetrics, pgAutoCloseDb } from './auto-close.js';
 import { fileJobs } from './files.js';
+import { pgPreviewDb, previewJobHandler } from './files-preview.js';
+import { createPreviewQueue, PREVIEW_QUEUE } from './preview-queue.js';
 import { pgTrashDb, trashPurgeJob, trashPurgeMetrics } from './trash-purge.js';
 
 export const JOB_SCHEMA = 'pgboss';
@@ -76,9 +80,14 @@ export interface JobOptions {
   readonly pollingIntervalSeconds?: number;
   /**
    * Run the scheduled jobs and the workers: the `all` and `worker` roles. The `web` role only
-   * queues email, so it leaves this off and pg-boss's maintenance to them.
+   * queues (previews, and email with SMTP), so it leaves this off and pg-boss's maintenance to
+   * them.
    */
   readonly work?: boolean;
+  /** Seconds between polls of the preview queue when idle. Default 2 (§10: a preview within 5 s). */
+  readonly previewPollingIntervalSeconds?: number;
+  /** How the preview job loads sharp (tests pass one that fails). Default: `import('sharp')`. */
+  readonly loadSharp?: LoadSharp;
   /** With SMTP configured: every role can queue email, and those that `work` send it. */
   readonly mail?: { readonly smtp: SmtpSettings; readonly sessionSecret: string };
   /** Seconds between polls of the email queue when idle. Default: the worker's own (2 s). */
@@ -138,9 +147,13 @@ export async function registerJobs(
     work = true,
     mail,
     emailPollingIntervalSeconds,
+    previewPollingIntervalSeconds = 2,
+    loadSharp,
   }: JobSetup,
 ): Promise<void> {
   const jobLog = log.child({ component: 'jobs' });
+  // Every role queues previews (SPEC-014 §4.4), the `web` role too, so every role makes the queue.
+  await createPreviewQueue(boss);
   if (!work) {
     // Every role that queues email needs the queue, the `web` role too.
     if (mail) await createEmailQueue(boss);
@@ -190,6 +203,23 @@ export async function registerJobs(
     await boss.schedule(queue.name, queue.cron, null, { singletonKey: queue.name });
     await boss.work(queue.name, { pollingIntervalSeconds }, () => run(queue.name));
   }
+
+  // SPEC-014 §4.4: one preview at a time per process (`batchSize` 1, pg-boss's one local worker),
+  // its decode on the process's shared limiter.
+  const preview = previewJobHandler({
+    db: pgPreviewDb(pool),
+    files: pgFileDb(pool),
+    blobs,
+    executor,
+    make: previewMaker(jobLog, loadSharp),
+    log: jobLog,
+  });
+  await boss.work(
+    PREVIEW_QUEUE.name,
+    { pollingIntervalSeconds: previewPollingIntervalSeconds, batchSize: 1 },
+    // One job per call; the outcome is stored as the job's output.
+    async ([job]) => (job === undefined ? undefined : preview(job.data)),
+  );
 
   // SPEC-015 §6.3: the daily issue jobs, one run at a time across replicas, caught up on start.
   const trashDb = pgTrashDb(pool);

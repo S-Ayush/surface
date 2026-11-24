@@ -52,6 +52,13 @@ export interface BlobStore {
   delete(key: string): Promise<void>;
   stat(key: string): Promise<{ readonly size: number } | undefined>;
   /**
+   * Where `key`'s bytes are on the local volume, for a reader that opens them itself (sharp reads
+   * an attachment image from its path, SPEC-014 §4.4). Undefined for a store that keeps no files
+   * (the memory store of tests) and for a string that is no key. Says nothing about whether the
+   * bytes are there.
+   */
+  localPath(key: string): string | undefined;
+  /**
    * Writes `source` to a new temporary file (`<uploads>/tmp/<uuid>.tmp`), one chunk at a time,
    * hashing on the way (SPEC-014 §4.5 step 2). `finish`, called once `source` ends, may return a
    * patch; the hash is then of the patched bytes. If `source` throws, the temporary file is
@@ -150,6 +157,8 @@ export function localBlobStore(root: string): BlobStore {
       }
       return key;
     },
+    // A string that is no key names no file (the guard `fileOf` would throw on).
+    localPath: (key) => (isBlobKey(key) ? fileOf(key) : undefined),
     async get(key) {
       try {
         return await readFile(fileOf(key));
@@ -303,6 +312,7 @@ export function memoryBlobStore(options: { now?: () => Date } = {}): BlobStore &
       const found = blobs.get(checkedKey(key));
       return Promise.resolve(found && { size: found.length });
     },
+    localPath: () => undefined,
     async putStream(source, finish) {
       const tempPath = `memory/tmp/${randomUUID()}.tmp`;
       const parts: Buffer[] = [];

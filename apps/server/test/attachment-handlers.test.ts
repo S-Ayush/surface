@@ -131,6 +131,45 @@ describe('attachment.createFile (AC-7)', () => {
     expect(a.files.get(file.id)?.detachedAt).toBeNull();
   });
 
+  it.each(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])(
+    'queues one preview job for a %s, after the row, in the same transaction (§4.4)',
+    async (mimeType) => {
+      const { m, a, issue } = await world();
+      const file = a.addFile({ id: attachmentId(), mimeType });
+      await createFileAttachment(a.ctx(), fileInput(issue.id, file.id));
+      expect(m.calls.filter((call) => call.startsWith('enqueuePreview'))).toEqual([
+        `enqueuePreview:${file.id}`,
+      ]);
+      expect(m.calls.indexOf(`enqueuePreview:${file.id}`)).toBeGreaterThan(
+        m.calls.indexOf('write:insert'),
+      );
+    },
+  );
+
+  it('queues a preview job when re-attaching an image too: the job reuses the preview it made (S4a handoff)', async () => {
+    const { m, a, issue } = await world();
+    const file = a.addFile({ id: attachmentId(), issueId: issue.id, detachedAt: NOW });
+    await createFileAttachment(a.ctx(), fileInput(issue.id, file.id));
+    expect(m.calls).toContain(`enqueuePreview:${file.id}`);
+  });
+
+  it.each(['application/pdf', 'text/plain', 'application/octet-stream', 'image/svg+xml'])(
+    'queues no preview for a %s',
+    async (mimeType) => {
+      const { m, a, issue } = await world();
+      const file = a.addFile({ id: attachmentId(), mimeType, width: null, height: null });
+      await createFileAttachment(a.ctx(), fileInput(issue.id, file.id));
+      expect(m.calls.some((call) => call.startsWith('enqueuePreview'))).toBe(false);
+    },
+  );
+
+  it('queues nothing when the claim is refused', async () => {
+    const { m, a, issue } = await world();
+    const file = a.addFile({ id: attachmentId(), uploaderId: IRIS_ID });
+    await refusal(createFileAttachment(a.ctx(), fileInput(issue.id, file.id)));
+    expect(m.calls.some((call) => call.startsWith('enqueuePreview'))).toBe(false);
+  });
+
   it.each([
     ['someone else’s unclaimed upload', { uploaderId: IRIS_ID }],
     ['an inline upload', { purpose: 'inline' as const }],

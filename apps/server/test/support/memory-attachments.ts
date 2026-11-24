@@ -131,6 +131,10 @@ export function memoryAttachments(m: MemoryIssues): MemoryAttachments {
       const file = files.get(fileId);
       return Promise.resolve(file?.purpose === 'preview' && file.previewOf === sourceId);
     },
+    enqueuePreview(fileId) {
+      m.calls.push(`enqueuePreview:${fileId}`);
+      return Promise.resolve();
+    },
   };
 
   return {

@@ -26,6 +26,11 @@ import type { FastifyBaseLogger } from 'fastify';
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 export type ImageType = (typeof IMAGE_TYPES)[number];
 
+/** PNG, JPEG, GIF or WebP: the raster images that render inline and get a preview (SPEC-014 §4.8). */
+export function isImageType(mimeType: string): mimeType is ImageType {
+  return IMAGE_TYPES.some((type) => type === mimeType);
+}
+
 /** Avatars show at 32 px at most (design-system §5.1); 256 stays sharp on any screen. */
 export const SQUARE_SIZE = 256;
 
@@ -90,7 +95,10 @@ export type SharpFactory = ((
   resize(
     width: number,
     height: number,
-    options: { fit: 'cover'; position: 'centre' },
+    options:
+      | { fit: 'cover'; position: 'centre' }
+      // A preview (SPEC-014 §4.4): the longer side at most the box, never enlarged.
+      | { fit: 'inside'; withoutEnlargement: true },
   ): ReturnType<SharpFactory>;
   webp(options: { quality: number }): ReturnType<SharpFactory>;
   toBuffer(): Promise<Buffer>;
@@ -110,11 +118,14 @@ const loadSharp: LoadSharp = async () => {
   return module.default;
 };
 
+/** Runs a decode when a slot is free (`decodeSlots`). */
+export type DecodeSlots = <T>(task: () => Promise<T>) => Promise<T>;
+
 /**
  * Runs at most `max` tasks at once; up to `queue` others wait and start in arrival order as slots
  * free up. Throws `ImagesBusy` when the queue is full.
  */
-function slots(max: number, queue: number) {
+export function decodeSlots(max = MAX_CONCURRENT_IMAGES, queue = MAX_WAITING_IMAGES): DecodeSlots {
   let running = 0;
   const waiting: (() => void)[] = [];
   return async <T>(task: () => Promise<T>): Promise<T> => {
@@ -133,11 +144,22 @@ function slots(max: number, queue: number) {
 }
 
 /**
+ * The process's one decode limiter, shared by avatar and logo uploads and the `files-preview` job
+ * (SPEC-014 §4.4, SPEC-004 E10): the memory budget is per process, so two limiters of 2 would let
+ * 4 images decode at once.
+ */
+export const IMAGE_DECODES: DecodeSlots = decodeSlots();
+
+/**
  * Turns an upload into what is stored. Throws `ImageTooLarge` over 25 MP, `ImagesBusy` when too
  * many are waiting, `UploadAbandoned` if `gone()` turns true while it waits, `UnreadableImage`
  * if sharp can't decode it, and `ImagesUnavailable` if sharp can't load.
  */
-export function imageProcessor(log: Pick<FastifyBaseLogger, 'error'>, load: LoadSharp = loadSharp) {
+export function imageProcessor(
+  log: Pick<FastifyBaseLogger, 'error'>,
+  load: LoadSharp = loadSharp,
+  decode: DecodeSlots = IMAGE_DECODES,
+) {
   // Loaded once, on the first upload: a server that never sees one never loads it.
   let sharp: Promise<SharpFactory | undefined> | undefined;
   const loaded = () =>
@@ -151,8 +173,6 @@ export function imageProcessor(log: Pick<FastifyBaseLogger, 'error'>, load: Load
         log.error({ err: error }, 'sharp could not load; image uploads are refused');
         return undefined;
       }));
-  const decode = slots(MAX_CONCURRENT_IMAGES, MAX_WAITING_IMAGES);
-
   // Every stored image is a WebP sharp wrote, whatever the upload's (sniffed) type was.
   return async (bytes: Buffer, gone: () => boolean = () => false): Promise<StoredImage> => {
     const factory = await loaded();
@@ -229,5 +249,78 @@ export function dimensionReader(
     } catch {
       return undefined;
     }
+  };
+}
+
+/** A preview's longer side at most (SPEC-014 §4.4). */
+export const PREVIEW_SIZE = 800;
+
+/** Why an image gets no preview: none of these is an error (§4.4, E10, E14). */
+export type PreviewSkip = 'unavailable' | 'too large' | 'unreadable';
+
+export type PreviewImage =
+  | {
+      readonly kind: 'made';
+      /** A WebP, at most `PREVIEW_SIZE` on its longer side, with no metadata. */
+      readonly bytes: Buffer;
+      readonly width: number;
+      readonly height: number;
+    }
+  | { readonly kind: 'skipped'; readonly reason: PreviewSkip };
+
+/**
+ * Makes an attachment image's preview (SPEC-014 §4.4) from its file on disk, never from a buffer
+ * of the whole original: the header first (over 25 MP is skipped with nothing decoded), then the
+ * decode in the process's shared limiter (`IMAGE_DECODES`) with the avatar limits (one libvips
+ * thread, no cache). The camera's orientation is applied, then all metadata is dropped (sharp
+ * writes none unless asked); an animated GIF gives its first frame (sharp reads one page unless
+ * asked for more). If sharp can't load, every image is skipped and the error logged once (E10).
+ * Throws only `ImagesBusy`, when too many decodes are waiting: the job then runs again later.
+ */
+export function previewMaker(
+  log: { error(object: object, message: string): void },
+  load: LoadSharp = loadSharp,
+  decode: DecodeSlots = IMAGE_DECODES,
+): (path: string) => Promise<PreviewImage> {
+  let sharp: Promise<SharpFactory | undefined> | undefined;
+  const loaded = () =>
+    (sharp ??= load()
+      .then((factory) => {
+        factory.cache(false);
+        factory.concurrency(1);
+        return factory;
+      })
+      .catch((error: unknown) => {
+        log.error({ err: error }, 'sharp could not load; image previews are not made');
+        return undefined;
+      }));
+  const skipped = (reason: PreviewSkip): PreviewImage => ({ kind: 'skipped', reason });
+  return async (path) => {
+    const factory = await loaded();
+    if (factory === undefined) return skipped('unavailable');
+    let header;
+    try {
+      header = await factory(path, { limitInputPixels: false, failOn: 'error' }).metadata();
+    } catch {
+      return skipped('unreadable');
+    }
+    const { width = 0, height = 0 } = header;
+    if (width <= 0 || height <= 0) return skipped('unreadable');
+    if (width * height > MAX_INPUT_PIXELS) return skipped('too large');
+    return decode(async (): Promise<PreviewImage> => {
+      try {
+        const bytes = await factory(path, { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' })
+          .rotate()
+          .resize(PREVIEW_SIZE, PREVIEW_SIZE, { fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 80 })
+          .toBuffer();
+        // The preview's own header: the rotation may have swapped the sides.
+        const size = await factory(bytes, { limitInputPixels: false, failOn: 'error' }).metadata();
+        if (size.width === undefined || size.height === undefined) return skipped('unreadable');
+        return { kind: 'made', bytes, width: size.width, height: size.height };
+      } catch {
+        return skipped('unreadable');
+      }
+    });
   };
 }

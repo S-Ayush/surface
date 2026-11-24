@@ -25,7 +25,7 @@ import {
   workflowStatuses,
 } from '../../db/schema/index.js';
 import type { HandlerContext } from '../../executor/context.js';
-import { claimInlineFiles } from '../../files/claim.js';
+import { claimInlineFiles, claimStore } from '../../files/claim.js';
 import { historyAccess } from '../../issues/history.js';
 import { lockIssueForWrite } from '../../issues/lifecycle.js';
 import { newIssuePosition } from '../../issues/numbering.js';
@@ -98,7 +98,8 @@ export function issueAccess(ctx: HandlerContext): IssueAccess {
         .where(eq(issueContent.issueId, issueId));
       return row;
     },
-    claimFiles: (doc, issue) => claimInlineFiles(tx, doc, issue, ctx.actor, 'description'),
+    claimFiles: (doc, issue) =>
+      claimInlineFiles(claimStore(ctx), doc, issue, ctx.actor, 'description'),
     async setSearchText(issueId, text) {
       // Server-only (§4.3): plain SQL in the content's transaction.
       await tx

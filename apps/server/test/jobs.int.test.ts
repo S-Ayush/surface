@@ -1,5 +1,7 @@
 // ADR-0010 / PLAN-003 S6: pg-boss starts in its own schema, schedules the idempotency prune,
-// and the prune job deletes only expired `clientMutationId` results.
+// and the prune job deletes only expired `clientMutationId` results. PLAN-014 S4b: previews are
+// queued on the operation's transaction, once per file, and run.
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { registry } from '@surface/operations';
@@ -7,6 +9,7 @@ import { createExecutor } from '../src/executor/execute.js';
 import { memoryBlobStore } from '../src/files/blob-store.js';
 import { HANDLERS } from '../src/handlers/index.js';
 import { JOB_SCHEMA, QUEUES, startJobs, type Jobs } from '../src/jobs/index.js';
+import { enqueuePreview, PREVIEW_QUEUE } from '../src/jobs/preview-queue.js';
 import { createTestDatabase, silentLog, type TestDatabase } from './db.js';
 
 let db: TestDatabase;
@@ -26,6 +29,7 @@ beforeAll(async () => {
     }),
     log: silentLog,
     pollingIntervalSeconds: 0.5,
+    previewPollingIntervalSeconds: 0.5,
   });
 });
 afterAll(async () => {
@@ -84,4 +88,30 @@ it('prunes expired idempotency results when the job runs', async () => {
     'SELECT client_mutation_id FROM api_idempotency ORDER BY 1',
   );
   expect(rows.map((r) => r.client_mutation_id)).toEqual(['new']);
+});
+
+it('queues a preview with the claiming transaction, once per file, and runs it (PLAN-014 S4b)', async () => {
+  expect((await jobs.boss.getQueue(PREVIEW_QUEUE.name))?.policy).toBe('stately');
+  const fileId = randomUUID();
+  const states = async () =>
+    (await jobs.boss.findJobs(PREVIEW_QUEUE.name, { key: fileId })).map((job) => job.state);
+
+  const client = await db.pool.connect();
+  try {
+    // Rolled back with its transaction: no job.
+    await client.query('BEGIN');
+    await enqueuePreview(jobs.boss, client, fileId);
+    await client.query('ROLLBACK');
+    expect(await states()).toEqual([]);
+    // Queued twice before a worker takes it: one job (`stately`, keyed by the file id).
+    await client.query('BEGIN');
+    await enqueuePreview(jobs.boss, client, fileId);
+    await enqueuePreview(jobs.boss, client, fileId);
+    await client.query('COMMIT');
+  } finally {
+    client.release();
+  }
+  // No attachment names this file: the run does nothing, and completes.
+  await until(async () => (await states()).includes('completed'), 'the preview job to complete');
+  expect(await states()).toEqual(['completed']);
 });

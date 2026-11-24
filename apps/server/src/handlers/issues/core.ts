@@ -103,7 +103,7 @@ export interface IssueAccess extends HistoryAccess {
   /** The issue's IssueContent without a lock (the issue lock covers it); undefined when absent. */
   readContent(issueId: string): Promise<StoredContent | undefined>;
   /**
-   * `claimInlineFiles(tx, doc, issue, actor, 'description')` (SPEC-014 §4.3): the document to
+   * `claimInlineFiles(…, doc, issue, actor, 'description')` (SPEC-014 §4.3): the document to
    * store, or `INVALID_INPUT` on `description`.
    */
   claimFiles(

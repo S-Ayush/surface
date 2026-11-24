@@ -20,7 +20,6 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { HandlerContext } from '../src/executor/context.js';
 import { SurfaceError } from '../src/executor/errors.js';
-import { claimInlineFiles } from '../src/files/claim.js';
 import {
   commentDoc,
   createComment,
@@ -224,7 +223,7 @@ describe('body checks (§6.3)', () => {
     expect(refused(doc('a\u0000b')).message).toBe(DOC_MESSAGES.brokenText);
   });
 
-  it('refuses a file reference: the claim stub accepts none until PLAN-014 S4b', async () => {
+  it('refuses a reference to a file that can’t be used, on the body, writing nothing', async () => {
     const m = memoryComments();
     const body = {
       type: 'doc',
@@ -237,40 +236,7 @@ describe('body checks (§6.3)', () => {
     expect(error.details.issues).toEqual([{ path: ['body'], message: DOC_MESSAGES.badFile }]);
     expect(m.writes).toEqual([]);
   });
-
-  it('the claimInlineFiles stub accepts a document without files and refuses one on its field', async () => {
-    // The stub reads no row; PLAN-014 S4b replaces this test with the real claim's.
-    const tx = recordingDb().db;
-    const actor: Actor = { kind: 'user', userId: ADA, groups: [], publicTeams: [], memberOf: [] };
-    const issue = { id: randomUUID(), teamId: TEAM };
-    const plain = commentDoc('No files here');
-    await expect(claimInlineFiles(tx, plain, issue, actor)).resolves.toBe(plain);
-    const withFile = {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [{ type: 'file', attrs: { src: `/files/${randomUUID()}`, name: 'a.pdf' } }],
-        },
-      ],
-    };
-    const message = DOC_MESSAGES.badFile;
-    const refusal = (field?: string) =>
-      failure(claimInlineFiles(tx, withFile, issue, actor, field)).then((e) => ({
-        code: e.code,
-        message: e.message,
-        issues: e.details.issues,
-      }));
-    await expect(refusal()).resolves.toEqual({
-      code: 'INVALID_INPUT',
-      message,
-      issues: [{ path: ['body'], message }],
-    });
-    // An issue description's save names its own field (PLAN-011 S6).
-    await expect(refusal('description')).resolves.toMatchObject({
-      issues: [{ path: ['description'], message }],
-    });
-  });
+  // The claim itself (claims, copies, the field a refusal names): `attachment-claim.test.ts`.
 });
 
 describe('comment.update (AC-2, E3, E22)', () => {

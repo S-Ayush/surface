@@ -10,7 +10,10 @@
 // - `sync_log` stores Attachment rows under `team:<teamId>` only: the assignee of a public team's
 //   issue who doesn't follow that team gets the Issue (through `user:`) but none of its
 //   attachments;
-// - the outbox events carry ids, never a title or URL.
+// - the outbox events carry ids, never a title or URL;
+// - (PLAN-014 S4b, AC-8 leak half) a saved description or comment that references a SEC file, its
+//   preview, a SEC inline image or someone else's unclaimed upload is refused byte for byte like
+//   one referencing an unknown id, copying and claiming nothing.
 // The SEC member gets everything, so the answers come from visibility, not a broken path.
 import { randomUUID } from 'node:crypto';
 import { teamGroup, type Actor } from '@surface/domain';
@@ -168,7 +171,10 @@ beforeAll(async () => {
     },
   );
 
-  executor = testExecutor(h.pool).executor;
+  // The copy branch checks the bytes are there (SPEC-014 §4.3): these rows' keys have none.
+  executor = testExecutor(h.pool, {
+    blobs: { stat: () => Promise.resolve({ size: 2048 }) },
+  }).executor;
   await ok('issue.create', { id: secIssue, team: 'SEC', title: 'Secret work' }, samActor);
   await ok('issue.create', { id: engIssue, team: 'ENG', title: 'Fix login' }, anaActor);
   // OPS is public; Ana is its issue's assignee but not a member, so her connection doesn't follow it.
@@ -531,6 +537,110 @@ describe('attachment operations on SEC rows (AC-6, E5, E17)', () => {
     );
     const eng = (await ok('issue.get', { issue: engIssue }, anaActor)) as object;
     expectNoSec(JSON.stringify(eng));
+  });
+});
+
+describe('documents referencing SEC files (SPEC-014 §4.3, AC-8 leak half, E17)', () => {
+  /** A preview of the SEC attachment's file, and an inline image of the SEC issue (plain SQL). */
+  const secPreview = uuidv7();
+  const secInline = uuidv7();
+  /** Sam's unclaimed inline upload, which only Sam may claim. */
+  const samInline = uuidv7();
+  beforeAll(async () => {
+    await h.pool.query(
+      `INSERT INTO files (id, storage_key, purpose, name, mime_type, size, uploader_id, preview_of)
+       VALUES ($1, $2, 'preview', 'keys.webp', 'image/webp', 512, $3, $4)`,
+      [secPreview, `sha256/00/${secPreview}`, sam, secFile],
+    );
+    for (const [id, issueId] of [
+      [secInline, secIssue],
+      [samInline, null],
+    ] as const) {
+      await h.pool.query(
+        `INSERT INTO files (id, storage_key, purpose, name, mime_type, size, uploader_id, issue_id)
+         VALUES ($1, $2, 'inline', 'diagram.png', 'image/png', 1024, $3, $4)`,
+        [id, `sha256/00/${id}`, sam, issueId],
+      );
+    }
+  });
+
+  const docWith = (fileId: string) => ({
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'Look:' }] },
+      { type: 'image', attrs: { src: `/files/${fileId}`, alt: null } },
+    ],
+  });
+  /** Each operation that saves a document, saving one that references `fileId` on ENG. */
+  const saves = async (actor: Actor): Promise<[string, (fileId: string) => object][]> => {
+    const { version } = (await ok('issue.get', { issue: engIssue }, actor)) as { version: number };
+    return [
+      ['issue.create', (f) => ({ team: 'ENG', title: 'Copy', description: docWith(f) })],
+      [
+        'issue.updateDescription',
+        (f) => ({ issue: engIssue, baseVersion: version, description: docWith(f) }),
+      ],
+      ['comment.create', (f) => ({ issue: engIssue, body: docWith(f) })],
+    ];
+  };
+  const fileCount = async () =>
+    Number((await h.pool.query<{ n: string }>('SELECT count(*) AS n FROM files')).rows[0]?.n);
+
+  it.each(OUTSIDERS)(
+    'a document naming a SEC file, its preview or a SEC inline image is refused exactly like an unknown id, for %s',
+    async (who) => {
+      const actor = outsider(who);
+      const before = await fileCount();
+      for (const [operation, input] of await saves(actor)) {
+        const missingId = uuidv7();
+        const missing = await refusal(operation, input(missingId), actor);
+        expect({ operation, code: missing.code }).toEqual({ operation, code: 'INVALID_INPUT' });
+        // Sam's own upload is his key's to claim (D25), so it is hidden from the others only.
+        const hiddenIds = [
+          secFile,
+          secPreview,
+          secInline,
+          ...(actor.userId === sam ? [] : [samInline]),
+        ];
+        for (const hiddenId of hiddenIds) {
+          const hidden = await refusal(operation, input(hiddenId), actor);
+          expect({ operation, hiddenId, shape: errorShape(hidden, hiddenId) }).toEqual({
+            operation,
+            hiddenId,
+            shape: errorShape(missing, missingId),
+          });
+        }
+      }
+      // Nothing copied or claimed.
+      expect(await fileCount()).toBe(before);
+      const { rows } = await h.pool.query<{ issue_id: string | null }>(
+        'SELECT issue_id FROM files WHERE id = $1',
+        [samInline],
+      );
+      expect(rows).toEqual([{ issue_id: null }]);
+    },
+  );
+
+  it('lets the SEC member copy the SEC file into an ENG comment, as a new inline row on the same bytes', async () => {
+    const comment = (await ok(
+      'comment.create',
+      { issue: engIssue, body: docWith(secFile) },
+      samActor,
+    )) as { id: string };
+    const { rows } = await h.pool.query<{ body: unknown }>(
+      'SELECT body FROM comments WHERE id = $1',
+      [comment.id],
+    );
+    const stored = JSON.stringify(rows[0]?.body);
+    expect(stored).not.toContain(secFile);
+    const copyId = /\/files\/([0-9a-f-]{36})/.exec(stored)?.[1];
+    const copy = await h.pool.query<{ purpose: string; issue_id: string; storage_key: string }>(
+      'SELECT purpose, issue_id, storage_key FROM files WHERE id = $1',
+      [copyId],
+    );
+    expect(copy.rows).toEqual([
+      { purpose: 'inline', issue_id: engIssue, storage_key: `sha256/00/${secFile}` },
+    ]);
   });
 });
 

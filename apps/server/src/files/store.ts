@@ -10,11 +10,13 @@
  */
 import { visibleGroups, type Actor } from '@surface/domain';
 import { sql, type SQL } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { z } from 'zod';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { PoolClient } from 'pg';
 import { LOCK_CLASSES } from '../db/locks.js';
 import type { Queryable } from '../db/pool.js';
-import type { FilePurpose } from '../db/schema/index.js';
+import { FILE_PURPOSES, type FilePurpose } from '../db/schema/index.js';
 import type { BlobStore } from './blob-store.js';
 import { insertUpload, pgFileTx, type NewFile } from './bytes.js';
 import { overCaps, type UnclaimedUsage } from './limits.js';
@@ -97,13 +99,19 @@ export function fileVisibilityBranches(reader: FileReader): readonly SQL[] {
   }
   // An owned file is its issue's: visible to whoever sees the issue (archived and deleted
   // included), never through being its uploader (D6, E16), and to nobody once detached (E8).
-  branches.push(
-    sql`(s.purpose IN ('attachment', 'inline')
+  branches.push(ownedFileSeenBy(reader));
+  return branches;
+}
+
+/**
+ * The issue branch of §4.2 over `s`: a claimed `attachment` or `inline` file, not detached, whose
+ * issue `reader` sees (and so `f`, `s` itself or a preview of it).
+ */
+function ownedFileSeenBy(reader: FileReader): SQL {
+  return sql`(s.purpose IN ('attachment', 'inline')
          AND s.issue_id IS NOT NULL
          AND s.detached_at IS NULL
-         AND ${ownerIssueSeenBy(reader, sql`s.issue_id`)})`,
-  );
-  return branches;
+         AND ${ownerIssueSeenBy(reader, sql`s.issue_id`)})`;
 }
 
 const dialect = new PgDialect();
@@ -151,6 +159,61 @@ export async function reattachableFile(
     query.params,
   );
   return rows[0];
+}
+
+/** A file a saved document references, with what `claimInlineFiles` decides by (SPEC-014 §4.3). */
+export interface DocumentFile {
+  readonly id: string;
+  readonly purpose: FilePurpose;
+  readonly issueId: string | null;
+  readonly uploaderId: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly size: number;
+  readonly width: number | null;
+  readonly height: number | null;
+  /**
+   * Whether the reader may copy it into its own document: §4.2's issue branch only (a claimed,
+   * attached file, or a preview of one, whose issue the reader sees after key narrowing). Never
+   * an unclaimed upload, an avatar or a logo, even one the reader may download (§4.3's table).
+   */
+  readonly copyable: boolean;
+}
+
+/** The rows of `ids` that exist, each with `copyable` for `reader` (§4.3); one statement. */
+export function documentFilesQuery(ids: readonly string[], reader: FileReader): SQL {
+  return sql`SELECT f.id, f.purpose, f.issue_id AS "issueId", f.uploader_id AS "uploaderId",
+                    f.name, f.mime_type AS "mimeType", f.size, f.width, f.height,
+                    ${ownedFileSeenBy(reader)} AS copyable
+               FROM files f
+               JOIN files s ON s.id = coalesce(f.preview_of, f.id)
+              WHERE f.id = ANY(${sql.param([...ids])}::uuid[])
+              ORDER BY f.id`;
+}
+
+const DocumentFileRow = z.object({
+  id: z.string(),
+  purpose: z.enum(FILE_PURPOSES),
+  issueId: z.string().nullable(),
+  uploaderId: z.string(),
+  name: z.string(),
+  mimeType: z.string(),
+  // `bigint`: node-postgres reads it as a string.
+  size: z.union([z.string(), z.number()]).transform(Number),
+  width: z.number().nullable(),
+  height: z.number().nullable(),
+  copyable: z.boolean(),
+});
+
+/** `documentFilesQuery` on the operation's transaction. */
+export async function documentFiles(
+  tx: Pick<NodePgDatabase, 'execute'>,
+  ids: readonly string[],
+  reader: FileReader,
+): Promise<DocumentFile[]> {
+  if (ids.length === 0) return [];
+  const { rows } = await tx.execute(documentFilesQuery(ids, reader));
+  return rows.map((row) => DocumentFileRow.parse(row));
 }
 
 interface VisibleRow {

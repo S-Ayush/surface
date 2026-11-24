@@ -1,5 +1,5 @@
 // PLAN-001 S4 wiring (session E's handoff): which queues and workers each role runs, and the
-// outbox that routes and handlers queue email through. Against a recording pg-boss stand-in; the
+// outboxes that routes and handlers queue email and previews (PLAN-014 S4b) through. Against a recording pg-boss stand-in; the
 // real queue is covered by `jobs.int.test.ts` and E's checks by hand (PLAN-001 S4 As built).
 import type { PoolClient } from 'pg';
 import { pino } from 'pino';
@@ -8,6 +8,7 @@ import type { Pool } from '../src/db/pool.js';
 import { memoryBlobStore } from '../src/files/blob-store.js';
 import { emailOutbox, NO_EMAIL } from '../src/jobs/email.js';
 import { QUEUES, registerJobs, type JobQueue } from '../src/jobs/index.js';
+import { NO_PREVIEWS, PREVIEW_QUEUE, previewOutbox } from '../src/jobs/preview-queue.js';
 import { EMAIL_QUEUE, type EmailJob, type JobSender } from '../src/mail/job.js';
 
 const SECRET = 'a'.repeat(64);
@@ -67,20 +68,47 @@ const PRUNES = [
 ];
 
 describe('registerJobs', () => {
-  it('lets the web role queue email without sending it or running any job', async () => {
+  it('lets the web role queue email and previews without sending, making or running anything', async () => {
     const r = recordingQueue();
     await registerJobs(r.queue, { ...base, work: false, mail: MAIL });
-    expect(r.created).toEqual([EMAIL_QUEUE]);
+    expect(r.created.sort()).toEqual([EMAIL_QUEUE, PREVIEW_QUEUE.name].sort());
     expect(r.workers).toEqual([]);
     expect(r.scheduled).toEqual([]);
   });
 
-  it('sends email where jobs run, next to the scheduled prunes', async () => {
+  it('lets the web role queue previews without SMTP (SPEC-014 §4.4: every role produces)', async () => {
+    const r = recordingQueue();
+    await registerJobs(r.queue, { ...base, work: false });
+    expect(r.created).toEqual([PREVIEW_QUEUE.name]);
+    expect(r.workers).toEqual([]);
+  });
+
+  it('sends email where jobs run, next to the scheduled prunes and the preview worker', async () => {
     const r = recordingQueue();
     await registerJobs(r.queue, { ...base, mail: MAIL });
     expect(r.created).toContain(EMAIL_QUEUE);
-    expect(r.workers.sort()).toEqual([EMAIL_QUEUE, ...PRUNES].sort());
+    expect(r.workers.sort()).toEqual([EMAIL_QUEUE, PREVIEW_QUEUE.name, ...PRUNES].sort());
     expect(r.scheduled.sort()).toEqual([...PRUNES].sort());
+  });
+
+  it('makes previews one per file at a time, on demand, with retries (SPEC-014 §4.4)', async () => {
+    const r = recordingQueue();
+    await registerJobs(r.queue, base);
+    // `stately`: one queued and one running per `singletonKey` (the file id).
+    expect(r.queue.createQueue).toHaveBeenCalledWith(PREVIEW_QUEUE.name, {
+      policy: 'stately',
+      retryLimit: 3,
+      retryDelay: 30,
+      retryBackoff: true,
+      expireInSeconds: 600,
+    });
+    // Not scheduled: queued by `attachment.createFile`; polled often (a preview within 5 s, §10).
+    expect(r.scheduled).not.toContain(PREVIEW_QUEUE.name);
+    expect(r.queue.work).toHaveBeenCalledWith(
+      PREVIEW_QUEUE.name,
+      { pollingIntervalSeconds: 2, batchSize: 1 },
+      expect.any(Function),
+    );
   });
 
   it('runs the file jobs one at a time across replicas (ADR-0024)', async () => {
@@ -106,7 +134,40 @@ describe('registerJobs', () => {
     const r = recordingQueue();
     await registerJobs(r.queue, base);
     expect(r.created).not.toContain(EMAIL_QUEUE);
-    expect(r.workers.sort()).toEqual([...PRUNES].sort());
+    expect(r.workers.sort()).toEqual([PREVIEW_QUEUE.name, ...PRUNES].sort());
+  });
+});
+
+describe('previewOutbox (SPEC-014 §4.4)', () => {
+  it('queues the file’s preview on the caller’s connection, keyed by the file id', async () => {
+    const calls: unknown[][] = [];
+    const sender: JobSender = {
+      send: vi.fn((...args: unknown[]) => {
+        calls.push(args);
+        return Promise.resolve('job-1');
+      }),
+    };
+    const query = vi.fn(() => Promise.resolve({ rows: [] }));
+    const client = { query } as unknown as PoolClient;
+    const fileId = '01940000-0000-7000-8000-00000000f11e';
+    await previewOutbox(() => sender).enqueue(client, fileId);
+    const [name, data, options] = calls[0] ?? [];
+    expect([name, data]).toEqual([PREVIEW_QUEUE.name, { fileId }]);
+    expect(options).toMatchObject({ singletonKey: fileId });
+    // pg-boss runs its INSERT through `db`, the caller's connection: it commits with the claim.
+    const db = (options as { db: { executeSql(t: string, v: unknown[]): unknown } }).db;
+    await db.executeSql('INSERT …', [1]);
+    expect(query).toHaveBeenCalledWith('INSERT …', [1]);
+  });
+
+  it('fails loudly before startup started the queue, and queues nothing without one', async () => {
+    const query = vi.fn();
+    const client = { query } as unknown as PoolClient;
+    await expect(
+      previewOutbox(() => undefined).enqueue(client, '01940000-0000-7000-8000-00000000f11e'),
+    ).rejects.toThrow('has not started');
+    await expect(NO_PREVIEWS.enqueue(client, 'x')).resolves.toBeUndefined();
+    expect(query).not.toHaveBeenCalled();
   });
 });
 

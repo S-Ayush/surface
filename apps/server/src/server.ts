@@ -25,6 +25,7 @@ import { SessionAuth } from './auth/sessions.js';
 import { pgAuthStore } from './auth/store.js';
 import type { ActorResolver } from './http/ops.js';
 import { emailOutbox } from './jobs/email.js';
+import { previewOutbox } from './jobs/preview-queue.js';
 import { startJobs, type Jobs } from './jobs/index.js';
 import { Lifecycle } from './lifecycle.js';
 import { createLogger } from './logger.js';
@@ -140,6 +141,10 @@ export async function startServer(
     sessionSecret: config.sessionSecret,
     sender: () => jobs?.boss,
   });
+  // Previews are queued the same way, in every role (SPEC-014 §4.4).
+  const previews = previewOutbox(() => jobs?.boss);
+  // The uploads volume: the jobs read and write it; operations check bytes on it (§4.3).
+  const blobs = localBlobStore(uploadsDir(config.dataDir));
   const setupStore = pgSetupStore(pool);
   const setupGate = new SetupGate(setupStore);
   // Before HTTP stops: clients reconnect elsewhere, or here once we are back (1012).
@@ -187,6 +192,8 @@ export async function startServer(
           allowInternal: config.nodeEnv !== 'production',
           rateLimiter: tokenBucket(),
           email,
+          previews,
+          blobs,
           closeSessions,
           publicUrl: config.publicUrl,
           attempts,
@@ -229,23 +236,21 @@ export async function startServer(
       });
     }
     await hub?.start();
-    // `all` and `worker` run the jobs; `web` starts the queue only to queue email (PLAN-001 S4).
-    const work = config.role !== 'web';
-    if (work || config.smtp !== null) {
-      if (appExecutor === undefined) throw new Error('The app built no executor for the jobs');
-      jobs = await startJobs({
-        databaseUrl: config.databaseUrl,
-        pool,
-        blobs: localBlobStore(uploadsDir(config.dataDir)),
-        executor: appExecutor,
-        ...(appMetrics ? { metrics: appMetrics } : {}),
-        log: logger,
-        work,
-        ...(config.smtp === null
-          ? {}
-          : { mail: { smtp: config.smtp, sessionSecret: config.sessionSecret } }),
-      });
-    }
+    // `all` and `worker` run the jobs; `web` starts the queue only to queue previews (SPEC-014
+    // §4.4) and email (PLAN-001 S4), so every role starts it.
+    if (appExecutor === undefined) throw new Error('The app built no executor for the jobs');
+    jobs = await startJobs({
+      databaseUrl: config.databaseUrl,
+      pool,
+      blobs,
+      executor: appExecutor,
+      ...(appMetrics ? { metrics: appMetrics } : {}),
+      log: logger,
+      work: config.role !== 'web',
+      ...(config.smtp === null
+        ? {}
+        : { mail: { smtp: config.smtp, sessionSecret: config.sessionSecret } }),
+    });
 
     lifecycle.markReady();
     // A shutdown that started during startup leaves us draining: don't claim ready.

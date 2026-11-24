@@ -41,6 +41,7 @@ import type { PurgeContext } from '../../src/issues/purge.js';
 import type { PurgeStep } from '../../src/issues/purge-steps.js';
 import type { AuditLine } from '../../src/auth/audit.js';
 import { ModelDb, ModelTx } from '../files-bytes-model.js';
+import { memoryClaims } from './memory-claims.js';
 import { recordingDb } from './scripted-db.js';
 
 export const NOW = new Date('2026-11-13T10:00:00.000Z');
@@ -234,8 +235,8 @@ export function memoryIssues(): MemoryIssues {
     },
     claimFiles(doc, issue) {
       calls.push('claimFiles');
-      // The real seam (its stub body needs no database).
-      return claimInlineFiles(recordingDb().db, doc, issue, actor, 'description');
+      // The real claim over a store with no files (claims: `attachment-claim.test.ts`).
+      return claimInlineFiles(memoryClaims().store, doc, issue, actor, 'description');
     },
     setSearchText(issueId, text) {
       calls.push('setSearchText');

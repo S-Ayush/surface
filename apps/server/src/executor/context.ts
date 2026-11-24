@@ -15,6 +15,7 @@ import type { Logger } from 'pino';
 import type { z } from 'zod';
 import type { SessionSelection } from '../auth/store.js';
 import type { Queryable } from '../db/pool.js';
+import type { BlobStore } from '../files/blob-store.js';
 import type { FileTx } from '../files/bytes.js';
 import type { EmailJob } from '../mail/job.js';
 import type { HandlerLinks } from '../mail/link-tokens.js';
@@ -76,6 +77,16 @@ export interface HandlerContext {
    * way a handler inserts or deletes `files` rows (purge, PLAN-014 S4a).
    */
   readonly files: FileTx;
+  /**
+   * The uploads volume, for the byte protocol's checks: a document's file copy checks the bytes
+   * are there (SPEC-014 §4.3, §4.5 step 3; PLAN-014 S4b). Handlers never write bytes.
+   */
+  readonly blobs: Pick<BlobStore, 'stat'>;
+  /**
+   * Queues the `files-preview` job for `fileId` on this operation's transaction (SPEC-014 §4.4),
+   * so it exists only if the operation commits. A job already queued for the file stands.
+   */
+  enqueuePreview(fileId: string): Promise<void>;
   readonly query: QueryHelpers;
   /** Buffers a domain event; the executor writes it to `event_outbox` before commit. */
   emit(event: DomainEvent): void;

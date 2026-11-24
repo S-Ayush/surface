@@ -79,6 +79,7 @@ export function attachmentAccess(ctx: HandlerContext): AttachmentAccess {
         );
       return row !== undefined;
     },
+    enqueuePreview: (fileId) => ctx.enqueuePreview(fileId),
   };
 }
 

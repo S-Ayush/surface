@@ -25,6 +25,7 @@ import {
 import type { DomainEvent } from '../../executor/context.js';
 import { SurfaceError } from '../../executor/errors.js';
 import { refNotFound } from '../../executor/refs/sources.js';
+import { isImageType } from '../../files/image.js';
 import { writeUpdatedHistory, type HistoryWriteContext } from '../../issues/history.js';
 import type { LockedIssue } from '../../issues/lifecycle.js';
 import type { ModelRow } from '../../sync/models.js';
@@ -61,6 +62,8 @@ export interface AttachmentAccess {
   detachFile(fileId: string, at: Date): Promise<void>;
   /** Whether `fileId` is a preview of `sourceId` (`setPreview`'s input check). */
   isPreviewOf(fileId: string, sourceId: string): Promise<boolean>;
+  /** Queues the `files-preview` job for `fileId` in this transaction (§4.4, `singletonKey`). */
+  enqueuePreview(fileId: string): Promise<void>;
 }
 
 export interface AttachmentWriteContext {
@@ -126,8 +129,10 @@ export interface CreateFileInput {
 
 /**
  * `attachment.createFile` (§6.2, AC-7): claims the file (or clears `detached_at` for an undo),
- * copies its name, type, size and dimensions onto the row. Any file it can't take is `NOT_FOUND`
- * on `file`, worded exactly like an unknown id (§6.4), so a refusal never tells files apart.
+ * copies its name, type, size and dimensions onto the row, and queues the preview of a raster
+ * image in the same transaction (§4.4; the job reuses the preview an undone removal left). Any
+ * file it can't take is `NOT_FOUND` on `file`, worded exactly like an unknown id (§6.4), so a
+ * refusal never tells files apart.
  */
 export async function createFileAttachment(
   ctx: AttachmentWriteContext,
@@ -154,6 +159,7 @@ export async function createFileAttachment(
     creatorId: input.creatorId,
   });
   await record(ctx, issue, row, 'added');
+  if (isImageType(file.mimeType)) await ctx.access.enqueuePreview(file.id);
   return row;
 }
 

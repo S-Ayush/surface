@@ -31,7 +31,7 @@ import type {
 import { claimInlineFiles } from '../../src/files/claim.js';
 import type { LockedIssue } from '../../src/issues/lifecycle.js';
 import type { Repo, RowChange } from '../../src/sync/repo.js';
-import { recordingDb } from './scripted-db.js';
+import { memoryClaims } from './memory-claims.js';
 
 export const NOW = new Date('2026-11-13T10:00:00.000Z');
 export const ADA = '0192f0c1-7e5a-7b3c-9d4e-0000000000ad';
@@ -86,7 +86,8 @@ export interface MemoryComments {
   reset(): void;
 }
 
-const claimDb = recordingDb().db;
+// No `files` rows: a document referencing any file is refused (claims: `attachment-claim.test.ts`).
+const claims = memoryClaims().store;
 const claimActor: Actor = {
   kind: 'user',
   userId: ADA,
@@ -157,11 +158,10 @@ export function memoryComments(): MemoryComments {
       else searchText.set(commentId, text);
       return Promise.resolve();
     },
-    // The real seam (`files/claim.ts`), over a connection that answers nothing: the stub reads no
-    // row. When PLAN-014 S4b gives it a body, this fake needs the claim's tables.
+    // The real claim (`files/claim.ts`) over a store with no files.
     claimFiles(doc: DocNodeJSON, issue: LockedIssue) {
       calls.push('claimFiles');
-      return claimInlineFiles(claimDb, doc, issue, claimActor);
+      return claimInlineFiles(claims, doc, issue, claimActor);
     },
     reactionsOn(issueId, commentId) {
       calls.push(`reactionsOn:${commentId ?? issueId}`);

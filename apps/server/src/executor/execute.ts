@@ -79,7 +79,9 @@ import { serverSyncRegistry } from '../sync/registry.js';
 import { syncRepo, type RepoFactory, type RowChange, type TransactionRepo } from '../sync/repo.js';
 import { nearestNames } from './suggest.js';
 import { inTransaction, isRetryable, jitterBackoff, postgresCode } from './transaction.js';
+import type { BlobStore } from '../files/blob-store.js';
 import { NO_EMAIL, type EmailOutbox } from '../jobs/email.js';
+import { NO_PREVIEWS, type PreviewOutbox } from '../jobs/preview-queue.js';
 import { handlerLinks } from '../mail/link-tokens.js';
 import { pgFileTx } from '../files/bytes.js';
 import type { AttemptStore } from '../auth/attempts.js';
@@ -116,6 +118,13 @@ export interface ExecutorDeps {
   readonly clock?: () => Date;
   /** Where `ctx.enqueueEmail` queues email. Default: no SMTP, nothing is queued. */
   readonly email?: EmailOutbox;
+  /** Where `ctx.enqueuePreview` queues previews (SPEC-014 §4.4). Default: nothing is queued. */
+  readonly previews?: PreviewOutbox;
+  /**
+   * The uploads volume, for `ctx.blobs` (SPEC-014 §4.3's copy). Without it, a handler that
+   * checks bytes fails (`INTERNAL`).
+   */
+  readonly blobs?: Pick<BlobStore, 'stat'>;
   /**
    * Closes the sockets of sessions an operation ended, on every replica (`sessionCloser`).
    * Called only after the commit that deleted them.
@@ -242,6 +251,11 @@ function postCommit(applied: Applied): Pick<Applied, 'lockedAt' | 'endedSessions
   };
 }
 
+/** An executor built without an uploads volume (tests): checking bytes is a bug there. */
+const NO_BLOBS: Pick<BlobStore, 'stat'> = {
+  stat: () => Promise.reject(new Error('This executor was built without an uploads volume.')),
+};
+
 export function createExecutor(deps: ExecutorDeps): Executor {
   const handlers = handlerMap(deps.registry, deps.handlers);
   const metrics: OperationMetrics = deps.metrics ? operationMetrics(deps.metrics) : noMetrics;
@@ -251,6 +265,8 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   const checks = deps.checks ?? [];
   const clock = deps.clock ?? (() => new Date());
   const email = deps.email ?? NO_EMAIL;
+  const previews = deps.previews ?? NO_PREVIEWS;
+  const blobs = deps.blobs ?? NO_BLOBS;
   const transactionOptions = { retries: deps.retries ?? 3, backoff: deps.backoff ?? jitterBackoff };
   let defaultModels: readonly string[] | undefined;
   const syncedModels = (): readonly string[] =>
@@ -352,6 +368,8 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       tx,
       repo,
       files: pgFileTx(client),
+      blobs,
+      enqueuePreview: (fileId) => previews.enqueue(client, fileId),
       query: queryHelpers(tx, client, viewer, now),
       emit: (event) => void events.push(event),
       audit: (event, fields, message) => void audits.push({ event, fields, message }),
