@@ -4,34 +4,20 @@
  * executor, the repo layer, `sync_log`, `client_mutations`, the hub and
  * Postgres behind the simulated network, one fresh database per case. Bursts
  * run a tab past the rate limit, so a batch stops at a 429 mid-way. Part of
- * the sync property suite, which the testing hold exempts.
+ * the sync property suite, which the testing hold exempts. The generated
+ * properties run in `real-server-*.int.test.ts`, one file each, so they run in
+ * parallel; this file holds the examples and the replay checks.
  */
 import fc from 'fast-check';
 import { describe, expect, inject, it } from 'vitest';
-import { simParameters } from '../src/context.js';
-import { archiveConvergence, convergence, exactlyOnce } from '../src/properties.js';
+import { convergence } from '../src/properties.js';
 import { SERVER_CODE, seedGlobals, seededRandom } from '../src/random.js';
-import type { RealServer } from '../src/real-server.js';
 import { startRealServer } from '../src/real-server.js';
-import type { SimServer } from '../src/server.js';
 import type { Outcome } from '../src/simulate.js';
 import { simulate } from '../src/simulate.js';
 import type { Case } from '../src/steps.js';
-import { archiveCase, convergenceCase, exactlyOnceCase, itemId } from '../src/steps.js';
-
-/** A factory for `simulate` that remembers the last server it started (and only that one). */
-function realServers() {
-  let latest: RealServer | undefined;
-  const server = async (users: number): Promise<SimServer> => {
-    latest = await startRealServer({
-      adminUrl: inject('pgAdminUrl'),
-      template: inject('pgTemplateDb'),
-      users,
-    });
-    return latest;
-  };
-  return { server, last: () => latest };
-}
+import { convergenceCase, itemId } from '../src/steps.js';
+import { realServers } from './support/real-servers.js';
 
 /** Rows seeded as `Item n`: renaming one to that title changes nothing. */
 const examples: Case = {
@@ -126,37 +112,6 @@ describe('against the real server', () => {
     expect(result.items[itemId(0)]?.title).toBe('Item 0');
     expect(result.items[itemId(1)]?.counter).toBe(130);
     expect(result.items[itemId(2)]?.title).toBe('Gamma');
-  });
-
-  it('every tab converges on the server state after any faults (AC-2)', async () => {
-    const { server } = realServers();
-    await fc.assert(
-      fc.asyncProperty(convergenceCase({ bursts: true }), (simCase) =>
-        simulate(simCase, { ...convergence.options, server }, convergence.check),
-      ),
-      simParameters(),
-    );
-  });
-
-  // PLAN-011 S2 (SPEC-011 AC-18): the repo's A and V rows, through the real delta writer.
-  it('archive, unarchive, edits and deletes in any interleaving equal a fresh bootstrap (AC-18)', async () => {
-    const { server } = realServers();
-    await fc.assert(
-      fc.asyncProperty(archiveCase({ bursts: true }), (simCase) =>
-        simulate(simCase, { ...archiveConvergence.options, server }, archiveConvergence.check),
-      ),
-      simParameters(),
-    );
-  });
-
-  it('applies every saved mutation exactly once across crashes and resends (AC-3)', async () => {
-    const { server } = realServers();
-    await fc.assert(
-      fc.asyncProperty(exactlyOnceCase({ bursts: true }), (simCase) =>
-        simulate(simCase, { ...exactlyOnce.options, server }, exactlyOnce.check),
-      ),
-      simParameters(),
-    );
   });
 
   /**

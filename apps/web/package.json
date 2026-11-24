@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:deep": "SURFACE_TEST_TIER=deep vitest run"
   },
   "dependencies": {
     "@surface/domain": "workspace:*",

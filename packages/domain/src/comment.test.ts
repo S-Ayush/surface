@@ -1,6 +1,7 @@
 // PLAN-013 S3, SPEC-013 §4.5: the comment and reaction invariants (INV-19, resolved fields set
 // together, issueId and teamId equalities), the reply-parent rule of §4.3 and the delete plan.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import {
   COMMENT_MESSAGES,
@@ -143,7 +144,7 @@ describe('replyParentProblem (§4.3, §6.3)', () => {
           expect(ok).toBe(parentCommentId === null && deletedAt === null && issueId === ISSUE);
         },
       ),
-      { seed: 13, numRuns: 100 },
+      propertyParameters({ seed: 13, numRuns: 100 }),
     );
   });
 });

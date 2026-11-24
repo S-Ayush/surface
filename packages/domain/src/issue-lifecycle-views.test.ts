@@ -2,6 +2,7 @@
 // live issues in the live lists, archived ones on the Issues tab, deleted ones on the Recently
 // deleted tab until `purgeAfter`, and none in two views at once.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import {
   editRefusal,
@@ -59,7 +60,7 @@ describe('inIssueView', () => {
       fc.property(instant, instant, (archivedAt, deletedAt) => {
         expect(views({ archivedAt, deletedAt }).length).toBeLessThanOrEqual(1);
       }),
-      { seed: 154, numRuns: 200 },
+      propertyParameters({ seed: 154, numRuns: 200 }),
     );
   });
 });

@@ -30,8 +30,17 @@ const provide = {
   simSeed: integer('seed', values.seed, SIM_DEFAULTS.simSeed),
   simRuns: integer('runs', values.runs, values.path === undefined ? SIM_DEFAULTS.simRuns : 1),
   simPath: values.path ?? '',
+  // Every case asked for: the gate's share (plans README §6) applies to `pnpm test` only.
+  propertyScale: 1,
 };
 const filters = positionals.length > 0 ? positionals : ['.prop.test.ts'];
 
-const vitest = await startVitest('test', filters, { run: true, watch: false, provide });
+// 1,000 cases take minutes per property: more than the suite's own timeout.
+const testTimeout = 4 * 3600_000;
+const vitest = await startVitest('test', filters, {
+  run: true,
+  watch: false,
+  provide,
+  testTimeout,
+});
 await vitest?.close();

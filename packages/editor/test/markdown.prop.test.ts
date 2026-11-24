@@ -1,5 +1,6 @@
 // PLAN-013 S1: the Markdown round trip (SPEC-013 AC-8, AC-25, E7).
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import {
   docToMarkdown,
@@ -27,7 +28,7 @@ describe('Markdown round trip (AC-8)', { timeout: 60_000 }, () => {
       fc.property(doc, (d) => {
         expect(markdownToDoc(docToMarkdown(d))).toEqual(normalize(d));
       }),
-      { ...propertyOptions, numRuns: 1000 },
+      propertyParameters({ ...propertyOptions, numRuns: 1000 }),
     );
   });
 
@@ -49,7 +50,7 @@ describe('Markdown round trip (AC-8)', { timeout: 60_000 }, () => {
         expect(docToMarkdown(markdownToDoc(md1))).toBe(md1);
         expect(validateDoc(markdownToDoc(md))).toMatchObject({ ok: true });
       }),
-      { ...propertyOptions, numRuns: 1000 },
+      propertyParameters({ ...propertyOptions, numRuns: 1000 }),
     );
   });
 
@@ -201,7 +202,7 @@ describe('normalize keeps what Markdown can write (M3)', { timeout: 60_000 }, ()
         expect(normalize(d)).toEqual(valid.doc);
         expect(markdownToDoc(docToMarkdown(d))).toEqual(valid.doc);
       }),
-      { ...propertyOptions, numRuns: 1000 },
+      propertyParameters({ ...propertyOptions, numRuns: 1000 }),
     );
   });
 

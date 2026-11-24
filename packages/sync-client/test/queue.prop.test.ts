@@ -15,7 +15,7 @@ import { FakeHub } from './support/hub.js';
 import { clientItems, liveStore, serverItems, until } from './support/live.js';
 import { id } from './support/models.js';
 import { debugTouch } from './support/ops.js';
-import { PROPERTY_SEED } from './support/fc.js';
+import { PROPERTY_SEED, propertyParameters } from './support/fc.js';
 import { uniqueName } from './support/storage.js';
 
 type Command =
@@ -123,6 +123,6 @@ it('applies every mutation exactly once through faults and reloads', async () =>
         await store.close();
       },
     ),
-    { seed: PROPERTY_SEED, numRuns: 100 },
+    propertyParameters({ seed: PROPERTY_SEED, numRuns: 100 }),
   );
 }, 120_000);

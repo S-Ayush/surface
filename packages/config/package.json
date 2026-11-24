@@ -11,6 +11,7 @@
     "./eslint": "./eslint.js",
     "./eslint-rules/no-synced-table-writes": "./eslint-rules/no-synced-table-writes.js",
     "./prettier": "./prettier.js",
+    "./properties": "./properties.js",
     "./vitest": "./vitest.js"
   }
 }

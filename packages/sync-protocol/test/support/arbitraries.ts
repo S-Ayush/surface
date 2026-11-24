@@ -1,4 +1,5 @@
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import type {
   Ack,
   BootstrapFrame,
@@ -12,7 +13,7 @@ import type {
 
 /** Fixed seed so runs are reproducible; fast-check prints the seed and path of any failure. */
 export const PROPERTY_SEED = 20261106;
-export const propertyOptions = { seed: PROPERTY_SEED, numRuns: 200 } as const;
+export const propertyOptions = propertyParameters({ seed: PROPERTY_SEED, numRuns: 200 });
 
 export const uuid = fc.uuid({ version: 7 });
 export const syncId = fc.integer({ min: 0, max: Number.MAX_SAFE_INTEGER });

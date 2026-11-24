@@ -16,11 +16,27 @@
       "dependsOn": ["transit"]
     },
     "test": {
-      "dependsOn": ["transit"]
+      "dependsOn": ["transit"],
+      "passThroughEnv": ["SURFACE_VITEST_WORKERS"]
     },
     "test:int": {
       "dependsOn": ["transit"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["SURFACE_VITEST_WORKERS", "TEST_DATABASE_URL"]
+    },
+    "test:deep": {
+      "dependsOn": ["transit"],
+      "cache": false,
+      "passThroughEnv": ["SURFACE_VITEST_WORKERS", "SURFACE_PROPERTY_SEED", "TEST_DATABASE_URL"]
+    },
+    "//#lint:deps": {
+      "inputs": ["$TURBO_ROOT$/**", "!**/node_modules/**", "!**/dist/**", "!.claude/worktrees/**"]
+    },
+    "//#lint:css": {
+      "inputs": ["$TURBO_ROOT$/**", "!**/node_modules/**", "!**/dist/**", "!.claude/worktrees/**"]
+    },
+    "//#format:check": {
+      "inputs": ["$TURBO_ROOT$/**", "!**/node_modules/**", "!**/dist/**", "!.claude/worktrees/**"]
     },
     "dev": {
       "cache": false,

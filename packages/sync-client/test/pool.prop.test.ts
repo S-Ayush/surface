@@ -8,7 +8,7 @@ import fc from 'fast-check';
 import { autorun } from 'mobx';
 import { expect, it } from 'vitest';
 import { ObjectPool } from '../src/pool.js';
-import { PROPERTY_RUNS, PROPERTY_SEED } from './support/fc.js';
+import { PROPERTY_RUNS, PROPERTY_SEED, propertyParameters } from './support/fc.js';
 import { DebugItem, TEST_MODELS, debugRow, id } from './support/models.js';
 
 const IDS = [1, 2, 3, 4] as const;
@@ -166,6 +166,6 @@ it('pool, indexes and reactions always match a reference model', () => {
       }
       for (const watcher of watchers) watcher.dispose();
     }),
-    { seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS },
+    propertyParameters({ seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS }),
   );
 });

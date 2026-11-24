@@ -3,6 +3,7 @@
 // added to, keeps multi-select groups and untouched groups as they were, and never invents or
 // duplicates an id. PLAN-010 S5 adds the real issue shapes (`mergeLabels`, the delete cascade).
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { ISSUE_LABEL_LIMIT, LABEL_LIMIT_MESSAGE, mergeLabels } from './issue.js';
 import { applyLabelAdd, type LabelInfo } from './label.js';
@@ -77,7 +78,7 @@ describe('applyLabelAdd (AC-10 property)', () => {
           if (group === undefined || !touched.has(group)) expect(result).toContain(id);
         }
       }),
-      { numRuns: 1000 },
+      propertyParameters({ numRuns: 1000 }),
     );
   });
 
@@ -198,7 +199,7 @@ describe('label writes on real issue shapes (AC-10, E6, AC-12)', () => {
           }
         },
       ),
-      { numRuns: 500 },
+      propertyParameters({ numRuns: 500 }),
     );
   });
 });

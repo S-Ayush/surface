@@ -3,7 +3,8 @@
 // - hub: the fake hub's properties (`pnpm sim --runs <k>`), seed `SIM_DEFAULTS.simSeed`;
 // - client: sync-client's `content.prop` and `partial.prop`, `propertyRuns: <k>`, seed
 //   `PROPERTY_SEED`;
-// - real: the generated properties of `issues-real-server.int.test.ts` on the real server (needs
+// - real: the generated properties of `issues-real-server.int.test.ts` and
+//   `issues-convergence-real-server.int.test.ts` (split from it) on the real server (needs
 //   Docker and `pnpm build`), seed `SIM_DEFAULTS.simSeed`. About 50 minutes at 1,000.
 // With no step named, all three run. Exits 1 when a step fails; fast-check prints the seed and
 // path of a failing case, which `pnpm sim --seed <s> --path <p>` (hub) replays. Below about 20
@@ -40,7 +41,9 @@ const PLAN = {
     files: ['.prop.test.ts'],
     options: {
       root: simRoot,
-      provide: { simSeed: SIM_DEFAULTS.simSeed, simRuns: runs, simPath: '' },
+      // `propertyScale: 1`: every case, not the gate's share (plans README §6).
+      provide: { simSeed: SIM_DEFAULTS.simSeed, simRuns: runs, simPath: '', propertyScale: 1 },
+      testTimeout: 4 * HOURS,
     },
   },
   client: {
@@ -53,13 +56,18 @@ const PLAN = {
     },
   },
   real: {
-    files: ['test/issues-real-server.int.test.ts'],
+    files: [
+      'test/issues-real-server.int.test.ts',
+      'test/issues-convergence-real-server.int.test.ts',
+    ],
     options: {
       root: simRoot,
       config: path.join(simRoot, 'vitest.int.config.js'),
       testNamePattern: 'after any faults|after any interleaving',
       provide: { simSeed: SIM_DEFAULTS.simSeed, simRuns: runs, simPath: '' },
       testTimeout: 6 * HOURS,
+      // `pnpm test:int` runs these files in parallel; the long run keeps one server at a time.
+      fileParallelism: false,
     },
   },
 };

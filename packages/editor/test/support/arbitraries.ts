@@ -6,10 +6,11 @@
  */
 import type { DocMarkJSON, DocNodeJSON } from '@surface/domain';
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 
 /** Fixed seed so runs are reproducible; fast-check prints the seed and path of any failure. */
 export const PROPERTY_SEED = 20261112;
-export const propertyOptions = { seed: PROPERTY_SEED, numRuns: 300 } as const;
+export const propertyOptions = propertyParameters({ seed: PROPERTY_SEED, numRuns: 300 });
 
 const fileId = fc.constantFrom(
   '0190f3b2-7c1a-7d4e-9a1b-2c3d4e5f6a7b',

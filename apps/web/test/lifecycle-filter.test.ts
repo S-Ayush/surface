@@ -3,6 +3,7 @@
 // Recently deleted tab only deleted ones before their purgeAfter. The archive rows are flat, in
 // the server's order, with the archive or deletion day.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { forListVariant, inListVariant } from '../src/features/issues/lifecycle-filter.js';
 import {
@@ -32,7 +33,7 @@ describe('the lifecycle filter', () => {
         const expired = deletedAt !== null && Date.parse(deletedAt) + 720 * HOUR <= NOW.getTime();
         expect(views.length).toBe(expired ? 0 : 1);
       }),
-      { seed: 1504, numRuns: 300 },
+      propertyParameters({ seed: 1504, numRuns: 300 }),
     );
   });
 

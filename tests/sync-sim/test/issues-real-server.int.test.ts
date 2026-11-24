@@ -16,6 +16,9 @@
  * label, among deletes, restores and auto-archives (`cascadeCase`, `cascadeConvergence`), and
  * compaction in the generated issue runs (the numbering check no longer reads `sync_log`). The
  * last test sends such a race over HTTP at once, so the §4.8 lock order meets real concurrency.
+ *
+ * The generated issue runs (AC-2, AC-4) are `issues-convergence-real-server.int.test.ts`, so they
+ * run in parallel with this file.
  */
 import fc from 'fast-check';
 import {
@@ -32,27 +35,10 @@ import {
   descriptionConvergence,
   issueConvergence,
 } from '../src/properties.js';
-import type { RealServer } from '../src/real-server.js';
-import { startRealServer } from '../src/real-server.js';
-import type { SimServer } from '../src/server.js';
 import { simulate } from '../src/simulate.js';
 import type { Case } from '../src/steps.js';
 import { cascadeCase, issueCase } from '../src/steps.js';
-
-/** A real server for `simulate`, with the labels and the second team the issue steps name. */
-function issueServers() {
-  let latest: RealServer | undefined;
-  const server = async (users: number): Promise<SimServer> => {
-    latest = await startRealServer({
-      adminUrl: inject('pgAdminUrl'),
-      template: inject('pgTemplateDb'),
-      users,
-    });
-    await latest.seedIssueFixtures();
-    return latest;
-  };
-  return { server, last: () => latest };
-}
+import { issueServers } from './support/real-servers.js';
 
 /**
  * Three tabs create at once, one of them offline for a while, with refused creates between
@@ -225,16 +211,6 @@ describe('issues against the real server', () => {
       Gamma: [id('Size/Large')],
       日本: [id('Size/Small')],
     });
-  });
-
-  it('every tab converges on the issues, and numbering and labels hold, after any faults (AC-2, AC-4)', async () => {
-    const { server } = issueServers();
-    await fc.assert(
-      fc.asyncProperty(issueCase({ bursts: true }), (simCase) =>
-        simulate(simCase, { ...issueConvergence.options, server }, issueConvergence.check),
-      ),
-      simParameters(),
-    );
   });
 });
 

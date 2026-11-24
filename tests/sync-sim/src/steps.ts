@@ -1127,18 +1127,15 @@ function attachmentSteps(weights: {
 
 /**
  * Attachments (SPEC-014 AC-6, AC-17; PLAN-014 S4a): links and files attached to two issues,
- * renamed and deleted from every tab, and previews set by the system, with `commentCase`'s faults:
- * crashes and late users bootstrap the attachments (an eager model, no page to open). Compaction
- * stays out here only: the numbering check no longer needs it out (PLAN-011 S8), but with it in,
- * the default seed's 20 runs store no preview and the test's coverage check fails (60 pass).
+ * renamed and deleted from every tab, and previews set by the system, with every fault,
+ * compaction included (PLAN-011 S8): crashes and late users bootstrap the attachments (an eager
+ * model, no page to open). `preview` weighs as much as a create, so the default seed's 20 runs
+ * store a preview (the test's coverage check) with compaction in.
  */
 export function attachmentCase(): fc.Arbitrary<Case> {
   const step = fc.oneof(
-    ...attachmentSteps({ link: 4, file: 4, rename: 3, remove: 2, preview: 2 }),
-    ...faultSteps.map((arbitrary) => ({
-      weight: 1,
-      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
-    })),
+    ...attachmentSteps({ link: 4, file: 4, rename: 3, remove: 2, preview: 4 }),
+    ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
   );
   return caseOf(step).map((c) => ({ ...c, steps: [...COMMENT_ISSUES, ...c.steps] }));
 }

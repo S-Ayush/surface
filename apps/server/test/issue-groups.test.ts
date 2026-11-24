@@ -5,6 +5,7 @@
 // rows are in `team:<teamId>` only (`issue-child-groups.test.ts` runs them through the repo).
 import { teamGroup, userGroup } from '@surface/domain';
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { groupsOfIssueChild, issueGroups, issueGroupsOnUpdate } from '../src/sync/models.js';
 import type { RowChange } from '../src/sync/repo.js';
@@ -124,7 +125,7 @@ describe('an issue’s groups (SPEC-011 §5.7)', () => {
           else expect(groups).toContain(userGroup(ADA));
         },
       ),
-      { seed: 4242, numRuns: 200 },
+      propertyParameters({ seed: 4242, numRuns: 200 }),
     );
   });
 

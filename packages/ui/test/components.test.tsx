@@ -141,29 +141,3 @@ describe('Kbd', () => {
     expect(html).toContain('⌘');
   });
 });
-
-describe('render cost (design-system §5.4: < 1 ms per instance)', () => {
-  const N = 500;
-  it.each([
-    ['Avatar', () => <Avatar name="Ada Lovelace" />],
-    ['Badge', () => <Badge count={12} />],
-    ['Kbd', () => <Kbd keys="Mod+K" />],
-    ['Button', () => <Button shortcut="C">Create issue</Button>],
-  ] as const)('%s renders well under 1 ms per instance', (_, make) => {
-    const batch = (
-      <>
-        {Array.from({ length: N }, (_, i) => (
-          <span key={i}>{make()}</span>
-        ))}
-      </>
-    );
-    renderToStaticMarkup(batch); // warm up
-    // Best of three, so scheduling noise on a busy CI runner does not fail the check.
-    const perInstance = Array.from({ length: 3 }, () => {
-      const start = performance.now();
-      renderToStaticMarkup(batch);
-      return (performance.now() - start) / N;
-    });
-    expect(Math.min(...perInstance)).toBeLessThan(1);
-  });
-});

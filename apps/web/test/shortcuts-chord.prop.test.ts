@@ -6,6 +6,7 @@
 // - a less specific binding runs only when every more specific matching binding is unavailable.
 // Fixed seed for CI.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { COMMANDS, isCommandId, type CommandId } from '../src/commands/catalog.js';
 import { CommandRegistry } from '../src/commands/registry.js';
@@ -106,7 +107,7 @@ describe('AC-9: how the engine resolves one key event', { timeout: 60_000 }, () 
           expect(new Set(scopes).size, candidates.map((c) => c.id).join(', ')).toBe(scopes.length);
         },
       ),
-      { seed: SEED, numRuns: 3000 },
+      propertyParameters({ seed: SEED, numRuns: 3000 }),
     );
   });
 
@@ -135,7 +136,7 @@ describe('AC-9: how the engine resolves one key event', { timeout: 60_000 }, () 
           }
         },
       ),
-      { seed: SEED, numRuns: 3000 },
+      propertyParameters({ seed: SEED, numRuns: 3000 }),
     );
   });
 
@@ -192,7 +193,7 @@ describe('AC-9: how the engine resolves one key event', { timeout: 60_000 }, () 
           }
         },
       ),
-      { seed: SEED, numRuns: 3000 },
+      propertyParameters({ seed: SEED, numRuns: 3000 }),
     );
   });
 });

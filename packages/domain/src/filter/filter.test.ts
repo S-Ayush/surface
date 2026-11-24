@@ -1,6 +1,7 @@
 // SPEC-003 §7.4 filter semantics: validation, relative values, evaluation.
 // Client/SQL agreement is AC-6 (apps/server/test/filter-conformance.int.test.ts).
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import {
   defineFilterFields,
@@ -343,7 +344,7 @@ describe('matches', () => {
         }
         return true;
       }),
-      { seed: 20261106, numRuns: 500 },
+      propertyParameters({ seed: 20261106, numRuns: 500 }),
     );
   });
 

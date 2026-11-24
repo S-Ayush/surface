@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { EDITABLE_STATUS_CATEGORIES, workflowProblems, type StatusCategory } from '@surface/domain';
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { SurfaceError } from '../src/executor/errors.js';
 import {
@@ -130,7 +131,7 @@ describe('any sequence of status operations (AC-4, AC-3)', () => {
           expect(new Set(names).size).toBe(names.length);
         }
       }),
-      { numRuns: 300 },
+      propertyParameters({ numRuns: 300 }),
     );
   });
 });

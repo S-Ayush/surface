@@ -2,6 +2,7 @@
 // `keyBefore` and `keyBetween` keeps a strict byte order with no duplicates; equal neighbours
 // with different jitter give different keys; the optimistic jitter is a function of the id.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { isFractionalKey } from './fractional-key.js';
 import {
@@ -88,7 +89,7 @@ describe('keyBefore and keyBetween (AC-2 property)', () => {
         const [a, b] = x < y ? [x, y] : [y, x];
         expectStrictOrder([a, keyBetween(a, b, j), b]);
       }),
-      { numRuns: 5000 },
+      propertyParameters({ numRuns: 5000 }),
     );
   });
 

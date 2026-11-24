@@ -8,6 +8,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:deep": "SURFACE_TEST_TIER=deep vitest run",
     "test:int": "vitest run --config vitest.int.config.js",
     "sim": "node scripts/sim.mjs",
     "sim:deep": "node scripts/sim-deep.mjs"

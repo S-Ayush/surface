@@ -1,3 +1,4 @@
-import { surfaceVitest } from '@surface/config/vitest';
+import { surfaceVitestShared } from '@surface/config/vitest';
 
-export default surfaceVitest({ test: { environment: 'node' } });
+// Files share workers and their module cache (`isolate: false`); those that `vi.mock` stay isolated.
+export default surfaceVitestShared(import.meta.dirname, { test: { environment: 'node' } });

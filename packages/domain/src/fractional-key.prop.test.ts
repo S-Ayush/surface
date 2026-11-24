@@ -3,6 +3,7 @@
 // A list is modelled as its rows in display order; each step computes the new key from the
 // neighbours at the target position, as the status handlers and their `optimistic` do.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { fractionalKeyBetween, isFractionalKey } from './fractional-key.js';
 
@@ -92,7 +93,7 @@ describe('fractionalKeyBetween over arbitrary valid keys', () => {
         const [a, b] = x < y ? [x, y] : [y, x];
         expectStrictOrder([a, fractionalKeyBetween(a, b), b]);
       }),
-      { numRuns: 2000 },
+      propertyParameters({ numRuns: 2000 }),
     );
   });
 
@@ -103,7 +104,8 @@ describe('fractionalKeyBetween over arbitrary valid keys', () => {
         // The largest integer has no next one, so it gets a fraction instead.
         expectStrictOrder([key, fractionalKeyBetween(key, null)]);
       }),
-      // Enough runs to reach the integer just above the reserved smallest one (review finding).
+      // Enough runs to reach the integer just above the reserved smallest one (review finding),
+      // so the gate keeps the full count too (it takes well under a second).
       { numRuns: 10_000 },
     );
   });

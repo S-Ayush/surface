@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json && tsc -p scripts/tsconfig.json && tsc -p visual/tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run --project unit",
+    "test:deep": "SURFACE_TEST_TIER=deep vitest run --project unit",
     "test:tokens": "vitest run test/contrast.test.ts",
     "test:storybook": "vitest run --project storybook-light --project storybook-dark",
     "storybook": "storybook dev --port 6006 --no-open --disable-telemetry --no-version-updates",

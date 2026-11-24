@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p scripts/tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:deep": "SURFACE_TEST_TIER=deep vitest run",
     "registry:lint": "tsx --conditions=@surface/source scripts/registry.ts lint",
     "registry:snapshot": "tsx --conditions=@surface/source scripts/registry.ts snapshot"
   },

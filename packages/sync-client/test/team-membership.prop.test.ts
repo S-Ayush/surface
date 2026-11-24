@@ -18,7 +18,7 @@ import { expect, it } from 'vitest';
 import { decodeRow } from '../src/bootstrap.js';
 import { OverlayEngine, type OverlayMutation } from '../src/overlay.js';
 import { ObjectPool } from '../src/pool.js';
-import { PROPERTY_RUNS, PROPERTY_SEED } from './support/fc.js';
+import { PROPERTY_RUNS, PROPERTY_SEED, propertyParameters } from './support/fc.js';
 import { id } from './support/models.js';
 
 const AT = '2026-11-12T10:00:00.000Z';
@@ -187,7 +187,7 @@ it('shows the memberships the server will hold after the pending membership muta
         expect(shown(pool).some((m) => m.startsWith('SEC/'))).toBe(false);
       }
     }),
-    { seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS },
+    propertyParameters({ seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS }),
   );
 });
 
@@ -200,6 +200,6 @@ it('predicts the same on a rebuild, mutation by mutation', () => {
       rebuilt.engine.rebuild(ops.map(overlayMutation));
       expect(shown(pushed.pool)).toEqual(shown(rebuilt.pool));
     }),
-    { seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS },
+    propertyParameters({ seed: PROPERTY_SEED, numRuns: PROPERTY_RUNS }),
   );
 });

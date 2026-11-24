@@ -24,6 +24,7 @@ import {
   type IssueLockMode,
 } from '@surface/domain';
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { SurfaceError } from '../src/executor/errors.js';
 import {
@@ -345,7 +346,7 @@ describe('label.delete raced with issue.update (§4.4, AC-19 label race, AC-10)'
           expect(w.m.issues.get(w.plain.id)?.labelIds).toEqual([]);
         }
       }),
-      { seed: 20261116, numRuns: 300 },
+      propertyParameters({ seed: 20261116, numRuns: 300 }),
     );
     // Both orders happen across the runs.
     expect(addedFirst).toBeGreaterThan(0);
@@ -598,7 +599,7 @@ describe('status.delete raced with issue.update into the same status (E16, §4.4
         const statusId = w.m.issues.get(w.issue.id)?.statusId ?? '';
         expect(w.m.statuses.has(statusId), report).toBe(true);
       }),
-      { seed: 20261116, numRuns: 200 },
+      propertyParameters({ seed: 20261116, numRuns: 200 }),
     );
     expect(editFirst).toBeGreaterThan(0);
     expect(deleteFirst).toBeGreaterThan(0);

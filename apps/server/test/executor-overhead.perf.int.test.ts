@@ -6,8 +6,8 @@
 // The machine is shared (other worktrees, CI neighbours), so a burst of load can push one
 // round's tail over the budget. Each case measures up to 3 rounds and keeps the best: a real
 // regression adds overhead to every round and still fails.
-// Runs alone (vitest.perf.config.js), and is a test rather than a Vitest bench because benches
-// cannot fail CI.
+// Runs alone in `pnpm test:deep` (vitest.deep.config.js), and is a test rather than a Vitest bench
+// because benches cannot fail CI.
 import { pino } from 'pino';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { actors, executorHarness, testExecutor, type ExecutorHarness } from './executor.js';

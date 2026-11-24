@@ -24,7 +24,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:int": "vitest run --config vitest.int.config.js && vitest run --config vitest.perf.config.js",
+    "test:deep": "SURFACE_TEST_TIER=deep vitest run && SURFACE_TEST_TIER=deep vitest run --config vitest.deep.config.js",
+    "test:int": "vitest run --config vitest.int.config.js",
     "db:generate": "drizzle-kit generate",
     "surface": "tsx --conditions=@surface/source --env-file-if-exists=dev.env src/cli/main.ts"
   },

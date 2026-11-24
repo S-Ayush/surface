@@ -2,6 +2,7 @@
 // characters), priorities and identifiers; SPEC-015 §4.1–§4.3: the lifecycle state and the
 // refusal an edit gets outside Live.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { editRefusal, lifecycleOf } from './issue-lifecycle.js';
 import {
@@ -221,7 +222,7 @@ describe('statusSideEffects (SPEC-011 §4.6, AC-3)', () => {
           if (everStarted) expect(stamps.startedAt).not.toBeNull();
         }
       }),
-      { numRuns: 500 },
+      propertyParameters({ numRuns: 500 }),
     );
   });
 });
@@ -371,7 +372,7 @@ describe('mergeLabels (SPEC-011 §4.2, AC-4, AC-16, E5–E7)', () => {
           }
         },
       ),
-      { numRuns: 500 },
+      propertyParameters({ numRuns: 500 }),
     );
   });
 });

@@ -14,7 +14,7 @@ import { MemoryStorage } from '../src/storage/memory.js';
 import { FakeHub } from './support/hub.js';
 import { TEST_MODELS } from './support/models.js';
 import { clientItems, liveStore, serverItems, until } from './support/live.js';
-import { PROPERTY_SEED } from './support/fc.js';
+import { PROPERTY_SEED, propertyParameters } from './support/fc.js';
 
 type Command =
   | { kind: 'upsert'; n: number; title: string }
@@ -157,6 +157,6 @@ it('converges on the server state whatever the connection does', async () => {
       expect(reopened.position?.lastSyncId).toBe(position);
       await reopened.close();
     }),
-    { seed: PROPERTY_SEED, numRuns: 200 },
+    propertyParameters({ seed: PROPERTY_SEED, numRuns: 200 }),
   );
 }, 120_000);

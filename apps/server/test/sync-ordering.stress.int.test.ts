@@ -1,7 +1,9 @@
 // AC-1 (SPEC-002 §9): 20 concurrent writers × 500 mutations produce sync ids that are gap-free
 // and in commit order, verified by replaying `sync_log`. "Commit order" is checked the way the
 // hub depends on it: no snapshot ever sees a sync id before every lower one is visible.
+// `pnpm test:int` runs 50 mutations a writer; `pnpm test:deep` the full 500 (plans README §6).
 import { randomUUID } from 'node:crypto';
+import { isDeepRun } from '@surface/config/properties';
 import pg from 'pg';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
@@ -13,7 +15,7 @@ import {
 } from './executor.js';
 
 const WORKERS = 20;
-const MUTATIONS = 500;
+const MUTATIONS = isDeepRun() ? 500 : 50;
 const SHARED_ITEMS = 8;
 const SEED = 20261106;
 

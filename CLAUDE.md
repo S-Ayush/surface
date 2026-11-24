@@ -28,15 +28,17 @@ If the code you need to write would contradict a spec, **stop and say so**. Fix 
 
 ## Commands
 
-| Command                                 | What it does                                                                                                                      |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm check`                            | The full gate: build → lint (ESLint + dependency-cruiser + Prettier) → typecheck → unit tests. Run it before saying work is done. |
-| `pnpm test` / `pnpm test:int`           | Unit tests / integration tests (`*.int.test.ts`, real Postgres)                                                                   |
-| `pnpm --filter @surface/<pkg> <script>` | Run a script in one package (e.g. `pnpm --filter @surface/server test`)                                                           |
-| `pnpm lint:deps`                        | Package boundary check only                                                                                                       |
-| `pnpm registry:lint`                    | SPEC-003 §11 operation rules (also run by `pnpm test`); `pnpm registry:snapshot` records the released catalog                     |
-| `pnpm format`                           | Prettier write                                                                                                                    |
-| `pnpm --filter @surface/server dev`     | Server in watch mode (uses `apps/server/dev.env`)                                                                                 |
+| Command                                 | What it does                                                                                                                                                                                                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm check`                            | The full gate, in one Turbo run: build, lint (ESLint, dependency-cruiser, Stylelint, Prettier), typecheck and unit tests. Turbo replays what hasn't changed. Run it before saying work is done.                                                              |
+| `pnpm check:fast`                       | The same for the packages changed since `main` and those that depend on them (Turbo `--affected`), plus the repo-wide lints. For iterating; `pnpm check` is the gate.                                                                                        |
+| `pnpm test` / `pnpm test:int`           | Unit tests (a share of each property's cases, no timing budgets) / integration tests (`*.int.test.ts`, real Postgres, files in parallel)                                                                                                                     |
+| `pnpm test:deep`                        | What the gate leaves out: every property case with one fresh seed (printed; replay with `SURFACE_PROPERTY_SEED=<seed> pnpm test:deep`), the `*.perf.test.ts` budgets and the full ordering stress. Needs Docker. `pnpm sim:deep` is the 1,000-case sync run. |
+| `pnpm --filter @surface/<pkg> <script>` | Run a script in one package (e.g. `pnpm --filter @surface/server test`)                                                                                                                                                                                      |
+| `pnpm lint:deps`                        | Package boundary check only                                                                                                                                                                                                                                  |
+| `pnpm registry:lint`                    | SPEC-003 §11 operation rules (also run by `pnpm test`); `pnpm registry:snapshot` records the released catalog                                                                                                                                                |
+| `pnpm format`                           | Prettier write                                                                                                                                                                                                                                               |
+| `pnpm --filter @surface/server dev`     | Server in watch mode (uses `apps/server/dev.env`)                                                                                                                                                                                                            |
 
 ## Repository layout and boundaries
 
@@ -85,6 +87,7 @@ SSO/SAML, guests, sub-teams, built-in AI or AI agents, third-party integrations 
 - **File naming:** `*.test.ts` for unit tests (no Docker), `*.int.test.ts` for tests that need Postgres (Testcontainers locally, a service container in CI). E2E tests live in `e2e/` (Playwright). **On hold:** don't write tests that need a browser, a running stack or Postgres (e2e, perf, smoke, new integration tests) until the user lifts the hold (`docs/07-plans/README.md` §6). Still required: unit and property tests, the sync property suite, and private-team leak tests (these may use Postgres). Existing integration tests are kept.
 - **Unit tests never call the network or a third-party service.** Mock the client or use a fake (an in-process server on `127.0.0.1`, a fake SMTP server, fake-indexeddb, fake timers). The shared Vitest preset enforces it for TCP and TLS connections from the test process: one to anything but this machine fails the test (`packages/config/vitest-no-network.js`). It can't see DNS lookups, UDP or child processes, so don't rely on it for those.
 - **Sync and permission logic** gets property tests (fast-check) and leak tests, not just examples.
+- **Test tiers** (`docs/07-plans/README.md` §6): a property states its full case count and fixed seed through `propertyParameters` (`@surface/config/properties`); the gate runs a share, `pnpm test:deep` all with a fresh seed. A wall-clock budget goes in its own `*.perf.test.ts` (deep only), and the behaviour it measures keeps a test in the gate.
 - **No real sleeps** to wait for conditions. Await events, poll with a deadline, or use fake timers.
 - **Fixing a bug starts with a test** that fails without the fix.
 

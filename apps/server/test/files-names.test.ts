@@ -42,15 +42,14 @@ describe('cleanFileName', () => {
     expect(cleanFileName(input)).toBe(expected);
   });
 
-  it('trims a long run of spaces in time linear in its length (review m3)', () => {
-    // 100,000 spaces then a letter: a backtracking trim tries every start, 5·10⁹ steps.
+  it('trims a long run of spaces (review m3)', () => {
+    // 100,000 spaces then a letter: a backtracking trim tries every start, 5·10⁹ steps, and runs
+    // past the test timeout. The 1 s budget is `files-names.perf.test.ts` (`pnpm test:deep`).
     const spaces = ' '.repeat(100_000);
-    const started = performance.now();
     expect(cleanFileName(header(`${spaces}a${spaces}`))).toBe('a');
     expect(cleanFileName(header(`${spaces}a`))).toBe('a');
     // Cut to 255 bytes, the spaces before the kept extension trimmed too.
     expect(cleanFileName(header(`a${spaces}.b`))).toBe('a.b');
-    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   it('ignores a repeated header', () => {

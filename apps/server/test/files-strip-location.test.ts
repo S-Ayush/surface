@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto';
 import { crc32 } from 'node:zlib';
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import sharp, { type Metadata } from 'sharp';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { UnreadableImage, type ImageType } from '../src/files/image.js';
@@ -312,7 +313,7 @@ describe('stripping location metadata (AC-13, E20)', () => {
           expect(strip(type, bytes, sizes).equals(strip(type, bytes))).toBe(true);
         },
       ),
-      { seed: 20261112, numRuns: 200 },
+      propertyParameters({ seed: 20261112, numRuns: 200 }),
     );
   });
 });
@@ -340,7 +341,7 @@ describe('images the stripper can’t follow are refused (E25)', () => {
           expect(() => strip(type, bytes.subarray(0, cut), [97])).toThrow(UnreadableImage);
         },
       ),
-      { seed: 20261112, numRuns: 300 },
+      propertyParameters({ seed: 20261112, numRuns: 300 }),
     );
   });
 
@@ -798,7 +799,7 @@ describe('damaged images (m5, E25)', () => {
         expect(meta.xmp).toBeUndefined();
         expect(readableGpsEntries(meta.exif)).toBe(0);
       }),
-      { seed: 20261112, numRuns: 400 },
+      propertyParameters({ seed: 20261112, numRuns: 400 }),
     );
   });
 });

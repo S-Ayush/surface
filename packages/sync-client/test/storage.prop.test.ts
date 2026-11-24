@@ -6,7 +6,7 @@
 import fc from 'fast-check';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { StoredChange, SyncStorage } from '../src/storage/types.js';
-import { PROPERTY_SEED } from './support/fc.js';
+import { PROPERTY_SEED, propertyParameters } from './support/fc.js';
 import { debugRow, id } from './support/models.js';
 import { BACKENDS, closePorts, uniqueName } from './support/storage.js';
 
@@ -104,7 +104,7 @@ describe.each(BACKENDS)('$name storage', (backend) => {
         await tabA.close();
         await tabB.close();
       }),
-      { seed: PROPERTY_SEED, numRuns: backend.name === 'memory' ? 300 : 60 },
+      propertyParameters({ seed: PROPERTY_SEED, numRuns: backend.name === 'memory' ? 300 : 60 }),
     );
   }, 60_000);
 });
@@ -273,7 +273,7 @@ describe.each(BACKENDS)('$name content storage', (backend) => {
         await tabA.close();
         if (tabB !== tabA) await tabB.close();
       }),
-      { seed: PROPERTY_SEED, numRuns: backend.name === 'memory' ? 300 : 60 },
+      propertyParameters({ seed: PROPERTY_SEED, numRuns: backend.name === 'memory' ? 300 : 60 }),
     );
   }, 60_000);
 });

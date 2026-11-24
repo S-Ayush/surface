@@ -5,6 +5,7 @@
  * and nothing is watched once the last subscriber leaves.
  */
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import {
   compareStructural,
   observable,
@@ -186,6 +187,6 @@ it('matches a reference model under any interleaving of changes, reads and subsc
         for (const sub of subscribers) expect(sub.calls).toBe(sub.expected);
       }
     }),
-    { seed: 20261107, numRuns: 300 },
+    propertyParameters({ seed: 20261107, numRuns: 300 }),
   );
 });

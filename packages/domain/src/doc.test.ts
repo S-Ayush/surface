@@ -1,5 +1,6 @@
 // PLAN-013 S1: document constants and derived reaction ids (SPEC-013 §4.2, §4.4).
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -16,7 +17,7 @@ import { uuidv5 } from './uuid.js';
 
 const V5 = z.uuid({ version: 'v5' });
 /** Fixed seed so runs are reproducible; fast-check prints the seed of any failure. */
-const PROPERTY_OPTIONS = { seed: 20261112, numRuns: 300 } as const;
+const PROPERTY_OPTIONS = propertyParameters({ seed: 20261112, numRuns: 300 });
 const hex = (bytes: Uint8Array) =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 

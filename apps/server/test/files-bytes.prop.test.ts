@@ -7,6 +7,7 @@
 // row, no temporary file and an empty `blob_release`. No transaction is left waiting (no deadlock).
 import { randomUUID } from 'node:crypto';
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import {
   deleteFiles,
@@ -273,7 +274,7 @@ describe('the byte protocol (SPEC-014 §4.5, AC-14 model half)', () => {
           }
         },
       ),
-      { seed: 20261113, numRuns: 400 },
+      propertyParameters({ seed: 20261113, numRuns: 400 }),
     );
   });
 
@@ -343,7 +344,7 @@ describe('the byte protocol (SPEC-014 §4.5, AC-14 model half)', () => {
           expect(w.violations).toEqual([]);
         },
       ),
-      { seed: 20261113, numRuns: 300 },
+      propertyParameters({ seed: 20261113, numRuns: 300 }),
     );
   });
 

@@ -3,6 +3,7 @@
 // deleted ones (they have no row). A delete it allows leaves no issue on the status and keeps INV-04
 // and INV-05 (`workflowProblems` is empty); it never allows one while any stored issue uses it.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { EDITABLE_STATUS_CATEGORIES, countStatusIssues, statusDeleteProblem } from './workflow.js';
 import { DEFAULT_TEAM_WORKFLOW, workflowProblems } from './workspace.js';
@@ -66,7 +67,7 @@ describe('statusDeleteProblem over any workflow and issue set (AC-6)', () => {
           }
         }
       }),
-      { numRuns: 1000 },
+      propertyParameters({ numRuns: 1000 }),
     );
   });
 });

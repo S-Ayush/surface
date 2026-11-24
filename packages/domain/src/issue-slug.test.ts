@@ -1,6 +1,7 @@
 // PLAN-011 S4, SPEC-011 §4.1 and AC-24: the cosmetic URL slug. It folds like the git branch name
 // (`foldToSlug`, SPEC-012 D19), so the two never disagree.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import { foldToSlug } from './git-branch.js';
 import { issuePath, issueSlug, issueUrl, ISSUE_SLUG_MAX_LENGTH } from './issue.js';
@@ -48,7 +49,7 @@ describe('issueSlug (AC-24)', () => {
         }
         expect(slug === '').toBe(!/[\p{L}\p{N}]/u.test(title) || folded === '');
       }),
-      { numRuns: 500 },
+      propertyParameters({ numRuns: 500 }),
     );
   });
 });

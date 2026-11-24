@@ -3,6 +3,7 @@
 // is in exactly one state, repeats change nothing, nothing but restore leaves Deleted or
 // Archived, delete keeps `archivedAt`, and the 30-day boundary is exact to the millisecond.
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import { describe, expect, it } from 'vitest';
 import {
   LIFECYCLE_ACTIONS,
@@ -104,7 +105,7 @@ describe('lifecycleStep over operation sequences (AC-1, AC-3)', () => {
           }).toEqual({ archivedAt: model.archivedAt, deletedAt: model.deletedAt });
         }
       }),
-      { numRuns: 1000 },
+      propertyParameters({ numRuns: 1000 }),
     );
   });
 
