@@ -1,9 +1,10 @@
 // The sidebar (SPEC-005 §7, M0): workspace and avatar menu, search, My issues, the user's teams
 // (live, expandable to their pages) with "Browse teams", and Settings. PLAN-012 S5 adds Drafts and
-// the New issue button.
+// the New issue button. PLAN-015 S4 adds each team's Archive page (SPEC-015 §3.3; `G` `X`).
 import { IconButton, Kbd } from '@surface/ui';
 import { Link } from '@tanstack/react-router';
 import {
+  Archive,
   ChevronRight,
   CircleDot,
   FilePen,
@@ -145,6 +146,17 @@ export function Sidebar({ width, autoFocus }: { width: number; autoFocus: boolea
                     >
                       <House aria-hidden="true" />
                       Home
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/team/$key/archive"
+                      params={{ key: team.key }}
+                      className={styles.item}
+                      aria-label={`${team.name} archive`}
+                    >
+                      <Archive aria-hidden="true" />
+                      Archive
                     </Link>
                   </li>
                 </ul>

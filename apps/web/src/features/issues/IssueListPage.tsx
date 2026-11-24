@@ -88,7 +88,7 @@ export function IssueListPage({ teamKey }: { teamKey: string }) {
             action={<CreateIssueButton />}
           />
         </div>
-        <ArchivedCountFooter teamKey={team.key} />
+        <ArchivedCountFooter team={team} />
       </>
     );
   }
@@ -104,7 +104,7 @@ export function IssueListPage({ teamKey }: { teamKey: string }) {
           groups={rows.groups}
         />
         {/* SPEC-015 §3.3: the way to the team's archive page (PLAN-015 S4). */}
-        <ArchivedCountFooter teamKey={team.key} />
+        <ArchivedCountFooter team={team} />
       </div>
     </>
   );

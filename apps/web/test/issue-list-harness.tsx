@@ -82,6 +82,7 @@ export class IssueApp extends AppModel {
     action: 'I' | 'U' | 'A' | 'V' | 'D';
     model: string;
     rowId: string;
+    teamId?: string;
     appliedAt: number;
   }>([], { deep: false });
   /** The operations dispatched (PLAN-012 S6), in order. */
@@ -166,10 +167,13 @@ export class IssueApp extends AppModel {
     return { userId: ME, workspaceId: 'w-1' };
   }
 
+  /** The user's workspace role; Admins may purge (SPEC-015 §5.3). */
+  role: 'admin' | 'member' = 'member';
+
   override actor = (): Actor | null =>
     userActor({
       userId: ME,
-      role: 'member',
+      role: this.role,
       memberships: this.memberOf.map((teamId) => ({ teamId, private: false })),
     });
 

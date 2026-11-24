@@ -148,6 +148,51 @@ describe('archive page, Recently deleted issues tab', () => {
     ]);
   });
 
+  it('when the connection drops while open, shows "Available when online" and # queues nothing (§3.3 item 7)', async () => {
+    const app = new IssueApp([]);
+    const deletedAt = new Date(Date.now() - DAY).toISOString();
+    app.api.deleted = [deletedNode(9, deletedAt, { title: 'Wrong issue' })];
+    mounted = await mountLists(app, '/team/ENG/archive/recently-deleted');
+    await settle();
+    expect(mounted.host.textContent).toContain('Wrong issue');
+    await act(async () => {
+      app.setOnline(false);
+      await Promise.resolve();
+    });
+    expect(mounted.host.textContent).toContain('Available when online');
+    expect(mounted.host.textContent).not.toContain('Wrong issue');
+    const registry = mounted.commands();
+    expect(registry.isAvailable('issue:restore')).toBe(false);
+    await act(async () => {
+      registry.run('issue:restore');
+      await Promise.resolve();
+    });
+    expect(app.dispatched).toEqual([]);
+    // Back online: "Loading…", then the rows again.
+    await act(async () => {
+      app.setOnline(true);
+      await Promise.resolve();
+    });
+    await settle();
+    expect(mounted.host.textContent).toContain('Wrong issue');
+  });
+
+  it('offers Permanently delete… on the focused row to an Admin, never to a Member (§3.4, AC-15)', async () => {
+    const deletedAt = new Date(Date.now() - DAY).toISOString();
+    const admin = new IssueApp([]);
+    admin.role = 'admin';
+    admin.api.deleted = [deletedNode(9, deletedAt, { title: 'Wrong issue' })];
+    mounted = await mountLists(admin, '/team/ENG/archive/recently-deleted');
+    await settle();
+    expect(mounted.commands().isAvailable('issue:purge')).toBe(true);
+    await mounted.unmount();
+    const member = new IssueApp([]);
+    member.api.deleted = [deletedNode(9, deletedAt, { title: 'Wrong issue' })];
+    mounted = await mountLists(member, '/team/ENG/archive/recently-deleted');
+    await settle();
+    expect(mounted.commands().isAvailable('issue:purge')).toBe(false);
+  });
+
   it('offers no Restore on a row past its purgeAfter (§3.4)', async () => {
     const app = new IssueApp([]);
     // Answered a moment before it expired: the client's filter leaves it out too.

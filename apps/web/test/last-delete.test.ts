@@ -3,6 +3,7 @@
 // packet (the fake store has no hub at all), and a refusal empties the memory.
 import { overlayManager } from '@surface/ui';
 import { afterEach, describe, expect, it } from 'vitest';
+import { lifecycleEvents, type LifecycleEvent } from '../src/features/archive/lifecycle-events.js';
 import { announcer } from '../src/features/issues/announcer.js';
 import { deleteIssue, LastDelete, restoreLastDeleted } from '../src/features/issues/delete-flow.js';
 import type { MutationStore } from '../src/features/teams/submit.js';
@@ -85,6 +86,28 @@ describe('delete (§3.11)', () => {
     expect(slot.get()?.id).toBe('i2');
     calls[1]?.answer({ status: 'confirmed' });
     await second;
+  });
+
+  it('tells the archive page about a confirmed delete and a refused one (SPEC-015 §3.3 item 6)', async () => {
+    const seen: LifecycleEvent[] = [];
+    const stop = lifecycleEvents.subscribe((event) => seen.push(event));
+    try {
+      const { store, calls } = fakeStore();
+      const slot = new LastDelete();
+      const confirmed = deleteIssue(store, { issueId: 'i1', identifier: 'ENG-1' }, slot);
+      const refused = deleteIssue(store, { issueId: 'i2', identifier: 'ENG-2' }, slot);
+      expect(seen).toEqual([]);
+      calls[0]?.answer({ status: 'confirmed' });
+      await confirmed;
+      calls[1]?.answer(rejected);
+      await refused;
+      expect(seen).toEqual([
+        { kind: 'confirmed', op: 'delete', issueId: 'i1' },
+        { kind: 'refused', op: 'delete', issueId: 'i2' },
+      ]);
+    } finally {
+      stop();
+    }
   });
 });
 

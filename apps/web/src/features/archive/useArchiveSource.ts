@@ -8,6 +8,7 @@ import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useApp } from '../../app/context.js';
 import type { OperationAnswer } from '../files/operation.js';
 import { useIssueApi, type IssueApi } from '../issues/issue-api.js';
+import type { PacketWatchDeps } from './archive-packets.js';
 import {
   ARCHIVED_FILTER,
   ArchiveSource,
@@ -44,11 +45,9 @@ export function fetchArchivePage(
   );
 }
 
-/** The source's view of the store, the API and the window. */
-export function storeArchiveDeps(store: SyncStore, api: IssueApi): ArchiveSourceDeps {
+/** The packet watch's view of the store and the window (`archive-packets.ts`). */
+export function storePacketDeps(store: SyncStore): PacketWatchDeps {
   return {
-    fetchPage: (tab, teamKey, cursor, limit) => fetchArchivePage(api, tab, teamKey, cursor, limit),
-    online: () => store.connection === 'online',
     subscribed: (teamId) => store.followedTeams.has(teamId),
     teamOf: (issueId) => store.pool.get(Issue, issueId)?.teamId,
     watchPackets: (listener) => {
@@ -63,11 +62,24 @@ export function storeArchiveDeps(store: SyncStore, api: IssueApi): ArchiveSource
         },
       );
     },
-    watchOnline: (listener) =>
+    setTimeout: (run, ms) => window.setTimeout(run, ms),
+    clearTimeout: (handle) => {
+      if (typeof handle === 'number') window.clearTimeout(handle);
+    },
+  };
+}
+
+/** The source's view of the store, the API and the window. */
+export function storeArchiveDeps(store: SyncStore, api: IssueApi): ArchiveSourceDeps {
+  return {
+    ...storePacketDeps(store),
+    fetchPage: (tab, teamKey, cursor, limit) => fetchArchivePage(api, tab, teamKey, cursor, limit),
+    online: () => store.connection === 'online',
+    watchConnection: (listener) =>
       reaction(
         () => store.connection === 'online',
         (online) => {
-          if (online) listener();
+          listener(online);
         },
       ),
     watchFocus: (listener) => {
@@ -77,10 +89,6 @@ export function storeArchiveDeps(store: SyncStore, api: IssueApi): ArchiveSource
       };
     },
     events: lifecycleEvents,
-    setTimeout: (run, ms) => window.setTimeout(run, ms),
-    clearTimeout: (handle) => {
-      if (typeof handle === 'number') window.clearTimeout(handle);
-    },
   };
 }
 

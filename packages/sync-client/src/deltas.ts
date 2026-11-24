@@ -66,6 +66,18 @@ export interface AppliedPacket {
   readonly action: 'I' | 'U' | 'A' | 'V' | 'D';
   readonly model: string;
   readonly rowId: string;
+  /**
+   * The row's team, when an upsert's row has one. Read from the packet, because an archived or
+   * deleted Issue never reaches the pool (AC-29): the archive page filters its refreshes by team
+   * with it (PLAN-015 S4). Absent on a `D`, which carries only the id.
+   */
+  readonly teamId?: string;
+}
+
+/** The `teamId` of a decoded row, for `AppliedPacket`. */
+function teamOf(row: Readonly<Record<string, unknown>>): { teamId?: string } {
+  const teamId = row['teamId'];
+  return typeof teamId === 'string' ? { teamId } : {};
 }
 
 export type DeltaPlan =
@@ -302,13 +314,25 @@ function toChange(
         return {
           base: { kind: 'delete', model: packet.m, id: row.id },
           stored: { kind: 'delete', model: packet.m, version, id: row.id },
-          applied: { id: packet.id, action: packet.a, model: packet.m, rowId: row.id },
+          applied: {
+            id: packet.id,
+            action: packet.a,
+            model: packet.m,
+            rowId: row.id,
+            ...teamOf(row),
+          },
         };
       }
       return {
         base: { kind, model: packet.m, row },
         stored: { kind, model: packet.m, version, row },
-        applied: { id: packet.id, action: packet.a, model: packet.m, rowId: row.id },
+        applied: {
+          id: packet.id,
+          action: packet.a,
+          model: packet.m,
+          rowId: row.id,
+          ...teamOf(row),
+        },
       };
     }
     case 'D': {

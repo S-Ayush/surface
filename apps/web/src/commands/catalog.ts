@@ -51,7 +51,7 @@ export const COMMANDS = {
   'issue:delete': { title: 'Delete issue' },
   'issue:restore': { title: 'Restore issue' },
   // The Permanently delete confirm (SPEC-015 §3.4, D14); PLAN-015 S4 registers its handler.
-  'issue:purge': { title: 'Permanently delete issue…' },
+  'issue:purge': { title: 'Permanently delete…' },
   'issue-page:next': { title: 'Next issue in the list' },
   'issue-page:previous': { title: 'Previous issue in the list' },
   'issue-page:save-description': { title: 'Save description now' },

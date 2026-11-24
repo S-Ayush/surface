@@ -10,7 +10,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { useApp } from '../../app/context.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
 import { askPurge } from './purge-flow.js';
-import { restoreIssue, type RestoreTarget } from './restore-flow.js';
+import { RESTORE_NEEDS_NETWORK, restoreIssue, type RestoreTarget } from './restore-flow.js';
 
 export interface LifecycleSubject {
   readonly id: string;
@@ -39,12 +39,16 @@ export function restorable(subject: LifecycleSubject, now: Date = new Date()): b
   }
 }
 
-/** The page's or row's lifecycle commands. `onOverlayClosed`: focus back to the row. */
+/**
+ * The page's or row's lifecycle commands. `onOverlayClosed`: focus back to the row. `needsNetwork`:
+ * the archive list, where a restore never queues (§3.3 item 7).
+ */
 export function useLifecycleCommands(
   subject: () => LifecycleSubject | undefined,
-  options: { readonly onOverlayClosed?: () => void } = {},
+  options: { readonly onOverlayClosed?: () => void; readonly needsNetwork?: boolean } = {},
 ): void {
   const app = useApp();
+  const offline = () => options.needsNetwork === true && app.readyStore?.connection !== 'online';
   const navigate = useNavigate();
   const open = (issue: RestoreTarget) => {
     void navigate({ href: issuePath(issue.identifier, '') });
@@ -55,16 +59,21 @@ export function useLifecycleCommands(
     () => {
       const current = subject();
       const store = app.readyStore;
-      if (current?.identifier == null || store === null || !restorable(current)) return;
+      if (current?.identifier == null || store === null || !restorable(current) || offline()) {
+        return;
+      }
       void restoreIssue(store, { id: current.id, identifier: current.identifier }, { open });
     },
     {
       when: () => {
         const current = subject();
-        return app.readyStore !== null && current !== undefined && restorable(current);
+        return (
+          app.readyStore !== null && current !== undefined && restorable(current) && !offline()
+        );
       },
       reason: () => {
         const current = subject();
+        if (current !== undefined && restorable(current) && offline()) return RESTORE_NEEDS_NETWORK;
         // Only a deleted issue past its purgeAfter has a reason; `#` on a live one does nothing.
         if (current?.identifier == null || current.lifecycle !== 'deleted') return undefined;
         return restorable(current) ? undefined : lifecycleRefusal(current.identifier, 'expired');

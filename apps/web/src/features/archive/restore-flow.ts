@@ -5,11 +5,13 @@
 // The toast says "Restoring ENG-42…" until the mutation is confirmed, then "Restored ENG-42" with
 // **Open**. It never waits for a packet: the replica holds no archived or deleted issue, so there is
 // nothing to patch (§6.2), and a connection that doesn't subscribe to the issue's team may never
-// get one. Offline it queues and says so; the toast still finishes on the confirmation (E14).
+// get one. Offline, or once the connection drops while it waits, it queues and says so; the toast
+// still finishes on the confirmation (E14).
 // The archive list drops the row at once (`restoring`) and refreshes on the confirmation.
 import { issueRestore } from '@surface/operations';
 import type { MutationOutcome } from '@surface/sync-client';
 import { toast as showToast, type ToastOptions } from '@surface/ui';
+import { when } from 'mobx';
 import type { MutationStore } from '../teams/submit.js';
 import { announce } from '../issues/announcer.js';
 import { lifecycleEvents, type LifecycleEvents } from './lifecycle-events.js';
@@ -37,12 +39,20 @@ export const restoredMessage = (identifier: string) => `Restored ${identifier}`;
 export const restoreQueuedMessage = (identifier: string) =>
   `${identifier} will be restored when you're back online.`;
 
+/**
+ * The archive page reads the server, so a restore from it needs the network (§3.3 item 7): its
+ * rows give way to "Available when online", and `#` on a row says this instead of queueing.
+ */
+export const RESTORE_NEEDS_NETWORK =
+  "Restore needs the network here. Try again when you're back online.";
+
 export type RestoreResult = 'confirmed' | 'queued' | 'refused';
 
 /**
  * Sends `issue.restore` and follows it to the server's answer. A refusal (purged meanwhile, past
  * its purgeAfter: E4, E24) is the shell's toast with the server's message; this one stops saying
- * "Restoring". Offline it resolves at once with `queued`.
+ * "Restoring". Offline it resolves at once with `queued`, and so it does when the connection drops
+ * before the answer.
  */
 export function restoreIssue(
   store: MutationStore,
@@ -108,5 +118,26 @@ export function restoreIssue(
     },
   );
   // Offline the caller isn't kept waiting; the toast still finishes on the confirmation (E14).
-  return online ? finished : Promise.resolve('queued');
+  if (!online) return Promise.resolve('queued');
+  return untilDropped(store, finished, () => {
+    // The connection dropped while waiting: queued now; the toast still says "Restored" later.
+    toast({ id, message: restoreQueuedMessage(issue.identifier), duration: Infinity });
+  });
+}
+
+/** `finished`, or `queued` as soon as the connection drops first (as `submitMutation` does). */
+async function untilDropped(
+  store: MutationStore,
+  finished: Promise<RestoreResult>,
+  onDropped: () => void,
+): Promise<RestoreResult> {
+  const dropped = when(() => store.connection !== 'online');
+  try {
+    const result = await Promise.race([finished, dropped.then(() => null)]);
+    if (result !== null) return result;
+    onDropped();
+    return 'queued';
+  } finally {
+    dropped.cancel();
+  }
 }

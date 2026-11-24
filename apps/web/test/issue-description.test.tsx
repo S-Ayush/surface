@@ -238,6 +238,34 @@ describe('the description on the issue page (AC-12)', () => {
   });
 });
 
+describe('a save refused because the issue was deleted meanwhile (SPEC-015 E1, PLAN-015 S4)', () => {
+  afterEach(() => {
+    overlayManager.clear();
+  });
+
+  it('shows exactly one toast, with Copy text, while the page is open: the shell reports nothing', async () => {
+    overlayManager.clear();
+    const content = contentWorld();
+    const locked = 'ENG-42 was deleted. Restore it to edit it.';
+    const app = new FakeApp({
+      issues: [issueRow(ISSUE_A, 42)],
+      content: content.api,
+      answer: () =>
+        Promise.resolve({ status: 'rejected', error: { code: 'CONFLICT', message: locked } }),
+    });
+    page = await mountIssuePage({ app, ref: 'ENG-42' });
+    await type('Half a thought');
+    await blur();
+    await settle();
+    expect(saves(app)).toHaveLength(1);
+    const toasts = overlayManager.getSnapshot().visibleToasts;
+    expect(toasts.map((t) => [t.tone, t.message, t.action?.label])).toEqual([
+      ['danger', locked, 'Copy text'],
+    ]);
+    expect(app.shellReports).toEqual([]);
+  });
+});
+
 describe('an earlier save of this description still unconfirmed when the page opens (SPEC-012 D31)', () => {
   // A save of "Mine" on v5 from before (an earlier visit to the page, or before a reload) is still
   // in the queue: the replica shows its predicted v6.

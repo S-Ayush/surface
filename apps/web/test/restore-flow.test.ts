@@ -2,6 +2,7 @@
 // row and page menus, "Restore issue" in `Mod+K` and `Mod+Z`. "Restoring ENG-42…" until the
 // mutation is confirmed, then "Restored ENG-42" with **Open**; never a packet.
 import { overlayManager } from '@surface/ui';
+import { observable, onBecomeObserved, onBecomeUnobserved, runInAction } from 'mobx';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LifecycleEvents, type LifecycleEvent } from '../src/features/archive/lifecycle-events.js';
 import { restoreIssue } from '../src/features/archive/restore-flow.js';
@@ -14,15 +15,24 @@ type Outcome =
 function fakeStore(connection = 'online') {
   const answers: ((outcome: Outcome) => void)[] = [];
   const sent: unknown[] = [];
+  // Observable, like the store's: the flow watches it while it waits.
+  const box = observable.box(connection);
   const store: MutationStore = {
-    connection,
+    get connection() {
+      return box.get();
+    },
     dispatch: (op, input) =>
       new Promise((resolve) => {
         sent.push([op.name, input]);
         answers.push(resolve);
       }),
   };
-  return { store, answers, sent };
+  const setConnection = (next: string) => {
+    runInAction(() => {
+      box.set(next);
+    });
+  };
+  return { store, answers, sent, setConnection };
 }
 
 function recordEvents() {
@@ -72,6 +82,52 @@ describe('restoreIssue', () => {
     answers[0]?.({ status: 'confirmed' });
     await Promise.resolve();
     await Promise.resolve();
+    expect(visible().map((t) => t.message)).toEqual(['Restored ENG-42']);
+  });
+
+  it('says it is queued when the connection drops while waiting, then still says "Restored" (E14)', async () => {
+    const { store, answers, setConnection } = fakeStore();
+    const { events, seen } = recordEvents();
+    const done = restoreIssue(store, ISSUE, { events });
+    expect(visible().map((t) => t.message)).toEqual(['Restoring ENG-42…']);
+    setConnection('offline');
+    expect(await done).toBe('queued');
+    expect(visible().map((t) => t.message)).toEqual([
+      "ENG-42 will be restored when you're back online.",
+    ]);
+    setConnection('online');
+    answers[0]?.({ status: 'confirmed' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(visible().map((t) => t.message)).toEqual(['Restored ENG-42']);
+    expect(seen.at(-1)).toEqual({ kind: 'confirmed', op: 'restore', issueId: 'i1' });
+  });
+
+  it('stops watching the connection once the answer arrives', async () => {
+    const { store, answers } = fakeStore();
+    const box = observable.box('online');
+    let watched = false;
+    const watching: MutationStore = {
+      get connection() {
+        return box.get();
+      },
+      dispatch: (op, input) => store.dispatch(op, input),
+    };
+    onBecomeObserved(box, () => {
+      watched = true;
+    });
+    onBecomeUnobserved(box, () => {
+      watched = false;
+    });
+    const done = restoreIssue(watching, ISSUE, { events: recordEvents().events });
+    expect(watched).toBe(true);
+    answers[0]?.({ status: 'confirmed' });
+    expect(await done).toBe('confirmed');
+    expect(watched).toBe(false);
+    // A later drop changes nothing.
+    runInAction(() => {
+      box.set('offline');
+    });
     expect(visible().map((t) => t.message)).toEqual(['Restored ENG-42']);
   });
 

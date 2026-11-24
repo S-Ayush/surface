@@ -57,6 +57,21 @@ describe('archived and deleted issues leave the replica (AC-29)', () => {
     expect(await kept.stored('TaskNote')).toEqual([]);
   });
 
+  it.each([
+    ['an archive (A)', 'A', (hub: FakeHub) => hub.archiveTask(110)],
+    ['a delete (U with deletedAt)', 'U', (hub: FakeHub) => hub.deleteTask(110)],
+  ])(
+    'reports the removed row with its team on %s, though the pool never holds it (PLAN-015 S4)',
+    async (_, action, act) => {
+      const { hub, store, settled } = await started();
+      act(hub);
+      await settled();
+      expect(
+        store.recentPackets.find((p) => p.rowId === id(110) && p.action === action),
+      ).toMatchObject({ model: 'Task', teamId: id(1) });
+    },
+  );
+
   it('removes it on a label-cascade U that carries the archived row, without bringing it back', async () => {
     const { hub, store, settled } = await started();
     hub.archiveTask(110);

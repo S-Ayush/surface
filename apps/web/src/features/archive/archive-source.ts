@@ -7,21 +7,23 @@
 //
 // Pages of 50 as the list scrolls. It refreshes on window focus, after the user's own delete,
 // restore and purge confirmations (`lifecycle-events.ts`), when the connection comes back, and,
-// only while the team is subscribed, on its packets: an `A`, the `U` of a delete or a restore, a
-// `V`. Packet refreshes run at most once a second, because auto-archive emits many `A`s at once.
-// Opening the page never subscribes the team: nothing here calls `openTeam`. A restore takes its
-// row off the list at once. Pure of React: the screen adapts it with `useArchiveSource`.
+// only while the team is subscribed, on its packets (`archive-packets.ts`, at most once a second).
+// Offline, or once the connection drops, it shows "Available when online": restore needs the
+// network here (§3.3 item 7). Opening the page never subscribes the team: nothing here calls
+// `openTeam`. A restore takes its row off the list at once. Pure of React: the screen adapts it
+// with `useArchiveSource`.
 import type { Filter } from '@surface/domain';
 import type { OperationAnswer } from '../files/operation.js';
 import type { ArchivedIssue } from '../issues/list-model.js';
+import { watchArchivePackets, type PacketWatchDeps } from './archive-packets.js';
 import type { LifecycleEvent, LifecycleEvents } from './lifecycle-events.js';
+
+export { PACKET_REFRESH_MS, type ArchivePacket } from './archive-packets.js';
 
 export type ArchiveTab = 'archived' | 'deleted';
 
 /** Rows per request (§3.3 item 4). */
 export const ARCHIVE_PAGE_SIZE = 50;
-/** Packet refreshes run at most this often (§3.3 item 6). */
-export const PACKET_REFRESH_MS = 1_000;
 
 /** The Issues tab's query: the team's archived issues, newest archived first. */
 export const ARCHIVED_FILTER: Filter = { field: 'archivedAt', op: 'exists', value: true };
@@ -32,15 +34,7 @@ export interface ArchivePage {
   readonly pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null };
 }
 
-/** An applied delta packet, as the store's `recentPackets` reports it. */
-export interface ArchivePacket {
-  readonly id: number;
-  readonly action: 'I' | 'U' | 'A' | 'V' | 'D';
-  readonly model: string;
-  readonly rowId: string;
-}
-
-export interface ArchiveSourceDeps {
+export interface ArchiveSourceDeps extends PacketWatchDeps {
   /** One page of `tab` for `teamKey`, after `cursor`. */
   fetchPage(
     tab: ArchiveTab,
@@ -50,19 +44,11 @@ export interface ArchiveSourceDeps {
   ): Promise<OperationAnswer<ArchivePage>>;
   /** Whether the store's connection is up. */
   online(): boolean;
-  /** Whether this tab receives the team's deltas (a member team, or one opened on demand). */
-  subscribed(teamId: string): boolean;
-  /** The team of an issue the replica holds now; undefined when it holds none. */
-  teamOf(issueId: string): string | undefined;
-  /** Calls back with packets applied from now on, oldest first. Returns the stop function. */
-  watchPackets(listener: (packets: readonly ArchivePacket[]) => void): () => void;
-  /** Calls back each time the connection comes back online. */
-  watchOnline(listener: () => void): () => void;
+  /** Calls back each time the connection comes up (`true`) or goes down (`false`). */
+  watchConnection(listener: (online: boolean) => void): () => void;
   /** Calls back on each window focus. */
   watchFocus(listener: () => void): () => void;
   readonly events: LifecycleEvents;
-  readonly setTimeout: (run: () => void, ms: number) => unknown;
-  readonly clearTimeout: (handle: unknown) => void;
 }
 
 export type ArchiveState =
@@ -89,9 +75,10 @@ export class ArchiveSource {
   readonly #deps: ArchiveSourceDeps;
   #state: ArchiveState = LOADING;
   #cursor: string | null = null;
-  /** Bumped by each refresh, so an older answer never lands over a newer one. */
+  /** Bumped by each refresh and stop, so an older answer never lands over a newer one. */
   #generation = 0;
-  #packetTimer: unknown;
+  /** A refresh is waiting for its answer: a next page would follow an old cursor. */
+  #refreshing = false;
   /** Issues whose restore was sent: off the list until it is confirmed or refused. */
   readonly #restoring = new Set<string>();
   readonly #listeners = new Set<() => void>();
@@ -112,10 +99,22 @@ export class ArchiveSource {
     const deps = this.#deps;
     this.#stops = [
       deps.watchFocus(() => void this.refresh()),
-      deps.watchOnline(() => void this.refresh()),
-      deps.watchPackets((packets) => {
-        this.#onPackets(packets);
+      deps.watchConnection((online) => {
+        if (online) {
+          void this.refresh();
+          return;
+        }
+        // §3.3 item 7: restore needs the network here, so the rows go until it is back.
+        this.#generation += 1;
+        this.#refreshing = false;
+        this.#set(OFFLINE);
       }),
+      watchArchivePackets(
+        deps,
+        this.#team.id,
+        (id) => this.#listed(id),
+        () => void this.refresh(),
+      ),
       deps.events.subscribe((event) => {
         this.#onEvent(event);
       }),
@@ -129,9 +128,9 @@ export class ArchiveSource {
   stop(): void {
     for (const stop of this.#stops) stop();
     this.#stops = [];
-    this.#cancelPacketTimer();
     // Answers still in flight are dropped.
     this.#generation += 1;
+    this.#refreshing = false;
   }
 
   getState = (): ArchiveState => this.#state;
@@ -144,17 +143,19 @@ export class ArchiveSource {
   };
 
   /**
-   * Reads the list again from the start, as many rows as it shows (at least a page), and keeps
-   * what it shows until the answer arrives.
+   * Reads the list again from the start, as many rows as it shows (at least a page). Rows shown
+   * stay until the answer arrives; from offline or a failure it says "Loading…" first.
    */
   async refresh(): Promise<void> {
     const generation = ++this.#generation;
-    this.#cancelPacketTimer();
     if (!this.#deps.online()) {
+      this.#refreshing = false;
       this.#set(OFFLINE);
       return;
     }
     const before = this.#state;
+    if (before.status === 'offline' || before.status === 'error') this.#set(LOADING);
+    this.#refreshing = true;
     const wanted = Math.max(
       ARCHIVE_PAGE_SIZE,
       before.status === 'ready' ? before.issues.length : 0,
@@ -171,6 +172,7 @@ export class ArchiveSource {
       );
       if (generation !== this.#generation) return;
       if (!answer.ok) {
+        this.#refreshing = false;
         this.#failed(answer.code);
         return;
       }
@@ -179,15 +181,16 @@ export class ArchiveSource {
       cursor = answer.result.pageInfo.endCursor ?? undefined;
       if (cursor === undefined) hasMore = false;
     }
+    this.#refreshing = false;
     this.#cursor = cursor ?? null;
     this.#set({ status: 'ready', issues: this.#shown(issues), hasMore, loadingMore: false });
   }
 
-  /** The next page, when the list scrolls near its end. */
+  /** The next page, when the list scrolls near its end. Not while a refresh is on its way. */
   async loadMore(): Promise<void> {
     const state = this.#state;
     if (state.status !== 'ready' || !state.hasMore || state.loadingMore) return;
-    if (this.#cursor === null || !this.#deps.online()) return;
+    if (this.#refreshing || this.#cursor === null || !this.#deps.online()) return;
     const generation = this.#generation;
     this.#set({ ...state, loadingMore: true });
     const answer = await this.#deps.fetchPage(
@@ -196,12 +199,13 @@ export class ArchiveSource {
       this.#cursor,
       ARCHIVE_PAGE_SIZE,
     );
+    // A refresh, a drop or a stop since: this page follows a cursor that no longer applies.
     if (generation !== this.#generation) return;
     const current = this.#state;
     if (current.status !== 'ready') return;
     if (!answer.ok) {
-      this.#set({ ...current, loadingMore: false });
       if (answer.code === 'UNREACHABLE') this.#set(OFFLINE);
+      else this.#set({ ...current, loadingMore: false });
       return;
     }
     const known = new Set(current.issues.map((issue) => issue.id));
@@ -213,6 +217,11 @@ export class ArchiveSource {
       hasMore: answer.result.pageInfo.hasNextPage && this.#cursor !== null,
       loadingMore: false,
     });
+  }
+
+  #listed(issueId: string): boolean {
+    const state = this.#state;
+    return state.status === 'ready' && state.issues.some((issue) => issue.id === issueId);
   }
 
   #failed(code: string): void {
@@ -235,48 +244,6 @@ export class ArchiveSource {
     if (event.op === 'restore') this.#restoring.delete(event.issueId);
     // The user's own delete, restore or purge was confirmed or refused: read the list again.
     void this.refresh();
-  }
-
-  /**
-   * Packets of the team, while it is subscribed (§3.3 item 6, E24): an Issue `A` (archived), `V`
-   * (restored from archive) or a `U` that removed a row from the replica (a delete) or put back
-   * one this list shows (a restore). A plain edit of a live issue changes nothing here.
-   */
-  #onPackets(packets: readonly ArchivePacket[]): void {
-    if (!this.#deps.subscribed(this.#team.id)) return;
-    if (!packets.some((packet) => this.#concerns(packet))) return;
-    if (this.#packetTimer !== undefined) return;
-    this.#packetTimer = this.#deps.setTimeout(() => {
-      this.#packetTimer = undefined;
-      void this.refresh();
-    }, PACKET_REFRESH_MS);
-  }
-
-  #concerns(packet: ArchivePacket): boolean {
-    if (packet.model !== 'Issue') return false;
-    const team = this.#deps.teamOf(packet.rowId);
-    if (team !== undefined && team !== this.#team.id) return false;
-    switch (packet.action) {
-      case 'A':
-      case 'V':
-        return true;
-      case 'U': {
-        const state = this.#state;
-        const listed = state.status === 'ready' && state.issues.some((i) => i.id === packet.rowId);
-        return team === undefined || listed;
-      }
-      // An insert is a live issue; a `D` is a purge, which only the user's own flow or a refresh
-      // shows (the purged row was never in the replica).
-      case 'I':
-      case 'D':
-        return false;
-    }
-  }
-
-  #cancelPacketTimer(): void {
-    if (this.#packetTimer === undefined) return;
-    this.#deps.clearTimeout(this.#packetTimer);
-    this.#packetTimer = undefined;
   }
 
   #set(state: ArchiveState): void {

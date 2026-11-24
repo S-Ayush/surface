@@ -12,6 +12,7 @@ import {
   ROW_HEIGHT_COMPACT,
   StatusIcon,
   VirtualList,
+  toast,
   type MenuEntry,
   type VirtualItemProps,
   type VirtualListHandle,
@@ -44,7 +45,7 @@ import { useCommandContext } from '../../command-menu/context.js';
 import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
 import type { CommandId } from '../../commands/catalog.js';
 import { useCommand, useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
-import { restoreIssue } from '../archive/restore-flow.js';
+import { RESTORE_NEEDS_NETWORK, restoreIssue } from '../archive/restore-flow.js';
 import {
   restorable,
   useLifecycleCommands,
@@ -110,7 +111,7 @@ function ArchiveRowCommands({
   subject: () => LifecycleSubject | undefined;
   onOverlayClosed: () => void;
 }) {
-  useLifecycleCommands(subject, { onOverlayClosed });
+  useLifecycleCommands(subject, { onOverlayClosed, needsNetwork: true });
   return null;
 }
 
@@ -400,6 +401,11 @@ export function IssueList({ ariaLabel, listKey, href, groups, archive }: IssueLi
   const restoreFromRow = (server: LifecycleSubject) => {
     const store = app.readyStore;
     if (store === null || server.identifier === null) return;
+    if (store.connection !== 'online') {
+      // §3.3 item 7: the archive page's restore never queues.
+      toast({ message: RESTORE_NEEDS_NETWORK });
+      return;
+    }
     const identifier = server.identifier;
     return restoreIssue(
       store,

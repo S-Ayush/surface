@@ -89,6 +89,11 @@ export class FakeApp extends AppModel {
   /** The fake queue's last `seq`; tests pushing their own entries use 1000 and up. */
   #seq = 0;
   readonly dispatched: Dispatched[] = [];
+  /**
+   * The rejections the store would hand to the shell's `onRejected` (its toast): those whose
+   * dispatch didn't say it shows them itself (`reportRejection`), like the store's queue.
+   */
+  readonly shellReports: { readonly op: string; readonly message: string }[] = [];
   /** The teams the page opened (`store.openTeam`), in order. */
   readonly opened: string[] = [];
   readonly issues: IObservableArray<Row>;
@@ -107,6 +112,7 @@ export class FakeApp extends AppModel {
     action: 'I' | 'U' | 'A' | 'V' | 'D';
     model: string;
     rowId: string;
+    teamId?: string;
     appliedAt: number;
   }>([], { deep: false });
   /** `store.connection`, observable. */
@@ -193,7 +199,10 @@ export class FakeApp extends AppModel {
       dispatch: (
         op: { name: string },
         input: unknown,
-        dispatchOptions?: { onQueued?: (key: { clientId: string; seq: number }) => void },
+        dispatchOptions?: {
+          onQueued?: (key: { clientId: string; seq: number }) => void;
+          reportRejection?: () => boolean;
+        },
       ) => {
         this.dispatched.push({ op: op.name, input });
         this.#seq += 1;
@@ -208,6 +217,9 @@ export class FakeApp extends AppModel {
           runInAction(() => {
             this.pending.replace(this.pending.filter((entry) => entry.seq !== seq));
           });
+          if (outcome.status === 'rejected' && (dispatchOptions?.reportRejection?.() ?? true)) {
+            this.shellReports.push({ op: op.name, message: outcome.error.message });
+          }
           return outcome;
         });
       },
