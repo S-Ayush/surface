@@ -34,6 +34,7 @@ import {
   type DescriptionTimers,
   type SavedDescription,
 } from './description-save.js';
+import { saversOf } from './description-savers.js';
 import { docInput } from './draft-adapter.js';
 import { refusedTextToast } from './locked-refusal.js';
 import { descriptionOf, useIssueContentView, type ContentView } from './server-issue.js';
@@ -55,22 +56,6 @@ const GONE: DescriptionSnapshot = {
   refusals: [],
   abandoned: true,
 };
-
-/**
- * The savers still holding an issue's description, per store (SPEC-012 D31): a page that opens the
- * issue again takes its saver back (and shows the text it holds), so two never race. Keyed by the
- * store, so a new session never meets one; a saver leaves once it stops.
- */
-const SAVERS = new WeakMap<SyncStore, Map<string, DescriptionSaver>>();
-
-function saversOf(store: SyncStore): Map<string, DescriptionSaver> {
-  let savers = SAVERS.get(store);
-  if (savers === undefined) {
-    savers = new Map();
-    SAVERS.set(store, savers);
-  }
-  return savers;
-}
 
 /**
  * The store as the saver watches it (SPEC-012 D31): the replica's row, and the queue's unconfirmed

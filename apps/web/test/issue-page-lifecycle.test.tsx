@@ -82,7 +82,13 @@ async function menuItems(): Promise<string[]> {
     trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await Promise.resolve();
   });
-  return [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent);
+  // The label only: the key hint (a Kbd, aria-hidden) joined the item with the M1 build.
+  return [...document.querySelectorAll('[role="menuitem"]')].map((item) => {
+    const label = item.cloneNode(true);
+    if (!(label instanceof Element)) return '';
+    for (const hidden of label.querySelectorAll('[aria-hidden="true"]')) hidden.remove();
+    return label.textContent ?? '';
+  });
 }
 
 const text = () => document.body.textContent;

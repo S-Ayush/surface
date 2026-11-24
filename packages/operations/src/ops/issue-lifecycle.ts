@@ -69,8 +69,8 @@ export const issueDelete = defineOperation({
     icon: 'trash',
     contexts: ['issue'],
     // `Mod+Backspace` (SPEC-015 §6.1) is bound to the app command `issue:delete`, which this
-    // entry opens; the hint joins once the build reaches M1 (PLAN-015 S1 As built).
-    shortcut: null,
+    // entry opens; the hint joins now that the build reaches M1 (PLAN-012 S7b).
+    shortcut: 'Mod+Backspace',
     // Hidden on a deleted issue (§7). An issue the replica doesn't hold is archived, deleted or
     // of an unsubscribed team: the server decides, and deleting a deleted one changes nothing.
     available: (target, store) =>
@@ -106,7 +106,7 @@ export const issueRestore = defineOperation({
     icon: 'rotate-ccw',
     contexts: ['issue'],
     // `#` (SPEC-015 §6.1), like Delete's key: bound to `issue:restore`, hint from M1.
-    shortcut: null,
+    shortcut: '#',
     // Only on an archived issue, or a deleted one before its purgeAfter (§7, D6). The replica
     // holds live issues only, so an issue it holds as live has nothing to restore; one it doesn't
     // hold is left to the server.

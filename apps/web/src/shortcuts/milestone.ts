@@ -4,7 +4,7 @@ export const MILESTONES = ['M0', 'M1', 'M2', 'M3', 'M4', 'M5'] as const;
 export type Milestone = (typeof MILESTONES)[number];
 
 /** The milestone this build delivers. Raise it when a milestone's features land. */
-export const BUILD_MILESTONE: Milestone = 'M0';
+export const BUILD_MILESTONE: Milestone = 'M1';
 
 export function isInBuild(milestone: Milestone, build: Milestone = BUILD_MILESTONE): boolean {
   return MILESTONES.indexOf(milestone) <= MILESTONES.indexOf(build);

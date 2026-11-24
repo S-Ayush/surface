@@ -7,6 +7,7 @@ import { EMPTY_DOC, type DocNodeJSON } from '@surface/domain';
 import type { RichTextEditorHandle } from '@surface/editor';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useObserved } from '../../app/context.js';
+import { commentFromDescription } from '../issues/description-savers.js';
 import { draftAdapterFor } from '../issues/draft-adapter.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
 import type { CommentActions } from './actions.js';
@@ -59,7 +60,9 @@ export function CommentBox({
   useCommand(
     'issue-page:comment',
     () => {
-      editor.current?.focus();
+      commentFromDescription(store, issueId, () => {
+        editor.current?.focus();
+      });
     },
     { level: 'page' },
   );

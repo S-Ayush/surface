@@ -262,8 +262,8 @@ export const attachmentCreateFile = defineOperation({
   examples: [{ issue: 'ENG-1', file: SEED_UPLOAD, title: 'Redirect loop screenshot' }],
   // Picking the file opens the browser's picker; the operation runs after the upload (§3.1). The
   // web client's entry opens that picker (`issue-page:attach-file`, bound to `Mod+Shift+U` on every
-  // platform). No hint here: the menu shows one only once the M1 key map is in the build.
-  ui: { title: 'Attach file…', icon: 'paperclip', contexts: ['issue'], shortcut: null },
+  // platform). The hint joins with the M1 build (PLAN-014 D32, PLAN-012 S7b).
+  ui: { title: 'Attach file…', icon: 'paperclip', contexts: ['issue'], shortcut: 'Mod+Shift+U' },
   optimistic: (store, input) => {
     if (input.id === undefined) return;
     const issue = writableIssue(store, input.issue);

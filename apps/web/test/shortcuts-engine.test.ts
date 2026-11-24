@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KeyInput } from '../src/shortcuts/chord.js';
 import { SEQUENCE_TIMEOUT_MS } from '../src/shortcuts/engine.js';
-import { shortcut } from '../src/shortcuts/registry.js';
+import { SHORTCUTS, inBuild, shortcut } from '../src/shortcuts/registry.js';
 import { body, element, keys, setup } from './shortcut-fakes.js';
 
 beforeEach(() => {
@@ -68,7 +68,8 @@ describe('AC-5: plain keys never fire while typing; Mod+K and Esc do', () => {
 
 describe('AC-6: sequences', () => {
   it('G then S within 1 s goes to settings, with a hint in between', () => {
-    const { commands, press, hints, engine } = setup();
+    // The M0 key map: from M1 on, G also continues to E, M, D and X.
+    const { commands, press, hints, engine } = setup({ bindings: inBuild(SHORTCUTS, 'M0') });
     const settings = vi.fn();
     commands.register('nav:settings', { run: settings });
 

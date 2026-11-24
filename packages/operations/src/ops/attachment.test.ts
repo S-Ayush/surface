@@ -301,7 +301,7 @@ describe('the attachment operations (AC-18)', () => {
         title: 'Attach file…',
         icon: 'paperclip',
         contexts: ['issue'],
-        shortcut: null,
+        shortcut: 'Mod+Shift+U',
       },
       'attachment.createLink': {
         title: 'Link any URL to issue…',
