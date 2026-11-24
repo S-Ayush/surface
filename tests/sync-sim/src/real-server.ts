@@ -183,6 +183,11 @@ export class RealServer
   readonly #entry: TestServer;
   /** Ids `autoArchive` archived (PLAN-015 S3), not those it was merely asked about. */
   readonly #archived = new Set<string>();
+  /**
+   * Each issue's commit order (the `sync_id` of its `I` row), read before every compaction prunes
+   * it (PLAN-011 S8), so the numbering check doesn't depend on what `sync_log` still holds.
+   */
+  readonly #insertedAt = new Map<string, number>();
   readonly #database: TestDatabaseHandle;
   readonly #byId: ReadonlyMap<string, TestUser>;
   readonly #sockets: RealSocket[] = [];
@@ -386,7 +391,7 @@ export class RealServer
         number: row.number,
         labelIds: row.labelIds,
         sortOrder: row.sortOrder,
-        insertedAt: row.insertedAt,
+        insertedAt: row.insertedAt ?? this.#insertedAt.get(row.id) ?? null,
       })),
     );
   }
@@ -606,7 +611,12 @@ export class RealServer
   }
 
   compactLog(): void {
-    void this.#serially('compact the log', () => this.#entry.compactLog()).catch(() => undefined);
+    void this.#serially('compact the log', async () => {
+      for (const row of await this.#entry.issues()) {
+        if (row.insertedAt !== null) this.#insertedAt.set(row.id, row.insertedAt);
+      }
+      await this.#entry.compactLog();
+    }).catch(() => undefined);
   }
 
   async dispose(): Promise<void> {

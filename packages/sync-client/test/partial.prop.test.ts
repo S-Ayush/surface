@@ -15,7 +15,7 @@ import type { SocketFactory } from '../src/socket.js';
 import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
 import type { SyncStore } from '../src/store.js';
-import { PROPERTY_SEED } from './support/fc.js';
+import { PROPERTY_SEED, propertyRuns } from './support/fc.js';
 import type { HubConnection } from './support/hub.js';
 import { FakeHub } from './support/hub.js';
 import { eventually, teamStore, teamView, until } from './support/live.js';
@@ -353,7 +353,7 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
     }),
     {
       seed: PROPERTY_SEED,
-      numRuns: 200,
+      numRuns: propertyRuns(200),
       examples: [
         // E35: tab A follows squad 3 and closes; squad 3 changes while only tab B (not following
         // it) moves the replica on; tab A starts again behind and must reload and sweep.

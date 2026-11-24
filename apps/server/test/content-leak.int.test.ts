@@ -33,6 +33,7 @@ import { uuidv7 } from '../src/db/uuidv7.js';
 import type { Executor } from '../src/executor/execute.js';
 import { Lifecycle } from '../src/lifecycle.js';
 import { createLogger } from '../src/logger.js';
+import { contentFrames } from '../src/sync/content.js';
 import { pgSyncLogSource } from '../src/sync/hub-source.js';
 import { SyncHub } from '../src/sync/hub.js';
 import { syncRegistry } from '../src/sync/registry.js';
@@ -463,5 +464,47 @@ describe('SEC content in sync', () => {
       outsider.close();
       member.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The byte budget (PLAN-011 S8; SPEC-011 §5.2, D16)
+
+describe('a content answer cut by its byte budget', () => {
+  /** One answer as `/sync/content` builds it, with the head left out (writes move it). */
+  async function answer(actor: Actor, parents: readonly string[], budgetBytes: number) {
+    const frames = await contentFrames({
+      pool: h.pool,
+      registry,
+      actor,
+      parents: parents.map(issueParent),
+      budgetBytes,
+    });
+    return frames.map((f) => (f.t === 'meta' ? { ...f, lastSyncId: 0 } : f));
+  }
+
+  it('reveals nothing of a large SEC parent: it neither counts nor cuts, as if it were not asked for', async () => {
+    const large = uuidv7();
+    await writeContent(large, 'SEC', samActor, `${SECRET} ${'x'.repeat(150_000)}`);
+    // ENG's two parents fit together; the SEC one alone would not.
+    const budget = 20 * 1024;
+    for (const actor of [anaActor, zoeActor]) {
+      const hidden = await answer(actor, [engIssue, large, engMarker], budget);
+      expect(hidden).toEqual(await answer(actor, [engIssue, uuidv7(), engMarker], budget));
+      expect(hidden[0]).toMatchObject({
+        parents: [issueParent(engIssue), issueParent(engMarker)],
+      });
+      // First in the request, where a visible parent always comes whole.
+      const first = await answer(actor, [large, engIssue, engMarker], 1);
+      expect(first).toEqual(await answer(actor, [uuidv7(), engIssue, engMarker], 1));
+      expect(first[0]).toMatchObject({ parents: [issueParent(engIssue)] });
+      for (const text of [large, h.teams.sec, SECRET]) {
+        expect(JSON.stringify([hidden, first]), text).not.toContain(text);
+      }
+    }
+    // SEC's member sees it: it doesn't fit after ENG's first parent, so the answer stops there.
+    // The cut above comes from visibility, not from a budget too large to cut.
+    const control = await answer(samActor, [engIssue, large, engMarker], budget);
+    expect(control[0]).toMatchObject({ parents: [issueParent(engIssue)] });
   });
 });

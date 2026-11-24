@@ -732,3 +732,28 @@ export const lifecycleConvergence: Property = {
     }
   },
 };
+
+/**
+ * Label cascades among the lifecycle (PLAN-011 S8; SPEC-011 AC-18, AC-20, E22): the lifecycle
+ * property (every tab holds exactly the live issues, equal to a fresh bootstrap), then the stored
+ * workflow's invariants over every stored issue, archived and deleted ones included (a cascade
+ * rewrites them too, so a restore never brings back a deleted label), and every tab showing the
+ * server's labels, with no issue naming one the tab doesn't hold.
+ */
+export const cascadeConvergence: Property = {
+  options: convergence.options,
+  check: async (outcome) => {
+    await lifecycleConvergence.check(outcome);
+    const { world } = outcome;
+    const server = world.server;
+    if (!isWorkflowServer(server)) throw new Error('The cascade property needs the real server.');
+    const state = await server.workflow();
+    checkWorkflow(state, await server.issues());
+    const expected = workflowOf(state);
+    const teamId = state.teams.find((t) => t.key === ISSUE_TEAM)?.id ?? '';
+    for (const tab of world.live) {
+      expect(workflowView(tab, teamId), tab.name).toEqual(expected);
+      checkNoDanglingRefs(tab);
+    }
+  },
+};

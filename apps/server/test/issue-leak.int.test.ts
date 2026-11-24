@@ -867,3 +867,83 @@ describe('issue.listDeleted', () => {
     expect(real).toEqual(none);
   });
 });
+
+// PLAN-011 S8 (permissions.md §5, "`A` and `V` frames"): an archive and a restore of an issue go
+// out as `A` and `V` with the whole row, like `I` and `U`, and the row's groups cut to the
+// connection's: a public issue Ana created and Sam is assigned names neither user's group to the
+// other. A SEC issue's archive and restore reach SEC's member only.
+describe('A and V frames of issues', () => {
+  it('carry the full row with its groups cut to the connection’s, and a SEC restore never reaches an outsider', async () => {
+    const issueModel = registry.models.find((m) => m.name === 'Issue');
+    if (issueModel === undefined) throw new Error('No Issue model');
+    const fields = [...new Set(['id', ...Object.keys(issueModel.def.fields)])].sort();
+    const at = await head();
+    const outsider = connect('outsider', at);
+    const member = connect('member', at);
+    try {
+      const shared = uuidv7();
+      const secret = uuidv7();
+      await ok(
+        'issue.create',
+        { id: shared, team: 'ENG', title: 'Shared work', status: 'Done', assignee: sam },
+        anaActor,
+      );
+      await ok(
+        'issue.create',
+        { id: secret, team: 'SEC', title: 'Restored secret', status: 'Done' },
+        samActor,
+      );
+      // Due for the job: completed 13 months ago. Test setup, so the unlogged write is harmless:
+      // the checks below read the logged `A` and `V` that follow it.
+      await h.pool.query(
+        `UPDATE issues SET completed_at = now() - interval '13 months',
+                           updated_at = now() - interval '13 months'
+          WHERE id = ANY($1)`,
+        [[shared, secret]],
+      );
+      await ok('issue.autoArchive', { issue: shared }, systemActor());
+      await ok('issue.autoArchive', { issue: secret }, systemActor());
+      await ok('issue.restore', { issue: shared }, anaActor);
+      await ok('issue.restore', { issue: secret }, samActor);
+      const marker = uuidv7();
+      const secMarker = uuidv7();
+      await ok('issue.create', { id: marker, team: 'ENG', title: 'Marker' }, anaActor);
+      await ok('issue.create', { id: secMarker, team: 'SEC', title: 'Marker' }, samActor);
+      await eventually(() => outsider.text().includes(marker) && member.text().includes(secMarker));
+
+      const frames = (packets: readonly DeltaPacket[], id: string) =>
+        packets.flatMap((p) =>
+          (p.a === 'A' || p.a === 'V') && p.m === 'Issue' && p.d.id === id ? [p] : [],
+        );
+      // Ana through `team:ENG` and her own group, Sam through his `user:` group (he follows SEC).
+      for (const [connection, own, other] of [
+        [outsider, ana, sam],
+        [member, sam, ana],
+      ] as const) {
+        const got = frames(connection.packets(), shared);
+        expect(got.map((p) => p.a)).toEqual(['A', 'V']);
+        for (const p of got) {
+          expect(Object.keys(p.d).sort()).toEqual(fields);
+          expect(p.d['title']).toBe('Shared work');
+          expect(p.d['groups']).toContain(`user:${own}`);
+          expect(p.d['groups']).not.toContain(`user:${other}`);
+        }
+      }
+      expect(frames(member.packets(), secret).map((p) => p.a)).toEqual(['A', 'V']);
+      expect(outsider.text()).not.toContain(secret);
+      expect(outsider.text()).not.toContain('Restored secret');
+      const { rows } = await h.pool.query<{ action: string; groups: string[] }>(
+        `SELECT action, groups FROM sync_log
+          WHERE model = 'Issue' AND model_id = $1 AND action IN ('A', 'V') ORDER BY sync_id`,
+        [secret],
+      );
+      expect(rows).toEqual([
+        { action: 'A', groups: [secGroup] },
+        { action: 'V', groups: [secGroup] },
+      ]);
+    } finally {
+      outsider.close();
+      member.close();
+    }
+  });
+});

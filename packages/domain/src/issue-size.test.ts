@@ -1,0 +1,261 @@
+/**
+ * SPEC-011 AC-14, §10 (PLAN-011 S8): the size of the Issue row and the worst-case eager replica.
+ *
+ * - Rows are generated over the §10 seed distribution, from every field of the `Issue` model (a
+ *   new field fails the test until the generator gives it a realistic value), and serialised as
+ *   compact JSON, the form a row is stored and sent in.
+ * - **The row budget** (650 bytes on average) is measured as §10 measured its rows: without
+ *   `groups`. §10's full and sparse rows (708 and 517 bytes) are what the model gives without it;
+ *   with it they are 55 bytes or more larger, because a row carries its groups cut to the
+ *   connection's (SPEC-002 Q8): `team:<id>`, and `user:<id>` of the viewer when they created or are
+ *   assigned the issue. The stored row, groups included, is what the replica total counts. The
+ *   coordinator decided this reading of AC-14 on 2026-11-24, following SPEC-011 §10; still open
+ *   for the user (PLAN-011 S8 As built). Stored rows average ≈ 685 bytes, for information.
+ * - **The worst-case replica** (§5.7, Q15) holds the live issues of the user's member teams plus
+ *   the 5 largest on-demand teams, the user's own issues of the other public teams (created or
+ *   assigned, through `user:<id>`), and the other eager models. At the reference scale (NFR-10:
+ *   100,000 issues, 20 teams, 50 users) it fits the per-replica 35 MB budget.
+ *
+ * The measured total of a real replica (IndexedDB, tombstones) is a perf test, held (plans README
+ * §6). Deterministic: one seeded generator, no wall clock.
+ */
+import { describe, expect, it } from 'vitest';
+import { keyBefore, jitterFromId } from './order-key.js';
+import { utf8Length } from './sha1.js';
+import { Issue } from './model/index.js';
+import { uuidv7 } from './uuid.js';
+
+/** SPEC-011 §10 and AC-14. */
+const ROW_BUDGET_BYTES = 650;
+/** sync-protocol §2: eager rows, uncompressed, per replica (SPEC-011 Q15). */
+const REPLICA_BUDGET_BYTES = 35 * 1024 * 1024;
+
+/** NFR-10, the reference scale. */
+const REFERENCE = { issues: 100_000, teams: 20, users: 50 } as const;
+/**
+ * The seed's team split: NFR-10's issues spread evenly over its teams, the split §10's "a user in
+ * teams holding 40k live issues has ≈ 24 MB" assumes (8 teams of 5,000). Every issue counts as
+ * live: no auto-archive has run, the largest replica a workspace of this size can give.
+ */
+const SEED_TEAM_SPLIT: readonly number[] = Array.from(
+  { length: REFERENCE.teams },
+  () => REFERENCE.issues / REFERENCE.teams,
+);
+/** ADR-0020: "a user in two or three teams". The worst case takes three, the largest. */
+const MEMBER_TEAMS = 3;
+/** SPEC-011 §5.7: at most 5 on-demand teams, least recently opened dropped. */
+const ON_DEMAND_TEAMS = 5;
+/**
+ * The other eager models a replica holds at the reference scale, each row counted at 1 KB (a Team
+ * row, the largest of them, is under 600 bytes; a draft with a long description is larger, and a
+ * user keeps a few): the workspace, 50 users, the user's preferences, 20 teams, every user in every
+ * team (1,000 memberships), 10 statuses and 50 labels per team plus 50 workspace labels, and the
+ * user's 10 drafts. Attachments (PLAN-014 S4a, eager issue children) add their own rows.
+ */
+const OTHER_EAGER_ROWS = 1 + 50 + 1 + 20 + 1_000 + 200 + 1_050 + 10;
+const OTHER_EAGER_ROW_BYTES = 1024;
+
+/** mulberry32: a small seeded generator, so every run measures the same rows. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Picks from `[value, weight]` pairs. */
+function weighted<T>(random: () => number, choices: readonly (readonly [T, number])[]): T {
+  const total = choices.reduce((sum, [, weight]) => sum + weight, 0);
+  let at = random() * total;
+  for (const [value, weight] of choices) {
+    at -= weight;
+    if (at < 0) return value;
+  }
+  const last = choices.at(-1);
+  if (last === undefined) throw new Error('No choices.');
+  return last[0];
+}
+
+const WORDS = [
+  'fix',
+  'login',
+  'crash',
+  'when',
+  'opening',
+  'the',
+  'settings',
+  'page',
+  'on',
+  'Safari',
+  'add',
+  'export',
+  'to',
+  'CSV',
+  'slow',
+  'search',
+  'results',
+  'for',
+  'large',
+  'teams',
+  'update',
+  'onboarding',
+  'copy',
+  'dark',
+  'mode',
+  'contrast',
+];
+
+/** A title of `length` characters at most, cut on a word boundary (§4.1 allows 255). */
+function title(random: () => number, length: number): string {
+  const words: string[] = [];
+  let size = 0;
+  while (size < length) {
+    const word = WORDS[Math.floor(random() * WORDS.length)] ?? 'issue';
+    if (size + word.length + 1 > length && words.length > 0) break;
+    words.push(word);
+    size += word.length + 1;
+  }
+  return words.join(' ');
+}
+
+/** The user whose replica the rows are measured in. */
+const VIEWER = 0;
+const EPOCH = Date.parse('2026-01-05T09:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The seed distribution of §10: titles of 10–80 characters (a third short), 0–3 labels (2 in a
+ * quarter of the issues), an assignee on 70 %, an estimate on 40 %, a due date on 15 %, the status
+ * categories of a working team, with their timestamps (INV-20), and the groups as the replica of
+ * `VIEWER` holds them: `team:<id>`, and `user:<viewer>` on the viewer's own issues.
+ */
+function generateIssues(count: number, seed: number): Record<string, unknown>[] {
+  const random = seeded(seed);
+  const bytes = () => Uint8Array.from({ length: 10 }, () => Math.floor(random() * 256));
+  const id = (at: number) => uuidv7(at, bytes());
+  const teams = Array.from({ length: REFERENCE.teams }, () => id(EPOCH));
+  const users = Array.from({ length: REFERENCE.users }, () => id(EPOCH));
+  const viewer = users[VIEWER] ?? '';
+  const statuses = new Map(teams.map((team) => [team, Array.from({ length: 6 }, () => id(EPOCH))]));
+  const labels = new Map(teams.map((team) => [team, Array.from({ length: 40 }, () => id(EPOCH))]));
+  const lowest = new Map<string, string | null>();
+  const rows: Record<string, unknown>[] = [];
+  for (let n = 0; n < count; n += 1) {
+    const created = EPOCH + Math.floor(random() * 300 * DAY_MS);
+    const issueId = id(created);
+    const teamId = teams[n % teams.length] ?? '';
+    const pick = <T>(list: readonly T[] | undefined): T | undefined =>
+      list?.[Math.floor(random() * list.length)];
+    const creatorId = pick(users) ?? '';
+    const assigneeId = random() < 0.7 ? (pick(users) ?? null) : null;
+    const category = weighted(random, [
+      ['backlog', 20],
+      ['unstarted', 25],
+      ['started', 20],
+      ['completed', 30],
+      ['canceled', 5],
+    ] as const);
+    const later = (days: number) => new Date(created + days * DAY_MS).toISOString();
+    const started = category === 'started' || category === 'completed';
+    const labelCount = weighted(random, [
+      [0, 30],
+      [1, 35],
+      [2, 25],
+      [3, 10],
+    ] as const);
+    const sortOrder = keyBefore(lowest.get(teamId) ?? null, jitterFromId(issueId));
+    lowest.set(teamId, sortOrder);
+    const row: Record<string, unknown> = {
+      id: issueId,
+      teamId,
+      number: Math.floor(n / teams.length) + 1,
+      title: title(random, random() < 0.33 ? 10 + Math.floor(random() * 20) : 30 + random() * 50),
+      statusId: pick(statuses.get(teamId)) ?? '',
+      priority: Math.floor(random() * 5),
+      assigneeId,
+      labelIds: Array.from({ length: labelCount }, () => pick(labels.get(teamId)) ?? ''),
+      estimate:
+        random() < 0.4
+          ? weighted(random, [
+              [1, 1],
+              [2, 1],
+              [3, 1],
+              [5, 1],
+              [8, 1],
+            ])
+          : null,
+      dueDate: random() < 0.15 ? later(14).slice(0, 10) : null,
+      sortOrder,
+      creatorId,
+      startedAt: started ? later(2) : null,
+      completedAt: category === 'completed' ? later(9) : null,
+      canceledAt: category === 'canceled' ? later(5) : null,
+      archivedAt: null,
+      deletedAt: null,
+      deletedById: null,
+      groups: [
+        `team:${teamId}`,
+        ...(creatorId === viewer || assigneeId === viewer ? [`user:${viewer}`] : []),
+      ],
+      createdAt: new Date(created).toISOString(),
+      updatedAt: later(10),
+    };
+    rows.push(row);
+  }
+  return rows;
+}
+
+const SAMPLE = 20_000;
+const rows = generateIssues(SAMPLE, 20261116);
+const sizeOf = (row: unknown) => utf8Length(JSON.stringify(row));
+const averageOf = (list: readonly unknown[]) =>
+  list.reduce<number>((sum, row) => sum + sizeOf(row), 0) / list.length;
+/** As §10 measured rows: without the connection-dependent `groups`. */
+const rowAverage = averageOf(rows.map(({ groups: _groups, ...row }) => row));
+/** As a replica stores rows: with their groups. */
+const storedAverage = averageOf(rows);
+/** The least a stored row adds for its groups: its team group. */
+const TEAM_GROUP_BYTES = sizeOf({ groups: [`team:${'0'.repeat(36)}`] }) - sizeOf({});
+
+describe('the Issue row (AC-14)', () => {
+  it('is generated with every field of the Issue model, each valid on the wire', () => {
+    const fields = Object.keys(Issue.fields).sort();
+    for (const row of rows.slice(0, 200)) {
+      expect(Object.keys(row).sort()).toEqual(fields);
+      for (const [name, field] of Object.entries(Issue.fields)) {
+        expect(field.schema.safeParse(row[name]).success, `${name}: ${String(row[name])}`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it(`averages at most ${ROW_BUDGET_BYTES} bytes of compact JSON over the seed distribution, as §10 measures it`, () => {
+    expect(rowAverage).toBeLessThanOrEqual(ROW_BUDGET_BYTES);
+    // §10's measured rows bracket the average: a sparse row (517 bytes) to a full one (708).
+    expect(rowAverage).toBeGreaterThan(517);
+    // Stored, each row also carries at least its team group.
+    expect(storedAverage - rowAverage).toBeGreaterThanOrEqual(TEAM_GROUP_BYTES);
+  });
+});
+
+describe('the worst-case replica (AC-14, §5.7, Q15)', () => {
+  it('holds the member teams, the 5 largest on-demand teams and the user’s own issues within 35 MB', () => {
+    expect(SEED_TEAM_SPLIT.reduce((a, b) => a + b, 0)).toBe(REFERENCE.issues);
+    const bySize = [...SEED_TEAM_SPLIT].sort((a, b) => b - a);
+    const followed = MEMBER_TEAMS + ON_DEMAND_TEAMS;
+    // In every other public team: the issues the user created or is assigned (each issue has a
+    // creator and, on 70 %, an assignee, spread over the users).
+    const ownShare = (1 + 0.7) / REFERENCE.users;
+    const issueRows =
+      bySize.slice(0, followed).reduce((a, b) => a + b, 0) +
+      bySize.slice(followed).reduce((a, b) => a + b, 0) * ownShare;
+    const total = issueRows * storedAverage + OTHER_EAGER_ROWS * OTHER_EAGER_ROW_BYTES;
+    expect(issueRows).toBeGreaterThanOrEqual(40_000);
+    expect(total).toBeLessThanOrEqual(REPLICA_BUDGET_BYTES);
+  });
+});

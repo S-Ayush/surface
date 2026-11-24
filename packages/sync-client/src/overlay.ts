@@ -68,13 +68,39 @@ function splitKey(key: string): [model: string, id: string] {
   return [key.slice(0, at), key.slice(at + 1)];
 }
 
+const NO_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * The rows pending mutations wrote, keyed `model\0id`, with the ids each model has among them, so
+ * a search of one model (`find`, a reference by name) reads that model's writes only. Scanning
+ * every write instead made a rebuild quadratic in the pending mutations: 1,000 issue edits took
+ * about 60 ms (PLAN-011 S8, `overlay.perf.test.ts`).
+ */
+class Draft extends Map<string, DraftRow> {
+  readonly #ids = new Map<string, Set<string>>();
+
+  override set(key: string, row: DraftRow): this {
+    super.set(key, row);
+    const [model, id] = splitKey(key);
+    const ids = this.#ids.get(model);
+    if (ids === undefined) this.#ids.set(model, new Set([id]));
+    else ids.add(id);
+    return this;
+  }
+
+  /** The ids of `model` written so far, in the order first written (as the map's own order). */
+  idsOf(model: string): ReadonlySet<string> {
+    return this.#ids.get(model) ?? NO_IDS;
+  }
+}
+
 export class OverlayEngine {
   readonly #pool: ObjectPool;
   /** The signed-in user's id, for `me` references. */
   readonly #me: () => string | undefined;
   readonly #onError: (mutation: OverlayMutation, error: unknown) => void;
   /** Rows written by pending mutations, as they now stand. */
-  #draft = new Map<string, DraftRow>();
+  #draft = new Draft();
   /** A delta to one of these means `rebuild`. */
   #dependsOn = noDependencies();
 
@@ -113,7 +139,7 @@ export class OverlayEngine {
 
   /** Recompute the overlay from base for these mutations, in order. */
   rebuild(mutations: readonly OverlayMutation[]): void {
-    const draft = new Map<string, DraftRow>();
+    const draft = new Draft();
     const dependsOn = noDependencies();
     for (const mutation of mutations) {
       const layer = this.#run(draft, dependsOn, mutation);
@@ -130,7 +156,7 @@ export class OverlayEngine {
 
   /** Run one mutation against `draft`; its writes, or `undefined` if it failed. */
   #run(
-    draft: ReadonlyMap<string, DraftRow>,
+    draft: Draft,
     dependsOn: Dependencies,
     mutation: OverlayMutation,
     failed: (error: unknown) => void = () => undefined,
@@ -151,13 +177,18 @@ export class OverlayEngine {
       searched.add(model);
       const rows = new Map<string, ModelRow>();
       for (const { row } of this.#pool.baseRows(model)) rows.set(row.id, row);
-      for (const changes of [draft, layer]) {
-        for (const [key, state] of changes) {
-          const [rowModel, id] = splitKey(key);
-          if (rowModel !== model) continue;
-          if (state === null) rows.delete(id);
-          else rows.set(id, state.row);
-        }
+      const apply = (id: string, state: DraftRow) => {
+        if (state === null) rows.delete(id);
+        else rows.set(id, state.row);
+      };
+      // The earlier mutations' writes of this model, then this one's (a layer is small).
+      for (const id of draft.idsOf(model)) {
+        const state = draft.get(rowKey(model, id));
+        if (state !== undefined) apply(id, state);
+      }
+      for (const [key, state] of layer) {
+        const [rowModel, id] = splitKey(key);
+        if (rowModel === model) apply(id, state);
       }
       return [...rows.values()];
     };

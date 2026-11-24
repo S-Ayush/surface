@@ -11,18 +11,27 @@
  * PLAN-011 S6 adds descriptions and history (AC-5, AC-6, AC-7, E10): `issueDescribe` steps save a
  * description from the version the tab holds, and `descriptionConvergence` compares every tab's
  * IssueContent and IssueHistory rows with the server's.
+ *
+ * PLAN-011 S8 adds label cascades (AC-18, AC-20, E22): `label.delete` racing edits that add the
+ * label, among deletes, restores and auto-archives (`cascadeCase`, `cascadeConvergence`), and
+ * compaction in the generated issue runs (the numbering check no longer reads `sync_log`).
  */
 import fc from 'fast-check';
 import { createDatabaseFrom, startTestServer, type TestServer } from '@surface/server/testing';
 import { describe, expect, inject, it } from 'vitest';
 import { simParameters } from '../src/context.js';
-import { checkNumbering, descriptionConvergence, issueConvergence } from '../src/properties.js';
+import {
+  cascadeConvergence,
+  checkNumbering,
+  descriptionConvergence,
+  issueConvergence,
+} from '../src/properties.js';
 import type { RealServer } from '../src/real-server.js';
 import { startRealServer } from '../src/real-server.js';
 import type { SimServer } from '../src/server.js';
 import { simulate } from '../src/simulate.js';
 import type { Case } from '../src/steps.js';
-import { issueCase } from '../src/steps.js';
+import { cascadeCase, issueCase } from '../src/steps.js';
 
 /** A real server for `simulate`, with the labels and the second team the issue steps name. */
 function issueServers() {
@@ -366,5 +375,115 @@ describe('concurrent creates over HTTP (E3)', () => {
       }),
       { seed: inject('simSeed'), numRuns: 5 },
     );
+  });
+});
+
+/**
+ * PLAN-011 S8, E22 and the cascade on archived and deleted issues. Alpha gets Size/Small online,
+ * then tab 1, offline, adds Size/Large by id while tab 0 deletes both labels: Size/Small's cascade
+ * rewrites Alpha, and tab 1's edit reaches the server after Size/Large is gone and is refused, so
+ * Alpha names neither. Then Beta is deleted and Gamma auto-archived, Frontend (on both) is deleted,
+ * and both come back with a restore, without it.
+ */
+const cascadeExample: Case = {
+  seed: 13,
+  users: 2,
+  lateUsers: 0,
+  webLocks: true,
+  steps: [
+    { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+    { t: 'issueCreate', tab: 0, title: 'Beta', status: 'default', labels: ['Frontend'] },
+    { t: 'issueCreate', tab: 0, title: 'Gamma', status: 'default', labels: ['Frontend'] },
+    { t: 'wait', ms: 3_000 },
+    {
+      t: 'issueUpdate',
+      tab: 0,
+      issue: 0,
+      status: 'keep',
+      addLabels: ['Size/Small'],
+      removeLabels: [],
+    },
+    { t: 'wait', ms: 2_000 },
+    { t: 'offline', tab: 1, ms: 4_000 },
+    {
+      t: 'issueUpdate',
+      tab: 1,
+      issue: 0,
+      status: 'keep',
+      addLabels: ['Size/Large#id'],
+      removeLabels: [],
+    },
+    { t: 'labelDelete', tab: 0, label: 'Size/Small' },
+    { t: 'labelDelete', tab: 0, label: 'Size/Large' },
+    { t: 'wait', ms: 6_000 },
+    { t: 'issueDelete', tab: 0, issue: 1 },
+    { t: 'issueAutoArchive', issue: 2 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'labelDelete', tab: 1, label: 'Frontend' },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueRestore', tab: 1, issue: 1 },
+    { t: 'issueRestore', tab: 0, issue: 2 },
+    { t: 'wait', ms: 3_000 },
+  ],
+};
+
+describe('label cascades against the real server (PLAN-011 S8)', () => {
+  it('rewrites an issue that took the label first, refuses an edit that comes after the delete, and reaches archived and deleted issues (E22, AC-18)', async () => {
+    const servers = issueServers();
+    const result = await simulate(
+      cascadeExample,
+      { ...cascadeConvergence.options, server: servers.server },
+      async (outcome) => {
+        await cascadeConvergence.check(outcome);
+        const issues = (await servers.last()?.issues()) ?? {};
+        return {
+          outcomes: outcome.world.dispatched
+            .filter((d) => d.op !== 'issue.create')
+            .map((d) =>
+              d.outcome?.status === 'rejected'
+                ? `${d.op} rejected ${d.outcome.error.code}`
+                : `${d.op} ${String(d.outcome?.status)}`,
+            ),
+          labels: Object.fromEntries(
+            Object.values(issues).map((i) => [String(i.title), i.labelIds]),
+          ),
+        };
+      },
+    );
+    // In dispatch order: tab 1's edit is dispatched before the deletes, but sent when the tab
+    // comes back online, after Size/Large is gone, so the id no longer resolves (E22).
+    expect(result.outcomes).toEqual([
+      'issue.update confirmed',
+      'issue.update rejected NOT_FOUND',
+      'label.delete confirmed',
+      'label.delete confirmed',
+      'issue.delete confirmed',
+      'label.delete confirmed',
+      'issue.restore confirmed',
+      'issue.restore confirmed',
+    ]);
+    expect(result.labels).toEqual({ Alpha: [], Beta: [], Gamma: [] });
+  });
+
+  it('every tab converges, and no stored issue names a deleted label, after any interleaving of cascades, archives and deletes (AC-18, AC-20)', async () => {
+    const { server } = issueServers();
+    const confirmed = new Map<string, number>();
+    await fc.assert(
+      fc.asyncProperty(cascadeCase(), (simCase) =>
+        simulate(simCase, { ...cascadeConvergence.options, server }, async (outcome) => {
+          await cascadeConvergence.check(outcome);
+          for (const d of outcome.world.dispatched) {
+            if (d.outcome?.status === 'confirmed') {
+              confirmed.set(d.op, (confirmed.get(d.op) ?? 0) + 1);
+            }
+          }
+        }),
+      ),
+      simParameters(),
+    );
+    // What the runs did, so a generator that stops reaching the server fails here.
+    for (const op of ['label.delete', 'issue.update', 'issue.delete', 'issue.restore']) {
+      expect(confirmed.get(op) ?? 0, op).toBeGreaterThan(0);
+    }
   });
 });

@@ -325,8 +325,8 @@ const labelPicks = fc.array(labelPick, { maxLength: 2 });
 
 /**
  * Issue numbering and labels (SPEC-011 AC-2, AC-4, E1, E3, E5–E7): creates (some refused) and
- * label edits from every tab, with every fault. Without compaction: the numbering check reads the
- * commit order from `sync_log`. Only the real server syncs issues.
+ * label edits from every tab, with every fault, compaction included (PLAN-011 S8: the real server
+ * records each issue's commit order before it compacts). Only the real server syncs issues.
  */
 export function issueCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
   const issueStep = (arbitrary: fc.Arbitrary<Step>) => ({ weight: 12, arbitrary });
@@ -352,10 +352,7 @@ export function issueCase(options: CaseOptions = {}): fc.Arbitrary<Case> {
       }),
     ),
     { weight: 1, arbitrary: fc.record({ t: fc.constant('rename'), tab, item, title }) },
-    ...faultSteps.map((arbitrary) => ({
-      weight: 1,
-      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
-    })),
+    ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
     ...(options.bursts ? [{ weight: 1, arbitrary: burst }] : []),
     ...(options.descriptions ? [{ weight: 8, arbitrary: describeStep }] : []),
   );
@@ -421,10 +418,7 @@ export function workflowCase(): fc.Arbitrary<Case> {
       arbitrary: fc.record({ t: fc.constant('setDefaultStatus'), tab, status: workflowPick }),
     },
     { weight: 2, arbitrary: fc.record({ t: fc.constant('labelDelete'), tab, label: labelPick }) },
-    ...faultSteps.map((arbitrary) => ({
-      weight: 1,
-      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
-    })),
+    ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
   );
   return caseOf(step);
 }
@@ -464,9 +458,8 @@ const COMMENT_ISSUES: readonly Step[] = [
  * Comment threads (SPEC-013 AC-5 for comments; reactions join in PLAN-013 S4): comments, replies,
  * edits, deletes, resolves and reopens on two issues from every tab, with the faults: a tab that
  * bootstraps again (a crash, a late user's first tab) loads each issue's comments when it opens
- * the issue (PLAN-011 S5b). A comment step acts from the issue pages the tab shows. Without
- * compaction, as `issueCase`: the issue property's numbering check reads the commit order from
- * `sync_log`.
+ * the issue (PLAN-011 S5b). A comment step acts from the issue pages the tab shows. With
+ * compaction, as `issueCase` (PLAN-011 S8).
  */
 export function commentCase(): fc.Arbitrary<Case> {
   const comment = index;
@@ -485,10 +478,7 @@ export function commentCase(): fc.Arbitrary<Case> {
     commentStep(fc.record({ t: fc.constant('commentDelete'), tab, comment })),
     commentStep(fc.record({ t: fc.constant('commentResolve'), tab, comment })),
     commentStep(fc.record({ t: fc.constant('commentReopen'), tab, comment })),
-    ...faultSteps.map((arbitrary) => ({
-      weight: 1,
-      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
-    })),
+    ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
   );
   return caseOf(step).map((c) => ({ ...c, steps: [...COMMENT_ISSUES, ...c.steps] }));
 }
@@ -503,8 +493,7 @@ export const REACTION_EMOJI = ['👍', '🎉', '👀', '❤️', '👍🏽', '�
  * Reactions (SPEC-013 AC-5 and AC-22 for reactions; PLAN-013 S4): set and clear on comments and on
  * the issues themselves from every tab, among comment creates and deletes (a delete takes its
  * reactions), with the same faults as `commentCase`: crashes and late users load each issue's
- * content when the tab opens the issue (PLAN-011 S5b); compaction stays out for the issue
- * property's numbering check (PLAN-011 S8 brings it back).
+ * content when the tab opens the issue (PLAN-011 S5b); compaction included (PLAN-011 S8).
  */
 export function reactionCase(): fc.Arbitrary<Case> {
   const reaction = fc.record({
@@ -532,10 +521,7 @@ export function reactionCase(): fc.Arbitrary<Case> {
       }),
     },
     { weight: 1, arbitrary: fc.record({ t: fc.constant('commentDelete'), tab, comment: index }) },
-    ...faultSteps.map((arbitrary) => ({
-      weight: 1,
-      arbitrary: arbitrary.map((s): Step => (s.t === 'compact' ? { t: 'wait', ms: 0 } : s)),
-    })),
+    ...faultSteps.map((arbitrary) => ({ weight: 1, arbitrary })),
   );
   return caseOf(step).map((c) => ({ ...c, steps: [...COMMENT_ISSUES, ...c.steps] }));
 }
@@ -969,6 +955,50 @@ export function lifecycleCase(): fc.Arbitrary<Case> {
   return caseOf(step).map((c) => ({ ...c, lateUsers: 0, steps: [...COMMENT_ISSUES, ...c.steps] }));
 }
 
+/**
+ * Label cascades (PLAN-011 S8; SPEC-011 AC-18, AC-20, E22): issues created with labels and edited
+ * to add them, while `label.delete` of the same labels runs from another tab, interleaved with
+ * deletes, restores and auto-archives, so a cascade rewrites live, archived and deleted issues
+ * alike. Only labels a delete can reach are added, with the faults `lifecycleCase` keeps (a tab
+ * keeps its replica).
+ */
+export function cascadeCase(): fc.Arbitrary<Case> {
+  const kept = new Set(['wait', 'faults', 'disconnect', 'offline', 'restart', 'reload']);
+  const deletable = fc.constantFrom<LabelPick>('Size/Small', 'Size/Large', 'Flaky', 'Frontend');
+  const step = fc.oneof(
+    {
+      weight: 4,
+      arbitrary: fc.record({
+        t: fc.constant('issueCreate'),
+        tab,
+        title,
+        status: fc.constant('default'),
+        labels: labelPicks,
+      }),
+    },
+    {
+      weight: 6,
+      arbitrary: fc.record({
+        t: fc.constant('issueUpdate'),
+        tab,
+        issue: index,
+        status: fc.constant('keep'),
+        addLabels: fc.array(deletable, { minLength: 1, maxLength: 2 }),
+        removeLabels: fc.constant([]),
+      }),
+    },
+    { weight: 2, arbitrary: fc.record({ t: fc.constant('labelDelete'), tab, label: deletable }) },
+    { weight: 2, arbitrary: fc.record({ t: fc.constant('issueDelete'), tab, issue: index }) },
+    { weight: 2, arbitrary: fc.record({ t: fc.constant('issueRestore'), tab, issue: index }) },
+    { weight: 2, arbitrary: fc.record({ t: fc.constant('issueAutoArchive'), issue: index }) },
+    ...faultSteps.map((arbitrary) => ({
+      weight: 1,
+      arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
+    })),
+  );
+  return caseOf(step).map((c) => ({ ...c, lateUsers: 0 }));
+}
+
 function applyLifecycle(world: World, step: LifecycleStep): void {
   if (step.t === 'issueAutoArchive') {
     const issue = pick(world.issueIds, step.issue);
@@ -1099,7 +1129,8 @@ function attachmentSteps(weights: {
  * Attachments (SPEC-014 AC-6, AC-17; PLAN-014 S4a): links and files attached to two issues,
  * renamed and deleted from every tab, and previews set by the system, with `commentCase`'s faults:
  * crashes and late users bootstrap the attachments (an eager model, no page to open). Compaction
- * stays out for the issue property's numbering check, as in `commentCase`.
+ * stays out here only: the numbering check no longer needs it out (PLAN-011 S8), but with it in,
+ * the default seed's 20 runs store no preview and the test's coverage check fails (60 pass).
  */
 export function attachmentCase(): fc.Arbitrary<Case> {
   const step = fc.oneof(

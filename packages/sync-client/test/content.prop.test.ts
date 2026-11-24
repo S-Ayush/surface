@@ -20,7 +20,7 @@ import { IndexedDbStorage } from '../src/storage/indexeddb.js';
 import type { StorageConnector } from '../src/storage/open.js';
 import type { SyncStorage } from '../src/storage/types.js';
 import type { SyncStore } from '../src/store.js';
-import { PROPERTY_SEED } from './support/fc.js';
+import { PROPERTY_SEED, propertyRuns } from './support/fc.js';
 import type { HubConnection } from './support/hub.js';
 import { FakeHub } from './support/hub.js';
 import { eventually, idle, liveStore } from './support/live.js';
@@ -371,7 +371,7 @@ it('leaves every opened item, in each tab and the shared replica, equal to a fre
     }),
     {
       seed: PROPERTY_SEED,
-      numRuns: 150,
+      numRuns: propertyRuns(150),
       examples: [
         // PLAN-011 S7: a prefetch cut by the budget (D16) while the answer is held and notes
         // change, evictions past the limit while the other tab keeps an item open, then reopens.

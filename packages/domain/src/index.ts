@@ -32,3 +32,4 @@ export * from './emoji.js';
 export * from './issue-history.js';
 export * from './activity-line.js';
 export * from './attachment.js';
+export * from './issue-filter.js';
