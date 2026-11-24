@@ -186,3 +186,81 @@ describe('auto-archive against the real server (AC-13)', () => {
     expect(archived).toBeGreaterThan(0);
   });
 });
+
+/**
+ * SPEC-011 D14 in a restart race: tab 2 creates Beta, the Admin deletes it and tab 2 restores it,
+ * so tab 2 holds Beta without its content. Then the server restarts and tab 2 comments on Beta:
+ * the load fails while the tab still believes it is online (the socket's close hasn't arrived),
+ * so the comment is refused with "Couldn't load SIM-1. Try again." before it is queued, and every
+ * replica still converges. Seed 2 is one whose delays put the failed fetch before the close.
+ */
+const restartRefusalExample: Case = {
+  seed: 2,
+  users: 2,
+  lateUsers: 0,
+  webLocks: false,
+  steps: [
+    { t: 'issueCreate', tab: 1, title: 'Beta', status: 'default', labels: [] },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueDelete', tab: 0, issue: 0 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueRestore', tab: 1, issue: 0 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'restart', downMs: 5_000 },
+    { t: 'commentCreate', tab: 1, issue: 0, text: 'During the restart' },
+    { t: 'wait', ms: 8_000 },
+  ],
+};
+
+/**
+ * The generated case that found the race (seed 20261107, path "11", minimised by hand to 12
+ * steps): a comment right after a restart, on an issue the reloaded tab hasn't loaded.
+ */
+const restartRefusalFound: Case = {
+  seed: 15,
+  users: 3,
+  lateUsers: 0,
+  webLocks: false,
+  steps: [
+    { t: 'issueCreate', tab: 1, title: 'Beta', status: 'default', labels: [] },
+    { t: 'wait', ms: 4015 },
+    { t: 'issueDelete', tab: 717, issue: 113 },
+    { t: 'wait', ms: 2657 },
+    { t: 'issuePurge', tab: 365, issue: 579, admin: false },
+    { t: 'issueRestore', tab: 277, issue: 526 },
+    { t: 'reload', tab: 195 },
+    { t: 'commentCreate', tab: 503, issue: 203, parent: 623, text: 'Repro on **Safari**' },
+    { t: 'wait', ms: 2958 },
+    { t: 'restart', downMs: 10744 },
+    { t: 'commentCreate', tab: 639, issue: 632, text: 'Done ✅' },
+    { t: 'wait', ms: 3471 },
+  ],
+};
+
+describe('a content load that fails in a restart (SPEC-011 D14)', () => {
+  it('refuses a comment on an unloaded issue when the server restarts, and still converges', async () => {
+    const servers = lifecycleServers();
+    const refusals = await simulate(
+      restartRefusalExample,
+      { ...lifecycleConvergence.options, server: servers.server },
+      async (outcome) => {
+        await lifecycleConvergence.check(outcome);
+        return outcome.world.contentLoadRefusals;
+      },
+    );
+    expect(refusals).toEqual(['user-2/tab-2: comment.create']);
+  });
+
+  it('converges in the generated case that found the race', async () => {
+    const servers = lifecycleServers();
+    const refusals = await simulate(
+      restartRefusalFound,
+      { ...lifecycleConvergence.options, server: servers.server },
+      async (outcome) => {
+        await lifecycleConvergence.check(outcome);
+        return outcome.world.contentLoadRefusals;
+      },
+    );
+    expect(refusals).toEqual(['user-2/tab-2: comment.create']);
+  });
+});

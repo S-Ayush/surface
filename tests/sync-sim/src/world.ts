@@ -20,7 +20,7 @@ import {
 } from '@surface/domain/model';
 import type { AnyOperation, InputOf } from '@surface/operations';
 import type { MutationOutcome, StorageConnector } from '@surface/sync-client';
-import { ContentUnavailableError, SyncStore } from '@surface/sync-client';
+import { ContentLoadFailedError, ContentUnavailableError, SyncStore } from '@surface/sync-client';
 import type { QueueWrite, SyncStorage } from '@surface/sync-client/testing';
 import { IndexedDbStorage } from '@surface/sync-client/testing';
 import { advance, settle } from './clock.js';
@@ -102,6 +102,12 @@ export class World {
   readonly users: readonly User[];
   readonly tabs: Tab[] = [];
   readonly dispatched: Dispatched[] = [];
+  /**
+   * Content mutations refused before they were queued because their issue's load failed while
+   * the tab was online (SPEC-011 D14), as `tab: op`. Nothing was queued, so they don't break
+   * convergence; the examples assert them.
+   */
+  readonly contentLoadRefusals: string[] = [];
   /**
    * Every mutation saved to a replica, by `clientId:seq`. A dispatch counts
    * from here on: a crash before the save may lose it (SPEC-002 §3.3), a
@@ -268,6 +274,7 @@ export class World {
   dispatch<Op extends AnyOperation>(tab: Tab, op: Op, input: InputOf<Op>): boolean {
     if (!tab.alive) return false;
     let outcome: Promise<MutationOutcome>;
+    const failuresBefore = tab.link.onlineFetchFailures;
     // A content mutation may wait for its issue's content before it is queued (SPEC-011 §5.3
     // step 6, PLAN-011 S5b): it counts from its seq on.
     let record: Dispatched | undefined;
@@ -289,6 +296,14 @@ export class World {
         // loaded ("Available when online", E11). Any other refusal is a problem.
         const offline = tab.store.connection === 'offline';
         if (record === undefined && offline && error instanceof ContentUnavailableError) return;
+        // SPEC-011 D14: online, a load that failed is refused ("Couldn't load SIM-1. Try again.").
+        // Only when a request of this tab really failed while it waited (a restart racing the
+        // socket's close): a refusal without a failed fetch is still a problem.
+        const fetchFailed = tab.link.onlineFetchFailures > failuresBefore;
+        if (record === undefined && fetchFailed && error instanceof ContentLoadFailedError) {
+          this.contentLoadRefusals.push(`${tab.name}: ${op.name}`);
+          return;
+        }
         const when = record === undefined ? 'before it was queued' : record.key;
         this.#problems.push(`${tab.name}: dispatch failed (${when}): ${String(error)}`);
       },

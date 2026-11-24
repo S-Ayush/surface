@@ -135,6 +135,7 @@ export class Network {
 export class Link {
   #online = true;
   #dead = false;
+  #onlineFetchFailures = 0;
   readonly #sockets = new Set<LinkSocket>();
   readonly #listeners = new Set<() => void>();
 
@@ -145,6 +146,15 @@ export class Link {
 
   get dead(): boolean {
     return this.#dead;
+  }
+
+  /**
+   * Requests that failed (`Failed to fetch`) while the tab believed it was online: the server was
+   * down or a leg was lost. The tab can't tell that from a server error, so a content load it was
+   * waiting on is refused per SPEC-011 D14 (`World.dispatch` tolerates exactly that).
+   */
+  get onlineFetchFailures(): number {
+    return this.#onlineFetchFailures;
   }
 
   /** What the store gets as `onlineSource`: the browser's `online` event. */
@@ -196,7 +206,11 @@ export class Link {
         settled = true;
         outcome();
       };
-      const failed = () => settle(() => reject(new TypeError('Failed to fetch')));
+      const failed = () =>
+        settle(() => {
+          if (this.#online) this.#onlineFetchFailures += 1;
+          reject(new TypeError('Failed to fetch'));
+        });
       const signal = init.signal;
       if (signal?.aborted) {
         reject(new DOMException('The operation was aborted.', 'AbortError'));
