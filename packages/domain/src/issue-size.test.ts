@@ -9,16 +9,16 @@
  *   with it they are 55 bytes or more larger, because a row carries its groups cut to the
  *   connection's (SPEC-002 Q8): `team:<id>`, and `user:<id>` of the viewer when they created or are
  *   assigned the issue. The stored row, groups included, is what the replica total counts. The
- *   coordinator decided this reading of AC-14 on 2026-11-24, following SPEC-011 §10; still open
- *   for the user (PLAN-011 S8 As built). Stored rows average ≈ 685 bytes, for information.
+ *   user decided this reading of AC-14 on 2026-11-24 (SPEC-011 D19). Stored rows average
+ *   ≈ 685 bytes, for information.
  * - **The worst-case replica** (§5.7, Q15) holds the live issues of the user's member teams plus
  *   the 5 largest on-demand teams, the user's own issues of the other public teams (created or
  *   assigned, through `user:<id>`), and the other eager models. At the reference scale (NFR-10:
  *   100,000 issues, 20 teams, 50 users) it fits the per-replica 35 MB budget on the seed's even
  *   team split (≈ 30 MiB), but not on a skewed one: on a Zipf(1) split it is ≈ 52 MiB (a user in
  *   3 teams) or ≈ 56 MiB (a lead in 5). It fits only while the followed teams hold at most ≈ 48 %
- *   of all issues. That half of AC-14 is open for the user (PLAN-011 S8 As built); the skewed
- *   cases are `it.fails`.
+ *   of all issues. The user accepted that as a known limit for M1 (SPEC-011 D19); a size-based
+ *   on-demand limit follows. The skewed cases are `it.fails`.
  *
  * The measured total of a real replica (IndexedDB, tombstones) is a perf test, held (plans README
  * §6). Deterministic: one seeded generator, no wall clock.
