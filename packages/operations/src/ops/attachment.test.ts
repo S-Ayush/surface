@@ -179,6 +179,14 @@ describe('attachment.update and attachment.delete optimistic (AC-17)', () => {
     ]);
   });
 
+  it('leaves a rename to the same title alone, updatedAt included, as the server does', () => {
+    const row = held();
+    const { store, writes } = fakeStore({ attachments: [row] });
+    const title = String(row['title']);
+    attachmentUpdate.optimistic?.(store, { attachment: String(row['id']), title: ` ${title} ` });
+    expect(writes).toEqual([]);
+  });
+
   it('lets a team member and an Admin change someone else’s attachment', () => {
     const row = held({ creatorId: IRIS });
     for (const world of [{ member: true }, { role: 'admin' as const }]) {

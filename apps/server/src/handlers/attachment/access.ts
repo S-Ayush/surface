@@ -7,14 +7,14 @@
  * its issue (an attachment is visible only through it), users (workspace-wide), and the file and
  * its preview, which belong to the issue (§4.2).
  */
-import { issueIdentifier, type RefEntity } from '@surface/domain';
+import type { RefEntity } from '@surface/domain';
 import type { AttachmentOutputSchema, AttachmentSummarySchema } from '@surface/operations';
 import { and, asc, count, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import type { z } from 'zod';
-import { attachments, files, issues, teams, users } from '../../db/schema/index.js';
+import { attachments, files, issues, users } from '../../db/schema/index.js';
 import type { HandlerContext } from '../../executor/context.js';
 import { historyWriteContext } from '../../issues/history.js';
-import { lockIssueForWrite } from '../../issues/lifecycle.js';
+import { identifierOf, lockIssueForWrite } from '../../issues/lifecycle.js';
 import { resolved } from '../teams/shared.js';
 import type {
   AttachmentAccess,
@@ -174,14 +174,13 @@ export async function attachmentOutput(
   const [summary] = await attachmentSummaries(ctx, [row]);
   if (summary === undefined) throw new Error(`No output for attachment ${row.id}`);
   const [issue] = await ctx.tx
-    .select({ number: issues.number, key: teams.key })
+    .select({ teamId: issues.teamId, number: issues.number })
     .from(issues)
-    .innerJoin(teams, eq(teams.id, issues.teamId))
     .where(eq(issues.id, row.issueId));
   if (issue === undefined) throw new Error(`Attachment ${row.id} names a missing issue`);
   return {
     ...summary,
-    issue: { id: row.issueId, identifier: issueIdentifier(issue.key, issue.number ?? 0) },
+    issue: { id: row.issueId, identifier: await identifierOf(ctx.tx, issue) },
     updatedAt: row.updatedAt.toISOString(),
   };
 }

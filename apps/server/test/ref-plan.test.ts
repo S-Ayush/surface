@@ -8,7 +8,12 @@ import {
   UserRef,
   UserRefIncludingInactive,
 } from '@surface/domain';
-import { defineOperation } from '@surface/operations';
+import {
+  attachmentCreateFile,
+  defineOperation,
+  userUpdateProfile,
+  workspaceUpdate,
+} from '@surface/operations';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { refPlan, RefPlanError, scopeTeamOf } from '../src/executor/refs/resolve.js';
@@ -51,14 +56,29 @@ describe('refPlan', () => {
       ),
     );
     expect(plan).toEqual([
-      { path: ['team'], key: 'team', type: 'TeamRef', many: false, allowInactive: false },
-      { path: ['assignee'], key: 'assignee', type: 'UserRef', many: false, allowInactive: false },
+      {
+        path: ['team'],
+        key: 'team',
+        type: 'TeamRef',
+        many: false,
+        allowInactive: false,
+        allowDetached: false,
+      },
+      {
+        path: ['assignee'],
+        key: 'assignee',
+        type: 'UserRef',
+        many: false,
+        allowInactive: false,
+        allowDetached: false,
+      },
       {
         path: ['owner', 'user'],
         key: 'owner.user',
         type: 'UserRef',
         many: false,
         allowInactive: true,
+        allowDetached: false,
       },
       {
         path: ['labels'],
@@ -66,10 +86,19 @@ describe('refPlan', () => {
         type: 'LabelRef',
         many: true,
         allowInactive: false,
+        allowDetached: false,
         scope: 'team',
         scopeType: 'TeamRef',
       },
     ]);
+  });
+
+  it('lets only attachment.createFile resolve a detached file (SPEC-014 D28)', () => {
+    const allows = (def: Parameters<typeof refPlan>[0], key: string) =>
+      refPlan(def).find((l) => l.key === key)?.allowDetached;
+    expect(allows(attachmentCreateFile, 'file')).toBe(true);
+    expect(allows(userUpdateProfile, 'avatar')).toBe(false);
+    expect(allows(workspaceUpdate, 'logo')).toBe(false);
   });
 
   it('follows scopedTo to another TeamRef field', () => {
@@ -80,7 +109,14 @@ describe('refPlan', () => {
   it('resolves labels without a team field against workspace labels only', () => {
     const plan = refPlan(op(z.object({ label: LabelRef })));
     expect(plan).toEqual([
-      { path: ['label'], key: 'label', type: 'LabelRef', many: false, allowInactive: false },
+      {
+        path: ['label'],
+        key: 'label',
+        type: 'LabelRef',
+        many: false,
+        allowInactive: false,
+        allowDetached: false,
+      },
     ]);
   });
 

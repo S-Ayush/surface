@@ -72,6 +72,28 @@ const example: Case = {
   ],
 };
 
+/**
+ * SPEC-014 D30, found by the S4a review: tab 0 attaches a file to Alpha and deletes Alpha; then
+ * the preview job sets the preview, which the server allows on a deleted issue (§4.4) and logs
+ * as an Attachment `U` no replica holds the issue of. Every tab must drop it, as bootstrap does.
+ */
+const previewAfterDelete: Case = {
+  seed: 15,
+  users: 3,
+  lateUsers: 0,
+  webLocks: false,
+  steps: [
+    { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+    { t: 'wait', ms: 3_000 },
+    { t: 'attachmentFile', tab: 0, issue: 0, upload: 0 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'issueDelete', tab: 0, issue: 0 },
+    { t: 'wait', ms: 3_000 },
+    { t: 'attachmentPreview', attachment: 0 },
+    { t: 'wait', ms: 3_000 },
+  ],
+};
+
 describe('attachments against the real server', () => {
   it('claims an upload once, re-attaches a deleted file to its issue, and keeps them through a delete and restore (§6.2, D28)', async () => {
     const servers = attachmentServers();
@@ -106,6 +128,24 @@ describe('attachments against the real server', () => {
       ['file', 'screen-1.png', true],
       ['link', 'Spec v2', true],
     ]);
+  });
+
+  it('keeps no attachment of a deleted issue when its preview lands afterwards (SPEC-014 D30)', async () => {
+    const servers = attachmentServers();
+    const stored = await simulate(
+      previewAfterDelete,
+      { ...lifecycleConvergence.options, server: servers.server },
+      async (outcome) => {
+        // Every tab holds only the live issues' attachments: none here, as a fresh bootstrap.
+        await lifecycleConvergence.check(outcome);
+        return Object.values((await servers.last()?.attachments()) ?? {}).map((a) => ({
+          kind: a.kind,
+          preview: a.previewFileId !== null,
+        }));
+      },
+    );
+    // The server keeps it with its deleted issue, now with the preview (§3.7, §4.4).
+    expect(stored).toEqual([{ kind: 'file', preview: true }]);
   });
 
   it('every tab and a fresh bootstrap hold exactly the server’s attachments after any faults (AC-6, AC-17)', async () => {

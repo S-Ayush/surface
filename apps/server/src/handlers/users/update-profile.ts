@@ -58,8 +58,7 @@ export default handler(userUpdateProfile, async (ctx, input) => {
     // the RESTRICT key. Anything else answers like an unknown id (SPEC-003 §4).
     const file = resolved(ctx.refs['avatar'], 'avatar');
     if (file.id !== current.avatarFileId) {
-      // A detached attachment file resolves only for an undo (SPEC-014 D28): unknown here.
-      if (file['uploaderId'] !== userId || file['detached'] === true) {
+      if (file['uploaderId'] !== userId) {
         throw refNotFound('FileRef', input.avatar, ['avatar']);
       }
       if (file['purpose'] !== 'avatar') {

@@ -168,4 +168,52 @@ describe('Attachment rows leave and return with their issue (SPEC-014 §4.1)', (
     ]);
     expect(remaining).toEqual([A3]);
   });
+
+  it('an Attachment U for an issue the replica doesn’t hold is not stored (SPEC-014 D30)', () => {
+    // attachment.setPreview runs on an archived or deleted issue (§4.4) and logs a U no replica
+    // holds the issue of; bootstrap leaves the row out, so the replica must too.
+    const pool = replica();
+    apply(pool, [{ id: 11, a: 'U', m: 'Issue', d: issueRow(ISSUE, { deletedAt: AT }) }]);
+    const STRAY = '0192f0c1-7e5a-7b3c-9d4e-0000000000b9';
+    const preview = '0192f0c1-7e5a-7b3c-9d4e-000000000f01';
+    const plan = planDeltas(
+      pool,
+      {
+        t: 'deltas',
+        prev: 11,
+        packets: [
+          {
+            id: 12,
+            a: 'U',
+            m: 'Attachment',
+            d: { ...attachmentRow(A1, ISSUE), previewFileId: preview },
+          },
+          { id: 13, a: 'U', m: 'Attachment', d: attachmentRow(A2, STRAY) },
+        ],
+        ack: [],
+      },
+      11,
+      rules,
+    );
+    if (plan.kind !== 'apply') throw new Error('expected an apply plan');
+    pool.applyBase(plan.base);
+    expect(pool.all('Attachment').map((row) => row.id)).toEqual([A3]);
+    // Storage ends without them too: each upsert is followed by its delete at the batch's last id.
+    const last = (id: string) =>
+      plan.stored.filter((c) => (c.kind === 'delete' ? c.id : c.row.id) === id).at(-1);
+    expect(last(A1)).toMatchObject({ kind: 'delete', model: 'Attachment', version: 13 });
+    expect(last(A2)).toMatchObject({ kind: 'delete', model: 'Attachment', version: 13 });
+    expect(plan.lastSyncId).toBe(13);
+  });
+
+  it('keeps an attachment whose issue arrives earlier in the same batch', () => {
+    const pool = replica();
+    const NEW = '0192f0c1-7e5a-7b3c-9d4e-0000000000b3';
+    const A4 = '0192f0c1-7e5a-7b3c-9d4e-000000000a04';
+    const remaining = apply(pool, [
+      { id: 11, a: 'I', m: 'Issue', d: issueRow(NEW) },
+      { id: 12, a: 'I', m: 'Attachment', d: attachmentRow(A4, NEW) },
+    ]);
+    expect(remaining).toEqual([A1, A2, A3, A4]);
+  });
 });

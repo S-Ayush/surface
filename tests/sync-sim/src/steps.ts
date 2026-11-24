@@ -959,6 +959,8 @@ export function lifecycleCase(): fc.Arbitrary<Case> {
       }),
     },
     { weight: 3, arbitrary: fc.record({ t: fc.constant('issueAutoArchive'), issue: index }) },
+    // PLAN-014 S4a: attachments ride along, so deletes, purges, archives and restores carry them.
+    ...attachmentSteps({ link: 2, file: 2, rename: 1, remove: 1, preview: 1 }),
     ...faultSteps.map((arbitrary) => ({
       weight: 1,
       arbitrary: arbitrary.map((s): Step => (kept.has(s.t) ? s : { t: 'wait', ms: 0 })),
@@ -995,12 +997,12 @@ function applyLifecycle(world: World, step: LifecycleStep): void {
 // Attachments (PLAN-014 S4a, SPEC-014 AC-6, AC-17)
 
 /**
- * `attachment.createLink` and `attachment.createFile` on an issue the tab shows (wrapped around
- * them), `attachment.update` (a rename) and `attachment.delete` of an attachment an earlier step
- * created (wrapped around them, refused ones included: NOT_FOUND), and the `files-preview` job's
- * `attachment.setPreview`, run by the system on the server. A file step attaches one of the tab's
+ * `attachment.createLink` and `attachment.createFile` on an issue the tab shows, `attachment.update`
+ * (a rename) and `attachment.delete` of an attachment an earlier step created (refused ones
+ * included: NOT_FOUND), and the `files-preview` job's `attachment.setPreview`, run by the system on
+ * the server. Indexes wrap around the list they pick from. A file step attaches one of the tab's
  * user's seeded uploads (`seedUploads`): one already attached is refused (the claim matches
- * nothing, §6.2), and a deleted one goes back to its own issue only (SPEC-014 D28).
+ * nothing, §6.2), and a deleted one goes back to its own issue only (the undo, SPEC-014 D28).
  */
 export type AttachmentStep =
   | {
@@ -1038,7 +1040,13 @@ export const ATTACHMENT_TITLES = ['Login flow', '  Spec\nv2 ', '日本語', 'Don
 /** How many uploads `seedUploads` gives each user: few, so tabs race to attach the same one. */
 export const UPLOADS_PER_USER = 3;
 
-/** The attachment steps with their weights, for `attachmentCase` and `lifecycleCase`. */
+/**
+ * The five attachment steps (`AttachmentStep`), each with its `fc.oneof` weight: `link` and `file`
+ * create, `rename` and `remove` act on an attachment an earlier step created, and `preview` runs
+ * `attachment.setPreview` as the system, whatever state the issue is in (SPEC-014 §4.4). Used by
+ * `attachmentCase`, and by `lifecycleCase` so attachments ride through deletes, archives,
+ * restores and purges (a preview on an archived or deleted issue is SPEC-014 D30's case).
+ */
 function attachmentSteps(weights: {
   readonly link: number;
   readonly file: number;

@@ -29,7 +29,13 @@ export async function resolveRefs(
     if (value === undefined || value === null) continue;
 
     const scopeTeam = scopeTeamOf(location, resolved);
-    const context = { db: tx, actor, scopeTeam, allowInactive: location.allowInactive };
+    const context = {
+      db: tx,
+      actor,
+      scopeTeam,
+      allowInactive: location.allowInactive,
+      allowDetached: location.allowDetached,
+    };
 
     if (location.many) {
       if (!Array.isArray(value)) throw new Error(`${def.name}: ${location.key} must be an array`);

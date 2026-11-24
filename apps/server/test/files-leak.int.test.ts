@@ -367,13 +367,15 @@ describe('a file uploaded through the streaming route (PLAN-014 S2)', () => {
 });
 
 describe('FileRef resolves by the same rule (permissions.md §4)', () => {
-  const resolve = async (label: string, actor: Actor) => {
+  // `allowDetached`: the field is `FileRefIncludingDetached` (only `attachment.createFile`, D28).
+  const resolve = async (label: string, actor: Actor, allowDetached = false) => {
     try {
       const row = await lookup('FileRef', ids[label] ?? MISSING, {
         db: h.pool,
         actor,
         path: ['file'],
         allowInactive: false,
+        allowDetached,
       });
       return row.id;
     } catch (error) {
@@ -407,8 +409,10 @@ describe('FileRef resolves by the same rule (permissions.md §4)', () => {
       },
     );
 
-  const hidden = async (label: string, actor: Actor) =>
-    expect(await resolve(label, actor)).toEqual(await resolve('missing', actor));
+  const hidden = async (label: string, actor: Actor, allowDetached = false) =>
+    expect(await resolve(label, actor, allowDetached)).toEqual(
+      await resolve('missing', actor, allowDetached),
+    );
 
   const sam = () =>
     actorFor({
@@ -434,12 +438,19 @@ describe('FileRef resolves by the same rule (permissions.md §4)', () => {
 
   it('resolves a detached attachment file only for its issue’s readers, for the undo (D28)', async () => {
     // Unreadable as ever (GET above); `attachment.createFile` can name it again within 24 hours.
-    expect(await resolve('detached', ben())).toBe(ids['detached']);
-    expect(await resolve('secDetached', sam())).toBe(ids['secDetached']);
-    await hidden('secDetached', ada());
-    await hidden('secDetached', ben());
-    await hidden('previewOfDetached', ben());
-    await hidden('detached', key([h.teams.sec])());
+    expect(await resolve('detached', ben(), true)).toBe(ids['detached']);
+    expect(await resolve('secDetached', sam(), true)).toBe(ids['secDetached']);
+    await hidden('secDetached', ada(), true);
+    await hidden('secDetached', ben(), true);
+    await hidden('previewOfDetached', ben(), true);
+    await hidden('detached', key([h.teams.sec])(), true);
+  });
+
+  it('answers any other FileRef (an avatar, a logo) for a detached file like an unknown id (D28)', async () => {
+    for (const label of ['detached', 'secDetached', 'previewOfDetached']) {
+      await hidden(label, ben());
+      await hidden(label, sam());
+    }
   });
 
   it('a key limited to some teams reads no unclaimed upload, but the M0 rule still applies', async () => {

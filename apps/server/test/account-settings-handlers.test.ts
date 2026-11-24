@@ -678,12 +678,23 @@ describe('SessionRef and FileRef (SPEC-003 §4; PLAN-001 S6)', () => {
     expect(text).toContain('s.issue_id IS NULL AND s.uploader_id = $3');
     // The file, the reader twice (uploader branches), and its groups (the issue branch, PLAN-014 S4a).
     expect(params).toEqual([FILE, ADA, ADA, ['workspace']]);
-    // Then the detached-file lookup (SPEC-014 D28), which finds nothing either.
+    // An avatar's FileRef never looks for a detached file (SPEC-014 D28): one query, then the
+    // answer for an unknown id.
     const none = db([]);
     await expect(lookup('FileRef', FILE, at(none, 'avatar'))).rejects.toMatchObject({
       code: 'NOT_FOUND',
       message: `File "${FILE}" not found. That upload has expired or isn't yours. Upload the file again.`,
     });
+    expect(none.calls).toHaveLength(1);
+  });
+
+  it('looks for a detached attachment file only where the field opts in (SPEC-014 D28)', async () => {
+    const undo = db([]);
+    await expect(
+      lookup('FileRef', FILE, { ...at(undo, 'file'), allowDetached: true }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(undo.calls).toHaveLength(2);
+    expect(undo.calls[1]?.[0]).toContain('f.detached_at IS NOT NULL');
   });
 
   it('never resolves an unclaimed upload for a key limited to some teams, and nothing for the system', async () => {

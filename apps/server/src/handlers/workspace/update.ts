@@ -19,12 +19,7 @@ export default handler(workspaceUpdate, async (ctx, input) => {
     // answers like an unknown id (SPEC-003 §4).
     const file = resolved(ctx.refs['logo'], 'logo');
     if (file.id !== current.logoFileId) {
-      // A detached attachment file resolves only for an undo (SPEC-014 D28): unknown here.
-      if (
-        ctx.actor.userId === undefined ||
-        file['uploaderId'] !== ctx.actor.userId ||
-        file['detached'] === true
-      ) {
+      if (ctx.actor.userId === undefined || file['uploaderId'] !== ctx.actor.userId) {
         throw refNotFound('FileRef', input.logo, ['logo']);
       }
       if (file['purpose'] !== 'logo') {

@@ -11,7 +11,8 @@
  * - With partial issue loading (SPEC-011 §5.7, PLAN-011 S4c): an `I`, `U`, `A` or `V` whose Issue
  *   row is archived or deleted removes the Issue with a tombstone at the packet's id. After the
  *   whole batch, the eager children of every Issue the batch left absent are removed too, so a
- *   `D`+`U` group-change pair keeps them.
+ *   `D`+`U` group-change pair keeps them. So is an eager child upsert whose Issue the replica
+ *   doesn't hold (SPEC-014 D30).
  * - Content (SPEC-011 §5.3 step 4, PLAN-011 S5b; `ContentRouting`): a content upsert reaches the
  *   pool only when its parent is paged in here; storage gets every content packet and keeps an
  *   upsert only for a hydrated parent. A content `D` always applies (a tombstone). An `I` of a
@@ -231,6 +232,12 @@ function removeContent(
  * SPEC-011 §5.7 "eager children leave with their issue": once the whole batch is planned, the
  * Issues it leaves absent take their eager children with them, at the batch's last id (their
  * content goes by `removeContent`; without content routing, by this). Returns those Issues.
+ *
+ * SPEC-014 §4.4 (D30): an upsert of an eager child whose Issue is held neither in the pool nor
+ * by the batch is dropped the same way. The server may log a child of an Issue no replica holds
+ * (`attachment.setPreview` on an archived or deleted issue); bootstrap leaves such rows out, so
+ * keeping it would make this replica differ from a fresh one. An Issue's `I` always precedes its
+ * children in log order, so a live Issue is never missing here.
  */
 function removeChildren(
   pool: ObjectPool,
@@ -243,16 +250,28 @@ function removeChildren(
 ): string[] {
   const goneSet = deletedBy(base, new Set([rules.issue]));
   const gone = [...goneSet];
-  if (gone.length === 0) return gone;
   const planned = [...base];
+  // Whether each Issue the batch changed is present once the batch has applied.
+  const inBatch = new Map<string, boolean>();
+  for (const change of planned) {
+    if (change.model !== rules.issue) continue;
+    inBatch.set(change.kind === 'delete' ? change.id : change.row.id, change.kind !== 'delete');
+  }
+  const held = (issue: string): boolean =>
+    inBatch.get(issue) ?? pool.baseOf(rules.issue, issue) !== undefined;
+  const eager = new Set(rules.shape.children.map(modelOf));
   for (const child of children) {
     const ids = new Set<string>();
-    for (const { row } of pool.baseRows(child.model)) {
-      if (goneSet.has(String(row[child.field]))) ids.add(row.id);
+    if (goneSet.size > 0) {
+      for (const { row } of pool.baseRows(child.model)) {
+        if (goneSet.has(String(row[child.field]))) ids.add(row.id);
+      }
     }
+    const orphansGo = eager.has(child.model);
     for (const change of planned) {
       if (change.model !== child.model || change.kind === 'delete') continue;
-      if (goneSet.has(String(change.row[child.field]))) ids.add(change.row.id);
+      const issue = String(change.row[child.field]);
+      if (goneSet.has(issue) || (orphansGo && !held(issue))) ids.add(change.row.id);
     }
     for (const id of ids) {
       base.push({ kind: 'delete', model: child.model, id });

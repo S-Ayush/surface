@@ -5,6 +5,7 @@
  */
 import {
   isRefType,
+  SURFACE_REF_ALLOW_DETACHED_KEY,
   SURFACE_REF_ALLOW_INACTIVE_KEY,
   SURFACE_REF_KEY,
   SURFACE_REF_SCOPE_KEY,
@@ -33,6 +34,8 @@ export interface RefLocation {
   readonly scopeType?: RefType;
   /** `UserRef` only: deactivated users resolve too. */
   readonly allowInactive: boolean;
+  /** `FileRef` only: a detached attachment file of a visible issue resolves too (SPEC-014 D28). */
+  readonly allowDetached: boolean;
 }
 
 /** A definition bug, found the first time the operation runs (and in its tests). */
@@ -58,6 +61,7 @@ interface Found {
   many: boolean;
   scopeField?: string;
   allowInactive: boolean;
+  allowDetached: boolean;
 }
 
 export function buildPlan(opName: string, root: JsonSchema): readonly RefLocation[] {
@@ -69,7 +73,14 @@ export function buildPlan(opName: string, root: JsonSchema): readonly RefLocatio
   const byKey = new Map(found.map((f) => [f.path.join('.'), f]));
   const locations = found.map((f): RefLocation => {
     const key = f.path.join('.');
-    const base = { path: f.path, key, type: f.type, many: f.many, allowInactive: f.allowInactive };
+    const base = {
+      path: f.path,
+      key,
+      type: f.type,
+      many: f.many,
+      allowInactive: f.allowInactive,
+      allowDetached: f.allowDetached,
+    };
     if (!f.scopeField) return base;
 
     const scope = byKey.get(f.scopeField);
@@ -149,6 +160,7 @@ function found(node: JsonSchema, path: string[], many: boolean): Found {
     many,
     scopeField,
     allowInactive: node[SURFACE_REF_ALLOW_INACTIVE_KEY] === true,
+    allowDetached: node[SURFACE_REF_ALLOW_DETACHED_KEY] === true,
   };
 }
 

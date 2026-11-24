@@ -36,6 +36,8 @@ export interface LookupContext {
   /** The resolved scope team, for scoped references. */
   readonly scopeTeam?: RefEntity;
   readonly allowInactive: boolean;
+  /** `FileRef`: also a detached attachment file of a visible issue (SPEC-014 D28). */
+  readonly allowDetached?: boolean;
 }
 
 const MAX_CANDIDATES = 10;
@@ -331,9 +333,10 @@ async function lookupSession(value: string, ctx: LookupContext): Promise<RefEnti
  * also check `uploaderId` (`user.updateProfile`, `workspace.update`; SPEC-003 §4), so another
  * user's file can't be borrowed. An actor without a user (the system) reads no file here.
  *
- * One addition to the download rule (SPEC-014 D28): a detached attachment file of an issue the
- * actor sees resolves too, unreadable as ever, so `attachment.createFile` can undo a removal
- * (§3.5). `detached: true` tells the handlers; every other handler refuses such a file.
+ * One opt-in addition to the download rule (SPEC-014 D28): where the input field is
+ * `FileRefIncludingDetached` (only `attachment.createFile`'s `file`), a detached attachment file of
+ * an issue the actor sees resolves too, unreadable as ever, so the removal can be undone (§3.5).
+ * Every other `FileRef` answers `NOT_FOUND` for it, exactly like an unknown id.
  */
 async function lookupFile(value: string, ctx: LookupContext): Promise<RefEntity> {
   const ref = parseIdRef(value);
@@ -343,9 +346,10 @@ async function lookupFile(value: string, ctx: LookupContext): Promise<RefEntity>
   if (file !== undefined) {
     return { id: file.id, purpose: file.purpose, uploaderId: file.uploaderId };
   }
-  const detached = await reattachableFile(ctx.db, ref.id, reader);
+  const detached =
+    ctx.allowDetached === true ? await reattachableFile(ctx.db, ref.id, reader) : undefined;
   if (detached === undefined) throw refNotFound('FileRef', value, ctx.path);
-  return { ...detached, detached: true };
+  return detached;
 }
 
 async function lookupStatus(value: string, ctx: LookupContext): Promise<StatusRow> {

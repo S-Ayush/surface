@@ -12,6 +12,11 @@ export const SURFACE_REF_KEY = 'x-surface-ref';
 export const SURFACE_REF_SCOPE_KEY = 'x-surface-ref-scope';
 /** Metadata key on a `UserRef` that also accepts deactivated users. */
 export const SURFACE_REF_ALLOW_INACTIVE_KEY = 'x-surface-ref-allow-inactive';
+/**
+ * Metadata key on a `FileRef` that also resolves a detached attachment file of an issue the
+ * caller sees (SPEC-014 D28): only `attachment.createFile`'s `file`, for the undo of a removal.
+ */
+export const SURFACE_REF_ALLOW_DETACHED_KEY = 'x-surface-ref-allow-detached';
 
 export const REF_TYPES = [
   'TeamRef',
@@ -187,6 +192,7 @@ interface RefMeta {
   readonly description: string;
   readonly [SURFACE_REF_SCOPE_KEY]?: string;
   readonly [SURFACE_REF_ALLOW_INACTIVE_KEY]?: true;
+  readonly [SURFACE_REF_ALLOW_DETACHED_KEY]?: true;
 }
 
 function refString(
@@ -283,6 +289,19 @@ export const FileRef = refString(
   'File id, from POST /files/upload',
   parseIdRef,
   'Use a file id from POST /files/upload',
+);
+
+/**
+ * A `FileRef` that also resolves a detached attachment file of an issue the caller sees (SPEC-014
+ * D28), so `attachment.createFile` can undo a removal (§3.5). Opt-in: every other `FileRef` answers
+ * `NOT_FOUND` for such a file, exactly like an unknown id.
+ */
+export const FileRefIncludingDetached = refString(
+  'FileRef',
+  'File id, from POST /files/upload, or the file of an attachment removed from the same issue',
+  parseIdRef,
+  'Use a file id from POST /files/upload',
+  { [SURFACE_REF_ALLOW_DETACHED_KEY]: true },
 );
 
 /**
