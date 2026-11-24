@@ -128,7 +128,7 @@ The **M** column is the milestone in which a shortcut ships. Shortcuts arrive wi
 | `Mod+Alt+C` | Copy issue as Markdown (matched on `KeyC`) | M1 |
 | `Shift+R` | Rename (focus the title; on a list, open the issue with the title in edit mode) | M1 |
 | `Mod+Backspace` | Delete: opens a confirm dialog. Not while typing | M1 |
-| `#` | Restore the issue. Only on an archived or deleted issue | M1 |
+| `#` | Restore the issue. Only on an archived issue, or a deleted one before its `purgeAfter` (SPEC-015 §3.4); on an archive row or an archived or deleted issue's page | M1 |
 | `Shift+S` | Subscribe / unsubscribe | M4 |
 | `Alt+F` | Toggle favorite | M2 |
 
@@ -219,7 +219,7 @@ Linear's keys for commands Surface doesn't have yet. Nothing else is bound to th
 ### 3.10 Not bound in M1, on purpose
 - `Enter` on a group header: `T` toggles it.
 - `Mod+Z` in a text field or the editor: it undoes text. Outside text, the global `Mod+Z` restores only the last issue you deleted, until M2's general undo takes the key over.
-- Permanent delete: no chord. It runs only from the row or page menu, in a confirm dialog (SPEC-015). There is also no archive, unarchive or purge binding.
+- Permanent delete: no chord. It runs only from a deleted issue's page (its ⋯ menu) or "Permanently delete…" in `Mod+K`, for Admins, in a confirm dialog (SPEC-015 §3.4). The archive page's rows have Copy › and Restore only. There is also no archive, unarchive or purge binding.
 - `Ctrl+L`, `Ctrl+M` and `Ctrl+Shift+I` on Windows and Linux, where the browser owns them. Their commands run from the ⋯ menu and `Mod+K`.
 - `Mod+Shift+D` is also a browser key ("Bookmark all tabs"). The binding calls `preventDefault`, and "Remove due date" stays in `Mod+K` if the browser wins.
 - Linear's comment keys (`↑` / `↓` through comments, `E` to edit, `Mod+Backspace` to delete a comment): its panel doesn't list them. Edit and delete run from the comment menu.

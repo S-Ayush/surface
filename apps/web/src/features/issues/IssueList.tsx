@@ -19,6 +19,7 @@ import {
 import { usePrefetchContent, usePrefetchOnHover } from '@surface/sync-react';
 import { useNavigate } from '@tanstack/react-router';
 import {
+  ArchiveRestore,
   Calendar,
   Copy,
   Gauge,
@@ -43,6 +44,12 @@ import { useCommandContext } from '../../command-menu/context.js';
 import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
 import type { CommandId } from '../../commands/catalog.js';
 import { useCommand, useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
+import { restoreIssue } from '../archive/restore-flow.js';
+import {
+  restorable,
+  useLifecycleCommands,
+  type LifecycleSubject,
+} from '../archive/useLifecycleCommands.js';
 import { announce } from './announcer.js';
 import { browserStorage, readCollapse, writeCollapse } from './collapse-state.js';
 import { COPY_ITEMS, planCopy, runCopy } from './copy-actions.js';
@@ -77,7 +84,35 @@ export type IssueListProps = {
   /** The list's own address: where `Esc` on the issue page comes back to. */
   href: string;
   groups: readonly ListGroup[];
+  /**
+   * The archive page (SPEC-015 §3.3; PLAN-015 S4): a flat list of rows read from the server, whose
+   * menu has Copy › and Restore and nothing else.
+   */
+  archive?: ArchiveListOptions;
 };
+
+export type ArchiveListOptions = {
+  /** What the server said about a row: its lifecycle, and when it was deleted. */
+  readonly subjectOf: (issueId: string) => LifecycleSubject | undefined;
+  /** The list scrolled near its last row: the next page (pages of 50, §3.3 item 4). */
+  readonly onEndReached?: () => void;
+};
+
+/** Rows from the end at which the archive list asks for the next page. */
+const END_REACHED_ROWS = 10;
+const NOTHING: readonly string[] = [];
+
+/** Restore (`#`) and Permanently delete… for the archive list's focused row (PLAN-015 S4). */
+function ArchiveRowCommands({
+  subject,
+  onOverlayClosed,
+}: {
+  subject: () => LifecycleSubject | undefined;
+  onOverlayClosed: () => void;
+}) {
+  useLifecycleCommands(subject, { onOverlayClosed });
+  return null;
+}
 
 const COMPACT_QUERY = '(max-width: 767.98px)';
 
@@ -111,7 +146,7 @@ function RowTarget({ id, label }: { id: string; label: string }) {
 
 type Focus = { readonly id: string | null; readonly order: readonly string[] };
 
-export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) {
+export function IssueList({ ariaLabel, listKey, href, groups, archive }: IssueListProps) {
   const app = useApp();
   const commands = useCommandRegistry();
   const navigate = useNavigate();
@@ -123,7 +158,8 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
   const [collapse, setCollapse] = useState<CollapseState>(() =>
     readCollapse(browserStorage(), listKey),
   );
-  const items = useMemo(() => flattenGroups(groups, collapse), [groups, collapse]);
+  const flat = archive !== undefined;
+  const items = useMemo(() => flattenGroups(groups, collapse, !flat), [groups, collapse, flat]);
   const ids = useMemo(() => items.map((item) => item.id), [items]);
 
   // SPEC-011 §5.4: the content of the rows on screen is prefetched once they stay 200 ms, and a
@@ -139,7 +175,13 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
         .flatMap((item) => (item.kind === 'row' ? [item.row.issueId] : [])),
     [items, range],
   );
-  usePrefetchContent(shown);
+  // Not on the archive page: the replica stores content only of issues it holds (SPEC-011 §5.3).
+  usePrefetchContent(flat ? NOTHING : shown);
+  const onEndReached = archive?.onEndReached;
+  const nearEnd = items.length > 0 && range[1] >= items.length - END_REACHED_ROWS;
+  useEffect(() => {
+    if (nearEnd) onEndReached?.();
+  }, [nearEnd, items.length, onEndReached]);
   const hover = usePrefetchOnHover();
 
   // Focus is an id, so it follows its issue across live re-sorts (E1) and, when the issue leaves,
@@ -279,7 +321,7 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
       identifier: row.pending ? null : row.identifier,
       title: row.title,
       teamKey: row.identifier.slice(0, row.identifier.lastIndexOf('-')),
-      lifecycle: facts?.lifecycle ?? 'live',
+      lifecycle: facts?.lifecycle ?? archive?.subjectOf(row.issueId)?.lifecycle ?? 'live',
       // A row the replica doesn't hold (the archive pages read the server) can't be edited here.
       editable: facts?.lifecycle === 'live',
     };
@@ -355,6 +397,21 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
     return keys === undefined ? undefined : { shortcut: keys };
   };
 
+  const restoreFromRow = (server: LifecycleSubject) => {
+    const store = app.readyStore;
+    if (store === null || server.identifier === null) return;
+    const identifier = server.identifier;
+    return restoreIssue(
+      store,
+      { id: server.id, identifier },
+      {
+        open: () => {
+          void navigate({ href: issuePath(identifier, '') });
+        },
+      },
+    );
+  };
+
   const rowMenu = (row: ListRow): MenuEntry[] => {
     const subject = subjectOf(row);
     const copy: MenuEntry = {
@@ -372,6 +429,26 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
         },
       })),
     };
+    // SPEC-015 §3.3 item 2: an archive row has Copy › and Restore (`#`), nothing else.
+    const server = archive?.subjectOf(row.issueId);
+    if (server !== undefined) {
+      const restoreKeys = keyHint('issue:restore');
+      return restorable(server)
+        ? [
+            copy,
+            { type: 'separator' },
+            {
+              type: 'item',
+              label: 'Restore',
+              icon: <ArchiveRestore aria-hidden="true" />,
+              ...restoreKeys,
+              onSelect: () => {
+                void restoreFromRow(server);
+              },
+            },
+          ]
+        : [copy];
+    }
     // An issue the replica doesn't hold, or an archived or deleted one, only copies (§3.8).
     if (!subject.editable) return [copy];
     const picker = (
@@ -542,6 +619,14 @@ export function IssueList({ ariaLabel, listKey, href, groups }: IssueListProps) 
       onFocus={onFocus}
       onBlur={onBlur}
     >
+      {archive !== undefined && (
+        <ArchiveRowCommands
+          subject={() =>
+            focusedRow === undefined ? undefined : archive.subjectOf(focusedRow.issueId)
+          }
+          onOverlayClosed={refocusRow}
+        />
+      )}
       {focusedRow !== undefined && (
         <RowTarget id={focusedRow.issueId} label={focusedRow.identifier} />
       )}

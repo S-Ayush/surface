@@ -1,0 +1,24 @@
+/* The archive feature (SPEC-015 §3.3). Tokens only. */
+
+/* "N archived issues" under the team's issue list. */
+.footer {
+  flex: none;
+  padding: var(--space-8) var(--space-16);
+  border-top: var(--border-width) solid var(--border-subtle);
+}
+
+.footerLink {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm-size);
+  text-decoration: none;
+}
+
+.footerLink:hover {
+  color: var(--text-primary);
+}
+
+.footerLink:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}

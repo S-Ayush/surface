@@ -1,8 +1,9 @@
 // Deleting an issue and taking it back (SPEC-012 §3.11, SPEC-015 §3.1; PLAN-012 S6). Pure of
 // React: `askDelete` leaves a request the dialog host shows, `deleteIssue` runs the operation, and
 // `restoreLastDeleted` is `Mod+Z`. The last-delete slot is memory only (one issue, this session).
-import { issueDelete, issueRestore } from '@surface/operations';
-import { toast } from '@surface/ui';
+import { issueDelete } from '@surface/operations';
+import { lifecycleEvents } from '../archive/lifecycle-events.js';
+import { restoreIssue, type RestoreDeps } from '../archive/restore-flow.js';
 import { submitMutation, toastIfFailed, type MutationStore } from '../teams/submit.js';
 import { announce } from './announcer.js';
 
@@ -100,45 +101,30 @@ export async function deleteIssue(
   announce(`${issue.identifier} deleted`);
   const result = await submitMutation(store, issueDelete, { issue: issue.issueId });
   // A refusal is the shell's toast with the server's message; Mod+Z has nothing to restore.
-  if (result.kind === 'rejected' || result.kind === 'failed') slot.clearIf(issue.issueId);
+  if (result.kind === 'rejected' || result.kind === 'failed') {
+    slot.clearIf(issue.issueId);
+    lifecycleEvents.emit({ kind: 'refused', op: 'delete', issueId: issue.issueId });
+  }
+  // The archive page refreshes on the user's own confirmations (SPEC-015 §3.3 item 6).
+  if (result.kind === 'confirmed') {
+    lifecycleEvents.emit({ kind: 'confirmed', op: 'delete', issueId: issue.issueId });
+  }
   toastIfFailed(result);
 }
 
-const RESTORE_TOAST = 'issue-restore-last';
-
 /**
- * `Mod+Z` outside text (§3.11 item 3): restores the last deleted issue with `issue.restore`.
- * "Restoring ENG-42…" shows until the mutation is confirmed, then "Restored ENG-42". It never
- * waits for a packet: the connection may not subscribe to the issue's team. Does nothing with
- * nothing remembered. The slot empties at once, so a second press never restores twice, and a
- * refusal (someone restored or purged it first, E24) leaves it empty.
+ * `Mod+Z` outside text (§3.11 item 3): restores the last deleted issue through PLAN-015 S4's
+ * restore flow ("Restoring ENG-42…" until the mutation is confirmed, then "Restored ENG-42" with
+ * **Open**; never waiting for a packet, since the connection may not subscribe to the issue's
+ * team). Does nothing with nothing remembered. The slot empties at once, so a second press never
+ * restores twice, and a refusal (someone restored or purged it first, E24) leaves it empty.
  */
 export async function restoreLastDeleted(
   store: MutationStore,
   slot: LastDelete = lastDelete,
+  deps: RestoreDeps = {},
 ): Promise<void> {
   const deleted = slot.take();
   if (deleted === undefined) return;
-  toast({ id: RESTORE_TOAST, message: `Restoring ${deleted.identifier}…`, duration: Infinity });
-  const result = await submitMutation(store, issueRestore, { issue: deleted.id });
-  switch (result.kind) {
-    case 'confirmed': {
-      const message = `Restored ${deleted.identifier}`;
-      toast({ id: RESTORE_TOAST, message });
-      announce(message);
-      return;
-    }
-    case 'queued':
-      // Offline: the restore is sent when the connection returns.
-      toast({
-        id: RESTORE_TOAST,
-        message: `${deleted.identifier} will be restored when you're back online.`,
-      });
-      return;
-    case 'rejected':
-    case 'failed':
-      // The shell toasts a refusal with the server's message; this one stops saying "Restoring".
-      toast.dismiss(RESTORE_TOAST);
-      toastIfFailed(result);
-  }
+  await restoreIssue(store, deleted, deps);
 }

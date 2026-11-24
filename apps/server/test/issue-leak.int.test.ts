@@ -777,3 +777,93 @@ describe('the auto-archive and auto-close jobs in SEC', () => {
     expect(await logLength()).toBe(before);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// The Recently deleted list (PLAN-015 S4, SPEC-015 §5.3, AC-10, AC-11, E13)
+
+describe('issue.listDeleted', () => {
+  const deletedSec = uuidv7();
+  const deletedOps = uuidv7();
+  const deletedEng = uuidv7();
+  const expiredEng = uuidv7();
+
+  beforeAll(async () => {
+    await ok('issue.create', { id: deletedSec, team: 'SEC', title: 'Deleted secret' }, samActor);
+    await ok('issue.delete', { issue: deletedSec }, samActor);
+    await ok('issue.create', { id: deletedOps, team: 'OPS', title: 'Deleted ops' }, anaActor);
+    await ok('issue.delete', { issue: deletedOps }, anaActor);
+    await ok('issue.create', { id: deletedEng, team: 'ENG', title: 'Deleted eng' }, anaActor);
+    await ok('issue.delete', { issue: deletedEng }, anaActor);
+    await ok('issue.create', { id: expiredEng, team: 'ENG', title: 'Expired eng' }, anaActor);
+    await ok('issue.delete', { issue: expiredEng }, anaActor);
+    // Past its purgeAfter, before the job ran (D6). Test setup, so the unlogged write is harmless:
+    // no connection holds the deleted issue.
+    await h.pool.query(
+      `UPDATE issues SET deleted_at = deleted_at - interval '721 hours' WHERE id = $1`,
+      [expiredEng],
+    );
+  });
+
+  const ids = (page: unknown) => (page as { nodes: { id: string }[] }).nodes.map((node) => node.id);
+
+  for (const [who, actor] of [
+    ['a Member', () => anaActor],
+    ['an Admin', () => zoeActor],
+  ] as const) {
+    it(`never lists or counts a SEC issue for ${who} outside SEC, even when a filter asks`, async () => {
+      const bySec = { field: 'team', op: 'eq', value: h.teams.sec };
+      for (const input of [
+        { limit: 100, withTotal: true },
+        { filter: bySec, withTotal: true },
+      ]) {
+        const page = await ok('issue.listDeleted', input, actor());
+        const text = JSON.stringify(page);
+        expect(text).not.toContain(deletedSec);
+        expect(text).not.toContain('Deleted secret');
+        expect(text).not.toContain(sam);
+        const { totalCount } = page as { totalCount: number };
+        expect(totalCount).toBe(ids(page).length);
+      }
+      const filtered = await ok('issue.listDeleted', { filter: bySec, withTotal: true }, actor());
+      expect(filtered).toMatchObject({ nodes: [], totalCount: 0 });
+    });
+
+    it(`answers SEC as the team like an unknown team for ${who} outside SEC`, async () => {
+      for (const [secRef, unknown] of [
+        ['SEC', 'ZZZ'],
+        [h.teams.sec, randomUUID()],
+      ] as const) {
+        const real = await failure('issue.listDeleted', { team: secRef }, actor(), [secRef]);
+        const none = await failure('issue.listDeleted', { team: unknown }, actor(), [unknown]);
+        expect(real).toMatchObject({ code: 'NOT_FOUND' });
+        expect(real).toEqual(none);
+      }
+    });
+  }
+
+  it('lists SEC’s deleted issue for its member (the control), with who deleted it', async () => {
+    const page = await ok('issue.listDeleted', { team: 'SEC', limit: 100 }, samActor);
+    expect(ids(page)).toContain(deletedSec);
+    expect(JSON.stringify(page)).toContain(sam);
+  });
+
+  it('lists a Member’s deleted public issues, and leaves one past its purgeAfter out (E13, AC-19)', async () => {
+    const page = await ok('issue.listDeleted', { limit: 100 }, anaActor);
+    expect(ids(page)).toEqual(expect.arrayContaining([deletedEng, deletedOps]));
+    expect(ids(page)).not.toContain(expiredEng);
+    // `issue.list` never lists a deleted issue, even with includeArchived.
+    const live = await ok('issue.list', { limit: 100, includeArchived: true }, anaActor);
+    expect(JSON.stringify(live)).not.toContain(deletedEng);
+  });
+
+  it('never lists or counts an OPS issue for an API key limited to ENG (AC-10, E13)', async () => {
+    const page = await ok('issue.listDeleted', { limit: 100, withTotal: true }, engKeyActor);
+    expect(ids(page)).toContain(deletedEng);
+    expect(ids(page)).not.toContain(deletedOps);
+    expect((page as { totalCount: number }).totalCount).toBe(ids(page).length);
+    const real = await failure('issue.listDeleted', { team: 'OPS' }, engKeyActor, ['OPS']);
+    const none = await failure('issue.listDeleted', { team: 'ZZZ' }, engKeyActor, ['ZZZ']);
+    expect(real).toMatchObject({ code: 'NOT_FOUND' });
+    expect(real).toEqual(none);
+  });
+});

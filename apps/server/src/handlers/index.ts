@@ -53,6 +53,7 @@ import issueUpdate from './issues/update.js';
 import issueDelete from './issues/delete.js';
 import issueRestore from './issues/restore.js';
 import issuePurge from './issues/purge.js';
+import issueListDeleted from './issues/list-deleted.js';
 import issueUpdateDescription from './issues/update-description.js';
 import {
   countHandler as issueCount,
@@ -134,6 +135,7 @@ export const HANDLERS: readonly Handler[] = [
   issueDelete,
   issueRestore,
   issuePurge,
+  issueListDeleted,
   issueAutoArchive,
   issueAutoClose,
   draftSave,

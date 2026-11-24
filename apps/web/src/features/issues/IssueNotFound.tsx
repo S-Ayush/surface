@@ -15,9 +15,24 @@ export function notFoundSubject(ref: string): string {
   return parsed?.by === 'identifier' ? issueIdentifier(parsed.key, parsed.number) : 'This issue';
 }
 
-export function IssueNotFound({ issueRef }: { issueRef: string }) {
+/** E5 of SPEC-015: the page showed this deleted issue, then it was purged. */
+export const PURGED_TITLE = 'This issue was deleted permanently.';
+
+/**
+ * `purged`: this page showed the issue as deleted before the server stopped knowing it (SPEC-015
+ * E5). Only then: opened afresh after a purge, the page reads like any unknown identifier (E9).
+ */
+export function IssueNotFound({
+  issueRef,
+  purged = false,
+}: {
+  issueRef: string;
+  purged?: boolean;
+}) {
   const navigate = useNavigate();
-  const title = `${notFoundSubject(issueRef)} doesn't exist, or you don't have access to it.`;
+  const title = purged
+    ? PURGED_TITLE
+    : `${notFoundSubject(issueRef)} doesn't exist, or you don't have access to it.`;
   return (
     <>
       <PageHeader crumbs={['Issue not found']} title="Issue not found" />

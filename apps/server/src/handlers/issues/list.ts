@@ -15,7 +15,7 @@ interface Scoped {
 }
 
 /** The input's filter narrowed to `team`, and the team names resolve within. */
-function scoped(
+export function scoped(
   ctx: HandlerContext,
   input: { team?: string | undefined; filter?: Filter | undefined },
 ): Scoped {

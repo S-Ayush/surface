@@ -3,6 +3,7 @@
 // and PLAN-015 S4's archive pages share one model. `useIssueRows` feeds it from the replica.
 import {
   CLOSED_CATEGORIES,
+  COLOR_HUES,
   formatDueDate,
   formatEstimate,
   isPriority,
@@ -20,12 +21,14 @@ import {
   type Priority,
   type StatusCategory,
 } from '@surface/domain';
+import { forListVariant, type ListVariant } from './lifecycle-filter.js';
 
 /**
  * `active` reads the replica. `archived` and `deleted` take their rows from PLAN-015 S4's server
- * data source (the replica holds neither, SPEC-011 §5.7); the deleted one shows the deletion day.
+ * data source (`features/archive/archive-source.ts`; the replica holds neither, SPEC-011 §5.7);
+ * they show the archive day and the deletion day.
  */
-export type ListVariant = 'active' | 'archived' | 'deleted';
+export type { ListVariant };
 
 /** Whose issues the list holds. */
 export type ListScope =
@@ -87,7 +90,7 @@ export interface ListRow {
   readonly estimate: { readonly label: string; readonly offScale: boolean } | null | undefined;
   readonly dueDate: { readonly label: string; readonly overdue: boolean } | null;
   readonly assignee: { readonly name: string; readonly avatarUrl?: string } | null;
-  /** The created day, or the deletion day on the deleted variant. */
+  /** The created day; the archive day on the archived variant, the deletion day on the deleted. */
   readonly createdLabel: string;
 }
 
@@ -127,14 +130,8 @@ export function selectIssues<I extends ListIssue>(
   statuses: readonly GroupableStatus[],
 ): I[] {
   const category = new Map(statuses.map((status) => [status.id, status.category]));
-  return issues.filter((issue) => {
-    if (variant === 'active' && (issue.archivedAt !== null || issue.deletedAt !== null)) {
-      return false;
-    }
-    if (variant === 'archived' && (issue.archivedAt === null || issue.deletedAt !== null)) {
-      return false;
-    }
-    if (variant === 'deleted' && issue.deletedAt === null) return false;
+  // Every list view filters by lifecycle (SPEC-015 §5.2), so no view forgets.
+  return forListVariant(issues, variant).filter((issue) => {
     switch (scope.kind) {
       case 'team':
         return issue.teamId === scope.teamId;
@@ -163,6 +160,16 @@ export function formatCreated(iso: string, today: string): string {
   return date.getFullYear() === Number(today.slice(0, 4))
     ? label
     : `${label}, ${String(date.getFullYear())}`;
+}
+
+/** The day a row shows (SPEC-015 §3.3): the archive day, the deletion day, else the created day. */
+function dateShown(
+  issue: Pick<ListIssue, 'createdAt' | 'archivedAt' | 'deletedAt'>,
+  variant: ListVariant,
+): string {
+  if (variant === 'deleted') return issue.deletedAt ?? issue.createdAt;
+  if (variant === 'archived') return issue.archivedAt ?? issue.createdAt;
+  return issue.createdAt;
 }
 
 function toRow(
@@ -209,10 +216,7 @@ function toRow(
             overdue: issue.dueDate < lookups.today && !CLOSED_CATEGORIES.has(status.category),
           },
     assignee: assignee ?? null,
-    createdLabel: formatCreated(
-      variant === 'deleted' ? (issue.deletedAt ?? issue.createdAt) : issue.createdAt,
-      lookups.today,
-    ),
+    createdLabel: formatCreated(dateShown(issue, variant), lookups.today),
   };
 }
 
@@ -263,9 +267,18 @@ export function isCollapsed(state: CollapseState, group: ListGroup): boolean {
 }
 
 /** The groups as the lines the virtual list shows: a header, then its rows unless collapsed. */
-export function flattenGroups(groups: readonly ListGroup[], state: CollapseState): ListItem[] {
+export function flattenGroups(
+  groups: readonly ListGroup[],
+  state: CollapseState,
+  /** False for a flat list (the archive page): rows only, none collapsed. */
+  headers = true,
+): ListItem[] {
   const items: ListItem[] = [];
   for (const group of groups) {
+    if (!headers) {
+      for (const row of group.rows) items.push({ kind: 'row', id: row.issueId, row });
+      continue;
+    }
     items.push({ kind: 'header', id: headerId(group.key), group });
     if (isCollapsed(state, group)) continue;
     for (const row of group.rows) items.push({ kind: 'row', id: row.issueId, row });
@@ -276,4 +289,99 @@ export function flattenGroups(groups: readonly ListGroup[], state: CollapseState
 /** Issue ids in list order, collapsed groups included: the source list the issue page steps through. */
 export function orderedIssueIds(groups: readonly ListGroup[]): string[] {
   return groups.flatMap((group) => group.rows.map((row) => row.issueId));
+}
+
+// ---- The archive page (SPEC-015 §3.3; PLAN-015 S4) ----
+
+/** An issue as `issue.list` and `issue.listDeleted` answer it: what an archive row reads. */
+export interface ArchivedIssue {
+  readonly id: string;
+  readonly identifier: string;
+  readonly title: string;
+  readonly status: {
+    readonly id: string;
+    readonly name: string;
+    readonly category: StatusCategory;
+  };
+  readonly priority: number;
+  readonly assignee: { readonly id: string; readonly name: string } | null;
+  readonly labels: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly color: string;
+  }[];
+  readonly estimate: number | null;
+  readonly dueDate: string | null;
+  readonly createdAt: string;
+  readonly archivedAt: string | null;
+  readonly deletedAt: string | null;
+}
+
+const isHue = (value: string): value is ColorHue => COLOR_HUES.some((hue) => hue === value);
+
+function archiveEstimate(team: ListTeam | undefined, estimate: number | null): ListRow['estimate'] {
+  const estimateOn = team !== undefined && team.estimate.scale !== 'off';
+  if (estimate === null) return estimateOn ? null : undefined;
+  if (team === undefined || !estimateOn) return { label: String(estimate), offScale: true };
+  return {
+    label: formatEstimate(team.estimate, estimate),
+    offScale: !isValidEstimate(team.estimate, estimate),
+  };
+}
+
+/**
+ * The archive page's rows (SPEC-015 §3.3): one flat group in the server's order (newest archived
+ * or deleted first), normal issue rows whose date column shows the archive or deletion day. Rows
+ * come from the server; status colours, estimate scales and avatars come from the replica when it
+ * holds them. A row that doesn't belong in `variant` (it changed since it was read) is left out.
+ */
+export function archiveGroups(
+  variant: Exclude<ListVariant, 'active'>,
+  teamId: string,
+  issues: readonly ArchivedIssue[],
+  lookups: ListLookups,
+  now: Date = new Date(),
+): ListGroup[] {
+  const team = lookups.teams.get(teamId);
+  const statusById = new Map(lookups.statuses.map((status) => [status.id, status]));
+  const rows = forListVariant(issues, variant, now).map((issue): ListRow => {
+    const user = issue.assignee === null ? undefined : lookups.users.get(issue.assignee.id);
+    return {
+      issueId: issue.id,
+      teamId,
+      identifier: issue.identifier,
+      pending: false,
+      title: issue.title,
+      priority: isPriority(issue.priority) ? issue.priority : 0,
+      status: {
+        name: issue.status.name,
+        category: issue.status.category,
+        color: statusById.get(issue.status.id)?.color ?? 'gray',
+      },
+      labels: issue.labels.map((label) => ({
+        id: label.id,
+        name: label.name,
+        color: isHue(label.color) ? label.color : 'gray',
+      })),
+      estimate: archiveEstimate(team, issue.estimate),
+      // Out of the live lists, nothing is overdue any more.
+      dueDate:
+        issue.dueDate === null
+          ? null
+          : { label: formatDueDate(issue.dueDate, lookups.today), overdue: false },
+      assignee: issue.assignee === null ? null : (user ?? { name: issue.assignee.name }),
+      createdLabel: formatCreated(dateShown(issue, variant), lookups.today),
+    };
+  });
+  if (rows.length === 0) return [];
+  return [
+    {
+      key: variant,
+      name: variant === 'archived' ? 'Archived issues' : 'Recently deleted issues',
+      category: 'completed',
+      color: 'gray',
+      add: { teamId, statusId: '', statusName: '', assignToMe: false },
+      rows,
+    },
+  ];
 }

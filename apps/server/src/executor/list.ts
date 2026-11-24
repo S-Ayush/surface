@@ -66,6 +66,12 @@ export interface ListModel<T extends PgTable, F extends FilterFields = FilterFie
   /** Rows with a value here are never listed, counted or grouped (deleted issues, SPEC-011 §6.1). */
   readonly deletedColumn?: ColumnKey<T>;
   /**
+   * Rows must also match this condition, applied with visibility before filters, limits, counts
+   * and order. `now` is the operation's clock. The Recently deleted list keeps deleted issues
+   * before their `purgeAfter` only (SPEC-015 §3.3).
+   */
+  readonly scope?: (now: Date) => SQL;
+  /**
    * Groupings for `*.groupBy`, by name. `key` is a text expression (null for "none") and
    * `label` its display name. A label read from another synced table must apply the actor's
    * groups, as filter dot-paths do. `lateral` joins a set per row (`LEFT JOIN LATERAL … ON
@@ -288,11 +294,12 @@ async function baseWhere<T extends PgTable, F extends FilterFields>(
       : isNull(columnOf(columns, model.archivedColumn));
   const present =
     model.deletedColumn === undefined ? undefined : isNull(columnOf(columns, model.deletedColumn));
+  const scoped = model.scope?.(new Date(ctx.filterContext.now));
   const filtered =
     args.filter === undefined
       ? undefined
       : compile(await resolveFilterRefs(ctx, model, args.filter, args.scopeTeam), model, ctx);
-  return and(visible, present, live, filtered);
+  return and(visible, present, live, scoped, filtered);
 }
 
 function compile<F extends FilterFields>(

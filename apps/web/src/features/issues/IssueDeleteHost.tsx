@@ -1,6 +1,8 @@
 // Shows the delete dialog and implements `Mod+Z` (SPEC-012 §3.11; PLAN-012 S6). Mounted once in
 // `SHELL_HOSTS`. `Mod+Backspace`, the menus and "Delete issue" in `Mod+K` all `askDelete`; the
 // dialog sends `issue.delete` only on **Delete**. PLAN-015 S4 owns `issue:restore` (`#`).
+import { issuePath } from '@surface/domain';
+import { useNavigate } from '@tanstack/react-router';
 import { useSyncExternalStore } from 'react';
 import { useApp } from '../../app/context.js';
 import { useCommand } from '../../shortcuts/ShortcutProvider.js';
@@ -9,6 +11,7 @@ import { deleteIssue, deleteRequests, lastDelete, restoreLastDeleted } from './d
 
 export function IssueDeleteHost() {
   const app = useApp();
+  const navigate = useNavigate();
   const request = useSyncExternalStore(
     deleteRequests.subscribe,
     deleteRequests.snapshot,
@@ -21,7 +24,14 @@ export function IssueDeleteHost() {
     'issue:restore-last-deleted',
     () => {
       const store = app.readyStore;
-      if (store !== null) void restoreLastDeleted(store);
+      // The restore flow (PLAN-015 S4): "Restored ENG-42" offers **Open**.
+      if (store !== null) {
+        void restoreLastDeleted(store, lastDelete, {
+          open: (issue) => {
+            void navigate({ href: issuePath(issue.identifier, '') });
+          },
+        });
+      }
     },
     {
       // Nor while the delete dialog is open: the dialog is modal and a restore under it confuses.

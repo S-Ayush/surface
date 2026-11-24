@@ -53,6 +53,7 @@ import {
   issueAutoArchive,
   issueAutoClose,
   issueDelete,
+  issueListDeleted,
   issuePurge,
   issueRestore,
 } from './issue-lifecycle.js';
@@ -165,6 +166,8 @@ export const ALL_OPERATIONS: readonly AnyOperation[] = [
   // Delete, then restore, the same issue (ENG-3): the seed ends as it started (SPEC-015 §6.1).
   issueDelete,
   issueRestore,
+  // The Recently deleted tab's read (PLAN-015 S4): it lists the seed's deleted ENG-4, purged next.
+  issueListDeleted,
   // The seed's deleted ENG-4 (PLAN-015 S2), purged for good.
   issuePurge,
   // System only: the jobs call them (SPEC-015 §6.1); no seed example runs.

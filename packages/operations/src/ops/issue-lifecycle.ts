@@ -1,7 +1,6 @@
 /**
- * Issue lifecycle operations (SPEC-015 §6.1; PLAN-015 S1): delete and restore, and purge (S2).
- * `issue.listDeleted` (S4) and the system-only `issue.autoArchive`/`issue.autoClose` (S3) join
- * this file later. Anyone who can see an issue may delete and restore it (permissions §3.3,
+ * Issue lifecycle operations (SPEC-015 §6.1; PLAN-015 S1): delete and restore, purge (S2), the
+ * system-only `issue.autoArchive`/`issue.autoClose` (S3) and `issue.listDeleted` (S4). Anyone who can see an issue may delete and restore it (permissions §3.3,
  * D7), so the permission is `p.any()`: a private team's issue is `NOT_FOUND` before any
  * permission check. Delete is destructive, so an API key needs `allowDestructive`.
  *
@@ -9,9 +8,10 @@
  * because the replica holds no archived or deleted issue (PLAN-011 S4c), so the row comes back
  * with the server's `V` or `U`.
  */
-import { canRestore, IssueRef, lifecycleOf, type LifecycleFields } from '@surface/domain';
+import { canRestore, IssueRef, lifecycleOf, TeamRef, type LifecycleFields } from '@surface/domain';
 import { z } from 'zod';
 import { defineOperation } from '../define.js';
+import { connectionOf, listInput } from '../list.js';
 import type { StoreRow } from '../optimistic.js';
 import type { UiTarget } from '../ui.js';
 import { IssueOutputSchema, IssueSummarySchema } from './issue.js';
@@ -148,6 +148,30 @@ export const issuePurge = defineOperation({
   // Nothing to predict (§6.2): the replica holds no deleted issue. Once the server's batch arrives
   // the Issue stays absent, so any content the client held goes too (SPEC-011 §5.3).
   optimistic: () => undefined,
+});
+
+/** One issue on the Recently deleted tab (§6.1): a summary plus when it stops being restorable. */
+export const DeletedIssueSchema = IssueSummarySchema.extend({
+  /** `deletedAt` + 720 hours (§4.2): from then on it can't be restored and leaves this list. */
+  purgeAfter: Timestamp,
+});
+
+export const issueListDeleted = defineOperation({
+  name: 'issue.listDeleted',
+  kind: 'query',
+  domain: 'issue',
+  summary: 'List recently deleted issues',
+  description:
+    'Lists visible issues in Recently deleted, newest deletion first, with deletedBy and purgeAfter (when it stops being restorable). An issue leaves the list once its purgeAfter has passed. Archived or not, so includeArchived changes nothing. With team, only its issues, and status and label names resolve in it. Takes the filters of issue.list.',
+  keywords: ['recently deleted issues', 'deleted issues', 'trash', 'issues to restore'],
+  input: z.object({ ...listInput, team: TeamRef.optional(), withTotal: z.boolean().optional() }),
+  output: connectionOf(DeletedIssueSchema),
+  // §5.3: anyone, on the issues they can see; a key with `read`. Visibility and the key's teams
+  // are applied in SQL (`executor/list.ts`).
+  permission: (p) => p.any(),
+  destructive: false,
+  // The seed's deleted ENG-4, before `issue.purge` takes it.
+  examples: [{ team: 'ENG' }, { orderBy: { field: 'deletedAt', direction: 'asc' } }],
 });
 
 export const issueAutoArchive = defineOperation({

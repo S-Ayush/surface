@@ -79,6 +79,45 @@ export function canRestore(issue: LifecycleFields, now: Date): boolean {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Views (SPEC-015 §5.2; PLAN-015 S4)
+
+/**
+ * The lists an issue can appear in: the live lists (team issues, My issues), the archive page's
+ * Issues tab and its Recently deleted issues tab. Every list view filters with `inIssueView`, so a
+ * row (an optimistic one too) never shows in the wrong view, whatever the server sent.
+ */
+export const ISSUE_LIST_VIEWS = ['active', 'archived', 'deleted'] as const;
+export type IssueListView = (typeof ISSUE_LIST_VIEWS)[number];
+
+/**
+ * Whether `issue` belongs in `view` at `now` (§5.2): live issues in `active`; archived (and not
+ * deleted) ones in `archived`; deleted ones in `deleted` only while `now < purgeAfter`, as the
+ * server leaves them out from then on (§3.3), even before the job has run.
+ */
+export function inIssueView(issue: LifecycleFields, view: IssueListView, now: Date): boolean {
+  const state = lifecycleOf(issue);
+  switch (view) {
+    case 'active':
+      return state === 'live';
+    case 'archived':
+      return state === 'archived';
+    case 'deleted': {
+      if (state !== 'deleted') return false;
+      const deletedAt = deletedAtOf(issue);
+      return deletedAt !== undefined && now.getTime() < purgeAfter(deletedAt).getTime();
+    }
+  }
+}
+
+/**
+ * Whether `message` is the §4.2 refusal of an edit to an archived or deleted issue (E1, E2): the
+ * client then offers **Copy text**, because the page turns read-only and the typing would be lost.
+ */
+export function isLockedRefusal(message: string): boolean {
+  return /^\S+ (?:is archived|was deleted)\. Restore it to edit it\.$/.test(message);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Transitions (SPEC-015 §4.2)
 
 /** What an operation does to an issue's lifecycle, as the rule table groups operations. */

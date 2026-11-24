@@ -16,6 +16,7 @@ import {
 import { issueUpdate } from '@surface/operations';
 import { Link, useLocation, useNavigate, useRouter } from '@tanstack/react-router';
 import {
+  ArchiveRestore,
   ArrowDown,
   ArrowUp,
   Copy,
@@ -35,6 +36,8 @@ import { User } from '@surface/domain/model';
 import { useApp, useObserved } from '../../app/context.js';
 import { useCommandContext } from '../../command-menu/context.js';
 import { askDelete } from './delete-flow.js';
+import { lifecycleEvents } from '../archive/lifecycle-events.js';
+import { restorable, useLifecycleCommands } from '../archive/useLifecycleCommands.js';
 import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
 import { structurallyEqual } from '../../app/equal.js';
 import { PageHeader } from '../../shell/PageHeader.js';
@@ -130,12 +133,23 @@ function useIssueSource(issueRef: string) {
   const lifecyclePending = useObserved(
     useCallback(
       () =>
-        app.store?.pending.some((p) => p.op === 'issue.delete' || p.op === 'issue.restore') ===
-        true,
+        app.store?.pending.some(
+          (p) => p.op === 'issue.delete' || p.op === 'issue.restore' || p.op === 'issue.purge',
+        ) === true,
       [app],
     ),
   );
   const deleting = useObserved(useCallback(() => pendingDeletes(app.store?.pending ?? []), [app]));
+  // SPEC-015 E5: an Issue `D` (a purge) makes a read-only page ask again. The newest one's id is
+  // enough: the page only asks while the replica doesn't hold its issue.
+  const issueRemoved = useObserved(
+    useCallback(
+      () => app.store?.recentPackets.find((p) => p.model === 'Issue' && p.action === 'D')?.id,
+      [app],
+    ),
+  );
+  // The ref whose last server answer was a deleted issue: a not-found after it is a purge (E5).
+  const [deletedSeen, setDeletedSeen] = useState<string | undefined>(undefined);
   // The issue this page shows as Deleted after deleting it here (PLAN-012 S6 handoff): from the
   // moment its delete is queued until the server's next answer, or until the row is back.
   const [deletedHere, setDeletedHere] = useState<string | undefined>(undefined);
@@ -170,17 +184,42 @@ function useIssueSource(issueRef: string) {
       // Asked after any delete was confirmed: an answer says what the issue is now. Offline or a
       // failure says nothing, so the last row stays Deleted.
       if (result.kind === 'remote' || result.kind === 'not-found') setDeletedHere(undefined);
+      if (result.kind === 'remote') {
+        setDeletedSeen(result.view.lifecycle === 'deleted' ? issueRef : undefined);
+      }
     });
     return () => {
       current = false;
     };
-  }, [app, api, issueRef, ready, online, inReplica, rejected, attempt, lifecyclePending, refresh]);
+  }, [
+    app,
+    api,
+    issueRef,
+    ready,
+    online,
+    inReplica,
+    rejected,
+    attempt,
+    lifecyclePending,
+    refresh,
+    issueRemoved,
+  ]);
 
   const lastView = last?.ref === issueRef ? last.view : undefined;
   const loadedHere = loaded?.ref === issueRef ? loaded.result : undefined;
   const shownId = (
     lastView?.id ?? (loadedHere?.kind === 'remote' ? loadedHere.view.id : undefined)
   )?.toLowerCase();
+  // SPEC-015 §3.4 (PLAN-015 S4): the user's own restore, delete or purge of this issue, once
+  // answered, makes the page ask again; a quick answer may never show as pending.
+  useEffect(() => {
+    if (shownId === undefined) return;
+    return lifecycleEvents.subscribe((event) => {
+      if (event.kind !== 'restoring' && event.issueId.toLowerCase() === shownId) {
+        setAttempt((n) => n + 1);
+      }
+    });
+  }, [shownId]);
   if (replica === undefined && shownId !== undefined && deleting.includes(shownId)) {
     if (deletedHere !== shownId) setDeletedHere(shownId);
   } else if (deletedHere !== undefined && (replica !== undefined || deletedHere !== shownId)) {
@@ -189,6 +228,7 @@ function useIssueSource(issueRef: string) {
   return {
     ready,
     refresh,
+    purged: loadedHere?.kind === 'not-found' && deletedSeen === issueRef,
     retry: () => {
       setLoaded(undefined);
       setAttempt((n) => n + 1);
@@ -219,14 +259,14 @@ function useWindowFocusCount(): number {
 }
 
 export function IssuePage({ issueRef }: { issueRef: string }) {
-  const { ready, source, retry, refresh } = useIssueSource(issueRef);
+  const { ready, source, retry, refresh, purged } = useIssueSource(issueRef);
 
   if (!ready) return null;
   switch (source.kind) {
     case 'loading':
       return <IssueLoading />;
     case 'not-found':
-      return <IssueNotFound issueRef={issueRef} />;
+      return <IssueNotFound issueRef={issueRef} purged={purged} />;
     case 'error':
       return (
         <Unavailable
@@ -470,8 +510,66 @@ function IssueBody({
     );
     void runCopy(plan, navigator.clipboard);
   };
+  // SPEC-015 §3.4 (PLAN-015 S4): Restore (`#`) on an archived or deleted issue until its
+  // purgeAfter, and Permanently delete… for Admins on a deleted one. The menu items run the same
+  // handlers as the key and `Mod+K`.
+  const lifecycle = {
+    id: view.id,
+    identifier: view.identifier,
+    title: view.title,
+    lifecycle: view.lifecycle,
+    deletedAt: view.deletedAt ?? null,
+  };
+  useLifecycleCommands(() => lifecycle);
+  const commands = useCommandRegistry();
+  const isAdmin = useObserved(useCallback(() => app.isAdmin() === true, [app]));
   const deleteKeys = shortcutsFor('issue:delete')[0];
   const deleteHint = deleteKeys === undefined ? {} : { shortcut: deleteKeys };
+  const restoreKeys = shortcutsFor('issue:restore')[0];
+  const restoreHint = restoreKeys === undefined ? {} : { shortcut: restoreKeys };
+  // An archived issue can still be deleted (§3.4); a deleted one only restored or purged.
+  const deletable = (editable || view.lifecycle === 'archived') && view.identifier !== null;
+  const lifecycleItems: MenuEntry[] = [
+    ...(restorable(lifecycle)
+      ? ([
+          {
+            type: 'item',
+            label: 'Restore',
+            icon: <ArchiveRestore />,
+            ...restoreHint,
+            onSelect: () => {
+              commands.run('issue:restore');
+            },
+          },
+        ] satisfies MenuEntry[])
+      : []),
+    ...(deletable
+      ? ([
+          {
+            type: 'item',
+            label: 'Delete',
+            icon: <Trash2 />,
+            ...deleteHint,
+            onSelect: () => {
+              if (view.identifier === null) return;
+              askDelete({ issueId: view.id, identifier: view.identifier, title: view.title });
+            },
+          },
+        ] satisfies MenuEntry[])
+      : []),
+    ...(isAdmin && view.lifecycle === 'deleted' && view.identifier !== null
+      ? ([
+          {
+            type: 'item',
+            label: 'Permanently delete…',
+            icon: <Trash2 />,
+            onSelect: () => {
+              commands.run('issue:purge');
+            },
+          },
+        ] satisfies MenuEntry[])
+      : []),
+  ];
   const menu: MenuEntry[] = [
     {
       type: 'submenu',
@@ -485,21 +583,8 @@ function IssueBody({
         },
       })),
     },
-    ...(editable && view.identifier !== null
-      ? ([
-          { type: 'separator' },
-          {
-            type: 'item',
-            label: 'Delete',
-            icon: <Trash2 />,
-            ...deleteHint,
-            onSelect: () => {
-              if (view.identifier === null) return;
-              askDelete({ issueId: view.id, identifier: view.identifier, title: view.title });
-            },
-          },
-        ] satisfies MenuEntry[])
-      : []),
+    ...(lifecycleItems.length === 0 ? [] : [{ type: 'separator' } satisfies MenuEntry]),
+    ...lifecycleItems,
   ];
 
   const saveTitle = (title: string) => {

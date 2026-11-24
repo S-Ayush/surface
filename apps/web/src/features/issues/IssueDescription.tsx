@@ -34,6 +34,7 @@ import {
   type SavedDescription,
 } from './description-save.js';
 import { docInput } from './draft-adapter.js';
+import { refusedTextToast } from './locked-refusal.js';
 import { descriptionOf, useIssueContentView, type ContentView } from './server-issue.js';
 import pageStyles from './issue-page.module.css';
 
@@ -163,8 +164,15 @@ function EditableDescription({
         );
         return descriptionSendResult(outcome);
       },
+      // SPEC-015 E1 (PLAN-015 S4): refused because the issue was deleted or archived meanwhile,
+      // the toast offers **Copy text**, so the typing isn't lost.
       onRefused: (message) => {
-        toast({ tone: 'danger', message });
+        toast(
+          refusedTextToast(message, created.getState().doc, {
+            markdownOf: docToMarkdown,
+            copy: (text) => copyText(text, navigator.clipboard),
+          }),
+        );
       },
     });
     return { saver: created, owner };

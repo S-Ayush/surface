@@ -37,6 +37,11 @@ describe('navigation commands', () => {
       'Go to Design',
       'Go to ENG issues',
       'Go to DES issues',
+      // SPEC-015 §7 (PLAN-015 S4): the archive page's two tabs, per team.
+      'Go to archived issues in ENG',
+      'Go to recently deleted issues in ENG',
+      'Go to archived issues in DES',
+      'Go to recently deleted issues in DES',
     ]);
     expect(commands.find((c) => c.id === 'nav:settings')?.shortcuts).toEqual(['Mod+,', ['G', 'S']]);
     expect(commands.find((c) => c.id === 'nav:open-team')?.shortcuts).toEqual([['O', 'T']]);

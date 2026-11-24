@@ -1,6 +1,7 @@
 // Navigation commands (SPEC-005 §4.1): the route table plus one "Go to {team}" per live team, and
 // "Open team…" (O T), a nested page of teams. Hidden until the shell provides `navigate` (S4).
 // The identifier fast path (command-menu §3.1, SPEC-011 §7): `eng-87` puts "Open ENG-87" first.
+import { teamArchivePath } from '../../features/archive/paths.js';
 import { typedIdentifier } from '../../features/issues/issue-url.js';
 import { commandTitle } from '../../commands/catalog.js';
 import type { Command, CommandContext, CommandPage, CommandSource } from '../model.js';
@@ -91,6 +92,26 @@ export const navigationSource: CommandSource = (ctx) => [
     when: canNavigate,
     run: (c) => c.navigate?.(`${teamPath(team.key)}/issues`),
   })),
+  // SPEC-015 §7 (PLAN-015 S4): the team archive page's two tabs, one pair per team. `G` `X` is
+  // the route's team's (`nav:team-archive`).
+  ...ctx.teams().flatMap((team): Command[] => [
+    {
+      id: `nav:team-archive:${team.id}`,
+      title: `Go to archived issues in ${team.key}`,
+      section: 'navigation',
+      keywords: [team.name, 'archive', 'archived'],
+      when: canNavigate,
+      run: (c) => c.navigate?.(teamArchivePath(team.key)),
+    },
+    {
+      id: `nav:team-recently-deleted:${team.id}`,
+      title: `Go to recently deleted issues in ${team.key}`,
+      section: 'navigation',
+      keywords: [team.name, 'deleted', 'trash', 'restore'],
+      when: canNavigate,
+      run: (c) => c.navigate?.(teamArchivePath(team.key, 'deleted')),
+    },
+  ]),
 ];
 
 /**

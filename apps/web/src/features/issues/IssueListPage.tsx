@@ -10,6 +10,7 @@ import { lostTeamMessage, observeTeam, type TeamView } from '../../app/workspace
 import { useCommandContext } from '../../command-menu/context.js';
 import { GLOBAL_TARGET } from '../../command-menu/model.js';
 import { NotFoundPage } from '../../pages/NotFoundPage.js';
+import { ArchivedCountFooter } from '../archive/ArchivedCountFooter.js';
 import { PageHeader } from '../../shell/PageHeader.js';
 import { IssueList } from './IssueList.js';
 import styles from './IssueList.module.css';
@@ -87,6 +88,7 @@ export function IssueListPage({ teamKey }: { teamKey: string }) {
             action={<CreateIssueButton />}
           />
         </div>
+        <ArchivedCountFooter teamKey={team.key} />
       </>
     );
   }
@@ -101,6 +103,8 @@ export function IssueListPage({ teamKey }: { teamKey: string }) {
           href={`/team/${team.key}/issues`}
           groups={rows.groups}
         />
+        {/* SPEC-015 §3.3: the way to the team's archive page (PLAN-015 S4). */}
+        <ArchivedCountFooter teamKey={team.key} />
       </div>
     </>
   );

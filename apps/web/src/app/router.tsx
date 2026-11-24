@@ -17,6 +17,7 @@ import {
 import { reaction } from 'mobx';
 import { useCallback, useEffect } from 'react';
 import { IssuePage } from '../features/issues/IssuePage.js';
+import { ArchiveScreen } from '../features/archive/ArchiveScreen.js';
 import { IssueListPage } from '../features/issues/IssueListPage.js';
 import { DraftsPage } from '../features/issues/DraftsPage.js';
 import { MyIssuesPage } from '../features/issues/MyIssuesPage.js';
@@ -216,6 +217,24 @@ const teamIssuesRoute = createRoute({
   },
 });
 
+// The team archive page (SPEC-015 §3.3, §7; PLAN-015 S4): two tabs, each its own address. There is
+// no `/trash` page.
+const teamArchiveRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: 'team/$key/archive',
+  component: function TeamArchive() {
+    return <ArchiveScreen teamKey={useRouteParams().key ?? ''} tab="archived" />;
+  },
+});
+
+const teamRecentlyDeletedRoute = createRoute({
+  getParentRoute: () => shellRoute,
+  path: 'team/$key/archive/recently-deleted',
+  component: function TeamRecentlyDeleted() {
+    return <ArchiveScreen teamKey={useRouteParams().key ?? ''} tab="deleted" />;
+  },
+});
+
 const teamRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: 'team/$key',
@@ -266,6 +285,8 @@ const routeTree = rootRoute.addChildren([
     draftsRoute,
     teamRoute,
     teamIssuesRoute,
+    teamArchiveRoute,
+    teamRecentlyDeletedRoute,
     issueRoute,
     issueSlugRoute,
     settingsRoute.addChildren([

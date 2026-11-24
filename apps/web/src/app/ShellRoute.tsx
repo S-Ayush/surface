@@ -13,6 +13,9 @@ import { followPreferences } from '../preferences/apply.js';
 import { savePreferences } from '../preferences/save.js';
 import { Shell } from '../shell/Shell.js';
 import { commentActionsFor } from '../features/comments/useComments.js';
+import { refusedDescription, refusedTextToast } from '../features/issues/locked-refusal.js';
+import { copyText } from '../features/members/reset-link.js';
+import { docToMarkdown } from '@surface/editor/schema';
 import { SystemBanners } from '../shell/SystemBanners.js';
 import { browserThemeEnvironment } from '../theme/toggleTheme.js';
 import styles from '../shell/Shell.module.css';
@@ -142,6 +145,18 @@ function useSyncStore(app: AppModel, { userId, workspaceId }: Session, epoch: nu
           message: rejection.message,
         });
         if (text) return;
+        // SPEC-015 E1 (PLAN-015 S4): a description save refused because the issue was deleted or
+        // archived meanwhile offers **Copy text**.
+        const description = refusedDescription(rejection.op, rejection.input);
+        if (description !== undefined) {
+          toast(
+            refusedTextToast(rejection.message, description, {
+              markdownOf: docToMarkdown,
+              copy: (copied) => copyText(copied, navigator.clipboard),
+            }),
+          );
+          return;
+        }
         toast({ tone: 'danger', message: statusGoneMessage(rejection, seenDeletes) });
       },
       // SPEC-002 E7, SPEC-005 §8: persistent, and above any dismissible warning.

@@ -58,6 +58,11 @@ export type IssueView = {
    * row has none: the live page reads it from the issue's content.
    */
   readonly description?: DocNodeJSON;
+  /**
+   * When it was deleted, on an `issue.get` answer: Restore is hidden from its `purgeAfter` on
+   * (SPEC-015 §3.4; PLAN-015 S4).
+   */
+  readonly deletedAt?: string;
 };
 
 export function isColorHue(value: string): value is ColorHue {
@@ -155,6 +160,7 @@ export function issueViewFromOutput(output: IssueOutput, pool?: ReadonlyPool): I
             allowZero: team.estimateAllowZero,
           },
     ...(isDocJson(output.description.json) ? { description: output.description.json } : {}),
+    ...(output.deletedAt === null ? {} : { deletedAt: output.deletedAt }),
   };
 }
 

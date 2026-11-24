@@ -101,6 +101,18 @@ export class FakeApp extends AppModel {
   }>([], {
     deep: false,
   });
+  /** `store.recentPackets`, newest first, observable (PLAN-015 S4: the archive page, E5). */
+  readonly packets = observable.array<{
+    id: number;
+    action: 'I' | 'U' | 'A' | 'V' | 'D';
+    model: string;
+    rowId: string;
+    appliedAt: number;
+  }>([], { deep: false });
+  /** `store.connection`, observable. */
+  readonly connection = observable.box<string>('online');
+  /** The actor's role (`app.isAdmin`). */
+  readonly #role: 'admin' | 'member';
   /** `store.queueLost`, observable: another tab took the queue over. */
   readonly queueLost = observable.box(false);
   /** The store's recent rejections (`store.rejections`), observable. */
@@ -124,9 +136,12 @@ export class FakeApp extends AppModel {
     users?: readonly Row[];
     /** How a dispatch ends; confirmed by default. */
     answer?: (op: string, input: unknown) => Promise<MutationOutcome>;
+    /** The signed-in user's role; Member by default. */
+    role?: 'admin' | 'member';
   }) {
     const unused = () => Promise.reject(new Error('unused'));
     super(new AuthState({ capabilities: unused, session: unused, login: unused, logout: unused }));
+    this.#role = options.role ?? 'member';
     this.issues = observable.array(
       options.issues.map((row) => observable({ ...row })),
       { deep: false },
@@ -158,12 +173,17 @@ export class FakeApp extends AppModel {
       [Issue, this.issues],
     ]);
     const queueLost = this.queueLost;
+    const connection = this.connection;
     this.#store = {
+      recentPackets: this.packets,
+      followedTeams: new Set(teams.map((t) => t['id'])),
       status: 'ready',
       get queueLost() {
         return queueLost.get();
       },
-      connection: 'online',
+      get connection() {
+        return connection.get();
+      },
       clientId: FAKE_CLIENT_ID,
       rejections: this.rejections,
       pending: this.pending,
@@ -194,6 +214,8 @@ export class FakeApp extends AppModel {
       openTeam: (teamId: string) => {
         this.opened.push(teamId);
       },
+      // The team of an issue a restore brought back is a member team here: loaded already.
+      whenTeamLoaded: () => Promise.resolve('ready'),
       pool: {
         all: (model: unknown) => byModel.get(model) ?? [],
         get: (model: unknown, id: string) =>
@@ -227,7 +249,11 @@ export class FakeApp extends AppModel {
   }
 
   override actor = (): Actor | null =>
-    userActor({ userId: 'u-ada', role: 'member', memberships: [{ teamId: TEAM, private: false }] });
+    userActor({
+      userId: 'u-ada',
+      role: this.#role,
+      memberships: [{ teamId: TEAM, private: false }],
+    });
 }
 
 /** The M1 keys are in the registry but outside the build until a slice raises it (S1). */

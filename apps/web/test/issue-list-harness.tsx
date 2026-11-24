@@ -23,6 +23,8 @@ import { AuthState, type Session } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
 import { TargetContext, TargetStore } from '../src/command-menu/context.js';
 import { readListSource } from '../src/features/issues/focus-model.js';
+import { ArchiveScreen } from '../src/features/archive/ArchiveScreen.js';
+import { IssueApiContext } from '../src/features/issues/issue-api.js';
 import { IssueListPage } from '../src/features/issues/IssueListPage.js';
 import { IssueNavHost } from '../src/features/issues/IssueNavHost.js';
 import { MyIssuesPage } from '../src/features/issues/MyIssuesPage.js';
@@ -31,6 +33,7 @@ import { ShellContext } from '../src/shell/ShellContext.js';
 import { ShellStore } from '../src/shell/ShellStore.js';
 import { ShortcutProvider, useCommandRegistry } from '../src/shortcuts/ShortcutProvider.js';
 import type { CommandRegistry } from '../src/commands/registry.js';
+import { FakeIssueApi } from './archive-fixtures.js';
 import { recordingContent } from './content-stub.js';
 import { DES, DES_DONE, DES_TODO, ENG, ME, STATUSES, issue, uuid } from './issue-list-fixtures.js';
 
@@ -71,6 +74,16 @@ export class IssueApp extends AppModel {
   readonly opened: string[] = [];
   /** What the list asked the store to prefetch (PLAN-011 S7). */
   readonly content = recordingContent();
+  /** The archive page's server and the list footer's count (PLAN-015 S4). */
+  readonly api = new FakeIssueApi();
+  /** `store.recentPackets`, newest first (PLAN-015 S4). */
+  readonly packets = observable.array<{
+    id: number;
+    action: 'I' | 'U' | 'A' | 'V' | 'D';
+    model: string;
+    rowId: string;
+    appliedAt: number;
+  }>([], { deep: false });
   /** The operations dispatched (PLAN-012 S6), in order. */
   readonly dispatched: { readonly op: string; readonly input: unknown }[] = [];
 
@@ -109,9 +122,14 @@ export class IssueApp extends AppModel {
     const opened = this.opened;
     const dispatched = this.dispatched;
     const content = this.content;
+    const members = this.memberOf;
     this.#store = {
       status: 'ready',
       content,
+      recentPackets: this.packets,
+      get followedTeams() {
+        return new Set(members);
+      },
       get connection() {
         return connection.get();
       },
@@ -245,8 +263,28 @@ export async function mountLists(
     path: 'issue/$ref/$slug',
     component: IssueProbe,
   });
+  const archive = createRoute({
+    getParentRoute: () => root,
+    path: 'team/$key/archive',
+    component: function Archive() {
+      const params: Record<string, unknown> = useParams({ strict: false });
+      return (
+        <ArchiveScreen teamKey={typeof params.key === 'string' ? params.key : ''} tab="archived" />
+      );
+    },
+  });
+  const recentlyDeleted = createRoute({
+    getParentRoute: () => root,
+    path: 'team/$key/archive/recently-deleted',
+    component: function RecentlyDeleted() {
+      const params: Record<string, unknown> = useParams({ strict: false });
+      return (
+        <ArchiveScreen teamKey={typeof params.key === 'string' ? params.key : ''} tab="deleted" />
+      );
+    },
+  });
   const router = createRouter({
-    routeTree: root.addChildren([team, assigned, created, issueRoute]),
+    routeTree: root.addChildren([team, assigned, created, issueRoute, archive, recentlyDeleted]),
     history: createMemoryHistory({ initialEntries: [path] }),
     origin: 'http://localhost',
     isServer: false,
@@ -259,18 +297,20 @@ export async function mountLists(
   await act(async () => {
     mounted.render(
       <AppContext value={app}>
-        <SyncStoreProvider store={storeOf(app)}>
-          <ShellContext value={new ShellStore(null)}>
-            <OverlayProvider>
-              <TargetContext value={new TargetStore()}>
-                <ShortcutProvider>
-                  {hosts}
-                  <RouterProvider router={router} />
-                </ShortcutProvider>
-              </TargetContext>
-            </OverlayProvider>
-          </ShellContext>
-        </SyncStoreProvider>
+        <IssueApiContext value={app instanceof IssueApp ? app.api : new FakeIssueApi()}>
+          <SyncStoreProvider store={storeOf(app)}>
+            <ShellContext value={new ShellStore(null)}>
+              <OverlayProvider>
+                <TargetContext value={new TargetStore()}>
+                  <ShortcutProvider>
+                    {hosts}
+                    <RouterProvider router={router} />
+                  </ShortcutProvider>
+                </TargetContext>
+              </OverlayProvider>
+            </ShellContext>
+          </SyncStoreProvider>
+        </IssueApiContext>
       </AppContext>,
     );
     await Promise.resolve();

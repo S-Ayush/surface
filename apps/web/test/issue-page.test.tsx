@@ -85,6 +85,8 @@ class FakeApp extends AppModel {
     this.#store = {
       status: 'ready',
       connection: 'online',
+      recentPackets: [],
+      followedTeams: new Set([TEAM]),
       rejections: rows.rejections ?? [],
       pending: [],
       content: NO_CONTENT,
