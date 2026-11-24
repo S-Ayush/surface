@@ -389,6 +389,17 @@ it('leaves each tab, and the shared replica, equal to a fresh bootstrap with the
             { kind: 'part', n: 4 },
           ],
         ],
+        // The same part survives the prune that another team's removal runs before the answer:
+        // opening squad 5 evicts squad 3 while squad 4 still loads.
+        [
+          [
+            { kind: 'open', tab: 0, squad: 3 },
+            { kind: 'open', tab: 0, squad: 4 },
+            { kind: 'yield', turns: 3 },
+            { kind: 'part', n: 3 },
+            { kind: 'open', tab: 0, squad: 5 },
+          ],
+        ],
       ],
     },
   );

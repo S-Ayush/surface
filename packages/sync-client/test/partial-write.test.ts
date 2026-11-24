@@ -288,12 +288,18 @@ describe("store: an eager child waits for its team's load (SPEC-014 D30, amended
     for (const store of stores.splice(0)) await store.close();
   });
 
-  /** Squad 3 (public, not a member) with live task 133 and archived task 135; held answer. */
+  /**
+   * Squad 3 (public, not a member) with live task 133 and archived task 135, its answer held;
+   * squads 1 and 5 public, the user's.
+   */
   async function loading() {
     const hub = new FakeHub().withTeams();
     hub.addSquad(1);
     hub.addSquad(3);
+    hub.addSquad(5);
     hub.join(USER_ID, 1);
+    hub.join(USER_ID, 5);
+    hub.putTask(150, 5, { creatorId: OTHER_USER });
     hub.putTask(133, 3, { creatorId: OTHER_USER });
     hub.putTask(135, 3, { creatorId: OTHER_USER });
     hub.archiveTask(135);
@@ -323,6 +329,22 @@ describe("store: an eager child waits for its team's load (SPEC-014 D30, amended
     expect(teamView(store).parts).toEqual({ [id(501)]: id(133) });
     await settled();
     await eventually(async () => (await kept.stored('TaskPart')).length === 1);
+    expect(await kept.stored('TaskPart')).toEqual([id(501)]);
+  });
+
+  it('keeps that part through the removal of another team before the answer', async () => {
+    const { hub, store, kept, settled } = await loading();
+    hub.putPart(501, 133);
+    await settled();
+    // Leaving squad 5 prunes the pool on its `unsubscribed` ack, while squad 3 still loads.
+    hub.leave(USER_ID, 5);
+    await until(() => !store.followedTeams.has(id(5)));
+    await settled();
+    expect(teamView(store).parts).toEqual({ [id(501)]: id(133) });
+    hub.releasePartial();
+    await until(() => store.teamLoadState(id(3)) === 'ready');
+    expect(teamView(store).parts).toEqual({ [id(501)]: id(133) });
+    await settled();
     expect(await kept.stored('TaskPart')).toEqual([id(501)]);
   });
 

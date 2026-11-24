@@ -750,11 +750,18 @@ export class TeamSubscriptions {
       .map(({ row }) => row.id)
       .filter((id) => !live.has(id));
     this.#host.forgetContent(unlive);
+    const eager = new Set(rules.shape.children.map((child) => child.model));
     for (const child of [...rules.shape.children, ...rules.shape.content]) {
       for (const { row } of pool.baseRows(child.model)) {
-        if (!live.has(String(row[child.field]))) {
-          changes.push({ kind: 'delete', model: child.model, id: row.id });
-        }
+        const issue = String(row[child.field]);
+        if (live.has(issue)) continue;
+        // SPEC-014 D30 (amended): a child kept while its team loads, its Issue not here yet,
+        // waits for the load's answer; the sweep at its end drops it if the Issue never comes.
+        const loading =
+          eager.has(child.model) &&
+          pool.baseOf(rules.issue, issue) === undefined &&
+          this.#loading.has(teamOf(row) ?? '');
+        if (!loading) changes.push({ kind: 'delete', model: child.model, id: row.id });
       }
     }
     if (changes.length > 0) this.#host.applyBase(changes);

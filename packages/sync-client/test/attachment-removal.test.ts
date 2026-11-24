@@ -239,7 +239,10 @@ describe('Attachment rows leave and return with their issue (SPEC-014 §4.1)', (
         .map((row) => row.id)
         .sort(),
     ).toEqual([A1, A2, A3, A4]);
-    expect(plan.stored.filter((c) => c.kind === 'delete')).toEqual([
+    // Storage gets A4's upsert and A5's delete alone: an upsert of A5 at 12 would outlast a
+    // delete at the same id.
+    expect(plan.stored).toEqual([
+      { kind: 'upsert', model: 'Attachment', version: 11, row: attachmentRow(A4, NEW) },
       { kind: 'delete', model: 'Attachment', version: 12, id: A5 },
     ]);
   });
