@@ -5,8 +5,8 @@
  * (concurrent creates in one team), E5–E7 (label adds and removes from several clients).
  *
  * The simulation hands the server one request at a time, so its creates commit one after
- * another; the last test sends creates over HTTP at once, so Postgres runs them concurrently and
- * the counter row's lock orders them.
+ * another; the concurrent creates test sends them over HTTP at once, so Postgres runs them
+ * concurrently and the counter row's lock orders them.
  *
  * PLAN-011 S6 adds descriptions and history (AC-5, AC-6, AC-7, E10): `issueDescribe` steps save a
  * description from the version the tab holds, and `descriptionConvergence` compares every tab's
@@ -14,10 +14,16 @@
  *
  * PLAN-011 S8 adds label cascades (AC-18, AC-20, E22): `label.delete` racing edits that add the
  * label, among deletes, restores and auto-archives (`cascadeCase`, `cascadeConvergence`), and
- * compaction in the generated issue runs (the numbering check no longer reads `sync_log`).
+ * compaction in the generated issue runs (the numbering check no longer reads `sync_log`). The
+ * last test sends such a race over HTTP at once, so the §4.8 lock order meets real concurrency.
  */
 import fc from 'fast-check';
-import { createDatabaseFrom, startTestServer, type TestServer } from '@surface/server/testing';
+import {
+  createDatabaseFrom,
+  startTestServer,
+  type OpResponse,
+  type TestServer,
+} from '@surface/server/testing';
 import { describe, expect, inject, it } from 'vitest';
 import { simParameters } from '../src/context.js';
 import {
@@ -485,5 +491,101 @@ describe('label cascades against the real server (PLAN-011 S8)', () => {
     for (const op of ['label.delete', 'issue.update', 'issue.delete', 'issue.restore']) {
       expect(confirmed.get(op) ?? 0, op).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * PLAN-011 S8, AC-20 and E22 under real concurrency: the simulation hands the server one request
+ * at a time, so here edits that add label L to several issues, `label.delete` of L and the delete
+ * or auto-archive of another issue that carries L go over HTTP at once, and Postgres runs them
+ * concurrently under the §4.8 lock order.
+ */
+describe('label cascades racing edits over HTTP (PLAN-011 S8, AC-20, E22)', () => {
+  /** SPEC-011 E22's answer to an edit that finds L gone under its key lock. */
+  const LABEL_GONE = 'That label was deleted. Choose another label.';
+  const LABEL = '01930000-0000-7000-8000-0000000001ab';
+  const issueAt = (n: number) => `01930000-0000-7000-8000-${String(n + 1).padStart(12, '0')}`;
+
+  const race = fc.record({
+    /** Issues the edits add L to (by id), each from the next user. */
+    edited: fc.integer({ min: 2, max: 6 }),
+    /** Where `label.delete` goes in the batch: sent before, among or after the edits. */
+    deleteAt: fc.nat(6),
+    /** What happens at the same time to one more issue, created with L. */
+    lifecycle: fc.constantFrom('delete', 'archive', 'none'),
+  });
+
+  it('answers each edit ok or CONFLICT with no deadlock or 5xx, and leaves no issue naming the deleted label', async () => {
+    const answers = new Map<string, number>();
+    await fc.assert(
+      fc.asyncProperty(race, async ({ edited, deleteAt, lifecycle }) => {
+        const database = await createDatabaseFrom(inject('pgAdminUrl'), inject('pgTemplateDb'));
+        let entry: TestServer | undefined;
+        try {
+          entry = await startTestServer({ databaseUrl: database.url, users: 3 });
+          const server = entry;
+          const userAt = (n: number) => {
+            const user = server.users[n % server.users.length];
+            if (user === undefined) throw new Error('no user');
+            return user;
+          };
+          const label = await server.run(userAt(0), 'label.create', {
+            id: LABEL,
+            team: 'SIM',
+            name: 'Racing',
+          });
+          expect(label.ok).toBe(true);
+          // The edited issues, half of them with L already (the cascade rewrites those either
+          // way), and the one the lifecycle step acts on, with L.
+          for (let n = 0; n <= edited; n += 1) {
+            const created = await server.run(userAt(n), 'issue.create', {
+              id: issueAt(n),
+              team: 'SIM',
+              title: `Race ${n}`,
+              labels: n % 2 === 0 || n === edited ? [LABEL] : [],
+            });
+            expect(created.ok).toBe(true);
+          }
+          const edit = (n: number) => () =>
+            server.run(userAt(n + 1), 'issue.update', { issue: issueAt(n), addLabels: [LABEL] });
+          const remove = () => server.run(userAt(0), 'label.delete', { label: LABEL, team: 'SIM' });
+          const batch: (() => Promise<OpResponse | boolean>)[] = Array.from(
+            { length: edited },
+            (_, n) => edit(n),
+          );
+          batch.splice(Math.min(deleteAt, batch.length), 0, remove);
+          if (lifecycle === 'delete') {
+            batch.push(() => server.run(userAt(2), 'issue.delete', { issue: issueAt(edited) }));
+          }
+          // `autoArchive` answers a boolean: false only when an edit got to the issue first.
+          if (lifecycle === 'archive') batch.push(() => server.autoArchive(issueAt(edited)));
+          const results = await Promise.all(batch.map((send) => send()));
+
+          expect(results[batch.indexOf(remove)], 'label.delete').toMatchObject({ ok: true });
+          for (const result of results) {
+            if (typeof result === 'boolean') continue;
+            const answer = result.ok ? 'ok' : result.error.code;
+            answers.set(answer, (answers.get(answer) ?? 0) + 1);
+            if (result.ok) continue;
+            // CONFLICT under the key lock (E22), or NOT_FOUND when the delete had committed
+            // before the edit resolved its references. Nothing else: no 5xx, no deadlock.
+            if (result.error.code === 'CONFLICT') {
+              expect(result.error.message).toBe(LABEL_GONE);
+            } else {
+              expect(result.error.code, result.error.message).toBe('NOT_FOUND');
+            }
+          }
+          const named = (await server.issues()).filter((issue) => issue.labelIds.includes(LABEL));
+          expect(named.map((issue) => issue.id)).toEqual([]);
+        } finally {
+          await entry?.stop();
+          await database.drop();
+        }
+      }),
+      { seed: inject('simSeed'), numRuns: 8 },
+    );
+    // Which answer an edit gets depends on timing, so only the answers' kinds are asserted above.
+    // One run (PLAN-011 S8 As built) gave 26 ok (with the deletes), 7 CONFLICT and 2 NOT_FOUND.
+    expect(answers.get('ok') ?? 0).toBeGreaterThan(0);
   });
 });

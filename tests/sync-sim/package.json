@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:int": "vitest run --config vitest.int.config.js",
-    "sim": "node scripts/sim.mjs"
+    "sim": "node scripts/sim.mjs",
+    "sim:deep": "node scripts/sim-deep.mjs"
   },
   "dependencies": {
     "@surface/domain": "workspace:*",

@@ -76,6 +76,11 @@ export function issueFieldGetter(categoryOf: StatusCategoryOf): FieldGetter<Issu
 /**
  * The rows of `rows` that `filter` matches, in their order. Throws `FilterError` for a filter the
  * server would refuse (an unknown field, an operator its type lacks, a malformed value).
+ *
+ * No list scope is applied: the server's issue list adds "not archived, not deleted" to the
+ * compiled filter itself, but the replica holds live issues only (SPEC-011 §5.7, AC-29), so its
+ * rows are already in scope. A caller passing archived or deleted rows gets them filtered like any
+ * other.
  */
 export function filterIssues<Row extends IssueFilterRow>(
   rows: readonly Row[],

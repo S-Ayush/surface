@@ -14,7 +14,11 @@
  * - **The worst-case replica** (§5.7, Q15) holds the live issues of the user's member teams plus
  *   the 5 largest on-demand teams, the user's own issues of the other public teams (created or
  *   assigned, through `user:<id>`), and the other eager models. At the reference scale (NFR-10:
- *   100,000 issues, 20 teams, 50 users) it fits the per-replica 35 MB budget.
+ *   100,000 issues, 20 teams, 50 users) it fits the per-replica 35 MB budget on the seed's even
+ *   team split (≈ 30 MiB), but not on a skewed one: on a Zipf(1) split it is ≈ 52 MiB (a user in
+ *   3 teams) or ≈ 56 MiB (a lead in 5). It fits only while the followed teams hold at most ≈ 48 %
+ *   of all issues. That half of AC-14 is open for the user (PLAN-011 S8 As built); the skewed
+ *   cases are `it.fails`.
  *
  * The measured total of a real replica (IndexedDB, tombstones) is a perf test, held (plans README
  * §6). Deterministic: one seeded generator, no wall clock.
@@ -52,7 +56,10 @@ const ON_DEMAND_TEAMS = 5;
  * team (1,000 memberships), 10 statuses and 50 labels per team plus 50 workspace labels, and the
  * user's 10 drafts. Attachments (PLAN-014 S4a, eager issue children) add their own rows.
  */
-const OTHER_EAGER_ROWS = 1 + 50 + 1 + 20 + 1_000 + 200 + 1_050 + 10;
+/** Labels per team, in the generated rows and in the other eager rows alike. */
+const LABELS_PER_TEAM = 50;
+const OTHER_EAGER_ROWS =
+  1 + 50 + 1 + 20 + 1_000 + REFERENCE.teams * 10 + (REFERENCE.teams * LABELS_PER_TEAM + 50) + 10;
 const OTHER_EAGER_ROW_BYTES = 1024;
 
 /** mulberry32: a small seeded generator, so every run measures the same rows. */
@@ -141,7 +148,9 @@ function generateIssues(count: number, seed: number): Record<string, unknown>[] 
   const users = Array.from({ length: REFERENCE.users }, () => id(EPOCH));
   const viewer = users[VIEWER] ?? '';
   const statuses = new Map(teams.map((team) => [team, Array.from({ length: 6 }, () => id(EPOCH))]));
-  const labels = new Map(teams.map((team) => [team, Array.from({ length: 40 }, () => id(EPOCH))]));
+  const labels = new Map(
+    teams.map((team) => [team, Array.from({ length: LABELS_PER_TEAM }, () => id(EPOCH))]),
+  );
   const lowest = new Map<string, string | null>();
   const rows: Record<string, unknown>[] = [];
   for (let n = 0; n < count; n += 1) {
@@ -243,19 +252,106 @@ describe('the Issue row (AC-14)', () => {
   });
 });
 
+/**
+ * The share of every other public team's issues the user created or is assigned: each issue has a
+ * creator and, on 70 %, an assignee, spread over the users.
+ */
+const OWN_SHARE = (1 + 0.7) / REFERENCE.users;
+
+/**
+ * The issue rows of the worst-case replica over `split` (issues per team): the largest
+ * `memberTeams` teams as the user's, the next 5 largest opened on demand, and the user's own
+ * issues of every other team.
+ */
+function worstCaseRows(split: readonly number[], memberTeams: number): number {
+  const bySize = [...split].sort((a, b) => b - a);
+  const followed = memberTeams + ON_DEMAND_TEAMS;
+  return (
+    bySize.slice(0, followed).reduce((a, b) => a + b, 0) +
+    bySize.slice(followed).reduce((a, b) => a + b, 0) * OWN_SHARE
+  );
+}
+
+/** A replica of `issueRows` stored Issue rows and the other eager rows, in bytes. */
+const replicaBytes = (issueRows: number) =>
+  issueRows * storedAverage + OTHER_EAGER_ROWS * OTHER_EAGER_ROW_BYTES;
+
+/**
+ * A skewed split for AC-14's "not only the seed's team split": Zipf with s = 1 over NFR-10's 20
+ * teams, team k holding (1/k) / H(20) of the issues. Its 8 largest teams hold ≈ 75.5 % of them,
+ * its 10 largest ≈ 81.4 %.
+ */
+const ZIPF_TEAM_SPLIT: readonly number[] = (() => {
+  const weights = Array.from({ length: REFERENCE.teams }, (_, k) => 1 / (k + 1));
+  const sum = weights.reduce((a, b) => a + b, 0);
+  return weights.map((weight) => (REFERENCE.issues * weight) / sum);
+})();
+/** A lead, in more teams than ADR-0020's "two or three". */
+const LEAD_MEMBER_TEAMS = 5;
+
+/**
+ * The largest share of all issues the followed teams (members and on-demand, however many) can
+ * hold with the replica within 35 MB, the user's own issues of the other teams counted:
+ * share · N + OWN_SHARE · (1 − share) · N stored rows fit what the budget leaves for issues.
+ */
+const LARGEST_FOLLOWED_SHARE =
+  ((REPLICA_BUDGET_BYTES - OTHER_EAGER_ROWS * OTHER_EAGER_ROW_BYTES) /
+    storedAverage /
+    REFERENCE.issues -
+    OWN_SHARE) /
+  (1 - OWN_SHARE);
+
+const MIB = 1024 * 1024;
+const shareOf = (split: readonly number[], teams: number) =>
+  [...split]
+    .sort((a, b) => b - a)
+    .slice(0, teams)
+    .reduce((a, b) => a + b, 0) / REFERENCE.issues;
+
 describe('the worst-case replica (AC-14, §5.7, Q15)', () => {
-  it('holds the member teams, the 5 largest on-demand teams and the user’s own issues within 35 MB', () => {
+  it('holds the member teams, the 5 largest on-demand teams and the user’s own issues within 35 MB, on the seed’s even split', () => {
     expect(SEED_TEAM_SPLIT.reduce((a, b) => a + b, 0)).toBe(REFERENCE.issues);
-    const bySize = [...SEED_TEAM_SPLIT].sort((a, b) => b - a);
-    const followed = MEMBER_TEAMS + ON_DEMAND_TEAMS;
-    // In every other public team: the issues the user created or is assigned (each issue has a
-    // creator and, on 70 %, an assignee, spread over the users).
-    const ownShare = (1 + 0.7) / REFERENCE.users;
-    const issueRows =
-      bySize.slice(0, followed).reduce((a, b) => a + b, 0) +
-      bySize.slice(followed).reduce((a, b) => a + b, 0) * ownShare;
-    const total = issueRows * storedAverage + OTHER_EAGER_ROWS * OTHER_EAGER_ROW_BYTES;
+    const issueRows = worstCaseRows(SEED_TEAM_SPLIT, MEMBER_TEAMS);
     expect(issueRows).toBeGreaterThanOrEqual(40_000);
+    expect(replicaBytes(issueRows)).toBeLessThanOrEqual(REPLICA_BUDGET_BYTES);
+  });
+
+  // Open for the user (PLAN-011 S8 As built): on a skewed split the worst case is over budget.
+  // `it.fails` keeps the gap visible in the gate, and turns red once the budget or the replica
+  // changes enough to pass, so the record is updated then.
+  it.fails('stays within 35 MB on a Zipf(1) team split, a user in 3 teams', () => {
+    const total = replicaBytes(worstCaseRows(ZIPF_TEAM_SPLIT, MEMBER_TEAMS));
     expect(total).toBeLessThanOrEqual(REPLICA_BUDGET_BYTES);
+  });
+
+  it.fails('stays within 35 MB on a Zipf(1) team split, a lead in 5 teams', () => {
+    const total = replicaBytes(worstCaseRows(ZIPF_TEAM_SPLIT, LEAD_MEMBER_TEAMS));
+    expect(total).toBeLessThanOrEqual(REPLICA_BUDGET_BYTES);
+  });
+
+  it('records the measurements of PLAN-011 S8 As built', () => {
+    expect(ZIPF_TEAM_SPLIT.reduce((a, b) => a + b, 0)).toBeCloseTo(REFERENCE.issues, 6);
+    const mib = (memberTeams: number, split: readonly number[]) =>
+      Math.round(replicaBytes(worstCaseRows(split, memberTeams)) / MIB);
+    const percent = (share: number) => Math.round(share * 100);
+    expect({
+      row: Math.round(rowAverage),
+      stored: Math.round(storedAverage),
+      even: mib(MEMBER_TEAMS, SEED_TEAM_SPLIT),
+      zipfMember: mib(MEMBER_TEAMS, ZIPF_TEAM_SPLIT),
+      zipfLead: mib(LEAD_MEMBER_TEAMS, ZIPF_TEAM_SPLIT),
+      zipfTop8: percent(shareOf(ZIPF_TEAM_SPLIT, MEMBER_TEAMS + ON_DEMAND_TEAMS)),
+      zipfTop10: percent(shareOf(ZIPF_TEAM_SPLIT, LEAD_MEMBER_TEAMS + ON_DEMAND_TEAMS)),
+      largestShare: percent(LARGEST_FOLLOWED_SHARE),
+    }).toEqual({
+      row: 628,
+      stored: 685,
+      even: 30,
+      zipfMember: 52,
+      zipfLead: 56,
+      zipfTop8: 76,
+      zipfTop10: 81,
+      largestShare: 48,
+    });
   });
 });

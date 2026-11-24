@@ -75,6 +75,9 @@ const NO_IDS: ReadonlySet<string> = new Set();
  * a search of one model (`find`, a reference by name) reads that model's writes only. Scanning
  * every write instead made a rebuild quadratic in the pending mutations: 1,000 issue edits took
  * about 60 ms (PLAN-011 S8, `overlay.perf.test.ts`).
+ *
+ * Always constructed empty and written only through `set`, which keeps the index: nothing passes
+ * entries to the constructor, whose `Map` calls would bypass the subclass field.
  */
 class Draft extends Map<string, DraftRow> {
   readonly #ids = new Map<string, Set<string>>();
@@ -103,6 +106,16 @@ export class OverlayEngine {
   #draft = new Draft();
   /** A delta to one of these means `rebuild`. */
   #dependsOn = noDependencies();
+  #searchedWrites = 0;
+
+  /**
+   * How many pending writes searches (`find`, references by name) have read so far. The overlay
+   * perf test checks by this count, not by time, that a rebuild grows linearly with the pending
+   * mutations (PLAN-011 S8).
+   */
+  get searchedWrites(): number {
+    return this.#searchedWrites;
+  }
 
   constructor(
     pool: ObjectPool,
@@ -183,10 +196,12 @@ export class OverlayEngine {
       };
       // The earlier mutations' writes of this model, then this one's (a layer is small).
       for (const id of draft.idsOf(model)) {
+        this.#searchedWrites += 1;
         const state = draft.get(rowKey(model, id));
         if (state !== undefined) apply(id, state);
       }
       for (const [key, state] of layer) {
+        this.#searchedWrites += 1;
         const [rowModel, id] = splitKey(key);
         if (rowModel === model) apply(id, state);
       }

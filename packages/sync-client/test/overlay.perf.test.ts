@@ -138,18 +138,14 @@ it(`pushes one more of ${PENDING} pending issue edits within a frame, and rebuil
     now,
   };
 
-  /** The best of ten rebuilds of `list`, to keep machine noise out. */
-  const bestRebuild = (list: readonly OverlayMutation[]) => {
-    let best = Number.POSITIVE_INFINITY;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const started = performance.now();
-      engine.rebuild(list);
-      best = Math.min(best, performance.now() - started);
-    }
-    return best;
+  /** The pending writes the searches of one rebuild of `list` read. */
+  const searchedBy = (list: readonly OverlayMutation[]) => {
+    const before = engine.searchedWrites;
+    engine.rebuild(list);
+    return engine.searchedWrites - before;
   };
-  const quarter = bestRebuild(mutations.slice(0, PENDING / 4));
-  const rebuild = bestRebuild(mutations);
+  const quarter = searchedBy(mutations.slice(0, PENDING / 4));
+  const rebuild = searchedBy(mutations);
   let push = Number.POSITIVE_INFINITY;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     engine.rebuild(mutations);
@@ -164,8 +160,11 @@ it(`pushes one more of ${PENDING} pending issue edits within a frame, and rebuil
   expect(pool.get(Issue, issueId(ISSUES))?.priority).toBe(1);
   // AC-5: a new edit shows in the same frame.
   expect(push, `push took ${push.toFixed(1)} ms`).toBeLessThan(FRAME_MS);
-  // Linear in the pending edits: four times the edits, about four times the time (the quadratic
-  // rebuild before the fix took ten to sixteen). A ratio, not a time: about 12 ms on an idle
-  // laptop, but several times that under a parallel test run, which a frame budget can't absorb.
-  expect(rebuild / quarter, `${rebuild.toFixed(1)} ms vs ${quarter.toFixed(1)} ms`).toBeLessThan(7);
+  // Linear in the pending edits, counted rather than timed so machine load can't flake it: each
+  // edit's searches read a bounded number of pending writes (its own layer, and the searched
+  // model's earlier writes), so four times the edits read at most four times as many. Here that is
+  // none: the edits search statuses and labels, which no pending mutation writes. Before the fix
+  // each search read every pending write of every model: 999,000 for the 1,000 edits.
+  expect(rebuild, `${rebuild} vs ${quarter} for a quarter`).toBeLessThanOrEqual(4 * quarter);
+  expect(rebuild).toBeLessThanOrEqual(4 * PENDING);
 });
