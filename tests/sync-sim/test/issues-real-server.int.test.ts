@@ -21,6 +21,7 @@
  * run in parallel with this file.
  */
 import fc from 'fast-check';
+import { propertyParameters } from '@surface/config/properties';
 import {
   createDatabaseFrom,
   startTestServer,
@@ -355,7 +356,7 @@ describe('concurrent creates over HTTP (E3)', () => {
           await database.drop();
         }
       }),
-      { seed: inject('simSeed'), numRuns: 5 },
+      propertyParameters({ seed: inject('simSeed'), numRuns: 5 }),
     );
   });
 });
@@ -558,7 +559,7 @@ describe('label cascades racing edits over HTTP (PLAN-011 S8, AC-20, E22)', () =
           await database.drop();
         }
       }),
-      { seed: inject('simSeed'), numRuns: 8 },
+      propertyParameters({ seed: inject('simSeed'), numRuns: 8 }),
     );
     // Which answer an edit gets depends on timing, so only the answers' kinds are asserted above.
     // One run (PLAN-011 S8 As built) gave 26 ok (with the deletes), 7 CONFLICT and 2 NOT_FOUND.

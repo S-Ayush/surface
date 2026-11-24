@@ -50,6 +50,16 @@ function phase(name, groupOrder, test) {
   return config;
 }
 
+/**
+ * Every file in one project, one file at a time, with `test` on top: `pnpm sim:deep`'s real step
+ * (`scripts/sim-deep-plan.mjs`). Its runs, seed and timeout can't go through the phases below: a
+ * project's own `provide` and timeout win over the root's, so a 1,000-case run would run 20.
+ * One file at a time also keeps the timing-sensitive files' conditions through hours of cases.
+ */
+export function serialConfig(test) {
+  return mergeConfig({ ...common, test: project }, { test: { ...test, fileParallelism: false } });
+}
+
 export default {
   ...common,
   test: {
