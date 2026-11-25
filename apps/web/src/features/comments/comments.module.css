@@ -187,22 +187,6 @@
   flex-wrap: wrap;
 }
 
-/* With no chips the Add reaction button shows on hover and focus, like the other actions. */
-.reactions[data-empty='true'] {
-  opacity: 0;
-}
-
-.card:hover .reactions[data-empty='true'],
-.card:focus-within .reactions[data-empty='true'] {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .reactions[data-empty='true'] {
-    opacity: 1;
-  }
-}
-
 .issueReactions {
   display: flex;
 }

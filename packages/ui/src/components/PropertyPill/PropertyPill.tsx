@@ -12,6 +12,10 @@ type Common = {
   icon?: ReactNode;
   /** Shown beside the icon for an empty value, on hover and focus only. Defaults to "Set <property>". */
   placeholder?: string;
+  /** Rich visual for a non-empty value (label chips); the accessible name still comes from `value`. */
+  valueContent?: ReactNode;
+  /** Shows the placeholder for an empty value without hover (the composer's empty pills). */
+  showPlaceholder?: boolean;
   /** Icon only: the text stays in the accessible name (rows with little room). */
   iconOnly?: boolean;
   /** `panel`: the issue page's 28 px round pill with the placeholder always shown (PLAN-016 S6). */
@@ -36,6 +40,8 @@ export function PropertyPill({
   value,
   icon,
   placeholder,
+  valueContent,
+  showPlaceholder = false,
   iconOnly = false,
   variant = 'inline',
   className,
@@ -46,7 +52,15 @@ export function PropertyPill({
     <span aria-hidden="true" className={styles.content}>
       {icon !== undefined && <span className={styles.icon}>{icon}</span>}
       {!iconOnly && (
-        <span className={cx(styles.text, value === null && styles.placeholder)}>{text}</span>
+        <span
+          className={cx(
+            styles.text,
+            value === null && styles.placeholder,
+            value === null && showPlaceholder && styles.shown,
+          )}
+        >
+          {value !== null && valueContent !== undefined ? valueContent : text}
+        </span>
       )}
     </span>
   );

@@ -2,8 +2,16 @@
 // "Created by" and "Updated". The pills open the bound pickers (PLAN-012 S6) unless the issue is
 // read-only (archived, deleted, or not in the replica).
 import { formatDueDate, formatEstimate, priorityLabel } from '@surface/domain';
+import { CalendarDays, Gauge } from 'lucide-react';
 import type { MouseEvent } from 'react';
-import { Avatar, PriorityIcon, PropertyPill, StatusIcon, VisuallyHidden } from '@surface/ui';
+import {
+  Avatar,
+  LabelChip,
+  PriorityIcon,
+  PropertyPill,
+  StatusIcon,
+  VisuallyHidden,
+} from '@surface/ui';
 import type { PickerKind } from './issue-pickers.js';
 import { agoText, estimateRow, shortDate, type IssueView } from './issue-view.js';
 import styles from './issue-page.module.css';
@@ -108,6 +116,13 @@ export function PropertiesPanel({
               {...pill('labels')}
               property="Labels"
               value={labelNames.length === 0 ? null : labelNames.join(', ')}
+              valueContent={
+                <span className={styles.labelChips}>
+                  {view.labels.map((label) => (
+                    <LabelChip key={label.id} name={label.name} color={label.color} />
+                  ))}
+                </span>
+              }
             />
           </dd>
         </div>
@@ -122,6 +137,7 @@ export function PropertiesPanel({
                 {...pill('estimate')}
                 property="Estimate"
                 value={estimateText}
+                icon={<Gauge size={16} aria-hidden="true" />}
               />
               {estimate.offScale && <span className={styles.hint}>Off scale</span>}
             </dd>
@@ -136,6 +152,7 @@ export function PropertiesPanel({
               variant="panel"
               {...pill('dueDate')}
               property="Due date"
+              icon={<CalendarDays size={16} aria-hidden="true" />}
               value={view.dueDate === null ? null : formatDueDate(view.dueDate, todayYmd(now))}
             />
           </dd>

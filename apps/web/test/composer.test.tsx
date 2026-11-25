@@ -120,6 +120,17 @@ describe('opening (AC-1)', () => {
   });
 });
 
+describe('empty pills (PLAN-016 visual pass)', () => {
+  it('show an icon and the muted property name, not a bare dash', async () => {
+    await open(new ComposerApp());
+    for (const name of ['Priority', 'Assignee', 'Labels']) {
+      const el = pill(name);
+      expect(el?.textContent).toBe(`${name}: none, change${name}`);
+      expect(el?.querySelector('svg')).not.toBeNull();
+    }
+  });
+});
+
 describe('creating (AC-1, §3.1 items 6 to 9)', () => {
   it('an empty title: Create is aria-disabled, and submitting says "Title is required." with no dispatch', async () => {
     const app = new ComposerApp();

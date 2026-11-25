@@ -61,6 +61,7 @@ button.root:active {
   display: none;
 }
 
+.empty .shown,
 .empty:hover .text,
 .empty:focus-visible .text {
   display: inline;

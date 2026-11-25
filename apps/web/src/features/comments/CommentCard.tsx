@@ -79,6 +79,19 @@ export function CommentCard({
 }: CommentCardProps) {
   const label = `Comment by ${authorName}, ${agoLong(createdAt, now)}`;
   const showActions = !readOnly && !pending && editor === undefined;
+  // With no reactions the add button lives in the hover actions, so the card keeps no empty row at
+  // the bottom (SPEC-013 comments; Linear shows it beside the other actions).
+  const inlineReactions = showActions && !deleted && chips.length === 0;
+  const reactionBar = (
+    <ReactionBar
+      reactions={chips}
+      onReact={onReact}
+      loadEmoji={loadEmoji}
+      readOnly={readOnly || pending}
+      {...(pickerOpen === undefined ? {} : { pickerOpen })}
+      {...(onPickerOpenChange === undefined ? {} : { onPickerOpenChange })}
+    />
+  );
   return (
     <article
       id={commentDomId(id)}
@@ -107,6 +120,7 @@ export function CommentCard({
         <span className={styles.spacer} />
         {showActions && (
           <span className={styles.actions}>
+            {inlineReactions && reactionBar}
             {onReply !== undefined && (
               <IconButton aria-label="Reply" icon={<Reply />} size="sm" onClick={onReply} />
             )}
@@ -136,17 +150,8 @@ export function CommentCard({
       ) : (
         <CommentDoc doc={body} {...(onToggle === undefined ? {} : { onToggle })} />
       )}
-      {!deleted && editor === undefined && (
-        <div className={styles.reactions} data-empty={chips.length === 0}>
-          <ReactionBar
-            reactions={chips}
-            onReact={onReact}
-            loadEmoji={loadEmoji}
-            readOnly={readOnly || pending}
-            {...(pickerOpen === undefined ? {} : { pickerOpen })}
-            {...(onPickerOpenChange === undefined ? {} : { onPickerOpenChange })}
-          />
-        </div>
+      {!deleted && editor === undefined && chips.length > 0 && (
+        <div className={styles.reactions}>{reactionBar}</div>
       )}
       {children}
     </article>

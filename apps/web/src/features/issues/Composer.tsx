@@ -29,6 +29,7 @@ import {
   VisuallyHidden,
   type PropertyPickerOption,
 } from '@surface/ui';
+import { CalendarDays, Gauge, Tag, UserRound } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { CommentEditor as LazyEditor } from '../comments/editor-host.js';
 import {
@@ -322,7 +323,13 @@ function Pills({
       <PickerPill
         property="Assignee"
         value={assignee?.name ?? null}
-        icon={assignee && <Avatar name={assignee.name} size={16} />}
+        icon={
+          assignee ? (
+            <Avatar name={assignee.name} size={16} />
+          ) : (
+            <UserRound size={16} aria-hidden="true" />
+          )
+        }
         label="Assign to"
         picker={(close) => (
           <PropertyPicker
@@ -346,6 +353,7 @@ function Pills({
               ? labels.map((l) => l.name).join(', ')
               : `${String(labels.length)} labels`
         }
+        icon={<Tag size={16} aria-hidden="true" />}
         label="Change labels"
         picker={(close) => (
           <PropertyPicker
@@ -364,6 +372,7 @@ function Pills({
         <PickerPill
           property="Estimate"
           value={state.estimate === null ? null : formatEstimate(team.estimate, state.estimate)}
+          icon={<Gauge size={16} aria-hidden="true" />}
           label="Change estimate"
           picker={(close) => (
             <PropertyPicker
@@ -382,6 +391,7 @@ function Pills({
       <PickerPill
         property="Due date"
         value={state.dueDate}
+        icon={<CalendarDays size={16} aria-hidden="true" />}
         label="Change due date"
         picker={(close) => (
           <DatePicker
@@ -424,7 +434,13 @@ function PickerPill({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger>
-        <PropertyPill property={property} value={value} {...(icon ? { icon } : {})} />
+        <PropertyPill
+          property={property}
+          value={value}
+          placeholder={property}
+          showPlaceholder
+          {...(icon ? { icon } : {})}
+        />
       </PopoverTrigger>
       <PopoverContent aria-label={label}>
         {picker(() => {

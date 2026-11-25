@@ -178,3 +178,11 @@
     max-width: 100%;
   }
 }
+
+/* The labels pill's chips: small dot chips in one clipped row (PLAN-016 visual pass). */
+.labelChips {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+}

@@ -155,6 +155,16 @@
   text-decoration: line-through;
 }
 
+/* The generic block margin above would not collapse through this flex item and would push the first
+   line below the box. */
+:is(.surface-editor-content, .surface-doc) li[data-type='taskItem'] > div > :first-child {
+  margin-top: 0;
+}
+
+:is(.surface-editor-content, .surface-doc) li[data-type='taskItem'] > div > :last-child {
+  margin-bottom: 0;
+}
+
 /* Placeholder (TipTap's Placeholder extension marks the empty first block). */
 .surface-editor-content p.is-editor-empty:first-child::before {
   float: left;

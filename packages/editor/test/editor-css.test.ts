@@ -40,4 +40,20 @@ describe('editor body type', () => {
     expect(label).toContain('align-items: flex-start');
     expect(label).toContain('margin-top: calc((1lh - var(--checkbox-size)) / 2)');
   });
+
+  it('the paragraph inside a task item adds no top margin, so the first line sits at the box', () => {
+    // The generic `p { margin: space-8 0 }` rule applies inside the item's content div. The div is a
+    // flex item (its own formatting context), so that margin does not collapse and pushes the text
+    // 8px below the label; the box then looks high. The item content must zero its first/last margins.
+    const generic = block(`${SCOPE} :is(p, ul, ol, blockquote, pre, h1, h2, h3, h4)`);
+    expect(generic).toContain('margin: var(--space-8) 0');
+    const first = block(`${SCOPE} li[data-type='taskItem'] > div > :first-child`);
+    expect(first).toContain('margin-top: 0');
+    const last = block(`${SCOPE} li[data-type='taskItem'] > div > :last-child`);
+    expect(last).toContain('margin-bottom: 0');
+    // Specificity: the reset must beat the generic rule (it has more compound selectors).
+    expect(css.indexOf(`li[data-type='taskItem'] > div > :first-child {`)).toBeGreaterThan(
+      css.indexOf(`:is(p, ul, ol, blockquote, pre, h1, h2, h3, h4) {`),
+    );
+  });
 });

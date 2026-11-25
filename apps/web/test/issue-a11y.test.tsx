@@ -111,6 +111,25 @@ describe('the properties panel (§7.4)', () => {
     expect(html).not.toContain('Status: In Progress, change');
   });
 
+  it('gives labels, estimate and due date their own visuals without changing the accessible names', () => {
+    const full = issueViewFromOutput({
+      ...output,
+      labels: [
+        { id: ID, name: 'API', color: 'blue' },
+        { id: ID, name: 'Bug', color: 'red' },
+      ],
+      estimate: 3,
+      dueDate: '2026-11-26',
+    });
+    const html = renderToString(<PropertiesPanel view={full} now={now} onPick={() => undefined} />);
+    expect(html).toContain('Labels: API, Bug, change');
+    expect(html).toContain('Due date: ');
+    // Chips carry the colour dot; the estimate and due date each carry an icon.
+    expect(html).toContain('--label-blue');
+    expect(html).toContain('lucide-gauge');
+    expect(html).toContain('lucide-calendar-days');
+  });
+
   it('keeps every value a term and a definition, so it reads as text and not colour alone', () => {
     const html = renderToString(<PropertiesPanel view={view} now={now} />);
     expect(html.match(/<dt[ >]/g)?.length).toBe(html.match(/<dd[ >]/g)?.length);
