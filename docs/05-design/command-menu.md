@@ -1,6 +1,6 @@
 # Surface: Command Menu (`Mod+K`)
 
-Status: **Draft v0.1** · Date: 2026-11-06 · Implements: FR-NAV-02, FR-NAV-04 (search mode, M2) · Engine: [SPEC-005 §4](../06-specs/SPEC-005-app-shell-command-menu-shortcuts.md)
+Status: **Draft v0.2** · Date: 2026-11-25 (v0.1: 2026-11-06) · Implements: FR-NAV-02, FR-NAV-04 (search mode, M2) · Engine: [SPEC-005 §4](../06-specs/SPEC-005-app-shell-command-menu-shortcuts.md)
 
 The command menu is Surface's **universal entry point**. Every action, navigation target, and (from M2) search result is reachable here. If something can be done in Surface, it can be done from `Mod+K`.
 
@@ -26,7 +26,9 @@ The command menu is Surface's **universal entry point**. Every action, navigatio
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- **Size:** 640 px wide, at most 60% of the viewport tall, centred in the top third. `--bg-elevated`, elevation `e2`.
+- **Size and position:** about 720 px wide (`--command-menu-width`), at most 60% of the viewport tall, anchored to the top of the window (about 87 px down; `--command-menu-top`) so it does not move as the list grows or shrinks. `--bg-elevated`, `--radius-lg`, a `--hairline` border, elevation `e2`.
+- **No backdrop.** The page behind stays visible and is not dimmed, so the user keeps the context they are acting on. Focus is still trapped in the menu, the page behind is inert, and `Esc` or a click outside closes it. *Changed 2026-11-25 (PLAN-016, D-d; [design-system §8](design-system.md)): was 640 px, centred in the top third, over a 0.6 black backdrop.*
+- **Input and options:** the input is `text-md` (15 px) and draws no focus ring (the caret is the cue). Options are 40 px high. The active option is a neutral `--bg-active` fill, as in the pickers. Teal is kept for meaning, not for the cursor. The footer of key hints stays.
 - **Context chip:** shows what commands apply to: the focused issue, "3 selected issues", the current project, or nothing. `Backspace` on an empty input removes the chip, so commands apply globally.
 - **Sections** (in this order, hidden when empty): Suggested (context actions), Navigation, Create, Issues / Projects / Docs / People (search, M2), Settings, Help.
 - **Footer** shows key hints.
@@ -53,6 +55,29 @@ The command menu is Surface's **universal entry point**. Every action, navigatio
 Commands that need a value open a **sub-page** in the same menu, using the shared Property picker list:
 `Change status…` → list of the team's statuses → `Enter` applies to the context → the menu closes and an Undo toast shows.
 `Backspace` on an empty query goes back one level. The breadcrumb shows the path: `ENG-142 › Change status`.
+
+### 3.5 Property pages from the keyboard
+
+*Added 2026-11-25 (PLAN-016, D-e).* A property shortcut pressed on an issue (`S` status, `P` priority, `A` assignee, `L` labels, and the other property keys of [shortcuts.md](shortcuts.md)) opens the menu **directly on that property's sub-page** instead of an anchored popover. The same page opens from the command ("Change status…"). Mouse clicks on a property pill still open the Property picker as a popover anchored to the pill.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ [ENG-142 · Fix login redirect]  ← issue context chip         │
+│ ▸ Change status…                                             │
+├──────────────────────────────────────────────────────────────┤
+│   ○  Backlog                                            1    │
+│   ◔  In Progress                                      ✓ 2    │
+│   ●  Done                                               3    │
+├──────────────────────────────────────────────────────────────┤
+│ ↑↓ navigate   ↵ select   1–9 pick   ⌫ back   esc close       │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **Context chip:** the issue identifier and title (the target of the change), so it is never ambiguous which issue a key press will change. It follows §1 (`Backspace` on an empty input removes it, but on a property page `Backspace` first goes back).
+- **Options:** the list of SPEC-012 §3.5 for that property, in the same component as the anchored picker. Each option shows its icon, its name, the **number key cap** for the quick keys (empty query only: `1`–`9` by position, priority `0`–`4`) and a **check on the current value**.
+- **Keys:** `Enter` or a number key applies the change as one `issue.update`. The menu closes and focus returns to the row or issue page it came from, at once. `Esc` closes the whole menu. `Backspace` on an empty query goes back to the home page. A multi-select picker (labels) keeps its `Space` toggle and `Enter` apply rules (SPEC-012 D28).
+- **Pickers that don't fit a list page** (the due-date calendar) still close the menu and open anchored to the issue, as SPEC-012 D28 says.
+- **Same behaviour as the pointer picker:** search, options, empty state and the "No X" entry. Only the frame differs, so there is one component to test.
 
 ### 3.3 Context rules
 | Context | Example suggested commands |
@@ -94,4 +119,4 @@ Navigation also gains **Go to archive** and **Go to recently deleted** (M1, SPEC
 - Focus returns to the element that was focused before opening.
 
 ## 6. Acceptance (summarised in SPEC-005)
-Every M0 operation with `ui` metadata appears. Context and permission filtering is correct. Nested picker pages work. The identifier fast path works (from M1). The keyboard table above is fully implemented. The axe audit passes.
+Every M0 operation with `ui` metadata appears. Context and permission filtering is correct. Nested picker pages work, and a property shortcut opens its page with the context chip (§3.5). The identifier fast path works (from M1). The keyboard table above is fully implemented. The axe audit passes.
