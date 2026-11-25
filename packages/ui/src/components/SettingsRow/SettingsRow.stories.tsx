@@ -8,6 +8,20 @@ const meta = { title: 'Primitives/SettingsRow' } satisfies Meta;
 export default meta;
 type Story = StoryObj;
 
+/** Static rows for the visual snapshot (design-system §5.4): with and without a hint. */
+export const Rows: Story = {
+  render: () => (
+    <SettingsGroup title="Preferences">
+      <SettingsRow label="Email digest" hint="A daily summary of what changed.">
+        <Switch aria-label="Email digest" defaultChecked />
+      </SettingsRow>
+      <SettingsRow label="Desktop alerts">
+        <Switch aria-label="Desktop alerts" />
+      </SettingsRow>
+    </SettingsGroup>
+  ),
+};
+
 /** The row is a named group whose description is its hint. */
 export const LabelAndControl: Story = {
   render: () => (

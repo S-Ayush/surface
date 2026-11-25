@@ -29,12 +29,14 @@ const stories = readStories().filter((story) => !story.tags.includes('play-fn'))
 
 test('every component has at least one snapshotted (static) story', () => {
   const components = readdirSync(new URL('../src/components/', import.meta.url));
-  const missing = components.filter(
-    (name) =>
-      !stories.some((story) =>
-        new RegExp(`^(primitives|overlays)-${name.toLowerCase()}--`).test(story.id),
-      ),
-  );
+  // Any story group counts (Primitives, Overlays, Domain, Brand): the group is a catalogue choice,
+  // not a reason to skip the snapshot. A folder may also be the group itself (Brand/SurfaceMark).
+  const missing = components.filter((name) => {
+    const id = name.toLowerCase();
+    return !stories.some((story) =>
+      new RegExp(`^([a-z0-9]+-${id}|${id}-[a-z0-9]+)--`).test(story.id),
+    );
+  });
   expect(missing).toEqual([]);
 });
 
