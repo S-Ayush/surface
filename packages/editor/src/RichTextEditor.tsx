@@ -203,7 +203,8 @@ export function RichTextEditor({ ref, ...props }: RichTextEditorProps) {
     showValue(editor, contentOf(value));
   }, [editor, value]);
 
-  // Name the highlighted option for screen readers.
+  // Name the highlighted option for screen readers. The editor is a `textbox`, which allows
+  // `aria-activedescendant` and `aria-controls` but not `aria-expanded` (axe aria-allowed-attr).
   const activeSlash =
     slash !== null && slash.items.length > 0 ? optionId(SLASH_ID, slash.index) : null;
   const activeEmoji =
@@ -216,11 +217,9 @@ export function RichTextEditor({ ref, ...props }: RichTextEditorProps) {
     if (active === null || listId === null) {
       dom.removeAttribute('aria-activedescendant');
       dom.removeAttribute('aria-controls');
-      dom.setAttribute('aria-expanded', 'false');
     } else {
       dom.setAttribute('aria-activedescendant', active);
       dom.setAttribute('aria-controls', listId);
-      dom.setAttribute('aria-expanded', 'true');
     }
   }, [editor, active, listId]);
 
