@@ -7,8 +7,10 @@
 
 .text {
   display: block;
-  width: 100%;
+  width: auto;
   padding: var(--space-2) var(--space-4);
+  /* Pulls the glyphs back onto the description's left edge (PLAN-016 S0). */
+  margin-inline: calc(-1 * (var(--space-4) + var(--border-width)));
   border: var(--border-width) solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;

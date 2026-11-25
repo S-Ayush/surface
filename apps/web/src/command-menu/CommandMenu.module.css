@@ -45,6 +45,11 @@
   line-height: var(--text-lg-line);
 }
 
+/* Out-ranks the global :focus-visible ring in base.css; the menu's own frame is the focus cue. */
+.input:focus-visible {
+  outline: none;
+}
+
 .input::placeholder {
   color: var(--text-tertiary);
 }

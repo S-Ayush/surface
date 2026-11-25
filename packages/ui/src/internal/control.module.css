@@ -47,6 +47,11 @@
   font: inherit;
 }
 
+/* The wrapper draws the one ring; this out-ranks the global :focus-visible rule (0,2,0 vs 0,1,0). */
+.native:focus-visible {
+  outline: none;
+}
+
 .native::placeholder {
   color: var(--text-tertiary);
   opacity: 1;

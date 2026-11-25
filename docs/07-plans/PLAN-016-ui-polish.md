@@ -42,7 +42,7 @@ CSS and component changes only: no data, schema, wire or operation change. Each 
 - **Fixing a bug starts with a test that fails without the fix** (CLAUDE.md).
 - Components use semantic tokens only (Stylelint rejects raw hex and px outside token files).
 
-### S0: Visible-bug hotfix · S
+### S0: Visible-bug hotfix · S · ✅ Done 2026-11-25
 Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ring), 24 and 26 (the offset). Each fix starts with a failing test at unit or jsdom level.
 
 - **Breadcrumb links (row 6):** issue-page crumbs render as browser-default purple underlined links. `.crumbs a { color: inherit; text-decoration: none }`, hover to `--text-primary`.
@@ -52,6 +52,8 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Files:** `apps/web/src/shell/Shell.module.css`, `packages/ui/src/internal/control.module.css`, `apps/web/src/command-menu/CommandMenu.module.css`, `packages/ui/src/components/EditableTitle/EditableTitle.module.css`.
 - **Dependencies:** none.
 - **Verify:** the four failing-first unit tests in the test plan (§5); `pnpm check`; by-hand headless capture of an issue page, shortcut help and the command menu.
+
+> **As built (2026-11-25).** All four bugs reproduced in the CSS source and are fixed in the four planned files; `base.css` is untouched. (1) `.crumbs a` inherits colour with no underline, hover `--text-primary`. (2) `.native:focus-visible { outline: none }` in `control.module.css` (a bare `.native` only tied the global rule at (0,1,0)); the wrapper's `:has()` rule still draws the single accent ring. (3) `.input:focus-visible { outline: none }` in `CommandMenu.module.css`. (4) `EditableTitle` `.text` gets `margin-inline: calc(-1 * (var(--space-4) + var(--border-width)))` and `width: auto`: the plan's `-space-4` alone leaves 1 px from the transparent border, and `width: 100%` would shift the box instead of widening it. Tests (CSS-source, since jsdom does not compute CSS Modules): `web/test/shell-css.test.ts`, `web/test/command-menu-css.test.ts`, `ui/test/control-focus.test.ts`, `ui/test/editable-title-css.test.ts`; each failed before its fix. Not checked by hand in a browser (no headless capture of this worktree).
 
 ### S1: Foundation tokens · M
 - **Changes:**
