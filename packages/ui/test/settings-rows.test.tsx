@@ -3,7 +3,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { SettingsGroup, SettingsPanel } from '../src/components/SettingsGroup/SettingsGroup.js';
-import { SettingsRow } from '../src/components/SettingsRow/SettingsRow.js';
+import { SettingsRow, settingsHintId } from '../src/components/SettingsRow/SettingsRow.js';
 
 /** The value of `attr` on the first tag that has it. */
 function attr(html: string, name: string): string | undefined {
@@ -11,15 +11,14 @@ function attr(html: string, name: string): string | undefined {
 }
 
 describe('SettingsGroup', () => {
-  it('names its section by its heading', () => {
+  it('has a level-two heading and is not a second landmark with the same name', () => {
     const html = renderToStaticMarkup(
       <SettingsGroup title="Account">
         <SettingsPanel>form</SettingsPanel>
       </SettingsGroup>,
     );
-    const headingId = /<h2 id="([^"]*)"[^>]*>Account<\/h2>/.exec(html)?.[1];
-    expect(headingId).toBeDefined();
-    expect(attr(html, 'aria-labelledby')).toBe(headingId);
+    expect(html).toMatch(/<h2[^>]*>Account<\/h2>/);
+    expect(html).not.toContain('aria-labelledby');
   });
 
   it('renders rows as a named list of items', () => {
@@ -32,6 +31,13 @@ describe('SettingsGroup', () => {
     expect(html).toMatch(/<ul class="[^"]*" aria-label="Members"/);
     expect(html.match(/<li[ >]/g)).toHaveLength(2);
     expect(html).not.toContain('role="group"');
+  });
+
+  it('puts a description between the heading and the card', () => {
+    const html = renderToStaticMarkup(
+      <SettingsGroup title="Sessions" description={<p>Browsers signed in.</p>} />,
+    );
+    expect(html.indexOf('Sessions')).toBeLessThan(html.indexOf('Browsers signed in.'));
   });
 
   it('shows actions beside the heading', () => {
@@ -62,6 +68,14 @@ describe('SettingsRow', () => {
     expect(html).toContain('role="group"');
     expect(html).toContain(`id="${labelledby}"`);
     expect(html).toMatch(new RegExp(`id="${describedby}"[^>]*>System follows your computer\\.`));
+  });
+
+  it('gives a control row a hint id for the control to be described by', () => {
+    const html = renderToStaticMarkup(
+      <SettingsRow label="Archive after" hint="Changes apply within a day." controlId="archive" />,
+    );
+    expect(html).toContain('id="' + settingsHintId('archive') + '"');
+    expect(settingsHintId('archive')).toBe('archive-hint');
   });
 
   it('keeps an anchor id', () => {

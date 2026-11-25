@@ -129,7 +129,7 @@ export function Shell({ children, docked }: { children: ReactNode; docked?: Reac
               />
             )}
             {settings ? (
-              <SettingsSidebar width={width} />
+              <SettingsSidebar width={width} autoFocus={mode === 'drawer' && drawerOpen} />
             ) : (
               <Sidebar width={width} autoFocus={mode === 'drawer' && drawerOpen} />
             )}

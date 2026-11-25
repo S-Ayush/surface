@@ -1,10 +1,12 @@
-import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
+import { type ComponentPropsWithRef, type ReactNode } from 'react';
 import { cx } from '../../internal/cx.js';
 import styles from './SettingsGroup.module.css';
 
 export type SettingsGroupProps = Omit<ComponentPropsWithRef<'section'>, 'title'> & {
   /** The section heading, in the text-label style above the card. */
   title?: string;
+  /** Under the heading, above the card: a note or an error (inside the group, not above it). */
+  description?: ReactNode;
   /** Right of the heading: a button or a count. */
   actions?: ReactNode;
   /** Render the rows as a list (`<ul>` of `<SettingsRow as="li">`); needs `listLabel`. */
@@ -19,6 +21,7 @@ export type SettingsGroupProps = Omit<ComponentPropsWithRef<'section'>, 'title'>
  */
 export function SettingsGroup({
   title,
+  description,
   actions,
   list = false,
   listLabel,
@@ -26,24 +29,16 @@ export function SettingsGroup({
   className,
   ...props
 }: SettingsGroupProps) {
-  const headingId = useId();
   const hasHeading = title !== undefined;
   return (
-    <section
-      className={cx(styles.root, className)}
-      aria-labelledby={hasHeading ? headingId : undefined}
-      {...props}
-    >
+    <section className={cx(styles.root, className)} {...props}>
       {(hasHeading || actions !== undefined) && (
         <div className={styles.head}>
-          {hasHeading && (
-            <h2 id={headingId} className={styles.title}>
-              {title}
-            </h2>
-          )}
+          {hasHeading && <h2 className={styles.title}>{title}</h2>}
           {actions !== undefined && <div className={styles.actions}>{actions}</div>}
         </div>
       )}
+      {description !== undefined && <div className={styles.description}>{description}</div>}
       {list ? (
         <ul className={styles.card} aria-label={listLabel}>
           {children}

@@ -2,7 +2,7 @@
 // with "Back to app" at the top and the settings sections under Account and Workspace headings.
 import { Link, useRouter } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useApp, useObserved } from '../app/context.js';
 import { settingsNav } from '../app/settings.js';
 import { useShell } from './ShellContext.js';
@@ -17,15 +17,21 @@ export function inSettings(pathname: string): boolean {
 
 const GROUPS = ['Account', 'Workspace'] as const;
 
-export function SettingsSidebar({ width }: { width: number }) {
+export function SettingsSidebar({ width, autoFocus }: { width: number; autoFocus: boolean }) {
   const app = useApp();
   const shell = useShell();
   const router = useRouter();
   const isAdmin = useObserved(useCallback(() => app.isAdmin(), [app]));
   const items = settingsNav(isAdmin);
+  // The drawer opens with focus inside it, on the first link (as in Sidebar).
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (autoFocus) ref.current?.querySelector<HTMLElement>('a, button')?.focus();
+  }, [autoFocus]);
   return (
     <nav
       id="sidebar"
+      ref={ref}
       aria-label="Settings"
       className={styles.sidebar}
       style={{ width }}

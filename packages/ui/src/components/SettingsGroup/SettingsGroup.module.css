@@ -33,11 +33,34 @@
   flex-direction: column;
   margin: 0;
   padding: 0;
-  overflow: hidden;
   border-radius: var(--radius-group);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-e0);
   list-style: none;
+}
+
+/* No overflow clipping (a wide table scrolls itself): the end rows round their own corners. */
+.card > :first-child {
+  border-top-left-radius: var(--radius-group);
+  border-top-right-radius: var(--radius-group);
+}
+
+.card > :last-child {
+  border-bottom-left-radius: var(--radius-group);
+  border-bottom-right-radius: var(--radius-group);
+}
+
+.description {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  line-height: var(--text-sm-line);
+}
+
+.description > p {
+  margin: 0;
 }
 
 .panel {

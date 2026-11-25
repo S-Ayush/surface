@@ -111,7 +111,7 @@ describe('settings pages render in the layout', () => {
 
 describe('the settings sidebar', () => {
   it('starts with Back to app, then the sections under Account and Workspace', async () => {
-    const html = await render(() => <SettingsSidebar width={240} />, true);
+    const html = await render(() => <SettingsSidebar width={240} autoFocus={false} />, true);
     expect(html).toContain('aria-label="Settings"');
     expect(html.indexOf('Back to app')).toBeGreaterThan(-1);
     const order = ['Account', 'Workspace', 'Back to app'].map((text) => html.indexOf(text));
@@ -120,7 +120,7 @@ describe('the settings sidebar', () => {
   });
 
   it('leaves admin sections out for a Member', async () => {
-    const html = await render(() => <SettingsSidebar width={240} />, false);
+    const html = await render(() => <SettingsSidebar width={240} autoFocus={false} />, false);
     expect(html).not.toContain('/settings/members');
     expect(html).not.toContain('/settings/workspace"');
     expect(html).toContain('/settings/account/profile');
@@ -128,11 +128,13 @@ describe('the settings sidebar', () => {
 
   it('sends Back to app to the last page outside settings, or home', async () => {
     const shell = new ShellStore(null);
-    expect(await render(() => <SettingsSidebar width={240} />, true, shell)).toContain('href="/"');
+    expect(
+      await render(() => <SettingsSidebar width={240} autoFocus={false} />, true, shell),
+    ).toContain('href="/"');
     shell.rememberAppPath('/team/ENG/issues?view=1');
-    expect(await render(() => <SettingsSidebar width={240} />, true, shell)).toContain(
-      'href="/team/ENG/issues?view=1"',
-    );
+    expect(
+      await render(() => <SettingsSidebar width={240} autoFocus={false} />, true, shell),
+    ).toContain('href="/team/ENG/issues?view=1"');
   });
 
   it('knows which paths are settings', () => {

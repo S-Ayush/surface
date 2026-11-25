@@ -69,7 +69,7 @@ function Members({ details }: { readonly details: TeamDetails }) {
         list
         listLabel={`Members of ${team.name}`}
         actions={
-          access.manageMembers && (
+          access.manageMembers ? (
             <Menu
               align="end"
               trigger={<Button disabled={addable.length === 0}>Add member</Button>}
@@ -79,7 +79,7 @@ function Members({ details }: { readonly details: TeamDetails }) {
                 onSelect: () => void add(user),
               }))}
             />
-          )
+          ) : undefined
         }
       >
         {members.map((user) => {
@@ -89,7 +89,7 @@ function Members({ details }: { readonly details: TeamDetails }) {
             <SettingsRow
               as="li"
               key={user.id}
-              id={`member-${user.id}`}
+              id={`setting-member-${user.id}`}
               leading={<Avatar name={user.name} />}
               label={
                 <>

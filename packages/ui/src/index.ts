@@ -36,7 +36,7 @@ export type {
 } from './components/SegmentedControl/SegmentedControl.js';
 export { SettingsGroup, SettingsPanel } from './components/SettingsGroup/SettingsGroup.js';
 export type { SettingsGroupProps } from './components/SettingsGroup/SettingsGroup.js';
-export { SettingsRow } from './components/SettingsRow/SettingsRow.js';
+export { SettingsRow, settingsHintId } from './components/SettingsRow/SettingsRow.js';
 export type { SettingsRowProps } from './components/SettingsRow/SettingsRow.js';
 export { Skeleton } from './components/Skeleton/Skeleton.js';
 export type { SkeletonProps } from './components/Skeleton/Skeleton.js';

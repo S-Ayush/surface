@@ -4,7 +4,7 @@
 // controls. Turning estimates off keeps the stored values (D21). Readers of a public team see the
 // page read-only.
 import { teamSetEstimates, type InputOf } from '@surface/operations';
-import { SettingsGroup, SettingsRow, Switch } from '@surface/ui';
+import { SettingsGroup, SettingsRow, Switch, settingsHintId } from '@surface/ui';
 import { useId } from 'react';
 import { useApp } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
@@ -55,13 +55,14 @@ function Estimates({ details }: { readonly details: TeamDetails }) {
       )}
       <SettingsGroup title="Estimation">
         <SettingsRow
-          id="estimation"
+          id="setting-estimation"
           label="Issue estimation"
           hint="The scale used to size issues."
           controlId={scaleId}
         >
           <select
             id={scaleId}
+            aria-describedby={settingsHintId(scaleId)}
             className={styles.select}
             value={settings.scale}
             disabled={readOnly}
@@ -80,13 +81,14 @@ function Estimates({ details }: { readonly details: TeamDetails }) {
         {on && (
           <>
             <SettingsRow
-              id="extended"
+              id="setting-extended"
               controlId={extendedId}
               label="Extended"
               hint="Adds larger values to the scale."
             >
               <Switch
                 id={extendedId}
+                aria-describedby={settingsHintId(extendedId)}
                 aria-label="Extended"
                 checked={settings.extended}
                 disabled={readOnly}
@@ -94,13 +96,14 @@ function Estimates({ details }: { readonly details: TeamDetails }) {
               />
             </SettingsRow>
             <SettingsRow
-              id="allow-zero"
+              id="setting-allow-zero"
               controlId={zeroId}
               label="Allow zero estimates"
               hint="Lets an issue be sized at 0."
             >
               <Switch
                 id={zeroId}
+                aria-describedby={settingsHintId(zeroId)}
                 aria-label="Allow zero estimates"
                 checked={settings.allowZero}
                 disabled={readOnly}
@@ -108,13 +111,14 @@ function Estimates({ details }: { readonly details: TeamDetails }) {
               />
             </SettingsRow>
             <SettingsRow
-              id="count-unestimated"
+              id="setting-count-unestimated"
               controlId={countId}
               label="Count unestimated issues as 1 point"
               hint="Totals include issues with no estimate."
             >
               <Switch
                 id={countId}
+                aria-describedby={settingsHintId(countId)}
                 aria-label="Count unestimated issues as 1 point"
                 checked={settings.countUnestimatedAsOne}
                 disabled={readOnly}

@@ -2,6 +2,9 @@ import { useId, type HTMLAttributes, type ReactNode } from 'react';
 import { cx } from '../../internal/cx.js';
 import styles from './SettingsRow.module.css';
 
+/** The id of a row's hint when it has a `controlId`: put it in the control's `aria-describedby`. */
+export const settingsHintId = (controlId: string): string => `${controlId}-hint`;
+
 export type SettingsRowProps = Omit<HTMLAttributes<HTMLElement>, 'title'> & {
   /** `li` inside a `SettingsGroup list`. */
   as?: 'div' | 'li';
@@ -12,8 +15,9 @@ export type SettingsRowProps = Omit<HTMLAttributes<HTMLElement>, 'title'> & {
   /** Before the text: an avatar, a swatch or a status icon. */
   leading?: ReactNode;
   /**
-   * The id of the control the label names: the label becomes a `<label for>`. Without it the row
-   * is a group named by its label, and its hint is the group's description.
+   * The id of the control the label names: the label becomes a `<label for>`, and the hint has
+   * `settingsHintId(controlId)` for the control's `aria-describedby`. Without it the row is a
+   * group named by its label, and its hint is the group's description.
    */
   controlId?: string;
   /** The control, aligned right; below the text when `stacked`. */
@@ -39,7 +43,7 @@ export function SettingsRow({
 }: SettingsRowProps) {
   const ids = useId();
   const labelId = `${ids}-label`;
-  const hintId = `${ids}-hint`;
+  const hintId = controlId === undefined ? `${ids}-hint` : settingsHintId(controlId);
   const Root = as;
   const named = controlId === undefined;
   return (

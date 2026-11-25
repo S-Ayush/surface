@@ -31,12 +31,18 @@ export function PendingInvitesList({
   const empty = !loading && view.invites.length === 0;
   return (
     <div className={styles.stack}>
-      {view.error !== null && (
-        <p role="alert" className={styles.formError}>
-          {view.error}
-        </p>
-      )}
-      <SettingsGroup title="Pending invites" list={!loading && !empty} listLabel="Pending invites">
+      <SettingsGroup
+        title="Pending invites"
+        description={
+          view.error !== null ? (
+            <p role="alert" className={styles.formError}>
+              {view.error}
+            </p>
+          ) : undefined
+        }
+        list={!loading && !empty}
+        listLabel="Pending invites"
+      >
         {loading ? (
           <SettingsPanel>
             <Spinner />
@@ -52,7 +58,7 @@ export function PendingInvitesList({
               <SettingsRow
                 as="li"
                 key={invite.id}
-                id={`invite-${invite.id}`}
+                id={`setting-invite-${invite.id}`}
                 label={row.title}
                 hint={row.meta}
               >

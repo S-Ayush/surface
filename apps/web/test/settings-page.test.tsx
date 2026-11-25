@@ -6,6 +6,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router';
+import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { AppModel } from '../src/app/AppModel.js';
@@ -13,6 +14,7 @@ import { AuthState } from '../src/app/auth.js';
 import { AppContext } from '../src/app/context.js';
 import { SETTINGS, settingsNav, type SettingsSection } from '../src/app/settings.js';
 import { SettingsPage } from '../src/pages/SettingsPage.js';
+import { SettingsSidebar } from '../src/shell/SettingsSidebar.js';
 import { ShellContext } from '../src/shell/ShellContext.js';
 import { ShellStore } from '../src/shell/ShellStore.js';
 
@@ -26,7 +28,11 @@ class FakeApp extends AppModel {
 }
 
 async function render(section: SettingsSection, admin: boolean | undefined): Promise<string> {
-  const rootRoute = createRootRoute({ component: () => <SettingsPage section={section} /> });
+  return renderNode(() => <SettingsPage section={section} />, admin);
+}
+
+async function renderNode(node: () => ReactNode, admin: boolean | undefined): Promise<string> {
+  const rootRoute = createRootRoute({ component: node });
   const router = createRouter({
     routeTree: rootRoute,
     history: createMemoryHistory({ initialEntries: ['/settings'] }),
@@ -84,9 +90,13 @@ describe('AC-15: admin-only settings', () => {
       'Labels',
       'Teams',
     ]);
-    const html = await render(SETTINGS.profile, false);
+    // The nav is the shell's settings sidebar.
+    const html = await renderNode(() => <SettingsSidebar width={240} autoFocus={false} />, false);
     expect(html).toContain('>Profile<');
     expect(html).not.toContain('/settings/members');
     expect(html).not.toContain('/settings/workspace');
+    const admin = await renderNode(() => <SettingsSidebar width={240} autoFocus={false} />, true);
+    expect(admin).toContain('/settings/members');
+    expect(admin).toContain('/settings/workspace');
   });
 });

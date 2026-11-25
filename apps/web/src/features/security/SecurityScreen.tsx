@@ -123,21 +123,25 @@ export function SessionsSection({
   const loading = view.loading && view.sessions.length === 0;
   return (
     <div className={styles.stack}>
-      <p className={styles.note}>
-        Browsers signed in to your account. Revoke one you don’t recognise; it is logged out at
-        once.
-      </p>
-      {view.error !== null && (
-        <p role="alert" className={styles.formError}>
-          {view.error}
-        </p>
-      )}
       <SettingsGroup
         title="Sessions"
+        description={
+          <>
+            <p>
+              Browsers signed in to your account. Revoke one you don’t recognise; it is logged out
+              at once.
+            </p>
+            {view.error !== null && (
+              <p role="alert" className={styles.formError}>
+                {view.error}
+              </p>
+            )}
+          </>
+        }
         list={!loading}
         listLabel="Sessions"
         actions={
-          others > 0 && (
+          others > 0 ? (
             <Button
               variant="ghost"
               loading={view.revoking === 'others'}
@@ -146,7 +150,7 @@ export function SessionsSection({
             >
               Revoke all others
             </Button>
-          )
+          ) : undefined
         }
       >
         {loading ? (
@@ -161,7 +165,7 @@ export function SessionsSection({
               <SettingsRow
                 as="li"
                 key={session.id}
-                id={`session-${session.id}`}
+                id={`setting-session-${session.id}`}
                 label={
                   <span className={styles.rowTitle}>
                     {device}

@@ -68,7 +68,7 @@ export const SETTINGS = {
   teamGeneral: {
     screen: 'settings/teams/general',
     title: 'Team settings',
-    description: 'The team’s name, key, icon and visibility.',
+    description: 'The team’s name, key, icon, color and time zone.',
     admin: false,
   },
   teamMembers: {

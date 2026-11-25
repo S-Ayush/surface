@@ -3,7 +3,15 @@
 // rolls back.
 import { canEndMembership } from '@surface/domain';
 import { teamJoin } from '@surface/operations';
-import { Badge, Button, EmptyState, SettingsGroup, SettingsRow, Skeleton } from '@surface/ui';
+import {
+  Badge,
+  Button,
+  EmptyState,
+  SettingsGroup,
+  SettingsPanel,
+  SettingsRow,
+  Skeleton,
+} from '@surface/ui';
 import { Link } from '@tanstack/react-router';
 import { Users } from 'lucide-react';
 import { useCallback, useId, useState } from 'react';
@@ -27,33 +35,26 @@ export function TeamsScreen(_props: ScreenProps) {
   return (
     <>
       <p className={styles.note}>Join a team to see it in your sidebar.</p>
-      {teams === null ? (
-        <Skeleton shape="row" aria-label="Loading teams" />
-      ) : teams.length === 0 ? (
-        <EmptyState icon={<Users />} title="No teams yet" description="Create the first one." />
-      ) : (
-        <SettingsGroup
-          title="Teams"
-          list
-          listLabel="Teams"
-          actions={
-            <Button disabled={!canCreate} onClick={() => commands.run('form:create-team')}>
-              Create team
-            </Button>
-          }
-        >
-          {teams.map((team) => (
-            <TeamRow key={team.id} team={team} />
-          ))}
-        </SettingsGroup>
-      )}
-      {(teams === null || teams.length === 0) && (
-        <div className={styles.actions}>
+      <SettingsGroup
+        title="Teams"
+        list={teams !== null && teams.length > 0}
+        listLabel="Teams"
+        actions={
           <Button disabled={!canCreate} onClick={() => commands.run('form:create-team')}>
             Create team
           </Button>
-        </div>
-      )}
+        }
+      >
+        {teams === null ? (
+          <SettingsPanel>
+            <Skeleton shape="row" aria-label="Loading teams" />
+          </SettingsPanel>
+        ) : teams.length === 0 ? (
+          <EmptyState icon={<Users />} title="No teams yet" description="Create the first one." />
+        ) : (
+          teams.map((team) => <TeamRow key={team.id} team={team} />)
+        )}
+      </SettingsGroup>
     </>
   );
 }
@@ -78,7 +79,7 @@ function TeamRow({ team }: { readonly team: TeamListItem }) {
   return (
     <SettingsRow
       as="li"
-      id={`team-${team.key}`}
+      id={`setting-team-${team.key}`}
       leading={<span className={styles.key}>{team.key}</span>}
       label={
         <Link to="/settings/teams/$key/general" params={{ key: team.key }} className={styles.link}>

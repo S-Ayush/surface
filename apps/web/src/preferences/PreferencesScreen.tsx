@@ -74,7 +74,7 @@ export function PreferencesScreen(_props: ScreenProps) {
 
   return (
     <SettingsGroup title="Appearance">
-      <SettingsRow id="theme" label="Theme" hint="System follows your computer’s setting.">
+      <SettingsRow id="setting-theme" label="Theme" hint="System follows your computer’s setting.">
         <SegmentedControl
           aria-label="Theme"
           options={THEMES}
@@ -84,7 +84,7 @@ export function PreferencesScreen(_props: ScreenProps) {
           }}
         />
       </SettingsRow>
-      <SettingsRow id="font-size" label="Font size" hint="Changes the size of text.">
+      <SettingsRow id="setting-font-size" label="Font size" hint="Changes the size of text.">
         <SegmentedControl
           aria-label="Font size"
           options={FONT_SIZES}
@@ -94,7 +94,7 @@ export function PreferencesScreen(_props: ScreenProps) {
           }}
         />
       </SettingsRow>
-      <SettingsRow id="home-view" label="Home view" hint="The page Surface opens on.">
+      <SettingsRow id="setting-home-view" label="Home view" hint="The page Surface opens on.">
         <Menu
           align="end"
           trigger={

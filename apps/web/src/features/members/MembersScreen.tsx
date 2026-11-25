@@ -162,7 +162,7 @@ export function MembersScreen(_props: ScreenProps) {
           <SettingsRow
             as="li"
             key={member.id}
-            id={`member-${member.id}`}
+            id={`setting-member-${member.id}`}
             leading={
               <Avatar name={member.name} {...(member.avatarUrl ? { src: member.avatarUrl } : {})} />
             }

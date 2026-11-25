@@ -6,7 +6,7 @@
 // Readers of a public team see the page read-only.
 import { AUTOMATION_MONTHS, DEFAULT_AUTO_CLOSE_MONTHS } from '@surface/domain';
 import { teamUpdateAutomations, type InputOf } from '@surface/operations';
-import { SettingsGroup, SettingsRow, Switch } from '@surface/ui';
+import { SettingsGroup, SettingsRow, Switch, settingsHintId } from '@surface/ui';
 import { useId } from 'react';
 import { useApp } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
@@ -68,13 +68,14 @@ function Automations({ details }: { readonly details: TeamDetails }) {
 
       <SettingsGroup title="Auto-archive">
         <SettingsRow
-          id="auto-archive"
+          id="setting-auto-archive"
           label="Auto-archive closed items after"
           hint="Automatically archive closed issues (completed, canceled, or duplicate) after the selected period. Changes apply within a day."
           controlId={archiveId}
         >
           <select
             id={archiveId}
+            aria-describedby={settingsHintId(archiveId)}
             className={styles.select}
             value={settings.autoArchiveMonths}
             disabled={readOnly}
@@ -90,13 +91,14 @@ function Automations({ details }: { readonly details: TeamDetails }) {
 
       <SettingsGroup title="Auto-close issues">
         <SettingsRow
-          id="auto-close"
+          id="setting-auto-close"
           controlId={closeOnId}
           label="Auto-close stale issues"
           hint="Close issues that have had no activity for a while."
         >
           <Switch
             id={closeOnId}
+            aria-describedby={settingsHintId(closeOnId)}
             aria-label="Auto-close stale issues"
             checked={closeOn}
             disabled={readOnly || (!closeOn && settings.canceled.length === 0)}
@@ -108,7 +110,7 @@ function Automations({ details }: { readonly details: TeamDetails }) {
         {closeOn && settings.autoCloseMonths !== null && (
           <>
             <SettingsRow
-              id="auto-close-after"
+              id="setting-auto-close-after"
               label="Close after being stale for"
               controlId={closeAfterId}
             >
@@ -126,7 +128,7 @@ function Automations({ details }: { readonly details: TeamDetails }) {
               </select>
             </SettingsRow>
             <SettingsRow
-              id="auto-close-status"
+              id="setting-auto-close-status"
               label="When closing stale issues, set status to"
               controlId={closeStatusId}
             >
