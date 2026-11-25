@@ -37,6 +37,15 @@
   content: '';
 }
 
+/* No overhang past the first and last entries. */
+.item:first-child::before {
+  top: 0;
+}
+
+.item:last-child::before {
+  bottom: 0;
+}
+
 .icon {
   position: absolute;
   top: 0;

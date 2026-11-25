@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { EditableTitle } from '../src/components/EditableTitle/EditableTitle.js';
 import { GroupHeader } from '../src/components/GroupHeader/GroupHeader.js';
 import { IssueRow } from '../src/components/IssueRow/IssueRow.js';
+import { IconButton } from '../src/components/IconButton/IconButton.js';
 import { LabelChip } from '../src/components/LabelChip/LabelChip.js';
 import { PriorityIcon } from '../src/components/PriorityIcon/PriorityIcon.js';
 import { PropertyPill } from '../src/components/PropertyPill/PropertyPill.js';
@@ -103,6 +104,13 @@ describe('PropertyPill', () => {
   it('panel variant keeps the accessible name', () => {
     const html = render(<PropertyPill variant="panel" property="Status" value="In Progress" />);
     expect(html).toContain('>Status: In Progress, change<');
+  });
+
+  it('a row pill (no variant) does not get the panel class', () => {
+    const row = render(<PropertyPill property="Status" value="Done" />);
+    const panel = render(<PropertyPill variant="panel" property="Status" value="Done" />);
+    expect(/class="[^"]*panel/.test(row)).toBe(false);
+    expect(/class="[^"]*panel/.test(panel)).toBe(true);
   });
 
   it('is plain text with the property read first when read-only, and nothing when empty', () => {
@@ -391,5 +399,14 @@ describe('DatePicker', () => {
     expect(html).toContain('aria-label="November 2026"');
     expect(html).toContain('aria-current="date"');
     expect(html).toMatch(/<button[^>]*disabled[^>]*>[^<]*(<[^>]*>)*[^<]*No due date/);
+  });
+});
+
+describe('IconButton', () => {
+  it('round adds the round class and the default does not', () => {
+    const round = render(<IconButton aria-label="Copy link" icon={<span />} round />);
+    const plain = render(<IconButton aria-label="Copy link" icon={<span />} />);
+    expect(/class="[^"]*round/.test(round)).toBe(true);
+    expect(/class="[^"]*round/.test(plain)).toBe(false);
   });
 });

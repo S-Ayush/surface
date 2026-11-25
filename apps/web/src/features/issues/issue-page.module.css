@@ -105,14 +105,8 @@
   max-width: 100%;
 }
 
-/* The property name is in each pill's accessible name; the dt keeps the list's structure for
-   assistive tech and is not painted (the pills are left-aligned, as in Linear). */
-.property dt {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-}
+/* The property name is in each pill's accessible name; the dt (visually hidden in the markup) keeps
+   the list's structure for assistive tech. */
 
 .property dd {
   display: flex;

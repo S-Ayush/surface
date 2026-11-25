@@ -3,7 +3,7 @@
 // read-only (archived, deleted, or not in the replica).
 import { formatDueDate, formatEstimate, priorityLabel } from '@surface/domain';
 import type { MouseEvent } from 'react';
-import { Avatar, PriorityIcon, PropertyPill, StatusIcon } from '@surface/ui';
+import { Avatar, PriorityIcon, PropertyPill, StatusIcon, VisuallyHidden } from '@surface/ui';
 import type { PickerKind } from './issue-pickers.js';
 import { agoText, estimateRow, shortDate, type IssueView } from './issue-view.js';
 import styles from './issue-page.module.css';
@@ -55,7 +55,9 @@ export function PropertiesPanel({
       </p>
       <dl className={styles.properties}>
         <div className={styles.property}>
-          <dt>Status</dt>
+          <VisuallyHidden asChild>
+            <dt>Status</dt>
+          </VisuallyHidden>
           <dd>
             <PropertyPill
               variant="panel"
@@ -67,7 +69,9 @@ export function PropertiesPanel({
           </dd>
         </div>
         <div className={styles.property}>
-          <dt>Priority</dt>
+          <VisuallyHidden asChild>
+            <dt>Priority</dt>
+          </VisuallyHidden>
           <dd>
             <PropertyPill
               variant="panel"
@@ -79,7 +83,9 @@ export function PropertiesPanel({
           </dd>
         </div>
         <div className={styles.property}>
-          <dt>Assignee</dt>
+          <VisuallyHidden asChild>
+            <dt>Assignee</dt>
+          </VisuallyHidden>
           <dd>
             <PropertyPill
               variant="panel"
@@ -93,7 +99,9 @@ export function PropertiesPanel({
           </dd>
         </div>
         <div className={styles.property}>
-          <dt>Labels</dt>
+          <VisuallyHidden asChild>
+            <dt>Labels</dt>
+          </VisuallyHidden>
           <dd>
             <PropertyPill
               variant="panel"
@@ -105,7 +113,9 @@ export function PropertiesPanel({
         </div>
         {estimate.shown && (
           <div className={styles.property}>
-            <dt>Estimate</dt>
+            <VisuallyHidden asChild>
+              <dt>Estimate</dt>
+            </VisuallyHidden>
             <dd>
               <PropertyPill
                 variant="panel"
@@ -118,7 +128,9 @@ export function PropertiesPanel({
           </div>
         )}
         <div className={styles.property}>
-          <dt>Due date</dt>
+          <VisuallyHidden asChild>
+            <dt>Due date</dt>
+          </VisuallyHidden>
           <dd>
             <PropertyPill
               variant="panel"

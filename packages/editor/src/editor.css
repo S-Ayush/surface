@@ -43,20 +43,20 @@
 }
 
 :is(.surface-editor-content, .surface-doc) h1 {
-  font-size: var(--text-2xl-size);
-  line-height: var(--text-2xl-line);
-  font-weight: var(--weight-semibold);
-}
-
-:is(.surface-editor-content, .surface-doc) h2 {
   font-size: var(--text-xl-size);
   line-height: var(--text-xl-line);
   font-weight: var(--weight-semibold);
 }
 
-:is(.surface-editor-content, .surface-doc) :is(h3, h4) {
+:is(.surface-editor-content, .surface-doc) h2 {
   font-size: var(--text-lg-size);
   line-height: var(--text-lg-line);
+  font-weight: var(--weight-semibold);
+}
+
+:is(.surface-editor-content, .surface-doc) :is(h3, h4) {
+  font-size: var(--text-md-size);
+  line-height: var(--text-md-line);
   font-weight: var(--weight-semibold);
 }
 
