@@ -129,6 +129,7 @@ Exit (METHODOLOGY M1): **start dogfooding.** Surface's own backlog lives in Surf
 | [PLAN-013](PLAN-013-comments-reactions-editor.md) | SPEC-013 Comments, reactions & editor | 5 | ~17 d |
 | [PLAN-014](PLAN-014-attachments-files.md) | SPEC-014 Attachments & files | 6 (S4a, S4b) | ~16 d |
 | [PLAN-015](PLAN-015-recently-deleted-archive.md) | SPEC-015 Recently deleted & archive | 5 | ~12 d |
+| [PLAN-016](PLAN-016-ui-polish.md) | UI polish, before M2: design-system v0.2, SPEC-005 D4, SPEC-012 D32 (no new spec) | 9 (S0–S8) | ~20 d |
 
 Total: about **138 ideal days** (40 slices), plus about 2 days for the acceptance gate. That is roughly 15 weeks for two engineers or 11 weeks for three, using the tracks below. The critical path alone is about 44 ideal days, so more people don't shorten it below about 9 weeks. Partial issue loading (ADR-0020, 2026-11-12) added about 15 days: PLAN-011 S4b and S4c (10), and the server-backed counts, archive page and issue loader in PLAN-010, PLAN-012 and PLAN-015 (4), plus sign-out (1).
 
