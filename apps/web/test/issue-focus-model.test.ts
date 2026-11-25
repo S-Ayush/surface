@@ -5,7 +5,7 @@ import {
   FocusMemory,
   INITIAL_MODALITY,
   focusIsVisible,
-  nextModality,
+  modalityAfter,
   LIST_SOURCE_STATE_KEY,
   readListSource,
   resolveFocus,
@@ -88,12 +88,12 @@ describe('readListSource', () => {
 describe('input modality', () => {
   it('nothing is focus-visible before the first key press', () => {
     expect(focusIsVisible(INITIAL_MODALITY)).toBe(false);
-    expect(focusIsVisible(nextModality(INITIAL_MODALITY, 'pointer'))).toBe(false);
+    expect(focusIsVisible(modalityAfter('pointer'))).toBe(false);
   });
 
   it('a key press shows focus and a pointer press hides it again', () => {
-    const keyed = nextModality(INITIAL_MODALITY, 'key');
+    const keyed = modalityAfter('key');
     expect(focusIsVisible(keyed)).toBe(true);
-    expect(focusIsVisible(nextModality(keyed, 'pointer'))).toBe(false);
+    expect(focusIsVisible(modalityAfter('pointer'))).toBe(false);
   });
 });

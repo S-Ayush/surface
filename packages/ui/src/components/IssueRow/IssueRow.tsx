@@ -77,7 +77,7 @@ export function IssueRow(props: IssueRowProps) {
     pending = false,
     focused = false,
     showFocus = true,
-    selected = false,
+    selected,
     tabIndex = -1,
     level = 2,
     style,
@@ -131,8 +131,8 @@ export function IssueRow(props: IssueRowProps) {
       tabIndex={tabIndex}
       data-focused={focused || undefined}
       data-focus-visible={(focused && showFocus) || undefined}
-      data-selected={selected || undefined}
-      aria-selected={selected || undefined}
+      data-selected={selected === true ? true : undefined}
+      aria-selected={selected}
       data-compact={compact || undefined}
       data-pending={pending || undefined}
       className={cx(styles.root, compact && styles.compact, className)}

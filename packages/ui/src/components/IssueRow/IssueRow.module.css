@@ -171,3 +171,10 @@
 .root[data-pending] .identifier {
   font-style: italic;
 }
+
+/* A pill hovered inside a row: a step from the row's hover fill and from the focused row's
+   --bg-active, so it reads on both. The specificity beats PropertyPill's own hover. */
+.root .cell button:hover {
+  background: var(--bg-elevated-hover);
+  color: var(--text-primary);
+}

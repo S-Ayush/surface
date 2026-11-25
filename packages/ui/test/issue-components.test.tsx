@@ -222,6 +222,9 @@ describe('row states (PLAN-016 S4, D-f)', () => {
     expect(focused).not.toContain('data-selected');
     expect(selected).toContain('data-selected');
     expect(selected).not.toContain('data-focus-visible');
+    // aria-selected is only emitted once a caller passes the prop.
+    expect(plain).not.toContain('aria-selected');
+    expect(render(<IssueRow {...row} selected={false} />)).toContain('aria-selected="false"');
     // Hover has no attribute at all: it is the `:hover` rule, so it can't be mistaken for either.
     const styles = css('IssueRow');
     expect(styles).toMatch(/\.root:hover\s*\{[^}]*--bg-hover/);

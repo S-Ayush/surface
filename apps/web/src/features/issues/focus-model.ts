@@ -120,7 +120,7 @@ export type InputModality = 'initial' | 'keyboard' | 'pointer';
 
 export const INITIAL_MODALITY: InputModality = 'initial';
 
-export function nextModality(_current: InputModality, input: 'key' | 'pointer'): InputModality {
+export function modalityAfter(input: 'key' | 'pointer'): InputModality {
   return input === 'key' ? 'keyboard' : 'pointer';
 }
 

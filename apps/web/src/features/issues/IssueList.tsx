@@ -61,7 +61,7 @@ import {
   LIST_SOURCE_STATE_KEY,
   focusIsVisible,
   focusMemory,
-  nextModality,
+  modalityAfter,
   resolveFocus,
   type InputModality,
   type IssueListSource,
@@ -204,10 +204,10 @@ export function IssueList({ ariaLabel, listKey, href, groups, archive }: IssueLi
   const [modality, setModality] = useState<InputModality>(INITIAL_MODALITY);
   useEffect(() => {
     const onKey = () => {
-      setModality((current) => nextModality(current, 'key'));
+      setModality(modalityAfter('key'));
     };
     const onPointer = () => {
-      setModality((current) => nextModality(current, 'pointer'));
+      setModality(modalityAfter('pointer'));
     };
     document.addEventListener('keydown', onKey, true);
     document.addEventListener('pointerdown', onPointer, true);
