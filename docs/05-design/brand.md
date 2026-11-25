@@ -46,7 +46,8 @@ The SVGs are plain paths: no masks, strokes, filters or embedded fonts. They ren
 | --- | --- | --- |
 | Colour mark | The default everywhere, on light and dark | `surface-mark.svg` |
 | Mono mark | One ink (`currentColor`): a coloured background, print, an embossed or engraved surface | `surface-mark-mono.svg` |
-| App icon | Full bleed with square corners, because the OS rounds it. The gap is drawn in **Deep** `#04201F`, so nothing is transparent | `app-icon.svg`, `apple-touch-icon.png`, `icon-192.png`, `icon-512.png` |
+| iOS icon | Full bleed with square corners, because iOS cuts its own rounded shape (pre-rounded corners would fill with black). The gap is drawn in **Deep** `#04201F`, so nothing is transparent | `app-icon.svg`, `apple-touch-icon.png` |
+| Desktop app icon | The rounded colour mark at 824 on a clear 1024 canvas, on the macOS icon grid. Chrome and Edge show the manifest's `any` icons as drawn on macOS and Windows, so this one carries its own corners | `app-icon-any.svg`, `icon-192.png`, `icon-512.png` |
 | Maskable icon | The rounded mark at 62.5 % on Deep, inside the 80 % safe circle | `app-icon-maskable.svg`, `icon-maskable-512.png` |
 | Favicon | The colour mark | `favicon.svg`, `favicon.ico` (16, 32, 48) |
 
@@ -149,7 +150,8 @@ All of these are in [`brand/assets/`](brand/assets/).
 | `surface-wordmark.svg` | 118.4 × 25.5 | The wordmark (`currentColor`) |
 | `surface-lockup.svg` · `-dark.svg` · `-mono.svg` | 156.8 × 32 | The lockup |
 | `favicon.svg` · `favicon.ico` | 32 / 16, 32, 48 | The browser tab |
-| `app-icon.svg` · `apple-touch-icon.png` · `icon-192.png` · `icon-512.png` | 1024 / 180 / 192 / 512 | Home screen and PWA |
+| `app-icon.svg` · `apple-touch-icon.png` | 1024 / 180 | iOS home screen (square; iOS rounds it) |
+| `app-icon-any.svg` · `icon-192.png` · `icon-512.png` | 1024 / 192 / 512 | Installed app on desktop (rounded, clear corners) |
 | `app-icon-maskable.svg` · `icon-maskable-512.png` | 1024 / 512 | PWA maskable icon |
 | `mark-32.png` · `mark-256.png` | 32 / 256 | Places that can't take SVG |
 | `email-lockup.png` · `email-lockup-dark.png` | 314 × 64 | Email headers (2×) |
@@ -164,3 +166,4 @@ The SVGs are generated from the geometry in §2.1 and §3, and the PNGs are rend
 | B-2 | **No new colours or fonts.** The brand palette is a subset of the existing tokens, and the wordmark is outlined from the bundled Inter. | 2026-11-25 |
 | B-3 | **The workspace logo comes before the Surface mark** in the sidebar, because one install is one company (VISION §3). | 2026-11-25 |
 | B-4 | **Surface is described as open source.** The descriptor is the user's. *Resolved by [ADR-0026](../04-architecture/adr/0026-open-source-mit.md): the licence is MIT, `LICENSE` and the `license` fields are in, and VISION §5 now reads "Free and open source, never sold".* | 2026-11-25 |
+| B-5 | **Icons the OS masks are square; icons shown as drawn are rounded.** iOS (`apple-touch-icon`) and Android (the maskable icon) cut their own shape. The manifest's `any` icons are shown as drawn by desktop installs, so they carry the rounded tile. Changed after the user saw square corners on the 192 and 512 icons. | 2026-11-25 |
