@@ -47,5 +47,5 @@ function categoryPage(ctx: CommandContext): CommandPage {
 }
 
 export const STATUS_COMMANDS: Readonly<Record<string, OperationCommand>> = {
-  'status.create': { refs: targetTeamRefs, page: (ctx) => categoryPage(ctx) },
+  'status.create': { suggest: false, refs: targetTeamRefs, page: (ctx) => categoryPage(ctx) },
 };

@@ -119,8 +119,9 @@ function removePage(ctx: CommandContext): CommandPage {
 
 export const TEAM_COMMANDS: Readonly<Record<string, OperationCommand>> = {
   'team.create': { opens: 'form:create-team' },
-  'team.join': { refs: targetTeamRefs, run: (ctx) => join(ctx) },
-  'team.leave': { refs: targetTeamRefs, page: (ctx) => leavePage(ctx) },
-  'team.removeMember': { refs: targetTeamRefs, page: (ctx) => removePage(ctx) },
-  'team.update': { refs: targetTeamRefs, run: (ctx) => rename(ctx) },
+  // Team administration is reached by typing, not pre-suggested (SPEC-005 §4.2).
+  'team.join': { suggest: false, refs: targetTeamRefs, run: (ctx) => join(ctx) },
+  'team.leave': { suggest: false, refs: targetTeamRefs, page: (ctx) => leavePage(ctx) },
+  'team.removeMember': { suggest: false, refs: targetTeamRefs, page: (ctx) => removePage(ctx) },
+  'team.update': { suggest: false, refs: targetTeamRefs, run: (ctx) => rename(ctx) },
 };

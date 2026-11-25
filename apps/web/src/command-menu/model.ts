@@ -107,6 +107,12 @@ export type Command = {
   /** Whether it acts on the current target, for Suggested and the ×2 ranking boost (§4.2). */
   readonly appliesTo?: (ctx: CommandContext) => boolean;
   /**
+   * `false`: with an empty query the command stays in its own section even where it applies to the
+   * context. For team administration, which Linear leaves to typing (SPEC-005 §4.2, changed
+   * 2026-11-26). With a query it ranks as usual, including the ×2 boost.
+   */
+  readonly suggest?: false;
+  /**
    * A command that destroys data (Delete issue). It never ranks first for a keyword-only match
    * (SPEC-012 §3.8, AC-16): only when its title matches the query better than any other command.
    */

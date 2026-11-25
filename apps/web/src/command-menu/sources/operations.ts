@@ -23,6 +23,8 @@ import { isBound } from './shortcuts.js';
  */
 export type OperationCommand = {
   readonly section?: Command['section'];
+  /** `false` keeps it out of Suggested with an empty query (team administration; see Command). */
+  readonly suggest?: false;
   /** References for the permission pre-check, from the target: `{ team: row }`. */
   readonly refs?: (ctx: CommandContext) => ResolvedRefs;
 } & (
@@ -93,6 +95,7 @@ export function operationSource(
         keywords: op.keywords,
         // Delete issue and the like never rank first for a keyword match (SPEC-012 §3.8, AC-16).
         ...(op.destructive ? { destructive: true } : {}),
+        ...(impl.suggest === false ? { suggest: false as const } : {}),
         ...(ui.shortcut && isBound(ui.shortcut) ? { shortcuts: [ui.shortcut] } : {}),
         when: (ctx) =>
           matchesContext(ui.contexts, ctx.target) &&

@@ -30,6 +30,7 @@ The command menu is Surface's **universal entry point**. Every action, navigatio
 - **No backdrop.** The page behind stays visible and is not dimmed, so the user keeps the context they are acting on. Focus is still trapped in the menu, the page behind is inert, and `Esc` or a click outside closes it. *Changed 2026-11-25 (PLAN-016, D-d; [design-system §8](design-system.md)): was 640 px, centred in the top third, over a 0.6 black backdrop.*
 - **Input and options:** the input is `text-md` (15 px) and draws no focus ring (the caret is the cue). Options are 40 px high. The active option is a neutral `--bg-active` fill, as in the pickers. Teal is kept for meaning, not for the cursor. The footer of key hints stays.
 - **Context chip:** shows what commands apply to: the focused issue, "3 selected issues", the current project, or nothing. `Backspace` on an empty input removes the chip, so commands apply globally.
+- **Suggested order** *(changed 2026-11-26, PLAN-016 visual pass)*: Create issue, then actions for the focused issue, then navigation. With an empty query a command that opts out (`suggest: false`, team administration) or is destructive stays in its own section. Typing still ranks it first when it matches, with the ×2 context boost.
 - **Sections** (in this order, hidden when empty): Suggested (context actions), Navigation, Create, Issues / Projects / Docs / People (search, M2), Settings, Help.
 - **Footer** shows key hints.
 
@@ -89,7 +90,7 @@ Commands that need a value open a **sub-page** in the same menu, using the share
 | One attachment (focused row) | Open attachment, Download attachment, Copy link to attachment, Rename attachment…, Remove attachment (SPEC-014). Rename and Remove show only to the creator, a team member or an Admin, and not on a read-only page |
 | Multiple selected issues | The same as above, applied in bulk ("Set priority for 3 issues…"), plus Clear selection |
 | Project page | Edit project, post update, add milestone, add issues |
-| Team page | Create issue in TEAM, go to cycles, team settings |
+| Team page (no issue focused) | Create issue, then the team's views (Go to TEAM issues, archived, recently deleted). Rename, Leave, Remove member and the other team administration are not suggested: type to find them. *Changed 2026-11-26 (PLAN-016 visual pass): copies Linear, which leads with issue work and never pre-suggests administration or destructive commands.* |
 | Nothing | Create issue, Create team, Go to…, Search |
 
 Navigation also gains **Go to archive** and **Go to recently deleted** (M1, SPEC-012 §3.8, SPEC-015). *As built (PLAN-015 S4):* their titles are "Go to archived issues in ENG" and "Go to recently deleted issues in ENG", one pair per team. The context chip for an attachment reads "Attachment: design.pdf".

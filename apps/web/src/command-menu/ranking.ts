@@ -82,7 +82,11 @@ export function rankCommands(
   );
   for (const entry of entries) {
     const { command, match } = entry;
-    let section: Section = entry.applies ? 'suggested' : command.section;
+    // SPEC-005 §4.2 (changed 2026-11-26): an empty query never pre-suggests a command that opted out
+    // (`suggest: false`) or a destructive one. Typing brings them back, ×2 included.
+    const quiet =
+      query.trim() === '' && (command.suggest === false || command.destructive === true);
+    let section: Section = entry.applies && !quiet ? 'suggested' : command.section;
     let score = scoreOf(entry, match.score);
     if (command.destructive === true) {
       const titleScore = matchCommand(query, command.title)?.score ?? 0;

@@ -39,6 +39,10 @@ export const teamPath = (key: string) => `/team/${encodeURIComponent(key)}`;
 
 const canNavigate = (ctx: CommandContext) => ctx.navigate !== undefined;
 
+/** On a team's own page its views are the next suggestion after Create issue (SPEC-005 §4.2). */
+const onTeam = (teamId: string) => (ctx: CommandContext) =>
+  ctx.target.kind === 'team' && ctx.target.ids.includes(teamId);
+
 export function teamsPage(ctx: CommandContext): CommandPage {
   return {
     title: 'Open team',
@@ -90,6 +94,7 @@ export const navigationSource: CommandSource = (ctx) => [
     section: 'navigation',
     keywords: [team.name, 'issues'],
     when: canNavigate,
+    appliesTo: onTeam(team.id),
     run: (c) => c.navigate?.(`${teamPath(team.key)}/issues`),
   })),
   // SPEC-015 §7 (PLAN-015 S4): the team archive page's two tabs, one pair per team. `G` `X` is
@@ -101,6 +106,7 @@ export const navigationSource: CommandSource = (ctx) => [
       section: 'navigation',
       keywords: [team.name, 'archive', 'archived'],
       when: canNavigate,
+      appliesTo: onTeam(team.id),
       run: (c) => c.navigate?.(teamArchivePath(team.key)),
     },
     {
@@ -109,6 +115,7 @@ export const navigationSource: CommandSource = (ctx) => [
       section: 'navigation',
       keywords: [team.name, 'deleted', 'trash', 'restore'],
       when: canNavigate,
+      appliesTo: onTeam(team.id),
       run: (c) => c.navigate?.(teamArchivePath(team.key, 'deleted')),
     },
   ]),

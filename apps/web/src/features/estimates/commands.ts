@@ -85,6 +85,10 @@ function defaultStatusPage(ctx: CommandContext): CommandPage {
 }
 
 export const ESTIMATE_COMMANDS: Readonly<Record<string, OperationCommand>> = {
-  'team.setEstimates': { refs: targetTeamRefs, page: (ctx) => scalePage(ctx) },
-  'team.setDefaultStatus': { refs: targetTeamRefs, page: (ctx) => defaultStatusPage(ctx) },
+  'team.setEstimates': { suggest: false, refs: targetTeamRefs, page: (ctx) => scalePage(ctx) },
+  'team.setDefaultStatus': {
+    suggest: false,
+    refs: targetTeamRefs,
+    page: (ctx) => defaultStatusPage(ctx),
+  },
 };

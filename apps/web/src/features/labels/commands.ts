@@ -64,5 +64,5 @@ function scopePage(ctx: CommandContext): CommandPage {
 }
 
 export const LABEL_COMMANDS: Readonly<Record<string, OperationCommand>> = {
-  'label.create': { refs: workspaceRefs, page: (ctx) => scopePage(ctx) },
+  'label.create': { suggest: false, refs: workspaceRefs, page: (ctx) => scopePage(ctx) },
 };
