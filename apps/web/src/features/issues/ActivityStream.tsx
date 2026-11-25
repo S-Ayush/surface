@@ -19,7 +19,6 @@ import {
   Trash2,
   Type,
   UserRound,
-  type LucideIcon,
 } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { absoluteTime, agoLong } from '../comments/model.js';
@@ -84,30 +83,30 @@ export function ActivityStream({ items, actorName, now, renderThread }: Activity
 }
 
 /** The small icon of an entry: its kind, or for an update the first field it changed. */
-function eventIcon(entry: HistoryRow): LucideIcon {
+function eventIcon(entry: HistoryRow): ReactNode {
   switch (entry.kind) {
     case 'created':
-      return Plus;
+      return <Plus />;
     case 'deleted':
-      return Trash2;
+      return <Trash2 />;
     case 'restored':
-      return ArchiveRestore;
+      return <ArchiveRestore />;
     case 'archived':
-      return Archive;
-    default:
+      return <Archive />;
+    case 'updated':
       break;
   }
   const changes = parseHistoryChanges(entry.changes);
-  if (changes.title) return Type;
-  if (changes.status) return CircleDot;
-  if (changes.priority) return Gauge;
-  if (changes.assignee) return UserRound;
-  if (changes.labels) return Tag;
-  if (changes.estimate) return Gauge;
-  if (changes.dueDate) return Calendar;
-  if (changes.description) return FileText;
-  if (changes.attachments) return Paperclip;
-  return Pencil;
+  if (changes.title) return <Type />;
+  if (changes.status) return <CircleDot />;
+  if (changes.priority) return <Gauge />;
+  if (changes.assignee) return <UserRound />;
+  if (changes.labels) return <Tag />;
+  if (changes.estimate) return <Gauge />;
+  if (changes.dueDate) return <Calendar />;
+  if (changes.description) return <FileText />;
+  if (changes.attachments) return <Paperclip />;
+  return <Pencil />;
 }
 
 /**
@@ -118,11 +117,10 @@ export function HistoryItem({ entry, name, now }: { entry: HistoryRow; name: str
   const lines = activityLines(entry, name);
   const who = entry.actorKind === 'system' ? 'Surface' : activityActor(name, entry.actorKind);
   const at = entry.createdAt;
-  const Icon = eventIcon(entry);
   return (
     <li className={styles.item}>
       <span className={styles.icon} aria-hidden="true">
-        <Icon />
+        {eventIcon(entry)}
       </span>
       <article className={styles.history} aria-label={`${who}, ${agoLong(at, now)}`} tabIndex={-1}>
         {lines.map((line, index) => (
