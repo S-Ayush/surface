@@ -159,7 +159,7 @@ Rules: animation **never delays input**. Exit animations are shorter than enter 
 
 ### 2.7 Iconography
 - Base set: **Lucide** (ISC licence), 16 px at 1.5 stroke by default. 14 px in dense pills, 20 px in empty states.
-- **Custom domain icons:** status-category rings, priority bars, health dots, cycle (circular progress), project progress ring, and the Surface logo mark.
+- **Custom domain icons:** status-category rings, priority bars, health dots, cycle (circular progress), project progress ring, and the Surface logo mark (geometry, versions and files: [brand](brand.md)).
 - Icons that carry meaning have an `aria-label`. Decorative icons are `aria-hidden`.
 
 ---
