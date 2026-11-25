@@ -1,6 +1,6 @@
 # PLAN-017: Brand in the app, and open-source groundwork
 
-Implements: [brand v0.1](../05-design/brand.md) (§7 "Where the brand appears", decisions B-1 to B-4) · the user's decisions of 2026-11-25: **MIT licence**, and **prepare the repo for publishing but publish nothing yet** · Status: **Ready** · Date: 2026-11-25
+Implements: [brand v0.1](../05-design/brand.md) (§7 "Where the brand appears", decisions B-1 to B-4) · the user's decisions of 2026-11-25: **MIT licence**, and **prepare the repo for publishing but publish nothing yet** · Status: **Done except S2 (held)** (2026-11-25) · Date: 2026-11-25
 Order: **S1 and S3 in parallel.** S4 after S3. S2 is held until the user decides on it.
 
 ---
@@ -92,6 +92,14 @@ SPEC-001 keeps emails image-free on purpose. This slice would put `email-lockup.
 > - **`docs/publishing.md`:** the day-of checklist. Before the push: the gate, a clean tree and the scan. Then create the repo private and push. While still private: private vulnerability reporting, rules for `main`, the About fields, features and Actions permissions. Then go public, verify, and record it.
 > - **Not done, as the user decided:** nothing has been pushed, no remote has been added, and no image has been published.
 
+### S5: Image labels · S · ✅ Done 2026-11-25
+
+Added after S4, so that brand.md §7 is complete except email. The Docker image's OCI labels carry the descriptor as `org.opencontainers.image.description` and `org.opencontainers.image.licenses="MIT"`. Title, version, revision and source were already there (PLAN-004).
+
+> **As built (2026-11-25).** A `docker/Dockerfile` label change and brand.md §7. No test pins the labels. CI's "Docker image builds" job builds the image. Docker was not running here, so the image was not built locally.
+>
+> **Also, a fix to S1 (`00b537b`):** the user saw square corners on `icon-192.png` and `icon-512.png`. Chrome and Edge show a manifest's `any` icons as drawn on macOS and Windows, so they are now the rounded tile on a clear canvas (`app-icon-any.svg`, the macOS icon grid). The iOS and maskable icons stay full bleed, because the OS cuts their shape (brand.md B-5). The test "draws the general-purpose icons with clear corners and the masked ones full bleed" reads each PNG's corner pixel, and it fails on the old icons.
+
 ## 5. Test plan (behaviour → test)
 
 > ⏸ Browser, e2e, visual and integration tests are held. Names are proposals; a slice may adjust a file name but keeps the behaviour in the title.
@@ -109,3 +117,5 @@ SPEC-001 keeps emails image-free on purpose. This slice would put `email-lockup.
 | S3 | Every package declares the MIT licence | `scripts` test, or `config/test/licence.test.ts`: "every package.json declares MIT" |
 | S3 | A production dependency outside the allowlist fails the check | `licenses:check` unit test with a fixture list: "rejects GPL-3.0 and accepts the named libvips exception" |
 | S4 | — (a by-hand scan and a checklist; recorded in "As built") | — |
+| S1 fix | Desktop (`any`) icons have clear corners; the iOS and maskable icons are full bleed | `web/test/brand-assets.test.ts`: "draws the general-purpose icons with clear corners and the masked ones full bleed" |
+| S5 | — (Dockerfile labels; CI's image build) | — |
