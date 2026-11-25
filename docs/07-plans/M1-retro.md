@@ -86,10 +86,14 @@ Each has evidence and options. The options are listed so the retro can choose; n
 
 ### Q1. How many parallel tracks for M2, and how to limit machine load?
 
+**Answered by the user on 2026-11-25** (M2 coordinator session): 4 tracks, as in M1 (option a). The coordinator had recommended 3.
+
 Evidence: M1 ran 4 tracks (log, 2026-11-12). Load reached 34; perf tests timed out and passed alone; orphaned workers ran 4 h; the handoff says four tracks "pushed the machine hard". Overlap cost: migration 0014 collided three times (2026-11-13). Idle tracks: four on 2026-11-13 because dependencies blocked them.
 Options: (a) 4 tracks again with the new fast gate (full `test:int` is now about 3 min); (b) 2 or 3 tracks; (c) 4 tracks but only 2 may run `test:int` at once; (d) number of tracks set per milestone by how many independent slices exist.
 
 ### Q2. Does the testing hold (README §6) still apply in M2?
+
+**Answered by the user on 2026-11-25** (M2 coordinator session): keep the hold unchanged (option a).
 
 Evidence: in force since 2026-11-06; exceptions for leak tests, the sync property suite, filter conformance and the byte-lock test. Review sent back new `jobs.int` cases (014 S4b). 55 lines in PLAN-010 to 015 carry ⏸. The by-hand demo is the only check for held ACs. README §6 names catch-up, resync and auth as covered only by unit tests. Test speed is no longer the reason the hold started (gate 0.3 s cached, `test:int` about 3 min).
 Options: (a) keep the hold unchanged; (b) lift it for integration tests only, keep e2e held; (c) lift it for the known-risk areas first (catch-up, resync, auth) and keep the rest held; (d) lift it fully and add the ⏸ rows as a slice.
@@ -115,6 +119,8 @@ Evidence: README §7.2 estimates 138 ideal days and about 15 weeks for two engin
 Options: (a) keep ideal days as a sizing aid only and drop calendar estimates for agent-built work; (b) record agent wall-clock and review rounds per slice and estimate from that; (c) estimate in slices and risk class (S, M, L) only.
 
 ### Q7. Does the coordinator's authority carry to M2, and does METHODOLOGY's PR step apply?
+
+**Answered by the user on 2026-11-25** (M2 coordinator session): the same authority for M2 (option a), including "no slice without the user's go-ahead". Whether METHODOLOGY's PR step should be changed to match is still open.
 
 Evidence: the user gave the coordinator authority to commit and fast-forward `main` for M1 (log header); the handoff says "confirm that it carries over to M2". METHODOLOGY Phase 7 lists PR, CI and merge, and M1 used none.
 Options: (a) the same authority for M2; (b) authority only after review and a green gate on an explicit list of checks; (c) merge through PRs again once CI runs `test:deep` on every PR.
