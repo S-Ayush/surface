@@ -24,6 +24,9 @@
   display: flex;
   flex-direction: column;
   overflow-x: auto;
+
+  /* The responsive rules at the end of this file read this element's width. */
+  container-type: inline-size;
 }
 
 .header {
@@ -259,19 +262,20 @@
   font-size: var(--text-sm-size);
 }
 
-/* SPEC-005 AC-16: below 768px a row keeps Name, Issues and the row menu on its first line; the
-   description (editable in place, so it has no other home) wraps to a line of its own, and Used
-   in, Last applied and Created are left out. */
-@media (width < 768px) {
-  .list [data-column='used-in'],
-  .list [data-column='last-applied'],
-  .list [data-column='created'],
-  .header [data-column='description'] {
+/* SPEC-005 AC-16, driven by the table's own width: it lives in the settings column, whose width
+   is fixed on desktop, so viewport queries would not track it. Wide (>= 900px) shows every column;
+   below that Used in goes; below 760px the description (editable in place, so it has no other
+   home) wraps to a line of its own under the name instead of being crushed; below 420px the dates
+   go too, leaving Name, Issues and the row menu. */
+@container (width < 900px) {
+  .list [data-column='used-in'] {
     display: none;
   }
+}
 
-  .list {
-    overflow-x: visible;
+@container (width < 760px) {
+  .header [data-column='description'] {
+    display: none;
   }
 
   .row {
@@ -288,9 +292,9 @@
   }
 }
 
-/* Between 768px and a wide window the settings column is cramped: drop Used in first. */
-@media (width < 1100px) {
-  .list [data-column='used-in'] {
+@container (width < 420px) {
+  .list [data-column='last-applied'],
+  .list [data-column='created'] {
     display: none;
   }
 }

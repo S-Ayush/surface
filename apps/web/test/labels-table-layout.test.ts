@@ -31,12 +31,24 @@ describe('labels table css', () => {
     expect(rule('\\.description')).toMatch(/text-overflow:\s*ellipsis/);
     expect(css).toMatch(/\.descriptionText \{[^}]*text-overflow:\s*ellipsis/);
   });
-  it('hides the secondary columns below 768px and keeps Issues', () => {
-    const narrow = /@media \(width < 768px\)\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
-    for (const column of ['used-in', 'last-applied', 'created']) {
-      expect(narrow).toContain(`[data-column='${column}']`);
-    }
-    expect(narrow).not.toContain("[data-column='issues']");
+  it('responds to the table width, not the viewport (the settings column is a fixed width)', () => {
+    expect(css).not.toMatch(/@media[^{]*width/);
+    expect(rule('\\.list')).toMatch(/container-type:\s*inline-size/);
+  });
+  const block = (query: string) =>
+    new RegExp(`@container \\(${query}\\)\\s*\\{([\\s\\S]*?)\\n\\}`).exec(css)?.[1] ?? '';
+  it('wraps the description to its own line below 760px and keeps Issues', () => {
+    const narrow = block('width < 760px');
     expect(narrow).toMatch(/flex-wrap:\s*wrap/);
+    expect(narrow).toMatch(/flex:\s*1 0 100%/);
+    expect(narrow).not.toContain("[data-column='issues']");
+  });
+  it('hides Used in below 900px and the dates below 420px', () => {
+    expect(block('width < 900px')).toContain("[data-column='used-in']");
+    const tiny = block('width < 420px');
+    for (const column of ['last-applied', 'created']) {
+      expect(tiny).toContain(`[data-column='${column}']`);
+    }
+    expect(tiny).not.toContain("[data-column='issues']");
   });
 });
