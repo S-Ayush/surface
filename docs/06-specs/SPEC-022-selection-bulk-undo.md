@@ -10,7 +10,7 @@ Related docs: [design-system §3](../05-design/design-system.md) (focus vs selec
 
 ## 1. Problem & goal
 
-M1 edits one issue at a time and can undo only the last delete. Triage and planning mean changing many issues at once ("move these twelve to Backlog", "assign all of these to me"), and a keyboard-first tool needs a safe way to take a change back. This spec adds **selection** (`X`, shift-click, `Mod+A`) on every issue list and board, **bulk edit** of every property from the same keys, pickers, `Mod+K` commands and a bottom action bar, a general **undo / redo** stack (`Mod+Z` / `Mod+Shift+Z`) that replaces M1's last-delete slot, a **context menu** on right-click that offers what `Mod+K` offers for the same target, and **peek** (`Space`), a small read-only popover that previews an issue without leaving the list.
+M1 edits one issue at a time and can undo only the last delete. Triage and planning mean changing many issues at once ("move these twelve to Backlog", "assign all of these to me"), and a keyboard-first tool needs a safe way to take a change back. This spec adds **selection** (`X`, shift-click, `Mod+A`) on every issue list and board, **bulk edit** of every property from the same keys, pickers, `Mod+K` commands and a bottom action bar, a general **undo / redo** stack (`Mod+Z` / `Mod+Shift+Z`) that replaces M1's last-delete slot, a **context menu** on right-click, on every kind of item, that offers what `Mod+K` offers for the same target, and **peek** (`Space`), a small read-only popover that previews an issue without leaving the list.
 
 All of it keeps Surface's rules: every change, including an undo, is an operation run by the server's executor; undo never writes base state; a private team's issue is never revealed by a bulk answer or an undo.
 
@@ -22,7 +22,7 @@ All of it keeps Surface's rules: every change, including an undo, is an operatio
 - Bulk edit of every M2 issue property (status, priority, assignee, labels, estimate, due date) on a selection: keys, pickers, property commands, the bulk action bar, and bulk delete and restore.
 - New operations `issue.bulkUpdate`, `issue.bulkDelete`, `issue.bulkRestore` (§6), with per-issue outcomes.
 - Undo and redo: what enters the stack, inverses as operations, the stack's scope and size, conflicts with other people's changes, refusals, offline and other tabs. The `inverse` hook of SPEC-003 §3.1 is implemented for the operations in §4.3.
-- The context menu on issue rows and board cards (and the keyboard context-menu key), built from the command sources.
+- The context menu on issue rows and board cards (§3.5), and on every other kind of item (§3.11, D17): sidebar items, views, group headers and board columns, comments, attachments, drafts and settings rows. The keyboard context-menu key opens the same menus. Every menu is built from the command sources.
 - Peek (`Space`, hold `Space`) on issue lists and boards.
 - The `Esc` chain's M2 steps, and the shortcut map for all of the above.
 
@@ -33,7 +33,7 @@ All of it keeps Surface's rules: every change, including an undo, is an operatio
 - Bulk title edits (Linear has none), bulk description edits, bulk comments.
 - Undo of comment, reaction, description, draft, settings (statuses, labels, teams, members) and account changes. The editor keeps its own text undo (SPEC-013).
 - Team moves, parent, project, cycle (M3). Their operations add `inverse` and bulk fields when they arrive (§4.3 rule for later operations).
-- Context menus on sidebar items, views and group headers (proposed for later, Q9).
+- Context menus on item types that arrive after M2 (projects, cycles, documents, inbox items, M3 and later). Their specs add their target to §3.11's table (E37).
 - `issue.bulkCreate` (domain-model §7 lists it for MCP and M3 sub-issues).
 
 ## 3. User flows
@@ -88,7 +88,7 @@ Selection keys and mouse rules are the same on a board (Linear: "the same shortc
 
 1. **Right-click** on an issue row or board card, or the platform context-menu key (the Menu key, or `Shift+F10`, which the browser turns into a `contextmenu` event) on the focused row, opens the context menu at the pointer or under the row.
 2. **Target:** a right-click on a selected row targets the whole selection (Linear: "right-click the selection to open the contextual menu", D1). A right-click on an unselected row targets that row only, with the single-issue menu, and leaves the selection as it is (D8). The menu's header line names the target: "ENG-42" or "12 issues".
-3. **Mirrors `Mod+K`:** the menu is built from the same command sources and availability rules (`ui.available`, the permission pre-check) as the command menu for that target, so a command is in one exactly when it is in the other (AC-18). Navigation and global commands are left out. Order (SPEC-012 §3.3 item 5, extended): Status › · Priority › · Assignee › · Due date › · Labels › · Estimate › (when used) · Assign to me · Copy › · separator · Delete…. On an archived or deleted issue: Copy › · Restore (`#`) · Delete (archived only) · Permanently delete… (Admin, deleted only), as SPEC-012 §3.4 item 8.
+3. **Mirrors `Mod+K`:** the menu is built from the same command sources and availability rules (`ui.available`, the permission pre-check) as the command menu for that target, so a command is in one exactly when it is in the other (AC-18). Navigation and global commands are left out (§3.11 extends the same rule to every other target). Order (SPEC-012 §3.3 item 5, extended): Status › · Priority › · Assignee › · Due date › · Labels › · Estimate › (when used) · Assign to me · Copy › · separator · Delete…. On an archived or deleted issue: Copy › · Restore (`#`) · Delete (archived only) · Permanently delete… (Admin, deleted only), as SPEC-012 §3.4 item 8.
 4. **Submenus** list the picker's options (§3.2 rules, quick-key hints included); choosing one dispatches at once. Labels is a checkbox submenu applied on close; Due date opens the date picker anchored to the row.
 5. Every item shows its key hint. Keyboard: arrows, `Enter`, `Esc` (Radix menu, already in `packages/ui`).
 6. On a selection, **Copy ›** lists, as Linear's menu does (D9): **Copy IDs** (`Mod+.`; `ENG-4, ENG-7, ENG-12`), **Copy URLs**, **Copy titles**, **Copy titles as links**, **Copy issues as Markdown**, **Copy everything as Markdown** and **Copy git branch name**. Each is SPEC-012 §3.7's copy action applied to every selected issue, in view order, one issue per line (the Markdown ones separated by a blank line); each of SPEC-012 §3.7's copy keys acts on the selection too. **Copy everything as Markdown** includes the description, loaded like the issue page loads it; an issue whose content was never hydrated and can't be fetched offline is left out, and the toast says how many. All of them build a string on the client from the replica: no integration, no network. Linear's "Copy as prompt" is left out (built-in AI is out of scope, CLAUDE.md).
@@ -143,6 +143,48 @@ Linear's keys (D1–D4). The conflict test (SPEC-005 AC-7) covers these with SPE
 | `S` `P` `A` `I` `L` `Shift+E` `Shift+D` `Mod+Shift+D` `Mod+Backspace` `#` | issue | As SPEC-012, on the selection when there is one | as SPEC-012 | |
 
 `Mod+Y` (Windows redo) is not bound: Linear documents `Cmd/Ctrl+Shift+Z` only (D3), and `Mod+Y` is a browser key in some browsers. The `issue` scope's definition already covers "selected in a list" (shortcuts.md §2).
+
+### 3.11 Context menus on every item (FR-NAV-11, D17)
+
+The PRD says "right-click on any item, mirroring the command menu" (FR-NAV-11), and Linear opens a menu on every item. So right-click works on every kind of item that exists in M2. §3.5 specified issues; this section adds the rest and keeps its one principle: **a menu is built from the same command sources and availability rules as `Mod+K` for that target** (the registry operations whose `ui.contexts` match, web-app commands, the permission pre-check), minus navigation and global commands. A command is in the menu exactly when `Mod+K`, opened with that target's context chip, lists it. No menu has an item of its own.
+
+**How a target is found.** Each item type registers a *context target* with the command menu: how to turn the element under the pointer into a target (an id), and which command context it maps to (command-menu §3.3). The right-click handler walks up from the event target to the nearest registered element. Pressing the context-menu key (the Menu key, or `Shift+F10`) on a focused item does the same for that item. The menu header names the target ("ENG", "Bugs this week", "Comment by Ada").
+
+| Item | Right-click on | Command context (command-menu §3.3) | Commands in the menu (same as `Mod+K` for that context) | Defined in |
+|---|---|---|---|---|
+| Issue | a row or card, live, archived or deleted | One issue, One archived or deleted issue, Multiple selected issues | §3.5 | SPEC-012, this spec |
+| Sidebar team | a team item | Team page | Create issue in ENG · Team settings · Join team or Leave team | SPEC-001 §3.7, SPEC-005 |
+| Sidebar favorite | a favorite item | Favorite (one favorite's target) | Copy URL · Remove from favorites, and nothing else (SPEC-021 §3.7 item 4) | SPEC-021 |
+| Other sidebar items | My issues, Drafts, Views, the team's Issues, Views, Home, Archive, Settings pages | none: they are pages, and the only commands are navigation | **No Surface menu.** The browser's own link menu opens (open in a new tab, copy link) | this spec |
+| View | a row on a Views page, a view's tab in a team header, a view in the sidebar's team Views | A view page | Edit view… · Duplicate view… · Copy view URL · Add to favorites or Remove from favorites · Delete view… (SPEC-021 §3.4 item 4) | SPEC-021 |
+| Built-in team view | the All issues, Active and Backlog tabs | A team tab | Add to favorites or Remove from favorites · Set display as default for everyone · Reset display to default (SPEC-021 §3.6, §3.10) | SPEC-021 |
+| Group header | a list group or sub-group header | Group | Create issue in this group (the header's `+`) · Select all in group (`Mod+Alt+A`) · Collapse group or Expand group (`T`) · Collapse all groups or Expand all groups (`Alt+T`) | SPEC-012 §3.3, SPEC-020 §3.3 |
+| Board column | a column header | Group (board column) | The group header's commands, plus Hide column (SPEC-020 §3.5 item 4); the same items as the column's ⋯ menu | SPEC-020 §3.5 |
+| Swimlane header | a lane header | Group (swimlane) | The group header's commands (a lane collapses with `T`) | SPEC-020 §3.5 |
+| Hidden columns entry | an entry in the Hidden columns column | Group (hidden column) | Show column | SPEC-020 §3.5 |
+| Comment | a comment or reply on an issue page (not the editor of a comment being written or edited) | One comment | Edit comment (author only) · Delete comment (author, or an Admin) · Add reaction… · Resolve thread or Reopen thread · Copy link to comment · Copy content as Markdown · New issue from comment… (command-menu §3.3, SPEC-013 §3 options menu) | SPEC-013 |
+| Attachment | a row in the Attachments section | One attachment | Open attachment · Download attachment · Copy link to attachment · Rename attachment… and Remove attachment (creator, a team member or an Admin; not on a read-only page) | SPEC-014 |
+| Draft | a row on the Drafts page | Draft | Open draft · Discard draft | SPEC-012 §3.2 |
+| Settings row | a row of the statuses, labels or members lists, and a row of the team members list | the row's own settings context | The row menu's actions: statuses (Edit, Make default, Delete), labels (Edit label name, Move to workspace…, View labeled issues, Archive… or Unarchive, Delete), members (change role, remove, as SPEC-001) | SPEC-010, SPEC-001 |
+
+**Rules for every item**
+
+1. **One target, one menu.** The menu is for the item under the pointer. Only issues have a selection (§3.5 item 2); for any other item the right-click doesn't change the selection or focus of an issue list. It moves the roving focus to the item, so the menu returns focus there on close.
+2. **No commands, no menu.** When the target has no available commands (the table's "Other sidebar items", or every command is unavailable for this user), Surface doesn't open a menu and doesn't call `preventDefault`, so the browser's own menu opens. The same goes for any editable element (a text field, the composer, an editor being edited): the browser's menu (spelling, paste) always wins there.
+3. **Private items can't be right-clicked.** Items come from the replica, which holds only what the user can see (permissions §5). A team, view, favorite, issue or comment that became invisible (the user left a private team) leaves the replica and its element leaves the page, so there is nothing to right-click. If the target disappears while its menu is open, the menu closes. A command whose target was deleted meanwhile returns `NOT_FOUND`, shown as the usual toast, identical to an unknown id (rule 4 of the leak checklist). The menu never lists a name or count the user couldn't see.
+4. **Read-only items.** A menu on an archived or deleted issue, a read-only page's attachment, or a team the user isn't a member of offers only the commands that stay available (§3.5 item 3; the `ui.available` and permission pre-check, as `Mod+K`). A comment written by someone else shows no Edit, and no Delete unless the user is an Admin. A team the user hasn't joined shows Join team and no Leave team.
+5. **Offline.** The menu opens offline; its commands dispatch and queue like any operation, and a command that needs the server (Copy everything as Markdown of an unhydrated issue, §3.5 item 6) shows its offline hint.
+6. **Below 768 px** the pointer gesture is a long press where the browser fires `contextmenu` for it; every item keeps its visible ⋯ button or its **Edit** control, so no action is reachable only by right-click (NFR-20).
+7. **Keyboard.** The context-menu key and `Shift+F10` open the focused item's menu; `Esc` closes it and returns focus (§3.5 item 5).
+
+**Gaps in the command sources.** A menu can only show a command that exists. The commands below are in the menus above but are not yet registry operations or web-app commands with the right context; the slice that builds a menu adds them (as a web-app command, like SPEC-012's property commands, or as a `ui` entry on its operation), so that `Mod+K` lists them too:
+
+- **Group and column:** "Create issue in this group", "Select all in group", "Collapse group / Expand group", "Collapse all groups / Expand all groups" (keys exist, SPEC-012 §3.3 and SPEC-020 §3.11), and "Hide column" and "Show column" (SPEC-020 §3.5 has the menu items but not `Mod+K` commands).
+- **Favorite:** a "Favorite" command context (SPEC-021 §3.10 has "Remove from favorites" for an issue, view page or team tab only), and "Copy URL" for a favorite whose target is an issue or a view.
+- **Team in the sidebar:** SPEC-001 §3.7 puts Join team and Leave team in the team's ⋯ menu; `team.join` and `team.leave` need `ui` entries (context: Team page) if they don't have them.
+- **Draft:** "Open draft" and "Discard draft" (`draft.discard` has no `ui` entry in SPEC-012 §4.3).
+- **Settings rows:** the row actions of SPEC-010 (Edit status, Delete status, Edit label name, Move to workspace…, View labeled issues, Archive label…, Delete label) are row-menu items without `Mod+K` commands. SPEC-010's operation table says `label.moveToWorkspace` has "no `ui` entry"; SPEC-010's "Set default status…" exists. The members row actions (change role, remove) are the same.
+- **Comment and attachment:** none missing: SPEC-013 and SPEC-014 already declare their commands with context `comment` and `attachment`. SPEC-013's "Copy content as Markdown", "New issue from comment…" and "Resolve thread" need to be checked to have `ui` entries too.
 
 ## 4. Domain & client changes
 
@@ -248,7 +290,7 @@ Each has a summary, description, ≥ 2 keywords and examples that run against th
 | `packages/ui` | `SelectionCheckbox` (row and card), `BulkActionBar`, `PeekPopover` (anchored popover, close), the Menu's checkbox-item and "mixed" state, the picker's "Mixed" trigger |
 | `apps/web/src/features/issues/` | the selection model (§4.1) and its bindings, bulk dispatch and chunking, the bulk outcome toast and **Show all** dialog, `IssueContextMenu` (built from the command sources), peek content and its hold-`Space` controller, the undo-from-another-page dialog |
 | `apps/web/src/features/undo/` | the undo stack, entry building from `inverse`, the "changed since" check, the Undo and Redo commands and bindings |
-| `apps/web/src/command-menu/` | the `issues` target from a selection; a "context menu" rendering of a command source (no navigation section) |
+| `apps/web/src/command-menu/` | the `issues` target from a selection; a "context menu" rendering of a command source (no navigation section); the **context target registry** of §3.11 (one entry per item type: element to target, and the command context), used by every menu |
 
 **No new dependencies.**
 
@@ -309,6 +351,12 @@ Each has a summary, description, ≥ 2 keywords and examples that run against th
 | E29 | A bulk edit whose every issue is skipped | `ok` with all skipped; the toast says "None of the 3 issues were changed: …"; no undo entry. |
 | E30 | `Mod+Z` when the newest entry was made on another page | The dialog of §3.6 item 8 asks first; Cancel leaves the stack as it is; Undo navigates there and undoes. |
 | E31 | `Mod`-click on a row | The issue opens in a new browser tab; the selection and focus stay (D6). |
+| E32 | Right-click on a sidebar team, view, favorite or group header that was just removed or became invisible (the user left a private team) | The element is already gone from the page, so nothing opens. If the menu is open when it goes, it closes (§3.11 rule 3). |
+| E33 | Right-click on a comment someone else wrote | The menu has no Edit, and no Delete unless the user is an Admin; Add reaction, Resolve thread, the copies and New issue from comment stay (§3.11 rule 4). |
+| E34 | Right-click on a sidebar page link (My issues, Drafts, Views, Archive, Settings) or on any text field | Surface opens no menu; the browser's own menu appears (§3.11 rule 2). |
+| E35 | Right-click on a comment that is being edited, or in the comment box | The browser's text menu (spelling, paste), not the comment menu. |
+| E36 | Right-click on a team the user hasn't joined | The menu shows Join team and no Leave team; Create issue is hidden if the pre-check refuses it. |
+| E37 | An item type that arrives after M2 (project, cycle, document) | It has no menu until its spec adds a row to §3.11's table and a context to command-menu §3.3; right-click on it opens the browser's menu. |
 
 ## 9. Acceptance criteria
 
@@ -346,6 +394,11 @@ Each has a summary, description, ≥ 2 keywords and examples that run against th
 | AC-27 | Every binding of §3.10 is registered with a command, shows in `?`, passes the conflict and reserved-keys tests, and `Mod+A`, `Mod+Alt+A`, `Mod+Z` and `Mod+Shift+Z` set `whileTyping: false`. | unit (registry, conflicts) |
 | AC-28 | Keyboard only: select a range, set its status, undo, redo, peek, right-click equivalent (context-menu key), bulk delete and undo the delete. | e2e ⏸ (checked by hand) |
 | AC-29 | A bulk change of 250 issues paints in < 50 ms after the choice (NFR-01) and commits on the server in < 1 s p95 at the reference scale; `Mod+A` on 10,000 rows selects in < 50 ms. | perf ⏸ (`*.perf.test.ts` for the client parts, deep tier; server part checked by hand) |
+| AC-31 | For every target of §3.11's table, the context menu lists exactly the commands `Mod+K` lists for the same context (same ids, same availability under each role and membership), minus navigation and global commands, in the table's order, with key hints; the menu has no item that isn't a command. A per-target table drives the test. | unit (menus built from command sources, per-target table, per role) + story |
+| AC-32 | A target with no available commands, a sidebar page link, and any editable element open no Surface menu and don't call `preventDefault` (the browser's menu opens); the context-menu key and `Shift+F10` open the focused item's menu and `Esc` returns focus to it. | unit (context target registry, synthetic `contextmenu` events) |
+| AC-33 | Read-only and permission cases: a comment by another user has no Edit (and Delete only for an Admin); an unjoined team has Join and no Leave; an archived issue and a read-only page's attachment show only read commands; an unavailable command is hidden, not disabled. | unit (per-target table) |
+| AC-34 | **Leak:** a private team's team item, view, favorite, comment or issue that leaves the replica is not right-clickable and its open menu closes; a command naming it returns `NOT_FOUND` identical to an unknown id; no menu text carries a name or count of an invisible item. | unit (replica delta, registry) + leak test (Postgres allowed) |
+| AC-35 | Every command in a §3.11 menu that is not yet a registry or web-app command is listed in the gaps of §3.11 and added by the slice; the registry test fails when a menu item has no command id. | unit (registry lint) |
 
 ## 10. Metrics & performance
 
@@ -360,24 +413,24 @@ Each has a proposed default; the user can accept them in bulk.
 
 | # | Question | Proposed default |
 |---|---|---|
-| Q1 | When undoing, what happens to a field someone changed since? Linear's docs don't say. | Leave that issue's field as it is and say so in the toast (client check against the store, §3.6 item 4). A server-side precondition (an `expect` input on `issue.update`) is not added in M2; offline undos rely on last-writer-wins. |
-| Q2 | `Mod+A` on a server-paged view (archive tabs, server-backed views of SPEC-021/023) | Select the loaded rows only, with "· more not loaded" in the bar. No "select all N matching" in M2. |
+| Q1 | **Decided, see D13.** When undoing, what happens to a field someone changed since? Linear's docs don't say. | Leave that issue's field as it is and say so in the toast (client check against the store, §3.6 item 4). A server-side precondition (an `expect` input on `issue.update`) is not added in M2; offline undos rely on last-writer-wins. |
+| Q2 | **Decided, see D14.** `Mod+A` on a server-paged view (archive tabs, server-backed views of SPEC-021/023) | Select the loaded rows only, with "· more not loaded" in the bar. No "select all N matching" in M2. |
 | Q3 | **Decided, see D5.** Does `Mod+A` select rows inside collapsed groups? | Yes, as Linear. |
-| Q4 | Limit on a bulk action | 1,000 issues per action (4 chunks of 250); selecting has no limit. |
+| Q4 | **Decided, see D15.** Limit on a bulk action | 1,000 issues per action (4 chunks of 250); selecting has no limit. |
 | Q5 | **Decided, see D6.** `Mod`-click on a row | Opens the issue in a new browser tab; it doesn't toggle selection. |
-| Q6 | **Partly decided, see D7.** Still open: the toast for a **bulk** change (not observed in Linear's web app). Linear shows none for a single property change, a toast for each undo and redo, and "Deleted <ID>" for a delete. | "Updated N issues" with **Undo** for bulk; the rest as D7. A difference found later is a dated change here. Changes design-system §4 principle 5 and command-menu §3.2, §3.4 (§12). |
+| Q6 | **Decided, see D7 and D16.** The toast for a **bulk** change (not observed in Linear's web app). Linear shows none for a single property change, a toast for each undo and redo, and "Deleted <ID>" for a delete. | "Updated N issues" with **Undo** for bulk; the rest as D7. A difference found later is a dated change here. Changes design-system §4 principle 5 and command-menu §3.2, §3.4 (§12). |
 | Q7 | **Decided, see D8.** Right-click on an unselected row while a selection exists | The menu targets that row only; the selection stays. |
 | Q8 | **Decided, see D9.** Copy actions on a selection | The seven items of §3.5 item 6; `Mod+.` copies the IDs. |
-| Q9 | Context menus on other items (sidebar teams and views, group headers, comments) in M2 | Issue rows and cards only. Group headers, sidebar items and views later (with SPEC-021 for views). |
-| Q10 | Does attachment removal join the undo stack? | Yes: `Mod+Z` re-creates it as SPEC-014's Undo toast does; the toast's **Undo** button stays. |
+| Q9 | **Decided, see D17.** Context menus on other items (sidebar teams and views, group headers, comments) in M2 | Everywhere: issue rows and cards, sidebar items, views, group headers and board columns, comments and other items (§3.11). |
+| Q10 | **Decided, see D18.** Does attachment removal join the undo stack? | Yes: `Mod+Z` re-creates it as SPEC-014's Undo toast does; the toast's **Undo** button stays. |
 | Q11 | **Decided, see D10.** Redo of a delete | Deletes again without the dialog (the user confirmed it once). |
 | Q12 | **Decided, see D11.** Is peek editable (pills open pickers, description editable)? | A small read-only popover; property keys act on the peeked issue. |
-| Q13 | Bulk edit as one `issue.bulkUpdate` per chunk with per-issue skips (needs lenient ref arrays and sync protocol v0.9), or one `issue.update` per issue (no protocol change, but needs the session mutation rate limit raised or lifted, and 250 queue entries per chunk)? | `issue.bulkUpdate` with per-issue skips, recorded in ADR-0028. |
-| Q14 | Chunk size per bulk operation | 250 issues. |
-| Q15 | Undo stack scope | Per tab, memory only, 100 entries, cleared on reload, sign-out and resync (sync-protocol §5.5 as accepted). Not shared across tabs or devices. |
-| Q16 | Are bulk delete and restore new operations (`issue.bulkDelete`, `issue.bulkRestore`) rather than N single calls? | Yes, for the same reasons as Q13. |
+| Q13 | **Decided, see D19.** Bulk edit as one `issue.bulkUpdate` per chunk with per-issue skips (needs lenient ref arrays and sync protocol v0.9), or one `issue.update` per issue (no protocol change, but needs the session mutation rate limit raised or lifted, and 250 queue entries per chunk)? | `issue.bulkUpdate` with per-issue skips, recorded in ADR-0028. |
+| Q14 | **Decided, see D20.** Chunk size per bulk operation | 250 issues. |
+| Q15 | **Decided, see D21.** Undo stack scope | Per tab, memory only, 100 entries, cleared on reload, sign-out and resync (sync-protocol §5.5 as accepted). Not shared across tabs or devices. |
+| Q16 | **Decided, see D22.** Are bulk delete and restore new operations (`issue.bulkDelete`, `issue.bulkRestore`) rather than N single calls? | Yes, for the same reasons as Q13. |
 | Q17 | **Decided, see D12.** Should undo be offered after navigating away from where the change was made? | Yes, after a dialog that offers to go back to that page (§3.6 item 8). |
-| Q18 | Does `Esc` clear the selection? In Linear's web app on 2026-11-25 it did not after `Mod+A`; the bar's × did. That may have been a focus artefact. | `Esc` clears the selection (§3.9), and the bar's × does too. Re-check Linear when the slice is built. |
+| Q18 | **Decided, see D23.** Does `Esc` clear the selection? In Linear's web app on 2026-11-25 it did not after `Mod+A`; the bar's × did. That may have been a focus artefact. | `Esc` clears the selection (§3.9), and the bar's × does too. Re-check Linear when the slice is built. |
 
 ## Decisions
 
@@ -397,6 +450,17 @@ Behaviour copied from Linear's public docs under the standing rule "copy Linear"
 | D10 | Q11: redo of a delete | **Decided by the user on 2026-11-25** ("we want same as Linear"): redo deletes again without the dialog. This is the spec's default. Checked in Linear's web app on 2026-11-25. |
 | D11 | Q12: peek | **Decided by the user on 2026-11-25** ("we want same as Linear"): `Space` on a hovered row opens a small read-only popover (identifier, status and age, priority, assignee, description); the property keys act on the peeked issue. Whether the pills in Linear's popover are clickable wasn't checked, so Surface keeps them read-only. This replaces the side panel with activity that this spec first proposed. Checked in Linear's web app on 2026-11-25. |
 | D12 | Q17: undo after navigating away | **Decided by the user on 2026-11-25** ("we want same as Linear"): Linear asks in a dialog, "Undo <action>? This operation was performed on a different page than you are currently on. Open that page and undo the operation?", with Cancel and Undo; Undo goes back to that page and undoes there. Checked in Linear's web app on 2026-11-25. |
+| D13 | Q1: undo and a field changed since | **Decided by the user on 2026-11-25:** accepted the proposed default: leave that issue's field as it is and say so in the toast (client check against the store, §3.6 item 4); no server-side `expect` precondition in M2, offline undos rely on last-writer-wins. |
+| D14 | Q2: `Mod+A` on a server-paged view | **Decided by the user on 2026-11-25:** accepted the proposed default: select the loaded rows only, with "· more not loaded" in the bar; no "select all N matching" in M2. |
+| D15 | Q4: limit on a bulk action | **Decided by the user on 2026-11-25:** accepted the proposed default: 1,000 issues per action (4 chunks of 250); selecting has no limit. |
+| D16 | Q6: toast for a bulk change | **Decided by the user on 2026-11-25:** accepted the proposed default: "Updated N issues" with **Undo** for a bulk change (the rest as D7). A difference found later is a dated change here. |
+| D17 | Q9: context menus on other items | **Decided by the user on 2026-11-25:** context menus on every item, like Linear (FR-NAV-11). Issue rows and cards, sidebar items, views, group headers and board columns, comments, attachments, drafts and settings rows (§3.11). |
+| D18 | Q10: attachment removal and undo | **Decided by the user on 2026-11-25:** accepted the proposed default: `Mod+Z` re-creates a removed attachment as SPEC-014's Undo toast does; the toast's **Undo** button stays. |
+| D19 | Q13: bulk edit as one operation per chunk | **Decided by the user on 2026-11-25:** accepted the proposed default: `issue.bulkUpdate` with per-issue skips, recorded in ADR-0028. |
+| D20 | Q14: chunk size | **Decided by the user on 2026-11-25:** accepted the proposed default: 250 issues. |
+| D21 | Q15: undo stack scope | **Decided by the user on 2026-11-25:** accepted the proposed default: per tab, memory only, 100 entries, cleared on reload, sign-out and resync (sync-protocol §5.5 as accepted); not shared across tabs or devices. |
+| D22 | Q16: bulk delete and restore as operations | **Decided by the user on 2026-11-25:** accepted the proposed default: yes, `issue.bulkDelete` and `issue.bulkRestore`, for the same reasons as Q13 (ADR-0028). |
+| D23 | Q18: does `Esc` clear the selection | **Decided by the user on 2026-11-25:** accepted the proposed default: `Esc` clears the selection (§3.9), and the bar's × does too. Re-check Linear when the slice is built. |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -426,4 +490,9 @@ Behaviour copied from Linear's public docs under the standing rule "copy Linear"
 | design-system.md | §3 Peek, §4 principle 5, §5.1 Toast, §5 components | Peek: a small read-only popover (about 360 px, anchored to the row; D11), replacing the 480 px resizable side panel and the peek column of the layout sketch; none below 768 px. Principle 5: reversible single-issue property changes apply at once **without** a toast; `Mod+Z` undoes them and its toast reads "Undo <action>." (D7); bulk changes show "Updated N issues" with Undo (Q6). Add `BulkActionBar`, `SelectionCheckbox`, `PeekPopover`. | No |
 | PRD | FR-NAV-05, 06, 07, 11; §5.6 key criterion | Link SPEC-022; FR-NAV-06: "per tab, 100 steps; changes made by others since are left alone". Remove "In M1, `Cmd+Z` restores only the last deleted issue". | No |
 | glossary.md | terms | Add **Selection**, **Anchor**, **Peek**, **Undo entry**, **Bulk action bar**. | No |
+| command-menu.md | §3.3 Context rules | Add the contexts of SPEC-022 §3.11: Team (sidebar item), Favorite, View, Team tab, Group (list group, board column, swimlane), Draft, and the settings row contexts; and the rule "the context menu of an item lists the same commands as `Mod+K` for that item's context". | No |
+| SPEC-021 | §3.4 item 4, §3.7 item 4, §3.10 | Right-click on a view tab, a Views row, a built-in team tab and a favorite uses the menus of SPEC-022 §3.11; add a Favorite context to §3.10 (Copy URL, Remove from favorites). Dated "Changed (SPEC-022)". | No |
+| SPEC-020 | §3.5 item 1, §3.12 | The column ⋯ menu is also the right-click menu of the column and swimlane header; Hide column, Show column, Create issue in this group, Collapse and Expand are `Mod+K` commands in the Group context (SPEC-022 §3.11 gaps). | No |
+| SPEC-013 · SPEC-014 · SPEC-012 · SPEC-010 · SPEC-001 | comment options, attachment row menu, Drafts page, settings row menus, team ⋯ menu | Right-click opens the same items as the ⋯ menu (SPEC-022 §3.11); missing `ui` entries are added (§3.11 gaps). | No |
+| design-system.md | §5 Menu / ContextMenu | Right-click opens the same items as the ⋯ menu **and** the `Mod+K` commands for the same target (FR-NAV-11); no Surface menu on a target with no commands or on an editable element. | No |
 | specs README | M2 table | Add SPEC-022 (FR-NAV-05, 06, 07, 11). | No |

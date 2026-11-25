@@ -23,6 +23,7 @@ This spec **owns the shape of view state** (§4.1): the layout and display optio
 - **Grouping and sub-grouping** (§3.3) in both layouts: none, status, status type, assignee, priority, label, a label group, and team.
 - **Ordering** (§3.4): manual, title, status, priority, assignee, estimate, last updated, last created, due date; reverse.
 - **Manual order** (§4.3): the `position` input on `issue.update`, its server rules and its optimistic update.
+- **Card height** (§4.5): a pure function from the card's data, so cards vary in height without measuring.
 - **Drag and drop** (§3.6) with the mouse, and the same moves by keyboard (§3.7).
 - **Display properties** (§3.8) and the group count (issues or estimate sum).
 - **Toggles** (§3.9): show empty groups ("Show empty columns" on a board), completed issues (all, past day, past week, past month, none). Show sub-issues is reserved for M3.
@@ -110,7 +111,7 @@ Every flow below applies to any issue view that SPEC-021 renders: a team's All i
 ### 3.5 Board
 
 1. **Columns** are the groups of §3.3, left to right, each a fixed width (`--board-column-width`, proposed 320 px, a design-system token change, §12). A column header shows the group's icon, name and count (or estimate sum), a `+` that opens the composer with the column's value, and a ⋯ menu.
-2. **Cards** are the column's issues in the view's ordering. A card shows the identifier, the title (at most two lines, clamped with an ellipsis) and a row of the chosen display properties (§3.8), with the assignee's avatar at the right end. The description is never shown ([Linear: Board layout](https://linear.app/docs/board-layout), FAQ). Card heights are fixed per view: the minimum card height (72 px, design-system §2.5) holds two title lines and one property row, whatever the title's length, so the window can be computed without measuring (Q8: Linear's cards vary in height with their labels and projects).
+2. **Cards** are the column's issues in the view's ordering. A card shows the identifier, the title (at most two lines, clamped with an ellipsis) and a row of the chosen display properties (§3.8), with the assignee's avatar at the right end. The description is never shown ([Linear: Board layout](https://linear.app/docs/board-layout), FAQ). Card heights **vary, as in Linear** ([Linear: Board layout](https://linear.app/docs/board-layout); D9), but each height is **computed from the card's data**, never measured from the DOM (§4.5). The card has the title's line count (1 or 2, from a characters-per-line rule), plus a property row only when the issue has something to show in it (up to 2 rows when the chips wrap). The card is rendered at exactly the computed height (the title is clamped to the computed lines), so an estimate that is a little off costs a slightly early ellipsis or a little slack, never an overlap. The minimum height is 72 px (design-system §2.5) and the maximum 136 px.
 3. **Scrolling.** Without swimlanes, each column scrolls vertically on its own, and the board scrolls horizontally (trackpad, `Shift`+wheel, or dragging an empty area of the board, as Linear). With swimlanes, the whole board scrolls vertically as one, the column headers stay sticky at the top and the lane headers stay sticky at the left. Both axes are virtualised (§4.4): only the columns and cards in view, plus a fixed overscan, are mounted.
 4. **Hide a column:** the column's ⋯ menu has **Hide column**. Hidden columns collapse into a narrow last column, "Hidden columns", listing each with its count; choosing one shows it again (**Show column**). An issue can be dropped onto a hidden column's entry without showing it. This copies Linear ([Linear: Board layout](https://linear.app/docs/board-layout), "Hide columns"). Hidden columns are part of the view state, kept per grouping (§4.1). A list has no hidden groups: filters do that (SPEC-021), as in Linear.
 5. **Swimlanes** (sub-grouping, §3.3) are lanes across every column. A lane header shows the sub-group's icon, name and count, and a chevron. `T` on a focused lane header, or a click on the chevron, collapses or expands the lane. Empty lanes follow Show empty groups ("Show empty columns" on a board).
@@ -296,13 +297,36 @@ The order key already exists: Issue `sortOrder`, one global fractional key with 
 
 | Where | What |
 |---|---|
-| `packages/ui` (presentational, stories with axe and visual baselines) | **DisplayOptions** (the popover body), **BoardColumn**, **BoardCard**, **SwimlaneHeader**, **HiddenColumns**, **VirtualGrid** (two-axis window over fixed sizes), **DropIndicator**; IssueRow gains visible-columns props and nested header levels; GroupHeader gains the estimate-sum toggle and a level |
+| `packages/ui` (presentational, stories with axe and visual baselines) | **DisplayOptions** (the popover body), **BoardColumn**, **BoardCard**, **SwimlaneHeader**, **HiddenColumns**, **VirtualGrid** (two-axis window over computed sizes), `cardHeight` (§4.5), **DropIndicator**; IssueRow gains visible-columns props and nested header levels; GroupHeader gains the estimate-sum toggle and a level |
 | `apps/web/src/features/views/` (new; bound to the store and `dispatch`, unit tested) | the view-state resolver (SPEC-021), the board page, the drag controller (pointer events, autoscroll, drop resolution), the board focus model, the move commands, the display-options commands |
 | `apps/web/src/features/issues/` | the list generalised to `groupIssues` and the view state; the list focus model gains nested headers |
 
-- **Drag and drop is built in-house** on pointer events, without a library (Q11): the window is arithmetic (fixed sizes), so the drop target is computed from the pointer position without measuring, and HTML5 drag-and-drop doesn't work with virtualised targets or autoscroll. About as much code as `VirtualList` was.
-- **Virtualisation:** `VirtualGrid` generalises `VirtualList` (SPEC-012 §4.4) to columns × rows and lanes, with fixed column width, card height and header heights. The focused card stays mounted while scrolled out of view (SPEC-012 §3.3 item 9).
+- **Drag and drop is built in-house** on pointer events, without a library (Q11): the window is arithmetic (computed sizes, §4.5), so the drop target is computed from the pointer position without measuring, and HTML5 drag-and-drop doesn't work with virtualised targets or autoscroll. About as much code as `VirtualList` was.
+- **Virtualisation:** `VirtualGrid` generalises `VirtualList` (SPEC-012 §4.4) to columns × rows and lanes, with a fixed column width and header heights, and a per-column table of cumulative card offsets built from `cardHeight` (§4.5; a binary search finds the window). The focused card stays mounted while scrolled out of view (SPEC-012 §3.3 item 9).
 - **No new dependencies.**
+
+### 4.5 Card height (D9)
+
+Linear's cards vary in height. Surface does the same without measuring: a card's height is a **pure function of its data**, so `VirtualGrid` knows every card's offset before anything renders.
+
+**Where it lives:** `packages/ui/src/board-card-height.ts`, exported as `cardHeight`. It is a layout concern (it uses `--board-column-width`, the card padding and line heights, which are design tokens), and its inputs are plain strings and numbers, so it needs no DOM and no domain types. `packages/domain` would have to know pixel sizes; `apps/web` can't share it with Storybook. `packages/ui` owns BoardCard, so the card and its height can't drift: BoardCard sets its own `height` from the same function.
+
+```ts
+cardHeight({
+  title: string,            // the issue title
+  chips: readonly ChipSpec[], // one per property the card shows, in order (§3.8); a label is {kind: 'label', name}, others {kind: 'status' | 'priority' | 'estimate' | 'due' | 'created' | 'updated'}
+}): number                  // px, an integer
+```
+
+The avatar is at the right end of the title block and takes no row. The rule (the constants are proposed and settled in the slice against the real font; the shape is the spec):
+
+1. `titleLines = min(2, wrapLines(title, CARD_TITLE_CHARS_PER_LINE))`. `wrapLines` is a greedy word wrap over code points: a word longer than a line is broken at the limit, and an empty title counts as one line. `CARD_TITLE_CHARS_PER_LINE` is a constant derived from the inner card width (proposed 36 at 320 px).
+2. `chipRows`: 0 when `chips` is empty. Otherwise `min(2, ceil(sum(chipWidth) / CARD_INNER_WIDTH))`, where `chipWidth` is a fixed estimate per kind and, for a label, `min(120, 12 + 7 * name length)`; a card shows at most 3 label chips and a "+n" chip (§3.8), so the sum is bounded.
+3. `height = max(72, 24 + 16 + 4 + 20 * titleLines + (chipRows > 0 ? 8 + 20 * chipRows : 0))` (padding, identifier line, gap, title lines, property rows). The result is in `[72, 136]`.
+
+**What changes a height:** the issue's title, its labels (when Labels is shown), whether other chips have a value (an issue with no due date or estimate shows no chip for it), and the view's display properties. The grid caches one height per issue and rebuilds a column's offsets only when one of those changes for an issue in that column. A live edit that changes a height above the viewport keeps the visible cards in place (scroll anchoring by the first visible card's offset).
+
+**Why not measure:** measuring needs the card in the DOM, so the window couldn't be computed for 10,000 issues and a scroll would reflow. It also breaks design-system §5.4 ("no measuring on render").
 
 ## 5. Sync & permissions
 
@@ -382,6 +406,8 @@ The header's right side (design-system §3) shows, in order: the filter button (
 | E22 | A view state written by a newer client (an unknown grouping, a property M2 doesn't know) | Read field by field: unknown values fall back to their defaults; unknown properties are dropped (§4.1). |
 | E23 | A drop changes the column and the lane, and the lane's change is refused (e.g. the assignee can't see the team) | Nothing is sent; the whole drop is refused with the lane's reason. |
 | E24 | A view holds 10,000 issues in one status column | The column is a virtual list; only visible cards plus overscan are mounted (AC-17). |
+| E25 | Someone edits a title or labels so a card above the viewport changes height | The column's offsets are rebuilt and the visible cards stay where they are (§4.5). |
+| E26 | A title is longer than two lines, or has one very long word | It is clamped at two lines with an ellipsis; the card height stays at the two-line value (AC-24). |
 
 ## 9. Acceptance criteria
 
@@ -405,17 +431,19 @@ The header's right side (design-system §3) shows, in order: the filter button (
 | AC-14 | **Leak:** `position.after` / `before` naming a private team's issue is `NOT_FOUND` for a non-member and for an API key outside the team, identical to an unknown id, and writes nothing; the key computed for "after A" is the same whether or not a private issue the actor can't see lies between A and its visible successor. | leak test (Postgres allowed) |
 | AC-15 | Keys never exceed 128 characters: past the limit the server re-spaces the neighbourhood, keeps every issue's relative order, logs `U` for each re-spaced row with no history and no `updatedAt` change, and takes its locks in SPEC-011 §4.8's order (the retry of §4.3 item 6). | unit (key function) + property (order preserved) + integration ⏸ |
 | AC-16 | Display properties show and hide exactly their columns and card fields; the defaults equal M1's columns; Title is always shown; < 768 px rows show the compact set. | unit + story |
-| AC-17 | `VirtualGrid` mounts only the columns and cards in view plus a fixed overscan for any board size, keeps the focused card mounted, and computes positions without measuring; with 10,000 issues (one column, and spread over 10 columns with 5 lanes) scrolling stays at 60 fps in both layouts. | unit (window arithmetic) + perf ⏸ |
+| AC-17 | `VirtualGrid` mounts only the columns and cards in view plus a fixed overscan for any board size, keeps the focused card mounted, and computes positions from `cardHeight` (§4.5) without measuring; with 10,000 issues (one column, and spread over 10 columns with 5 lanes) scrolling stays at 60 fps in both layouts. | unit (window arithmetic) + perf ⏸ |
 | AC-18 | Board focus: `J`/`K`/`↑`/`↓` move within a column and across lanes, `←`/`→` to the nearest card of the next visible column, `Enter` opens; focus survives live moves and returns on revisit (SPEC-012 AC-5 extended to two dimensions). | unit (board focus model) |
 | AC-19 | Every binding of §3.11 is registered with a command, shows in `?`, matches Linear's panel, passes the conflict and reserved-keys tests (`Mod+B` doesn't steal the editor's bold), and the `Alt` chords match on `event.code`. | unit (registry, conflicts) |
 | AC-20 | The commands of §3.12 appear in the list context only, apply their change, and are unavailable where §3.7 says. | unit (command sources) |
 | AC-21 | Accessibility: the list exposes the levels of §7.4; the board exposes groups, lists, `aria-setsize` and `aria-posinset`, named cards and lanes; moves and refusals are announced; every new component passes axe in light and dark. | unit (announcer) + story (axe) |
 | AC-22 | `issue.list` accepts `orderBy: estimate` (nulls last) and its order matches `compareIssues` for Estimate over the same rows. | unit (list model) + integration ⏸ |
 | AC-23 | Group-by and order-by on a view mixing teams: named status groups merge same-name statuses in category order; label groups merge same-name labels; a drop into a named group sets the issue's own team's status (or refuses, E8). | unit |
+| AC-24 | `cardHeight` is a pure function: the same input gives the same height; the height is a positive integer in [72, 136]; a longer title never gives a smaller height; adding a chip never gives a smaller height; an empty title and a title of 10,000 characters both stay in bounds; no input throws. The rendered BoardCard has exactly that height. | unit + property (fast-check over titles and chip lists) + story (rendered height equals `cardHeight`) |
 
 ## 10. Metrics & performance
 
 - A view of 10,000 issues: first paint < 200 ms from the replica in either layout; 60 fps scrolling (NFR-04, FR-VIEW-14). `groupIssues` over 10,000 issues with grouping and sub-grouping < 50 ms on the reference laptop (perf ⏸).
+- `cardHeight` over 10,000 issues < 20 ms; rebuilding one column's offsets after a single change < 1 ms for 1,000 cards (perf ⏸).
 - A property change by drop or key paints in < 16 ms (NFR-01); a reorder paints in < 16 ms.
 - Re-spacing (§4.3 item 6) usually writes 101 rows, and never more than 1,001.
 - No new log events.
@@ -424,19 +452,19 @@ The header's right side (design-system §3) shows, in order: the filter button (
 
 | # | Question | Proposed default |
 |---|---|---|
-| Q1 | **Manual order design** (needs an ADR, §12): add `position {after, before}` to `issue.update`, or a separate `issue.move` operation? And how to keep keys short: re-space up to 50 issues on each side when a key passes 128 characters (§4.3 item 6), or something else (a nightly re-key, no limit)? | `position` on `issue.update` (a drop that changes a property and the position is one operation and one undo step); the 128-character limit with neighbourhood re-spacing, retried with all locks in id order. Recorded in a new ADR, "Shared manual order of issues". |
+| Q1 | **Decided, see D5.** **Manual order design** (needs an ADR, §12): add `position {after, before}` to `issue.update`, or a separate `issue.move` operation? And how to keep keys short: re-space up to 50 issues on each side when a key passes 128 characters (§4.3 item 6), or something else (a nightly re-key, no limit)? | `position` on `issue.update` (a drop that changes a property and the position is one operation and one undo step); the 128-character limit with neighbourhood re-spacing, retried with all locks in id order. Recorded in a new ADR, "Shared manual order of issues". |
 | Q2 | **Decided, see D1.** Completed issues choices: the PRD's All · Past week · Past month · None, or more (past day, past 3 months)? | All · Past day · Past week · Past month · None; "past month" is the last 30 days (filter durations have no months, SPEC-003 §7.4). |
 | Q3 | **Decided, see D2.** Show empty groups: one setting for both layouts, or one per layout? | One per layout, off in both (§4.1). |
-| Q4 | Ordering by Estimate (the PRD's; Linear's ordering list has it too): largest or smallest first? Direction not observable in Linear (the team checked has no estimates). | Largest first, no estimate last. |
-| Q5 | Priority ordering ties: keep M1's tie-break (most recently updated, then number, SPEC-012 D17) or use manual order like every other ordering? | Keep D17, so the M1 list doesn't change. |
+| Q4 | **Decided, see D6.** Ordering by Estimate (the PRD's; Linear's ordering list has it too): largest or smallest first? Direction not observable in Linear (the team checked has no estimates). | Largest first, no estimate last. |
+| Q5 | **Decided, see D7.** Priority ordering ties: keep M1's tie-break (most recently updated, then number, SPEC-012 D17) or use manual order like every other ordering? | Keep D17, so the M1 list doesn't change. |
 | Q6 | **Decided, see D3.** Group order for Assignee and Priority: where do "No assignee" and "No priority" go? | Users by display name, then No assignee last; priority Urgent → Low, then No priority last. |
-| Q7 | Dragging within a group when ordering isn't Manual: do nothing with a hint, or switch the view to Manual? | Do nothing, with the hint "Order by Manual to move issues within a group." |
-| Q8 | Card height: fixed per view (two title lines reserved, so short titles leave space), or measured per card? Observed in Linear's web app on 2026-11-25: its cards vary in height with their labels and projects. Still open. Measuring conflicts with design-system §5.4 ("no measuring on render") and the 60 fps budget. | Fixed: 72 px with two title lines and one property row. |
+| Q7 | **Decided, see D8.** Dragging within a group when ordering isn't Manual: do nothing with a hint, or switch the view to Manual? | Do nothing, with the hint "Order by Manual to move issues within a group." |
+| Q8 | **Decided, see D9.** Card height: fixed per view (two title lines reserved, so short titles leave space), or measured per card? Observed in Linear's web app on 2026-11-25: its cards vary in height with their labels and projects. Measuring conflicts with design-system §5.4 ("no measuring on render") and the 60 fps budget. | Varies, as in Linear: computed from the card's data by a pure function (§4.5), never measured (D9). |
 | Q9 | **Decided, see D4.** Copy Linear's "a keyboard or command-menu change of the grouped property on a manually ordered board moves the issue to the top of its new column" (§3.7)? It changes the shared order for everyone. | Copy it, on boards ordered manually only. |
-| Q10 | Does a position-only move change `updatedAt`, write history or emit `issue.updated` (webhooks, M6)? | None of the three. |
-| Q11 | Drag and drop in-house on pointer events, or a library (for example dnd-kit)? | In-house; no new dependency. |
-| Q12 | Offer Team grouping (Linear has it; the PRD's list doesn't) on multi-team views? | Yes, on views that can hold several teams; not droppable until M3. |
-| Q13 | Offer grouping by a specific label group in addition to Label (Linear's board offers both "Label" and "Label group")? | Yes, one entry per label group. |
+| Q10 | **Decided, see D10.** Does a position-only move change `updatedAt`, write history or emit `issue.updated` (webhooks, M6)? | None of the three. |
+| Q11 | **Decided, see D11.** Drag and drop in-house on pointer events, or a library (for example dnd-kit)? | In-house; no new dependency. |
+| Q12 | **Decided, see D12.** Offer Team grouping (Linear has it; the PRD's list doesn't) on multi-team views? | Yes, on views that can hold several teams; not droppable until M3. |
+| Q13 | **Decided, see D13.** Offer grouping by a specific label group in addition to Label (Linear's board offers both "Label" and "Label group")? | Yes, one entry per label group. |
 
 ## Decisions
 
@@ -446,6 +474,15 @@ The header's right side (design-system §3) shows, in order: the filter button (
 | D2 | Q3: show empty groups, one setting or one per layout | **Decided by the user on 2026-11-25** ("we want same as Linear"): off by default in both layouts, with a separate toggle per layout; the board calls it "Show empty columns", the list "Show empty groups". An empty column is therefore a drop target only while its toggle is on. Checked in Linear's web app on 2026-11-25. |
 | D3 | Q6: group order for Assignee and Priority | **Decided by the user on 2026-11-25** ("we want same as Linear"): grouped by assignee, members are alphabetical by display name (case-insensitive) and "No assignee" is last; "No priority" is last. Checked in Linear's web app on 2026-11-25. |
 | D4 | Q9: keyboard change of the grouped property on a manually ordered board | **Decided by the user on 2026-11-25** ("we want same as Linear"): the issue lands at the top of the new column, with no toast. This is the spec's default (§3.7). Checked in Linear's web app on 2026-11-25. |
+| D5 | Q1: manual order design | **Decided by the user on 2026-11-25:** accepted the proposed default: `position` on `issue.update` (one operation and one undo step for a drop that changes a property and the position), with the 128-character key limit and neighbourhood re-spacing retried with all locks in id order, recorded in a new ADR, "Shared manual order of issues" (ADR-0026). |
+| D6 | Q4: ordering by Estimate direction | **Decided by the user on 2026-11-25:** accepted the proposed default: largest first, no estimate last. |
+| D7 | Q5: Priority ordering ties | **Decided by the user on 2026-11-25:** accepted the proposed default: keep SPEC-012 D17, so the M1 list doesn't change. |
+| D8 | Q7: dragging within a group when ordering isn't Manual | **Decided by the user on 2026-11-25:** accepted the proposed default: do nothing, with the hint "Order by Manual to move issues within a group." |
+| D9 | Q8: card height | **Decided by the user on 2026-11-25:** cards vary in height like Linear's, computed from data, not measured. The height is a pure function of the title and the chips (§4.5), so virtualization stays smooth at 10k+ issues and design-system §5.4's "no measuring on render" holds. This replaces the proposed fixed 72 px. |
+| D10 | Q10: position-only move and `updatedAt`, history, `issue.updated` | **Decided by the user on 2026-11-25:** accepted the proposed default: a position-only move changes none of the three. |
+| D11 | Q11: drag and drop, in-house or a library | **Decided by the user on 2026-11-25:** accepted the proposed default: in-house on pointer events, no new dependency. |
+| D12 | Q12: Team grouping on multi-team views | **Decided by the user on 2026-11-25:** accepted the proposed default: offered on views that can hold several teams, not droppable until M3. |
+| D13 | Q13: grouping by a specific label group | **Decided by the user on 2026-11-25:** accepted the proposed default: one entry per label group, in addition to Label. |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -463,8 +500,8 @@ The header's right side (design-system §3) shows, in order: the filter button (
 | permissions.md | §5 leak checklist | Add: "`issue.update` `position` neighbours resolve as `IssueRef` (`NOT_FOUND` for an invisible issue), and the key computed for a move doesn't depend on invisible issues (SPEC-020 AC-14)." | No |
 | sync-protocol.md | §10 | Manual-order moves join the convergence property generator (SPEC-020 AC-13). | No |
 | shortcuts.md | §3.3 | Mark M2 keys live: `Mod+B` (`whileTyping: false`), `Shift+V`, `Alt+↑`/`↓`, `Alt+Shift+↑`/`↓`, `Alt+←`/`→` (board), `←`/`→` (board focus), `T` also on sub-group and lane headers. Replace the row "`Mod+Shift+←` / `→` (board)" with `Alt+←` / `Alt+→` (§3.9's reserved keys). Remove these keys from §3.9's reserved list. | No |
-| design-system.md | §5.3 BoardColumn · BoardCard | "`Mod+Shift+←/→` moves the focused card between columns" → "`Alt+←/→`"; add the column ⋯ menu (Hide column), Hidden columns, swimlanes, fixed card height (two title lines). Add DisplayOptions, SwimlaneHeader, HiddenColumns, VirtualGrid, DropIndicator to the inventory. | No |
-| design-system.md | §2.5 | Add `--board-column-width` (320) and the lane header height (32). | No |
+| design-system.md | §5.3 BoardColumn · BoardCard | "`Mod+Shift+←/→` moves the focused card between columns" → "`Alt+←/→`"; add the column ⋯ menu (Hide column), Hidden columns, swimlanes, card height computed from data (§4.5). Add DisplayOptions, SwimlaneHeader, HiddenColumns, VirtualGrid, DropIndicator to the inventory. | No |
+| design-system.md | §2.5 | Add `--board-column-width` (320) and the lane header height (32). Board card height is "minimum 72, maximum 136, computed from the card's data (SPEC-020 §4.5)". | No |
 | command-menu.md | §2 Toggles | Add the display commands of SPEC-020 §3.12 (list context). | No |
 | SPEC-005 | §3 "URL state" | "filters and display (M2) are encoded in query params" → "filters (M2, SPEC-021) are encoded in the URL; display options are not (as Linear)". | No |
 | PRD | FR-VIEW-03, 04 | FR-VIEW-03: add Team and label-group grouping (Q12, Q13); project and cycle grouping arrive with M3. FR-VIEW-04: ordering names follow Linear (Last created, Last updated), and Title and Assignee are added to the options (Linear's web app, 2026-11-25); FR-VIEW-03 also gains Status type grouping. | No |
