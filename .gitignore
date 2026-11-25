@@ -15,3 +15,6 @@ test-results/
 # Personal Claude Code overrides (shared config is committed)
 .claude/settings.local.json
 CLAUDE.local.md
+
+# Slice worktrees (one per plan slice, removed after merge)
+.claude/worktrees/

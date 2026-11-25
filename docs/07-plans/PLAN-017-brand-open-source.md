@@ -78,11 +78,19 @@ SPEC-001 keeps emails image-free on purpose. This slice would put `email-lockup.
 > - **Deviation:** the test file sits in `packages/config/test/` (as the test plan allowed) rather than under `scripts/`, so the existing `pnpm test` gate runs it.
 > - **Notes for later:** `pnpm licenses` only lists what is installed, so on Linux the libvips package is `@img/sharp-libvips-linux-*`; the pattern covers it, but only the macOS arm64 install was checked here. Nothing was pushed, no remote was added and nothing was made public.
 
-### S4: Publish readiness · S · _(needs S3)_
+### S4: Publish readiness · S · _(needs S3)_ · ✅ Done 2026-11-25
 
 - Scan the **full git history** for secrets (keys, tokens, passwords, private hosts and `.env` files). Report each hit by file and commit only, never by value. Any real secret means rotating it, and then rewriting history or publishing fresh history; the user decides which.
 - Decide with the user which internal material stays private: `docs/07-plans/sessions/`, `.claude/`, review notes, and anything naming people.
 - Write `docs/publishing.md`: the checklist to run on the day the repo goes public (scan, the private-material list, repo settings: private vulnerability reporting, branch protection, the licence detected by the host).
+
+> **As built (2026-11-25).**
+> - **Scan:** a read-only pattern scan of all 380 commits on every branch found no real secret. The only hits were test fixtures, documented examples and the all-zero dev `SESSION_SECRET`. Details are in the [coordination log](sessions/p017-coordination.md). `docs/publishing.md` repeats the scan with gitleaks (values redacted) on publishing day.
+> - **The user's decisions:** publish the full history as it is (the author's own email is on the commits, and that is fine). Publish `docs/07-plans/sessions/` and `.claude/`. The home is `github.com/s-ayush/surface`.
+> - **Gap fixed:** CI runs `pnpm lint`, not `pnpm check`, so S3's `licenses:check` never ran in CI. It is now part of the root `lint` script, and the CI step name says so.
+> - **`.gitignore`:** now ignores `.claude/worktrees/`, so a slice worktree can't be committed.
+> - **`docs/publishing.md`:** the day-of checklist. Before the push: the gate, a clean tree and the scan. Then create the repo private and push. While still private: private vulnerability reporting, rules for `main`, the About fields, features and Actions permissions. Then go public, verify, and record it.
+> - **Not done, as the user decided:** nothing has been pushed, no remote has been added, and no image has been published.
 
 ## 5. Test plan (behaviour → test)
 

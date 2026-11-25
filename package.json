@@ -13,7 +13,7 @@
     "dev:db:down": "node scripts/dev.mjs db:down",
     "db:migrate": "node scripts/dev.mjs db:migrate",
     "build": "turbo run build",
-    "lint": "turbo run lint lint:deps lint:css format:check",
+    "lint": "turbo run lint lint:deps lint:css format:check licenses:check",
     "lint:deps": "depcruise apps packages tests --config .dependency-cruiser.cjs",
     "typecheck": "turbo run typecheck",
     "test": "SURFACE_VITEST_WORKERS=1 turbo run test",
