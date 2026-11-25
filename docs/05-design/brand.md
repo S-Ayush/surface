@@ -127,6 +127,7 @@ Surface speaks like a calm, competent teammate. The product's content rules ([de
 | Email (magic link, invite) | `email-lockup.png` (2×, shown at 157 × 32) | Inline it as a CID attachment, so the email never fetches a remote image |
 | Docs and README | `surface-lockup.svg` / `-dark.svg` in a `<picture>` that switches on `prefers-color-scheme` | |
 | Docker image | `org.opencontainers.image.title=Surface`, the descriptor as `…description`, and `…licenses=MIT` | `docker/Dockerfile` |
+| Website | The lockup in the nav and footer, the mark above the closing line, the surface line cutting the hero, `og-image.png` (1200 × 630) for link previews | `apps/site/` (PLAN-018). Copies of the assets; a test fails on drift |
 
 **Wired (PLAN-017 S1, 2026-11-25):** the favicon, icons and manifest (`apps/web/src/brand/`), the sidebar fallback and the lockup on sign-in, the other public pages and the setup wizard (`SurfaceMark` and `SurfaceLockup` in `packages/ui`). The README shows the lockup and the descriptor (PLAN-017 S3). The Docker image carries the title, the descriptor and `licenses=MIT` (PLAN-017 S5). **Not wired yet:** the email header (PLAN-017 S2, held). The assets live under `docs/05-design/brand/assets/`; the app's copies in `apps/web/src/brand/` must match them.
 

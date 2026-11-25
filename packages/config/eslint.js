@@ -110,6 +110,11 @@ export function surfaceEslint({ rootDir }) {
       languageOptions: { globals: globals.node },
     },
     {
+      // The landing page's script runs in the browser as a classic script (PLAN-018).
+      files: ['apps/site/public/**/*.js'],
+      languageOptions: { globals: globals.browser, sourceType: 'script' },
+    },
+    {
       files: ['apps/server/**/*.ts'],
       languageOptions: { globals: globals.node },
     },

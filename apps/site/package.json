@@ -1,0 +1,19 @@
+{
+  "name": "@surface/site",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "The public landing page: static files in public/, no build step (PLAN-018).",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "preview": "node scripts/preview.mjs"
+  },
+  "devDependencies": {
+    "@surface/config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "jsdom": "^31.0.0"
+  }
+}

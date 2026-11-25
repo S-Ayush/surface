@@ -1,0 +1,2864 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Surface: the open-source, self-hosted issue tracker</title>
+    <meta
+      name="description"
+      content="Surface is a fast, keyboard-first issue tracker you host yourself. Local-first sync, works offline, MIT licensed, no telemetry. One Docker image and PostgreSQL."
+    />
+    <link rel="canonical" href="https://s-ayush.github.io/surface/" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#F3F4F6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0B0D0F" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="assets/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+    <link rel="preload" href="fonts/inter.woff2" as="font" type="font/woff2" crossorigin />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Surface" />
+    <meta property="og:title" content="Surface: the open-source, self-hosted issue tracker" />
+    <meta
+      property="og:description"
+      content="The only open-source issue tracker your team needs. Keyboard-first, local-first and yours to host. MIT licensed."
+    />
+    <meta property="og:url" content="https://s-ayush.github.io/surface/" />
+    <meta property="og:image" content="https://s-ayush.github.io/surface/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The Surface logo and the line: The only open-source issue tracker your team needs."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Surface: the open-source, self-hosted issue tracker" />
+    <meta
+      name="twitter:description"
+      content="Keyboard-first, local-first and yours to host. MIT licensed, no telemetry."
+    />
+    <meta name="twitter:image" content="https://s-ayush.github.io/surface/assets/og-image.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://s-ayush.github.io/surface/#website",
+            "url": "https://s-ayush.github.io/surface/",
+            "name": "Surface",
+            "description": "The only open-source issue tracker your team needs."
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://s-ayush.github.io/surface/#software",
+            "name": "Surface",
+            "url": "https://s-ayush.github.io/surface/",
+            "description": "A fast, keyboard-first, local-first issue tracker for small teams, self-hosted with one Docker image and PostgreSQL.",
+            "applicationCategory": "BusinessApplication",
+            "applicationSubCategory": "Issue tracker",
+            "operatingSystem": "Linux (Docker), any modern browser",
+            "license": "https://opensource.org/license/mit",
+            "isAccessibleForFree": true,
+            "softwareVersion": "Alpha",
+            "image": "https://s-ayush.github.io/surface/assets/og-image.png",
+            "codeRepository": "https://github.com/s-ayush/surface",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "featureList": [
+              "Local-first sync: issues open and change without a network round trip",
+              "Works offline and queues edits until you reconnect",
+              "Keyboard-first: every action in the command menu",
+              "Rich-text editor, comments and attachments",
+              "Self-hosted: one Docker image and PostgreSQL",
+              "No telemetry"
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <style>
+      /* Layout: one column on the app ground. The hero is cut by the brand's surface line (brand.md §2):
+         the copy sits above it, the product demo straddles it, and the deep body runs below. */
+      @font-face {
+        font-family: 'Inter';
+        src: url('fonts/inter.woff2') format('woff2');
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'JetBrains Mono';
+        src: url('fonts/jetbrains-mono.woff2') format('woff2');
+        font-weight: 100 800;
+        font-style: normal;
+        font-display: swap;
+      }
+      :root {
+        --ground: #f3f4f6;
+        --paper: #fcfcfd;
+        --raised: #ffffff;
+        --ink: #16181d;
+        --muted: #4a5060;
+        --faint: #5f6676;
+        --hair: #dcdfe4;
+        --hair-soft: #eceef1;
+        --hover: #eff1f3;
+        --active: #e6e9ed;
+        --accent: #0a7a77;
+        --accent-hover: #086a67;
+        --on-accent: #ffffff;
+        --accent-soft: #e2f3f2;
+        --focus: #16908c;
+        --tide: #2ec4bf;
+        --teal: #0a7a77;
+        --deep: #04201f;
+        --deep-2: #073836;
+        --mist: #eceef1;
+        --ok: #2b9255;
+        --warn: #b86e0c;
+        --info: #3569d4;
+        --danger: #cc3636;
+        --label-violet: #7c5cd6;
+        --label-pink: #c2417a;
+        --label-blue: #3569d4;
+        --label-orange: #c26a1b;
+        --shadow-1:
+          0 0 0 0.5px rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 3px 9px rgb(0 0 0 / 0.04);
+        --shadow-2:
+          0 0 0 0.5px rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.1),
+          0 24px 64px rgb(0 0 0 / 0.12);
+        --font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --wrap: 1160px;
+        --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+        color-scheme: light;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ground: #0b0d0f;
+          --paper: #121518;
+          --raised: #1a1e22;
+          --ink: #eceef1;
+          --muted: #b2b8c3;
+          --faint: #8c94a1;
+          --hair: #262b31;
+          --hair-soft: #1f2329;
+          --hover: #1a1e23;
+          --active: #22272d;
+          --accent: #2ec4bf;
+          --accent-hover: #4ed2cd;
+          --on-accent: #04201f;
+          --accent-soft: #123130;
+          --focus: #4ed2cd;
+          --ok: #4fc47d;
+          --warn: #eba33f;
+          --info: #6e9ef6;
+          --danger: #f06868;
+          --label-violet: #a58cf0;
+          --label-pink: #ec79ab;
+          --label-blue: #6e9ef6;
+          --label-orange: #ec9a55;
+          --shadow-1: 0 0 0 0.5px #2a2f36, 0 1px 1px rgb(0 0 0 / 0.12), 0 3px 8px rgb(0 0 0 / 0.12);
+          --shadow-2:
+            0 0 0 0.5px #2a2f36, 0 2px 8px rgb(0 0 0 / 0.2), 0 24px 64px rgb(0 0 0 / 0.45);
+          color-scheme: dark;
+        }
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+        scroll-behavior: smooth;
+        scroll-padding-top: 72px;
+      }
+      body {
+        margin: 0;
+        background: var(--ground);
+        color: var(--ink);
+        font: 450 16px/1.6 var(--font);
+        font-feature-settings: 'cv11', 'ss01';
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      img,
+      svg {
+        display: block;
+        max-width: 100%;
+      }
+      a {
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+      .wrap {
+        width: 100%;
+        max-width: var(--wrap);
+        margin-inline: auto;
+        padding-left: max(20px, env(safe-area-inset-left, 0px));
+        padding-right: max(20px, env(safe-area-inset-right, 0px));
+      }
+      .skip {
+        position: absolute;
+        left: 12px;
+        top: -48px;
+        background: var(--accent);
+        color: var(--on-accent);
+        padding: 8px 12px;
+        border-radius: 6px;
+        z-index: 100;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .skip:focus {
+        top: 12px;
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        text-wrap: balance;
+      }
+      p {
+        margin: 0;
+      }
+      kbd,
+      .kbd {
+        font: 500 12px/1 var(--font);
+        display: inline-grid;
+        place-items: center;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 5px;
+        border-radius: 4px;
+        background: var(--paper);
+        color: var(--muted);
+        box-shadow:
+          0 0 0 0.5px var(--hair),
+          0 1px 0 var(--hair);
+      }
+
+      /* ---------- Nav ---------- */
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: color-mix(in srgb, var(--ground) 82%, transparent);
+        backdrop-filter: saturate(1.4) blur(14px);
+        -webkit-backdrop-filter: saturate(1.4) blur(14px);
+        border-bottom: 0.5px solid transparent;
+        transition: border-color 0.2s;
+      }
+      .nav.scrolled {
+        border-bottom-color: var(--hair);
+      }
+      .nav .wrap {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        height: 60px;
+      }
+      .nav .brand {
+        display: flex;
+        color: var(--ink);
+        flex: none;
+      }
+      .nav .brand svg {
+        height: 24px;
+        width: auto;
+      }
+      .nav ul {
+        display: flex;
+        gap: 4px;
+        list-style: none;
+        margin: 0 0 0 8px;
+        padding: 0;
+      }
+      .nav ul a {
+        display: block;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--muted);
+        text-decoration: none;
+        transition:
+          background-color 0.15s,
+          color 0.15s;
+      }
+      .nav ul a:hover {
+        background: var(--hover);
+        color: var(--ink);
+        transition-duration: 0s;
+      }
+      .nav .end {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        padding: 0 18px;
+        border-radius: 8px;
+        font: 500 15px/1 var(--font);
+        text-decoration: none;
+        border: 0;
+        cursor: pointer;
+        transition:
+          background-color 0.15s,
+          box-shadow 0.15s,
+          transform 0.15s var(--ease-out);
+        white-space: nowrap;
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: var(--on-accent);
+        box-shadow:
+          inset 0 1px 0 rgb(255 255 255 / 0.15),
+          0 1px 2px rgb(0 0 0 / 0.12);
+      }
+      .btn-primary:hover {
+        background: var(--accent-hover);
+        transition-duration: 0s;
+      }
+      .btn-ghost {
+        background: var(--paper);
+        color: var(--ink);
+        box-shadow:
+          0 0 0 0.5px var(--hair),
+          0 1px 1px rgb(0 0 0 / 0.04);
+      }
+      .btn-ghost:hover {
+        background: var(--raised);
+        box-shadow:
+          0 0 0 0.5px var(--faint),
+          0 1px 1px rgb(0 0 0 / 0.04);
+        transition-duration: 0s;
+      }
+      .btn-sm {
+        height: 32px;
+        padding: 0 12px;
+        font-size: 14px;
+        border-radius: 7px;
+      }
+      .btn svg {
+        width: 16px;
+        height: 16px;
+      }
+      @media (max-width: 760px) {
+        .nav ul {
+          display: none;
+        }
+        .nav .end .btn-ghost {
+          display: none;
+        }
+      }
+
+      /* ---------- Hero ---------- */
+      .hero {
+        position: relative;
+        overflow: hidden;
+      }
+      .hero-copy {
+        display: grid;
+        justify-items: center;
+        text-align: center;
+        gap: 22px;
+        padding-block: clamp(48px, 9vw, 104px) 0;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px 5px 6px;
+        border-radius: 999px;
+        background: var(--paper);
+        box-shadow: 0 0 0 0.5px var(--hair);
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .pill b {
+        font-weight: 600;
+        color: var(--on-accent);
+        background: var(--accent);
+        border-radius: 999px;
+        padding: 1px 8px;
+        font-size: 12px;
+      }
+      .hero h1 {
+        font-size: clamp(38px, 6.4vw, 76px);
+        line-height: 1.02;
+        letter-spacing: -0.035em;
+        max-width: 16ch;
+      }
+      .hero h1 .accent {
+        color: var(--accent);
+        white-space: nowrap;
+      }
+      .hero .lead {
+        font-size: clamp(17px, 2vw, 20px);
+        line-height: 1.55;
+        color: var(--muted);
+        max-width: 40em;
+      }
+      .ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: center;
+      }
+      .ctas .btn {
+        height: 44px;
+        padding: 0 20px;
+        font-size: 15px;
+      }
+      .facts {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 6px 22px;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-size: 14px;
+        color: var(--faint);
+      }
+      .facts li {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .facts svg {
+        width: 15px;
+        height: 15px;
+        color: var(--accent);
+      }
+
+      /* The surface line and the deep body below it. */
+      .stage {
+        position: relative;
+        margin-top: clamp(40px, 6vw, 64px);
+      }
+      .waterline {
+        position: absolute;
+        inset: clamp(120px, 16vw, 200px) 0 0 0;
+        pointer-events: none;
+      }
+      .waterline svg {
+        width: 100%;
+        height: 180px;
+      }
+      .waterline .body {
+        fill: var(--deep);
+      }
+      .waterline .gap {
+        fill: none;
+        stroke: var(--ground);
+        stroke-width: 9;
+      }
+      .waterline .glint {
+        fill: none;
+        stroke: var(--tide);
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-dasharray: 1;
+        stroke-dashoffset: 0;
+      }
+      .waterline .below {
+        position: absolute;
+        top: 178px;
+        inset-inline: 0;
+        bottom: 0;
+        background: radial-gradient(80% 60% at 72% 42%, var(--deep-2) 0%, var(--deep) 70%);
+      }
+      .stage .wrap {
+        position: relative;
+      }
+
+      /* ---------- The demo window ---------- */
+      .demo-wrap {
+        position: relative;
+        max-width: 1040px;
+        margin-inline: auto;
+      }
+      .demo {
+        --row: 40px;
+        position: relative;
+        display: grid;
+        grid-template-columns: 208px 1fr;
+        height: 480px;
+        border-radius: 14px;
+        background: var(--ground);
+        box-shadow: var(--shadow-2);
+        overflow: hidden;
+        font-size: 13px;
+        line-height: 20px;
+        text-align: left;
+        outline: none;
+      }
+      .demo:focus-visible {
+        box-shadow:
+          var(--shadow-2),
+          0 0 0 2px var(--ground),
+          0 0 0 4px var(--focus);
+      }
+      .demo-side {
+        padding: 10px 8px;
+        display: grid;
+        align-content: start;
+        gap: 2px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .demo-ws {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px 10px;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .demo-ws svg {
+        width: 18px;
+        height: 18px;
+      }
+      .demo-ws .av {
+        margin-left: auto;
+      }
+      .demo-nav {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 28px;
+        padding: 0 8px;
+        border-radius: 6px;
+      }
+      .demo-nav svg {
+        width: 15px;
+        height: 15px;
+        color: var(--faint);
+      }
+      .demo-nav.on {
+        background: var(--active);
+        color: var(--ink);
+      }
+      .demo-nav .count {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--faint);
+      }
+      .demo-label {
+        font-size: 12px;
+        color: var(--faint);
+        padding: 14px 8px 4px;
+      }
+      .team-dot {
+        width: 15px;
+        height: 15px;
+        border-radius: 4px;
+        display: grid;
+        place-items: center;
+        font-size: 9px;
+        font-weight: 700;
+        color: #fff;
+        background: var(--teal);
+      }
+      .team-dot.alt {
+        background: var(--label-violet);
+      }
+      .demo-main {
+        position: relative;
+        margin: 8px 8px 8px 0;
+        border-radius: 10px;
+        background: var(--paper);
+        box-shadow: 0 0 0 0.5px var(--hair);
+        display: grid;
+        grid-template-rows: 44px 1fr;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .demo-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 14px;
+        border-bottom: 0.5px solid var(--hair);
+        color: var(--muted);
+        font-weight: 500;
+        min-width: 0;
+      }
+      .demo-head .crumb {
+        color: var(--ink);
+      }
+      .demo-head .sep {
+        color: var(--faint);
+      }
+      .demo-head .k {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--faint);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .demo-list {
+        overflow: hidden;
+        padding: 4px 8px 8px;
+      }
+      .group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 34px;
+        padding: 0 10px;
+        margin-top: 4px;
+        border-radius: 8px;
+        background: var(--hover);
+        font-weight: 500;
+        color: var(--ink);
+      }
+      .group .n {
+        color: var(--faint);
+        font-weight: 450;
+      }
+      .row {
+        position: relative;
+        display: grid;
+        grid-template-columns: 20px 64px 20px 1fr auto 22px;
+        align-items: center;
+        gap: 8px;
+        height: var(--row);
+        padding: 0 10px;
+        border-radius: 8px;
+        cursor: default;
+        transition: background-color 0.15s;
+      }
+      .row:hover {
+        background: var(--hover);
+        transition-duration: 0s;
+      }
+      .row.focus {
+        background: var(--active);
+        box-shadow:
+          inset 2px 0 0 var(--accent),
+          inset 0 0 0 1px var(--focus);
+        transition-duration: 0s;
+      }
+      .row .id {
+        white-space: nowrap;
+        font-family: var(--font);
+        color: var(--faint);
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+      }
+      .row .title {
+        color: var(--ink);
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .row.flash {
+        animation: flash 0.7s var(--ease-out);
+      }
+      @keyframes flash {
+        from {
+          background: var(--accent-soft);
+        }
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: 999px;
+        box-shadow: 0 0 0 0.5px var(--hair);
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .chip i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      .av {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 9px;
+        font-weight: 600;
+        color: #16181d;
+      }
+      .ico {
+        width: 16px;
+        height: 16px;
+      }
+      .demo-input {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--ink);
+        font: 500 13px/20px var(--font);
+        outline: none;
+      }
+
+      /* Overlays inside the demo: picker and command menu. */
+      .overlay {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: start center;
+        padding-top: 70px;
+        z-index: 5;
+      }
+      .overlay[hidden] {
+        display: none;
+      }
+      .menu {
+        width: min(440px, calc(100% - 32px));
+        border-radius: 12px;
+        background: var(--raised);
+        box-shadow: var(--shadow-2);
+        overflow: hidden;
+        animation: pop 0.16s var(--ease-out);
+      }
+      @keyframes pop {
+        from {
+          transform: translateY(-4px) scale(0.98);
+          opacity: 0;
+        }
+      }
+      .menu .ctx {
+        display: flex;
+        gap: 6px;
+        padding: 10px 12px 0;
+      }
+      .menu .ctx span {
+        font-size: 12px;
+        color: var(--muted);
+        background: var(--hover);
+        border-radius: 6px;
+        padding: 2px 8px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .menu .q {
+        padding: 12px 14px;
+        border-bottom: 0.5px solid var(--hair);
+        font-size: 15px;
+      }
+      .menu ul {
+        list-style: none;
+        margin: 0;
+        padding: 6px;
+      }
+      .menu li {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 36px;
+        padding: 0 10px;
+        border-radius: 8px;
+        color: var(--ink);
+      }
+      .menu li.on {
+        background: var(--active);
+      }
+      .menu li .kbd {
+        margin-left: auto;
+      }
+      .menu li .check {
+        margin-left: auto;
+        color: var(--accent);
+      }
+      .menu .foot {
+        display: flex;
+        gap: 14px;
+        padding: 8px 14px;
+        border-top: 0.5px solid var(--hair);
+        font-size: 12px;
+        color: var(--faint);
+      }
+
+      /* Bottom-right: the key just pressed, and how long the local render took. */
+      .hud {
+        position: absolute;
+        left: 16px;
+        bottom: 16px;
+        display: flex;
+        flex-direction: column-reverse;
+        gap: 10px;
+        align-items: flex-start;
+        z-index: 6;
+        pointer-events: none;
+      }
+      .timing {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 10px;
+        border-radius: 999px;
+        background: var(--raised);
+        box-shadow: var(--shadow-1);
+        font: 500 12px/1 var(--mono);
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .timing i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ok);
+      }
+      .keycap {
+        min-width: 30px;
+        height: 30px;
+        padding: 0 8px;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font: 600 13px/1 var(--font);
+        background: var(--raised);
+        color: var(--ink);
+        box-shadow:
+          0 0 0 0.5px var(--hair),
+          0 2px 0 var(--hair),
+          var(--shadow-1);
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      .keycap.show {
+        animation: key 0.9s var(--ease-out);
+      }
+      @keyframes key {
+        0% {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        15% {
+          opacity: 1;
+          transform: translateY(0);
+        }
+        25% {
+          transform: translateY(2px);
+          box-shadow:
+            0 0 0 0.5px var(--hair),
+            0 0 0 var(--hair);
+        }
+        40% {
+          transform: translateY(0);
+        }
+        80% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+      .demo-hint {
+        margin-top: 16px;
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        color: var(--mist);
+        opacity: 0.85;
+        font-size: 14px;
+        position: relative;
+      }
+      .demo-hint kbd {
+        background: rgb(255 255 255 / 0.08);
+        color: var(--mist);
+        box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.22);
+      }
+      .demo-hint .live {
+        color: var(--tide);
+        font-weight: 500;
+      }
+      @media (max-width: 860px) {
+        .demo {
+          grid-template-columns: 1fr;
+          height: 440px;
+        }
+        .demo-side {
+          display: none;
+        }
+        .demo-main {
+          margin: 8px;
+        }
+        .row {
+          grid-template-columns: 62px 20px 1fr 22px;
+        }
+        .row > .ico:first-child {
+          display: none;
+        }
+        .hud {
+          left: auto;
+          right: 16px;
+          align-items: flex-end;
+          z-index: 4;
+        }
+        .row .chip {
+          display: none;
+        }
+        .demo-head .k span {
+          display: none;
+        }
+      }
+
+      /* ---------- Sections ---------- */
+      .deep {
+        background: var(--deep);
+        color: var(--mist);
+      }
+      .budgets {
+        position: relative;
+        padding-block: 56px 88px;
+        background: transparent;
+      }
+      .budgets ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0;
+      }
+      .budgets li:first-child {
+        border-left: 0;
+      }
+      .budgets li {
+        border-left: 1px solid rgb(255 255 255 / 0.1);
+        padding: 26px 24px;
+        display: grid;
+        gap: 6px;
+        align-content: start;
+      }
+      .budgets .num {
+        font-size: clamp(30px, 4vw, 42px);
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+        color: #fff;
+        font-variant-numeric: tabular-nums;
+      }
+      .budgets .num small {
+        font-size: 0.5em;
+        font-weight: 500;
+        color: var(--tide);
+        letter-spacing: -0.01em;
+        margin-left: 2px;
+      }
+      .budgets .what {
+        font-size: 14px;
+        color: rgb(236 238 241 / 0.75);
+        line-height: 1.5;
+      }
+      .budgets .note {
+        margin-top: 18px;
+        font-size: 13px;
+        color: rgb(236 238 241 / 0.55);
+      }
+      @media (max-width: 860px) {
+        .budgets ul {
+          grid-template-columns: 1fr 1fr;
+        }
+        .budgets li:nth-child(odd) {
+          border-left: 0;
+        }
+      }
+      @media (max-width: 460px) {
+        .budgets ul {
+          grid-template-columns: 1fr;
+        }
+        .budgets li {
+          border-left: 0;
+          padding-inline: 0;
+        }
+        .budgets li + li {
+          border-top: 1px solid rgb(255 255 255 / 0.1);
+        }
+      }
+
+      section.block {
+        padding-block: clamp(72px, 10vw, 128px);
+      }
+      .head {
+        display: grid;
+        gap: 14px;
+        margin-bottom: clamp(36px, 5vw, 56px);
+        max-width: 720px;
+      }
+      .head.center {
+        margin-inline: auto;
+        text-align: center;
+        justify-items: center;
+      }
+      .eyebrow {
+        font: 600 13px/1 var(--font);
+        letter-spacing: 0.04em;
+        color: var(--accent);
+      }
+      .head h2 {
+        font-size: clamp(30px, 4.2vw, 48px);
+        line-height: 1.08;
+        letter-spacing: -0.03em;
+      }
+      .head p {
+        font-size: 18px;
+        color: var(--muted);
+        max-width: 40em;
+      }
+
+      /* Pillars */
+      .pillars {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+      .card {
+        background: var(--paper);
+        border-radius: 14px;
+        box-shadow: var(--shadow-1);
+        padding: 28px;
+        display: grid;
+        gap: 14px;
+        align-content: start;
+        min-width: 0;
+      }
+      .card h3 {
+        font-size: 20px;
+        letter-spacing: -0.015em;
+      }
+      .card p {
+        color: var(--muted);
+        font-size: 15px;
+      }
+      .card .art {
+        height: 150px;
+        border-radius: 10px;
+        background: var(--ground);
+        box-shadow: inset 0 0 0 0.5px var(--hair);
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        position: relative;
+      }
+      @media (max-width: 900px) {
+        .pillars {
+          grid-template-columns: 1fr;
+        }
+      }
+      /* Pillar art: instant */
+      .art-instant {
+        display: grid;
+        gap: 10px;
+        width: 78%;
+      }
+      .bar {
+        display: grid;
+        grid-template-columns: 74px 1fr 52px;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--faint);
+      }
+      .bar .track {
+        height: 8px;
+        border-radius: 999px;
+        background: var(--hair-soft);
+        overflow: hidden;
+      }
+      .bar .fill {
+        height: 100%;
+        border-radius: inherit;
+        background: var(--faint);
+        transform-origin: left;
+      }
+      .bar.us .fill {
+        background: var(--accent);
+      }
+      .bar.us {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .bar span:last-child {
+        font-family: var(--mono);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .in-view .bar .fill {
+        animation: grow 1.1s var(--ease-out) both;
+      }
+      .in-view .bar.us .fill {
+        animation-duration: 0.25s;
+      }
+      @keyframes grow {
+        from {
+          transform: scaleX(0);
+        }
+      }
+      /* Pillar art: keys */
+      .keys {
+        display: grid;
+        grid-template-columns: repeat(4, auto);
+        gap: 8px;
+      }
+      .keys .k {
+        min-width: 44px;
+        height: 40px;
+        padding: 0 10px;
+        border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        font: 600 14px/1 var(--font);
+        color: var(--ink);
+        background: var(--raised);
+        box-shadow:
+          0 0 0 0.5px var(--hair),
+          0 2px 0 var(--hair);
+        transition:
+          transform 0.1s,
+          box-shadow 0.1s,
+          background-color 0.3s,
+          color 0.3s;
+      }
+      .keys .k.wide {
+        grid-column: span 2;
+      }
+      .keys .k.hit {
+        transform: translateY(2px);
+        box-shadow:
+          0 0 0 0.5px var(--accent),
+          0 0 0 var(--hair);
+        background: var(--accent-soft);
+        color: var(--accent);
+        transition-duration: 0s;
+      }
+      /* Pillar art: yours */
+      .own {
+        display: grid;
+        gap: 8px;
+        font: 500 12.5px/1.4 var(--mono);
+        color: var(--muted);
+        width: 80%;
+      }
+      .own div {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .own svg {
+        width: 15px;
+        height: 15px;
+        flex: none;
+        color: var(--accent);
+      }
+      .own .x svg {
+        color: var(--danger);
+      }
+
+      /* Sync simulation */
+      .sync {
+        display: grid;
+        grid-template-columns: 1fr 120px 1fr;
+        align-items: center;
+        gap: 0;
+        background: var(--paper);
+        border-radius: 16px;
+        box-shadow: var(--shadow-1);
+        padding: clamp(16px, 3vw, 32px);
+      }
+      .client {
+        border-radius: 12px;
+        background: var(--ground);
+        box-shadow: inset 0 0 0 0.5px var(--hair);
+        padding: 12px;
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+      }
+      .client header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 2px 4px 6px;
+      }
+      .client header .state {
+        margin-left: auto;
+        font-size: 12px;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+      }
+      .client header .state i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ok);
+      }
+      .client.offline header .state i {
+        background: var(--warn);
+      }
+      .srow {
+        display: grid;
+        grid-template-columns: 18px 62px 1fr;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 8px;
+        border-radius: 8px;
+        background: var(--paper);
+        box-shadow: 0 0 0 0.5px var(--hair-soft);
+        font-size: 13px;
+        min-width: 0;
+      }
+      .srow .title {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-weight: 500;
+      }
+      .srow .id {
+        white-space: nowrap;
+        font-family: var(--font);
+        color: var(--faint);
+        font-variant-numeric: tabular-nums;
+      }
+      .srow button {
+        all: unset;
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        border-radius: 5px;
+      }
+      .srow button:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      .srow.changed {
+        animation: flash 0.9s var(--ease-out);
+      }
+      .client .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-top: 6px;
+        font-size: 12px;
+        color: var(--faint);
+        min-height: 32px;
+      }
+      .switch {
+        all: unset;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12.5px;
+        font-weight: 500;
+        color: var(--muted);
+        border-radius: 6px;
+      }
+      .switch:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 3px;
+      }
+      .switch .track {
+        width: 30px;
+        height: 18px;
+        border-radius: 999px;
+        background: var(--accent);
+        position: relative;
+        transition: background-color 0.2s;
+        box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+      }
+      .switch .track::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 14px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #fff;
+        transition: left 0.2s var(--ease-out);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+      }
+      .switch[aria-checked='false'] .track {
+        background: var(--faint);
+      }
+      .switch[aria-checked='false'] .track::after {
+        left: 2px;
+      }
+      .queued {
+        margin-left: auto;
+        font: 500 12px/1 var(--mono);
+        color: var(--warn);
+      }
+      .hub {
+        position: relative;
+        height: 100%;
+        display: grid;
+        place-items: center;
+      }
+      .hub .wire {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        height: 0;
+        border-top: 1.5px dashed var(--hair);
+      }
+      .hub .server {
+        position: relative;
+        z-index: 1;
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        background: var(--raised);
+        box-shadow: var(--shadow-1);
+        display: grid;
+        place-items: center;
+        gap: 0;
+        text-align: center;
+      }
+      .hub .server svg {
+        width: 22px;
+        height: 22px;
+        color: var(--accent);
+      }
+      .hub .server span {
+        position: absolute;
+        top: calc(100% + 8px);
+        font-size: 11.5px;
+        color: var(--faint);
+        white-space: nowrap;
+        font-family: var(--mono);
+      }
+      .packet {
+        position: absolute;
+        top: calc(50% - 5px);
+        left: 0;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--tide);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--tide) 25%, transparent);
+        z-index: 2;
+        opacity: 0;
+      }
+      .sync-cap {
+        margin-top: 16px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 18px;
+        justify-content: center;
+        font-size: 13.5px;
+        color: var(--faint);
+      }
+      @media (max-width: 820px) {
+        .sync {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .hub {
+          height: 96px;
+        }
+        .hub .wire {
+          left: 50%;
+          right: auto;
+          top: 0;
+          bottom: 0;
+          height: auto;
+          border-top: 0;
+          border-left: 1.5px dashed var(--hair);
+        }
+        .hub .server span {
+          top: auto;
+          left: calc(100% + 10px);
+        }
+      }
+
+      /* Features */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        background: var(--hair);
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 0 0 0.5px var(--hair);
+      }
+      .feature {
+        background: var(--paper);
+        padding: 26px 24px 28px;
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }
+      .feature svg {
+        width: 22px;
+        height: 22px;
+        color: var(--accent);
+        margin-bottom: 6px;
+      }
+      .feature h3 {
+        font-size: 16px;
+        letter-spacing: -0.01em;
+      }
+      .feature p {
+        font-size: 14.5px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      @media (max-width: 980px) {
+        .features {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 520px) {
+        .features {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Self-host */
+      .host {
+        display: grid;
+        grid-template-columns: 1.25fr 1fr;
+        gap: clamp(24px, 4vw, 56px);
+        align-items: center;
+      }
+      .term {
+        border-radius: 14px;
+        background: #0b0d0f;
+        color: #d6dae0;
+        box-shadow: var(--shadow-2);
+        overflow: hidden;
+        font: 450 13.5px/1.75 var(--mono);
+        min-width: 0;
+      }
+      .term .bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 38px;
+        padding: 0 14px;
+        border-bottom: 0.5px solid #262b31;
+        color: #8c94a1;
+        font: 500 12px/1 var(--font);
+        grid-template-columns: none;
+      }
+      .term .bar i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #262b31;
+      }
+      .term .bar span {
+        margin-left: 8px;
+      }
+      .term pre {
+        margin: 0;
+        padding: 18px 20px 22px;
+        overflow-x: auto;
+        white-space: pre;
+        min-height: 312px;
+      }
+      .term .p {
+        color: #2ec4bf;
+        user-select: none;
+      }
+      .term .c {
+        color: #68707c;
+      }
+      .term .ok {
+        color: #4fc47d;
+      }
+      .term .caret {
+        display: inline-block;
+        width: 8px;
+        height: 1.1em;
+        vertical-align: text-bottom;
+        background: #2ec4bf;
+        animation: blink 1s steps(1) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      .specs {
+        display: grid;
+        gap: 2px;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .specs li {
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 14px;
+        padding: 14px 0;
+        border-bottom: 0.5px solid var(--hair);
+        align-items: start;
+      }
+      .specs li:last-child {
+        border-bottom: 0;
+      }
+      .specs .i {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        display: grid;
+        place-items: center;
+      }
+      .specs .i svg {
+        width: 18px;
+        height: 18px;
+      }
+      .specs b {
+        display: block;
+        font-weight: 600;
+        font-size: 15.5px;
+        letter-spacing: -0.01em;
+      }
+      .specs span {
+        color: var(--muted);
+        font-size: 14.5px;
+      }
+      @media (max-width: 900px) {
+        .host {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Open source band */
+      .oss {
+        position: relative;
+        border-radius: 20px;
+        background: var(--deep);
+        color: var(--mist);
+        overflow: hidden;
+        padding: clamp(36px, 6vw, 72px);
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 32px;
+        align-items: center;
+      }
+      .oss::before {
+        content: '';
+        position: absolute;
+        inset: auto -10% -60% 30%;
+        height: 140%;
+        background: radial-gradient(closest-side, rgb(46 196 191 / 0.22), transparent);
+        pointer-events: none;
+      }
+      .oss h2 {
+        font-size: clamp(28px, 3.6vw, 42px);
+        letter-spacing: -0.03em;
+        line-height: 1.1;
+        color: #fff;
+      }
+      .oss p {
+        color: rgb(236 238 241 / 0.78);
+        font-size: 17px;
+        margin-top: 14px;
+        max-width: 34em;
+      }
+      .oss .ctas {
+        justify-content: flex-start;
+        margin-top: 26px;
+      }
+      .oss .btn-ghost {
+        background: rgb(255 255 255 / 0.06);
+        color: #fff;
+        box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.25);
+      }
+      .oss .btn-ghost:hover {
+        background: rgb(255 255 255 / 0.12);
+      }
+      .oss .btn-primary {
+        background: var(--tide);
+        color: var(--deep);
+      }
+      .oss .btn-primary:hover {
+        background: #4ed2cd;
+      }
+      .oss dl {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px;
+        margin: 0;
+        border-radius: 12px;
+        overflow: hidden;
+        background: rgb(255 255 255 / 0.1);
+      }
+      .oss dl div {
+        background: rgb(4 32 31 / 0.92);
+        padding: 18px;
+      }
+      .oss dt {
+        font-size: 12.5px;
+        color: rgb(236 238 241 / 0.6);
+      }
+      .oss dd {
+        margin: 4px 0 0;
+        font-size: 17px;
+        font-weight: 600;
+        color: #fff;
+        letter-spacing: -0.01em;
+      }
+      @media (max-width: 860px) {
+        .oss {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Roadmap */
+      .road {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+      }
+      .road li {
+        position: relative;
+        background: var(--paper);
+        border-radius: 12px;
+        box-shadow: var(--shadow-1);
+        padding: 18px 18px 20px;
+        display: grid;
+        gap: 6px;
+        align-content: start;
+      }
+      .road .tag {
+        justify-self: start;
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--hover);
+        color: var(--muted);
+        letter-spacing: 0.02em;
+      }
+      .road .done .tag {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .road .next .tag {
+        background: color-mix(in srgb, var(--warn) 16%, transparent);
+        color: var(--warn);
+      }
+      .road h3 {
+        font-size: 15.5px;
+        letter-spacing: -0.01em;
+      }
+      .road p {
+        font-size: 14px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .road .done {
+        box-shadow:
+          var(--shadow-1),
+          inset 0 2px 0 var(--accent);
+      }
+      @media (max-width: 980px) {
+        .road {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 520px) {
+        .road {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* FAQ */
+      .faq {
+        max-width: 820px;
+        margin-inline: auto;
+        display: grid;
+        gap: 10px;
+      }
+      .faq details {
+        background: var(--paper);
+        border-radius: 12px;
+        box-shadow: var(--shadow-1);
+        padding: 0 22px;
+      }
+      .faq summary {
+        list-style: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 18px 0;
+        font-weight: 600;
+        font-size: 16.5px;
+        letter-spacing: -0.01em;
+      }
+      .faq summary::-webkit-details-marker {
+        display: none;
+      }
+      .faq summary::after {
+        content: '';
+        margin-left: auto;
+        width: 10px;
+        height: 10px;
+        border-right: 1.75px solid var(--faint);
+        border-bottom: 1.75px solid var(--faint);
+        transform: rotate(45deg) translateY(-3px);
+        transition: transform 0.2s var(--ease-out);
+        flex: none;
+      }
+      .faq details[open] summary::after {
+        transform: rotate(225deg) translateY(-3px);
+      }
+      .faq details p {
+        padding: 0 0 20px;
+        color: var(--muted);
+        max-width: 66ch;
+      }
+
+      /* Final CTA + footer */
+      .final {
+        text-align: center;
+        display: grid;
+        justify-items: center;
+        gap: 18px;
+      }
+      .final .mark {
+        width: 64px;
+        height: 64px;
+      }
+      .final h2 {
+        font-size: clamp(32px, 5vw, 56px);
+        letter-spacing: -0.035em;
+        line-height: 1.05;
+        max-width: 16ch;
+      }
+      .final p {
+        color: var(--muted);
+        font-size: 18px;
+      }
+      footer {
+        border-top: 0.5px solid var(--hair);
+        padding-block: 40px 56px;
+        font-size: 14px;
+        color: var(--faint);
+      }
+      footer .wrap {
+        display: grid;
+        grid-template-columns: 1.4fr repeat(3, 1fr);
+        gap: 28px;
+      }
+      footer .lock {
+        color: var(--ink);
+        height: 22px;
+        width: auto;
+      }
+      footer p {
+        margin-top: 12px;
+        max-width: 30ch;
+      }
+      footer h2 {
+        font-size: 13px;
+        letter-spacing: 0.02em;
+        color: var(--ink);
+        margin-bottom: 10px;
+      }
+      footer ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 6px;
+      }
+      footer a {
+        text-decoration: none;
+        color: var(--muted);
+      }
+      footer a:hover {
+        color: var(--ink);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      @media (max-width: 760px) {
+        footer .wrap {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      /* ---------- Motion ---------- */
+      @media (prefers-reduced-motion: no-preference) {
+        .hero-copy > * {
+          animation: rise 0.8s var(--ease-out) both;
+        }
+        .hero-copy > :nth-child(2) {
+          animation-delay: 0.06s;
+        }
+        .hero-copy > :nth-child(3) {
+          animation-delay: 0.12s;
+        }
+        .hero-copy > :nth-child(4) {
+          animation-delay: 0.18s;
+        }
+        .hero-copy > :nth-child(5) {
+          animation-delay: 0.24s;
+        }
+        .waterline .glint {
+          stroke-dasharray: 1;
+          stroke-dashoffset: 1;
+          animation: draw 1.6s 0.3s var(--ease-out) forwards;
+        }
+        .waterline svg .body,
+        .waterline .below {
+          animation: surface 1.2s 0.2s var(--ease-out) both;
+        }
+        .demo-wrap {
+          animation: rise-demo 1.1s 0.35s var(--ease-out) both;
+        }
+        /* Reveals move content only; it is never hidden. */
+        @supports (animation-timeline: view()) {
+          .reveal {
+            animation: reveal linear both;
+            animation-timeline: view();
+            animation-range: entry 0% entry 60%;
+          }
+        }
+      }
+      @keyframes rise {
+        from {
+          transform: translateY(14px);
+          opacity: 0;
+        }
+      }
+      @keyframes rise-demo {
+        from {
+          transform: translateY(48px);
+        }
+      }
+      @keyframes draw {
+        to {
+          stroke-dashoffset: 0;
+        }
+      }
+      @keyframes surface {
+        from {
+          transform: translateY(40px);
+        }
+      }
+      @keyframes reveal {
+        from {
+          transform: translateY(28px) scale(0.985);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="lockup" viewBox="0 0 156.794 32">
+          <path
+            fill="#2EC4BF"
+            d="M0 20.625C0.286 20.615 1.165 20.605 1.715 20.567C2.265 20.53 2.792 20.474 3.302 20.402C3.813 20.331 4.301 20.242 4.776 20.14C5.251 20.039 5.707 19.921 6.151 19.791C6.595 19.662 7.023 19.519 7.441 19.365C7.859 19.211 8.263 19.044 8.66 18.869C9.057 18.693 9.443 18.506 9.823 18.311C10.203 18.116 10.574 17.91 10.941 17.699C11.309 17.487 11.669 17.266 12.027 17.041C12.386 16.815 12.739 16.582 13.093 16.345C13.447 16.108 13.797 15.865 14.149 15.62C14.502 15.376 14.852 15.126 15.207 14.877C15.562 14.627 15.917 14.375 16.278 14.124C16.639 13.873 17.002 13.621 17.373 13.373C17.744 13.124 18.119 12.876 18.504 12.634C18.889 12.392 19.28 12.152 19.682 11.921C20.084 11.689 20.495 11.462 20.918 11.245C21.342 11.028 21.775 10.817 22.223 10.619C22.671 10.42 23.13 10.231 23.606 10.056C24.082 9.881 24.571 9.717 25.077 9.569C25.583 9.422 26.104 9.287 26.643 9.172C27.183 9.056 27.738 8.955 28.314 8.875C28.89 8.794 29.482 8.731 30.097 8.689C30.711 8.647 31.683 8.636 32 8.625V8A8 8 0 0 0 24 0H8A8 8 0 0 0 0 8Z"
+          />
+          <path
+            fill="#0A7A77"
+            d="M32 11.375C31.714 11.385 30.835 11.395 30.285 11.433C29.735 11.47 29.208 11.526 28.698 11.598C28.187 11.669 27.699 11.758 27.224 11.86C26.749 11.961 26.293 12.079 25.849 12.209C25.405 12.338 24.977 12.481 24.559 12.635C24.141 12.789 23.737 12.956 23.34 13.131C22.943 13.307 22.557 13.494 22.177 13.689C21.797 13.884 21.426 14.09 21.059 14.301C20.691 14.513 20.331 14.734 19.973 14.959C19.614 15.185 19.261 15.418 18.907 15.655C18.553 15.892 18.203 16.135 17.851 16.38C17.498 16.624 17.148 16.874 16.793 17.123C16.438 17.373 16.083 17.625 15.722 17.876C15.361 18.127 14.998 18.379 14.627 18.627C14.256 18.876 13.881 19.124 13.496 19.366C13.111 19.608 12.72 19.848 12.318 20.079C11.916 20.311 11.505 20.538 11.082 20.755C10.658 20.972 10.225 21.183 9.777 21.381C9.329 21.58 8.87 21.769 8.394 21.944C7.918 22.119 7.429 22.283 6.923 22.431C6.417 22.578 5.896 22.713 5.357 22.828C4.817 22.944 4.262 23.045 3.686 23.125C3.11 23.206 2.518 23.269 1.903 23.311C1.289 23.353 0.317 23.364 0 23.375V24A8 8 0 0 0 8 32H24A8 8 0 0 0 32 24Z"
+          />
+          <path
+            fill="currentColor"
+            d="M51.03 28Q48.33 28 46.33 27.15Q44.33 26.31 43.22 24.7Q42.1 23.09 42 20.79H46.11Q46.21 22.01 46.87 22.82Q47.53 23.63 48.61 24.03Q49.69 24.43 51 24.43Q52.37 24.43 53.42 24.01Q54.47 23.59 55.07 22.83Q55.67 22.07 55.67 21.07Q55.67 20.16 55.14 19.57Q54.62 18.98 53.67 18.57Q52.73 18.16 51.46 17.84L48.82 17.16Q45.91 16.41 44.27 14.89Q42.63 13.37 42.63 10.9Q42.63 8.85 43.75 7.3Q44.86 5.76 46.78 4.91Q48.7 4.05 51.14 4.05Q53.62 4.05 55.49 4.91Q57.36 5.77 58.42 7.28Q59.48 8.79 59.52 10.74H55.48Q55.32 9.24 54.14 8.42Q52.96 7.6 51.08 7.6Q49.77 7.6 48.82 7.99Q47.87 8.39 47.36 9.08Q46.86 9.77 46.86 10.66Q46.86 11.63 47.46 12.26Q48.06 12.88 48.97 13.26Q49.89 13.63 50.82 13.87L52.99 14.42Q54.29 14.73 55.51 15.25Q56.73 15.77 57.71 16.56Q58.69 17.35 59.26 18.47Q59.83 19.59 59.83 21.1Q59.83 23.15 58.79 24.71Q57.75 26.26 55.78 27.13Q53.81 28 51.03 28ZM68.81 27.86Q67.02 27.86 65.67 27.09Q64.32 26.32 63.58 24.84Q62.83 23.37 62.83 21.27V10.17H66.89V20.65Q66.89 22.41 67.81 23.41Q68.72 24.4 70.32 24.4Q71.4 24.4 72.24 23.93Q73.08 23.46 73.56 22.56Q74.04 21.66 74.04 20.4V10.17H78.11V27.64H74.25L74.21 23.32H74.51Q73.78 25.6 72.34 26.73Q70.91 27.86 68.81 27.86ZM81.78 27.64V10.17H85.71V13.1H85.9Q86.38 11.58 87.55 10.76Q88.71 9.94 90.21 9.94Q90.56 9.94 90.98 9.97Q91.4 10 91.7 10.06V13.79Q91.45 13.71 90.88 13.64Q90.32 13.58 89.79 13.58Q88.65 13.58 87.76 14.06Q86.86 14.54 86.35 15.39Q85.84 16.25 85.84 17.37V27.64ZM103.6 10.17V13.36H92.58V10.17ZM95.78 27.64V8.5Q95.78 6.76 96.51 5.6Q97.24 4.44 98.47 3.85Q99.71 3.27 101.2 3.27Q102.28 3.27 103.1 3.44Q103.93 3.62 104.32 3.75L103.5 6.91Q103.23 6.83 102.85 6.74Q102.46 6.66 101.95 6.66Q100.81 6.66 100.32 7.22Q99.82 7.78 99.82 8.81V27.64ZM110.51 28Q108.85 28 107.52 27.4Q106.2 26.8 105.43 25.62Q104.66 24.45 104.66 22.73Q104.66 21.25 105.21 20.28Q105.77 19.32 106.72 18.74Q107.67 18.16 108.86 17.87Q110.04 17.57 111.31 17.44Q112.84 17.27 113.79 17.14Q114.74 17.01 115.18 16.73Q115.63 16.45 115.63 15.86V15.78Q115.63 14.92 115.29 14.32Q114.94 13.72 114.26 13.41Q113.58 13.09 112.58 13.09Q111.57 13.09 110.83 13.4Q110.08 13.71 109.61 14.21Q109.14 14.71 108.92 15.29L105.16 14.52Q105.68 12.97 106.76 11.96Q107.84 10.95 109.33 10.45Q110.83 9.96 112.57 9.96Q113.8 9.96 115.05 10.25Q116.31 10.54 117.36 11.22Q118.41 11.9 119.05 13.06Q119.69 14.22 119.69 15.96V27.64H115.81V25.23H115.64Q115.26 25.97 114.58 26.6Q113.89 27.24 112.88 27.62Q111.87 28 110.51 28ZM111.56 24.98Q112.81 24.98 113.73 24.48Q114.65 23.99 115.15 23.16Q115.65 22.34 115.65 21.37V19.3Q115.45 19.47 114.98 19.61Q114.51 19.75 113.92 19.85Q113.33 19.96 112.77 20.04Q112.2 20.12 111.81 20.17Q110.89 20.29 110.16 20.58Q109.43 20.86 109.01 21.37Q108.59 21.88 108.59 22.68Q108.59 23.43 108.98 23.95Q109.36 24.46 110.03 24.72Q110.69 24.98 111.56 24.98ZM130.93 27.99Q128.39 27.99 126.52 26.86Q124.64 25.73 123.62 23.71Q122.59 21.68 122.59 18.99Q122.59 16.28 123.62 14.24Q124.64 12.21 126.52 11.08Q128.39 9.96 130.93 9.96Q132.39 9.96 133.64 10.33Q134.89 10.71 135.88 11.42Q136.86 12.13 137.52 13.14Q138.18 14.16 138.47 15.43L134.67 16.23Q134.51 15.56 134.18 15.01Q133.85 14.46 133.39 14.07Q132.92 13.67 132.31 13.46Q131.7 13.25 130.97 13.25Q129.55 13.25 128.61 14.01Q127.67 14.76 127.2 16.05Q126.73 17.34 126.73 18.98Q126.73 20.59 127.2 21.89Q127.67 23.18 128.61 23.94Q129.55 24.69 130.97 24.69Q131.71 24.69 132.33 24.48Q132.95 24.26 133.43 23.85Q133.91 23.44 134.24 22.87Q134.56 22.29 134.72 21.59L138.51 22.38Q138.23 23.69 137.57 24.72Q136.9 25.76 135.91 26.49Q134.93 27.22 133.67 27.61Q132.4 27.99 130.93 27.99ZM149.07 27.99Q146.44 27.99 144.54 26.88Q142.63 25.78 141.61 23.76Q140.59 21.75 140.59 19.01Q140.59 16.32 141.6 14.28Q142.61 12.24 144.46 11.1Q146.31 9.96 148.8 9.96Q150.4 9.96 151.84 10.47Q153.29 10.99 154.4 12.06Q155.52 13.14 156.16 14.8Q156.79 16.47 156.79 18.77V20.04H142.51V17.28H154.77L152.87 18.1Q152.87 16.62 152.41 15.5Q151.96 14.39 151.06 13.76Q150.16 13.14 148.82 13.14Q147.49 13.14 146.55 13.77Q145.61 14.41 145.12 15.46Q144.62 16.52 144.62 17.81V19.72Q144.62 21.37 145.19 22.51Q145.75 23.65 146.76 24.23Q147.78 24.8 149.12 24.8Q150.01 24.8 150.74 24.55Q151.47 24.29 151.99 23.79Q152.52 23.28 152.79 22.54L156.52 23.31Q156.11 24.71 155.09 25.77Q154.07 26.82 152.54 27.4Q151.02 27.99 149.07 27.99Z"
+          />
+        </symbol>
+        <symbol id="mark" viewBox="0 0 32 32">
+          <path
+            fill="#2EC4BF"
+            d="M0 20.625C0.286 20.615 1.165 20.605 1.715 20.567C2.265 20.53 2.792 20.474 3.302 20.402C3.813 20.331 4.301 20.242 4.776 20.14C5.251 20.039 5.707 19.921 6.151 19.791C6.595 19.662 7.023 19.519 7.441 19.365C7.859 19.211 8.263 19.044 8.66 18.869C9.057 18.693 9.443 18.506 9.823 18.311C10.203 18.116 10.574 17.91 10.941 17.699C11.309 17.487 11.669 17.266 12.027 17.041C12.386 16.815 12.739 16.582 13.093 16.345C13.447 16.108 13.797 15.865 14.149 15.62C14.502 15.376 14.852 15.126 15.207 14.877C15.562 14.627 15.917 14.375 16.278 14.124C16.639 13.873 17.002 13.621 17.373 13.373C17.744 13.124 18.119 12.876 18.504 12.634C18.889 12.392 19.28 12.152 19.682 11.921C20.084 11.689 20.495 11.462 20.918 11.245C21.342 11.028 21.775 10.817 22.223 10.619C22.671 10.42 23.13 10.231 23.606 10.056C24.082 9.881 24.571 9.717 25.077 9.569C25.583 9.422 26.104 9.287 26.643 9.172C27.183 9.056 27.738 8.955 28.314 8.875C28.89 8.794 29.482 8.731 30.097 8.689C30.711 8.647 31.683 8.636 32 8.625V8A8 8 0 0 0 24 0H8A8 8 0 0 0 0 8Z"
+          />
+          <path
+            fill="#0A7A77"
+            d="M32 11.375C31.714 11.385 30.835 11.395 30.285 11.433C29.735 11.47 29.208 11.526 28.698 11.598C28.187 11.669 27.699 11.758 27.224 11.86C26.749 11.961 26.293 12.079 25.849 12.209C25.405 12.338 24.977 12.481 24.559 12.635C24.141 12.789 23.737 12.956 23.34 13.131C22.943 13.307 22.557 13.494 22.177 13.689C21.797 13.884 21.426 14.09 21.059 14.301C20.691 14.513 20.331 14.734 19.973 14.959C19.614 15.185 19.261 15.418 18.907 15.655C18.553 15.892 18.203 16.135 17.851 16.38C17.498 16.624 17.148 16.874 16.793 17.123C16.438 17.373 16.083 17.625 15.722 17.876C15.361 18.127 14.998 18.379 14.627 18.627C14.256 18.876 13.881 19.124 13.496 19.366C13.111 19.608 12.72 19.848 12.318 20.079C11.916 20.311 11.505 20.538 11.082 20.755C10.658 20.972 10.225 21.183 9.777 21.381C9.329 21.58 8.87 21.769 8.394 21.944C7.918 22.119 7.429 22.283 6.923 22.431C6.417 22.578 5.896 22.713 5.357 22.828C4.817 22.944 4.262 23.045 3.686 23.125C3.11 23.206 2.518 23.269 1.903 23.311C1.289 23.353 0.317 23.364 0 23.375V24A8 8 0 0 0 8 32H24A8 8 0 0 0 32 24Z"
+          />
+        </symbol>
+        <symbol id="i-check" viewBox="0 0 16 16">
+          <path
+            d="m3.5 8.5 3 3 6-7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-x" viewBox="0 0 16 16">
+          <path
+            d="m4.5 4.5 7 7m0-7-7 7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-github" viewBox="0 0 16 16">
+          <path
+            fill="currentColor"
+            d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.35c-2.23.49-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.23 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.6 7.6 0 0 1 8 3.87c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.19c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"
+          />
+        </symbol>
+        <symbol id="i-arrow" viewBox="0 0 16 16">
+          <path
+            d="M3 8h10m-4-4 4 4-4 4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-server" viewBox="0 0 24 24">
+          <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+            <rect x="3.5" y="4" width="17" height="7" rx="2" />
+            <rect x="3.5" y="13" width="17" height="7" rx="2" />
+            <path d="M7 7.5h.01M7 16.5h.01M11 7.5h5M11 16.5h5" />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <nav class="nav" id="nav" aria-label="Main">
+      <div class="wrap">
+        <a class="brand" href="./" aria-label="Surface home">
+          <svg viewBox="0 0 156.794 32" width="118" height="24" aria-hidden="true">
+            <use href="#lockup" />
+          </svg>
+        </a>
+        <ul>
+          <li><a href="#product">Product</a></li>
+          <li><a href="#sync">Local-first</a></li>
+          <li><a href="#self-host">Self-host</a></li>
+          <li><a href="#roadmap">Roadmap</a></li>
+          <li><a href="#faq">FAQ</a></li>
+        </ul>
+        <div class="end">
+          <a class="btn btn-ghost btn-sm" href="https://github.com/s-ayush/surface">
+            <svg aria-hidden="true"><use href="#i-github" /></svg>GitHub
+          </a>
+          <a class="btn btn-primary btn-sm" href="#self-host">Get Surface</a>
+        </div>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div class="wrap hero-copy">
+        <a class="pill" href="#roadmap"><b>Alpha</b> Open source, MIT licensed</a>
+        <h1>The only <span class="accent">open-source</span> issue tracker your team needs.</h1>
+        <p class="lead">
+          Surface is a fast, keyboard-first issue tracker you host yourself. Your team's workspace
+          lives on every client, so opening and changing issues never waits on the network.
+        </p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="#self-host"
+            >Self-host in 15 minutes <svg aria-hidden="true"><use href="#i-arrow" /></svg
+          ></a>
+          <a class="btn btn-ghost" href="https://github.com/s-ayush/surface"
+            ><svg aria-hidden="true"><use href="#i-github" /></svg>Star on GitHub</a
+          >
+        </div>
+        <ul class="facts" aria-label="At a glance">
+          <li>
+            <svg aria-hidden="true"><use href="#i-check" /></svg>Works offline
+          </li>
+          <li>
+            <svg aria-hidden="true"><use href="#i-check" /></svg>No telemetry
+          </li>
+          <li>
+            <svg aria-hidden="true"><use href="#i-check" /></svg>Runs on 2 GB of RAM
+          </li>
+          <li>
+            <svg aria-hidden="true"><use href="#i-check" /></svg>One Docker image and PostgreSQL
+          </li>
+        </ul>
+      </div>
+
+      <div class="stage" id="product">
+        <div class="waterline" aria-hidden="true">
+          <svg viewBox="0 0 1440 180" preserveAspectRatio="none">
+            <path class="body" d="M0 132C520 132 760 36 1440 36V180H0Z" />
+            <path
+              class="gap"
+              d="M0 132C520 132 760 36 1440 36"
+              vector-effect="non-scaling-stroke"
+            />
+            <path
+              class="glint"
+              d="M0 126C520 126 760 30 1440 30"
+              pathLength="1"
+              vector-effect="non-scaling-stroke"
+            />
+          </svg>
+          <div class="below"></div>
+        </div>
+        <div class="wrap">
+          <div class="demo-wrap">
+            <div
+              class="demo"
+              id="demo"
+              tabindex="0"
+              role="application"
+              aria-roledescription="interactive demo"
+              aria-label="Surface demo. Press J or K to move, S for status, P for priority, I to assign to yourself, C to create an issue, Command or Control K for the command menu, Escape to close."
+            >
+              <aside class="demo-side" aria-hidden="true">
+                <div class="demo-ws">
+                  <svg viewBox="0 0 32 32"><use href="#mark" /></svg>Northwind
+                  <span class="av" style="background: #a6e3d8">AN</span>
+                </div>
+                <div class="demo-nav">
+                  <svg viewBox="0 0 16 16">
+                    <path
+                      d="M2.5 9.5h3l1 2h3l1-2h3M3 4.5h10l.5 5v3a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-3Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linejoin="round"
+                    /></svg
+                  >Inbox<span class="count">3</span>
+                </div>
+                <div class="demo-nav">
+                  <svg viewBox="0 0 16 16">
+                    <circle
+                      cx="8"
+                      cy="8"
+                      r="5.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                    />
+                    <circle cx="8" cy="8" r="1.5" fill="currentColor" /></svg
+                  >My issues
+                </div>
+                <div class="demo-nav">
+                  <svg viewBox="0 0 16 16">
+                    <path
+                      d="M4 3.5h6l2.5 2.5v6.5h-8.5Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linejoin="round"
+                    /></svg
+                  >Drafts
+                </div>
+                <div class="demo-label">Your teams</div>
+                <div class="demo-nav"><span class="team-dot">E</span>Engineering</div>
+                <div class="demo-nav on" style="padding-left: 30px">Issues</div>
+                <div class="demo-nav" style="padding-left: 30px">Archive</div>
+                <div class="demo-nav"><span class="team-dot alt">D</span>Design</div>
+              </aside>
+              <div class="demo-main">
+                <div class="demo-head">
+                  <span>Engineering</span><span class="sep">›</span
+                  ><span class="crumb">Issues</span>
+                  <span class="k"
+                    ><span>Command menu</span><kbd id="mod-key">⌘</kbd><kbd>K</kbd></span
+                  >
+                </div>
+                <div class="demo-list" id="demo-list"></div>
+                <div class="overlay" id="demo-overlay" hidden></div>
+              </div>
+              <div class="hud" aria-hidden="true">
+                <span class="keycap" id="keycap"></span>
+                <span class="timing" id="timing"
+                  ><i></i><span id="timing-text">rendered locally</span></span
+                >
+              </div>
+            </div>
+            <p class="demo-hint" id="demo-hint">
+              <span class="live" id="demo-mode">Playing a demo.</span>
+              <span>Click it, then try</span> <kbd>J</kbd><kbd>K</kbd> <kbd>S</kbd> <kbd>P</kbd>
+              <kbd>C</kbd> <span>or</span> <kbd class="mod-label">⌘</kbd><kbd>K</kbd>
+            </p>
+          </div>
+        </div>
+        <div class="deep budgets" aria-labelledby="budgets-title">
+          <div class="wrap">
+            <h2 id="budgets-title" class="visually-hidden">Performance budgets</h2>
+            <ul class="reveal">
+              <li>
+                <span class="num">&lt;50<small>ms</small></span
+                ><span class="what"
+                  >for local actions like opening a list or changing an issue (p95)</span
+                >
+              </li>
+              <li>
+                <span class="num">&lt;100<small>ms</small></span
+                ><span class="what">to open any issue</span>
+              </li>
+              <li>
+                <span class="num">&lt;150<small>ms</small></span
+                ><span class="what">for a change to reach your teammates on the same network</span>
+              </li>
+              <li>
+                <span class="num">2<small>GB</small></span
+                ><span class="what"
+                  >of RAM for 50 people and 100,000 issues, database included</span
+                >
+              </li>
+            </ul>
+            <p class="note">
+              These are Surface's written performance budgets, from its product requirements. The
+              demo above is a simplified copy of the interface, measuring its own render time.
+            </p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="block" aria-labelledby="why-title">
+        <div class="wrap">
+          <div class="head center reveal">
+            <span class="eyebrow">Everything on the surface</span>
+            <h2 id="why-title">Built for one team, so it can be fast for that team.</h2>
+            <p>
+              Trackers built for millions of tenants fetch your work across the internet, one click
+              at a time. Surface serves one company from a server you own, and keeps the workspace
+              on every client.
+            </p>
+          </div>
+          <div class="pillars">
+            <article class="card reveal">
+              <div class="art" aria-hidden="true">
+                <div class="art-instant" id="bars">
+                  <div class="bar us">
+                    <span>Surface</span
+                    ><span class="track"
+                      ><span class="fill" style="width: 6%; display: block"></span></span
+                    ><span>local</span>
+                  </div>
+                  <div class="bar">
+                    <span>Round trip</span
+                    ><span class="track"
+                      ><span class="fill" style="width: 62%; display: block"></span></span
+                    ><span>network</span>
+                  </div>
+                  <div class="bar">
+                    <span>Cold fetch</span
+                    ><span class="track"
+                      ><span class="fill" style="width: 100%; display: block"></span></span
+                    ><span>spinner</span>
+                  </div>
+                </div>
+              </div>
+              <h3>Instant, because it is already there</h3>
+              <p>
+                Statuses, labels, people and your teams' issues sit in the browser. Lists render and
+                changes apply locally, with no round trip. Descriptions and comments load once, then
+                stay cached.
+              </p>
+            </article>
+            <article class="card reveal">
+              <div class="art" aria-hidden="true">
+                <div class="keys" id="keys">
+                  <span class="k wide" data-key="mod+k"
+                    ><span class="mod-label">⌘</span><span>K</span></span
+                  >
+                  <span class="k" data-key="c">C</span>
+                  <span class="k" data-key="s">S</span>
+                  <span class="k" data-key="j">J</span>
+                  <span class="k" data-key="k">K</span>
+                  <span class="k" data-key="p">P</span>
+                  <span class="k" data-key="i">I</span>
+                </div>
+              </div>
+              <h3>Keyboard-first, mouse-friendly</h3>
+              <p>
+                Every action is in the command menu and most have a key: <kbd>C</kbd> creates,
+                <kbd>S</kbd> sets status, <kbd>J</kbd> and <kbd>K</kbd> move. Press them now: the
+                keys above light up.
+              </p>
+            </article>
+            <article class="card reveal">
+              <div class="art" aria-hidden="true">
+                <div class="own">
+                  <div>
+                    <svg><use href="#i-check" /></svg>your server, your database
+                  </div>
+                  <div>
+                    <svg><use href="#i-check" /></svg>MIT licence, no paid tier
+                  </div>
+                  <div class="x">
+                    <svg><use href="#i-x" /></svg>telemetry, analytics
+                  </div>
+                  <div class="x">
+                    <svg><use href="#i-x" /></svg>calls home, CDNs, trackers
+                  </div>
+                </div>
+              </div>
+              <h3>Yours, all of it</h3>
+              <p>
+                Surface makes no outbound calls except to your own mail server. No seats, plans or
+                upsells. Your planning data never leaves infrastructure you control.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="sync" aria-labelledby="sync-title" style="padding-top: 0">
+        <div class="wrap">
+          <div class="head reveal">
+            <span class="eyebrow">Local-first sync</span>
+            <h2 id="sync-title">Edits land at once. Offline is just a pause.</h2>
+            <p>
+              Every change applies on your screen first, then the server orders it and sends it to
+              everyone else. Lose the connection and you keep working: edits queue up and apply when
+              you are back.
+            </p>
+          </div>
+          <div class="reveal">
+            <div class="sync" id="sync-sim">
+              <section class="client" id="client-a" aria-label="Ana's laptop">
+                <header>
+                  <span class="av" style="background: #a6e3d8">AN</span>Ana's laptop<span
+                    class="state"
+                    ><i></i><span class="state-text">Online</span></span
+                  >
+                </header>
+                <div class="srows"></div>
+                <div class="toolbar">
+                  <button class="switch" id="online-a" role="switch" aria-checked="true">
+                    <span class="track"></span>Connected
+                  </button>
+                  <span class="queued" id="queued-a"></span>
+                </div>
+              </section>
+              <div class="hub" aria-hidden="true">
+                <span class="wire"></span>
+                <span class="server"
+                  ><svg><use href="#i-server" /></svg><span>your server</span></span
+                >
+                <span class="packet" id="packet"></span>
+              </div>
+              <section class="client" id="client-b" aria-label="Ben's laptop">
+                <header>
+                  <span class="av" style="background: #c9b8f5">BE</span>Ben's laptop<span
+                    class="state"
+                    ><i></i><span class="state-text">Online</span></span
+                  >
+                </header>
+                <div class="srows"></div>
+                <div class="toolbar"><span id="b-note">Updates arrive on their own</span></div>
+              </section>
+            </div>
+            <p class="sync-cap">
+              <span>A simulation, slowed down so you can watch it.</span>
+              <span>Click a status on Ana's laptop, or disconnect her.</span>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" aria-labelledby="features-title" style="padding-top: 0">
+        <div class="wrap">
+          <div class="head reveal">
+            <span class="eyebrow">In Surface today</span>
+            <h2 id="features-title">The core of a modern tracker, without the bloat.</h2>
+            <p>
+              Teams, workflows, issues and the editor are built. Views, cycles and projects are next
+              on the roadmap.
+            </p>
+          </div>
+          <div class="features reveal">
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="4" y="4" width="16" height="16" rx="4" />
+                  <path d="M8.5 12h7M12 8.5v7" />
+                </g>
+              </svg>
+              <h3>Issues with real IDs</h3>
+              <p>
+                Every issue gets a team key and number, like ENG-142, that is never reused. Press C
+                anywhere to create one.
+              </p>
+            </article>
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="6" cy="6" r="2.5" />
+                  <circle cx="18" cy="12" r="2.5" />
+                  <circle cx="6" cy="18" r="2.5" />
+                  <path d="M8.5 6H12a3 3 0 0 1 3 3v.5M8.5 18H12a3 3 0 0 0 3-3v-.5" />
+                </g>
+              </svg>
+              <h3>Workflows per team</h3>
+              <p>
+                Custom statuses in fixed categories, workspace and team labels with label groups,
+                and estimates on the scale you like.
+              </p>
+            </article>
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M5 7h14M5 12h9M5 17h11" />
+                  <path d="m17 14 3 3-3 3" />
+                </g>
+              </svg>
+              <h3>A real editor</h3>
+              <p>
+                Markdown shortcuts, slash commands, checklists, and code blocks with syntax
+                highlighting, in descriptions and comments.
+              </p>
+            </article>
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M5 6.5A2.5 2.5 0 0 1 7.5 4h9A2.5 2.5 0 0 1 19 6.5v6a2.5 2.5 0 0 1-2.5 2.5H11l-4 4v-4h0A2 2 0 0 1 5 13Z"
+                  />
+                </g>
+              </svg>
+              <h3>Comments and reactions</h3>
+              <p>
+                Threaded replies, resolvable threads and emoji reactions, synced live to everyone on
+                the issue.
+              </p>
+            </article>
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="m15.5 8-6.4 6.4a1.8 1.8 0 0 0 2.5 2.5l6.7-6.7a3.5 3.5 0 0 0-5-5L6.6 11.9a5.2 5.2 0 0 0 7.4 7.4l5.5-5.5"
+                  />
+                </g>
+              </svg>
+              <h3>Attachments</h3>
+              <p>
+                Paste, drop or upload files and images, with previews. Files stay on your server,
+                within the size limit you set.
+              </p>
+            </article>
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="8" />
+                  <path d="M12 7.5V12l3 2" />
+                </g>
+              </svg>
+              <h3>History you can trust</h3>
+              <p>
+                Every property change is recorded with who made it and when. Nothing changes without
+                a trace.
+              </p>
+            </article>
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M5 7h14M9.5 7V5h5v2M7 7l.8 11.2A2 2 0 0 0 9.8 20h4.4a2 2 0 0 0 2-1.8L17 7"
+                  />
+                  <path d="M10 13.5 12 11.5l2 2M12 11.5V17" />
+                </g>
+              </svg>
+              <h3>Delete without fear</h3>
+              <p>
+                Deleted issues wait 30 days in Recently deleted. Finished work archives itself, and
+                anything archived can come back.
+              </p>
+            </article>
+            <article class="feature">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M9 6.5A2.5 2.5 0 1 0 6.5 9H9Zm0 0v11m0-11h6m-6 11A2.5 2.5 0 1 1 6.5 15H9Zm0 0h6m0-11A2.5 2.5 0 1 1 17.5 9H15Zm0 0v11m0 0a2.5 2.5 0 1 0 2.5-2.5H15"
+                  />
+                </g>
+              </svg>
+              <h3>Command menu</h3>
+              <p>
+                Press ⌘K or Ctrl+K for every action the app has, aware of the issue you are on.
+                Press ? for every shortcut.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="self-host" aria-labelledby="host-title" style="padding-top: 0">
+        <div class="wrap">
+          <div class="head reveal">
+            <span class="eyebrow">Self-host</span>
+            <h2 id="host-title">Up in fifteen minutes. Then it stays out of your way.</h2>
+            <p>
+              One Docker image and PostgreSQL on a Linux machine you own. Migrations run on start,
+              health checks are built in, and upgrading is a new tag and a restart.
+            </p>
+          </div>
+          <div class="host">
+            <div class="term reveal" role="region" aria-label="Install commands">
+              <div class="bar"><i></i><i></i><i></i><span>~/surface</span></div>
+              <pre
+                id="term"
+              ><code><span class="p">$ </span>git clone --depth 1 https://github.com/s-ayush/surface.git
+<span class="p">$ </span>cd surface/docker &amp;&amp; cp .env.example .env
+<span class="c"># set SURFACE_URL and two secrets in .env (see the guide)</span>
+<span class="p">$ </span>docker compose --profile proxy up -d
+<span class="ok">✔ Container surface-db-1    Healthy</span>
+<span class="ok">✔ Container surface-app-1   Healthy</span>
+<span class="p">$ </span>docker compose logs app | grep setupUrl
+Surface is not set up yet. Open https://…/setup?token=…<span class="caret"></span></code></pre>
+            </div>
+            <ul class="specs reveal">
+              <li>
+                <span class="i"
+                  ><svg aria-hidden="true"><use href="#i-server" /></svg
+                ></span>
+                <div>
+                  <b>2 vCPU, 2 GB RAM, 20 GB disk</b
+                  ><span>Enough for 50 people and 100,000 issues, database included.</span>
+                </div>
+              </li>
+              <li>
+                <span class="i"
+                  ><svg aria-hidden="true" viewBox="0 0 16 16">
+                    <path
+                      d="M8 1.5 13.5 4v4c0 3-2.4 5.6-5.5 6.5C4.9 13.6 2.5 11 2.5 8V4Z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linejoin="round"
+                    /></svg
+                ></span>
+                <div>
+                  <b>Secure by default</b
+                  ><span
+                    >argon2id passwords, CSRF protection, a strict content security policy and rate
+                    limits.</span
+                  >
+                </div>
+              </li>
+              <li>
+                <span class="i"
+                  ><svg aria-hidden="true" viewBox="0 0 16 16">
+                    <path
+                      d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                ></span>
+                <div>
+                  <b>Upgrades are a restart</b
+                  ><span>Change the image tag, restart, and migrations run safely on start.</span>
+                </div>
+              </li>
+              <li>
+                <span class="i"
+                  ><svg aria-hidden="true" viewBox="0 0 16 16">
+                    <path
+                      d="M3 8.5h10M3 4.5h10M3 12.5h6"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.4"
+                      stroke-linecap="round"
+                    /></svg
+                ></span>
+                <div>
+                  <b>Bring your own database</b
+                  ><span
+                    >Use the bundled PostgreSQL, or point it at your own PostgreSQL 17 or
+                    newer.</span
+                  >
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" aria-labelledby="oss-title" style="padding-top: 0">
+        <div class="wrap">
+          <div class="oss reveal">
+            <div>
+              <h2 id="oss-title">Open source. Not open core.</h2>
+              <p>
+                Surface is MIT licensed, top to bottom. There is no enterprise edition, no paid tier
+                and no CLA. Read the code, run it, change it.
+              </p>
+              <div class="ctas">
+                <a class="btn btn-primary" href="https://github.com/s-ayush/surface"
+                  ><svg aria-hidden="true"><use href="#i-github" /></svg>View the code</a
+                >
+                <a
+                  class="btn btn-ghost"
+                  href="https://github.com/s-ayush/surface/blob/main/CONTRIBUTING.md"
+                  >How to contribute</a
+                >
+              </div>
+            </div>
+            <dl>
+              <div>
+                <dt>Licence</dt>
+                <dd>MIT</dd>
+              </div>
+              <div>
+                <dt>Price</dt>
+                <dd>Free, forever</dd>
+              </div>
+              <div>
+                <dt>Telemetry</dt>
+                <dd>None</dd>
+              </div>
+              <div>
+                <dt>Built with</dt>
+                <dd>TypeScript</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="roadmap" aria-labelledby="road-title" style="padding-top: 0">
+        <div class="wrap">
+          <div class="head reveal">
+            <span class="eyebrow">Roadmap</span>
+            <h2 id="road-title">Honest about where it stands.</h2>
+            <p>
+              Surface is in alpha. The foundations and the core issue tracker are done. Here is what
+              comes next, in order.
+            </p>
+          </div>
+          <ol class="road reveal">
+            <li class="done">
+              <span class="tag">Built</span>
+              <h3>Foundations</h3>
+              <p>Install, setup, sign-in, invites, teams, the sync engine and the command menu.</p>
+            </li>
+            <li class="done">
+              <span class="tag">Built</span>
+              <h3>Core issues</h3>
+              <p>
+                Issues, workflows, labels, the editor, comments, attachments, history and archive.
+              </p>
+            </li>
+            <li class="next">
+              <span class="tag">Next</span>
+              <h3>Views and navigation</h3>
+              <p>
+                Board layout, filters, grouping, saved views, favorites, global search, bulk edit,
+                undo.
+              </p>
+            </li>
+            <li class="">
+              <span class="tag">Planned</span>
+              <h3>Planning</h3>
+              <p>Sub-issues and relations, cycles, projects and milestones.</p>
+            </li>
+            <li class="">
+              <span class="tag">Planned</span>
+              <h3>Collaboration</h3>
+              <p>Inbox and notifications, @mentions, documents, triage, templates.</p>
+            </li>
+            <li class="">
+              <span class="tag">Planned</span>
+              <h3>Strategy and insights</h3>
+              <p>Initiatives, project updates, timeline and insights.</p>
+            </li>
+            <li class="">
+              <span class="tag">Planned</span>
+              <h3>API and MCP</h3>
+              <p>An API, webhooks, CSV import and export, and an MCP server for your own tools.</p>
+            </li>
+            <li class="">
+              <span class="tag">Planned</span>
+              <h3>Admin and ops</h3>
+              <p>Private teams, audit log, scheduled backups and a tested restore.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="block" id="faq" aria-labelledby="faq-title" style="padding-top: 0">
+        <div class="wrap">
+          <div class="head center reveal">
+            <span class="eyebrow">FAQ</span>
+            <h2 id="faq-title">Questions, answered plainly.</h2>
+          </div>
+          <div class="faq">
+            <details>
+              <summary>Is Surface really free?</summary>
+              <p>
+                Yes. Surface is MIT licensed with no paid tier, no enterprise edition and no seat
+                limits. You pay only for the machine you run it on.
+              </p>
+            </details>
+            <details>
+              <summary>How is Surface different from Linear?</summary>
+              <p>
+                Surface borrows the ideas that make Linear fast: a local copy of the workspace,
+                keyboard shortcuts for everything and a command menu. The difference is that Surface
+                is open source and runs on your own server. Surface is an independent project, not
+                affiliated with Linear.
+              </p>
+            </details>
+            <details>
+              <summary>Can my team use it today?</summary>
+              <p>
+                Surface is in alpha. Teams, issues, workflows, the editor, comments, attachments and
+                archive are built and tested. Views, cycles and projects come next. Try it with your
+                team, and follow the backup guide until scheduled backups arrive.
+              </p>
+            </details>
+            <details>
+              <summary>What do I need to run it?</summary>
+              <p>
+                A Linux machine with Docker, 2 vCPU, 2 GB of RAM and 20 GB of disk. PostgreSQL is
+                bundled, or you can use your own PostgreSQL 17 or newer. For HTTPS, the install
+                guide includes a ready Caddy setup.
+              </p>
+            </details>
+            <details>
+              <summary>Does it work offline?</summary>
+              <p>
+                Yes. Everything already synced stays readable offline, and your edits queue up and
+                apply when you reconnect. Content you have never opened shows as available when
+                online.
+              </p>
+            </details>
+            <details>
+              <summary>Does Surface send my data anywhere?</summary>
+              <p>
+                No. Surface has no telemetry, no analytics and no update checks. The only outbound
+                connection it ever makes is to the mail server you configure, if you configure one.
+              </p>
+            </details>
+            <details>
+              <summary>How many people can use it?</summary>
+              <p>
+                Surface is built for teams of 10 to 50 people, and its performance budgets are set
+                for 50 active users and 100,000 issues. There is no hard cap above that.
+              </p>
+            </details>
+            <details>
+              <summary>Can I import from Jira, Linear or GitHub?</summary>
+              <p>
+                CSV import and export is on the roadmap. Surface does not plan built-in integrations
+                with other services.
+              </p>
+            </details>
+            <details>
+              <summary>How do I contribute?</summary>
+              <p>
+                Read CONTRIBUTING.md in the repository, then open an issue or a pull request. Report
+                security problems privately, as SECURITY.md describes.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" aria-labelledby="final-title" style="padding-top: 0">
+        <div class="wrap final reveal">
+          <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><use href="#mark" /></svg>
+          <h2 id="final-title">Everything on the surface.</h2>
+          <p>Your team's work, instant and in plain view, on a server you own.</p>
+          <div class="ctas">
+            <a class="btn btn-primary" href="#self-host"
+              >Self-host Surface <svg aria-hidden="true"><use href="#i-arrow" /></svg
+            ></a>
+            <a class="btn btn-ghost" href="https://github.com/s-ayush/surface"
+              ><svg aria-hidden="true"><use href="#i-github" /></svg>Star on GitHub</a
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <div>
+          <svg
+            class="lock"
+            viewBox="0 0 156.794 32"
+            width="108"
+            height="22"
+            role="img"
+            aria-label="Surface"
+          >
+            <use href="#lockup" />
+          </svg>
+          <p>The only open-source issue tracker your team needs. MIT licensed.</p>
+        </div>
+        <div>
+          <h2>Product</h2>
+          <ul>
+            <li><a href="#product">Demo</a></li>
+            <li><a href="#sync">Local-first sync</a></li>
+            <li><a href="#roadmap">Roadmap</a></li>
+            <li><a href="#faq">FAQ</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Run it</h2>
+          <ul>
+            <li>
+              <a href="https://github.com/s-ayush/surface#install-about-15-minutes"
+                >Install guide</a
+              >
+            </li>
+            <li>
+              <a href="https://github.com/s-ayush/surface/blob/main/docs/ops/upgrade.md"
+                >Upgrades</a
+              >
+            </li>
+            <li>
+              <a href="https://github.com/s-ayush/surface/blob/main/docs/ops/backup-manual.md"
+                >Backups</a
+              >
+            </li>
+            <li>
+              <a href="https://github.com/s-ayush/surface/blob/main/docs/ops/reverse-proxy.md"
+                >HTTPS and proxies</a
+              >
+            </li>
+          </ul>
+        </div>
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="https://github.com/s-ayush/surface">GitHub</a></li>
+            <li>
+              <a href="https://github.com/s-ayush/surface/blob/main/CONTRIBUTING.md"
+                >Contributing</a
+              >
+            </li>
+            <li><a href="https://github.com/s-ayush/surface/blob/main/SECURITY.md">Security</a></li>
+            <li><a href="https://github.com/s-ayush/surface/blob/main/LICENSE">MIT licence</a></li>
+          </ul>
+        </div>
+      </div>
+    </footer>
+
+    <script src="site.js" defer></script>
+  </body>
+</html>

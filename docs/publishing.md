@@ -49,7 +49,7 @@ Run this checklist on the day the repository goes public. Nothing in it has run 
   - Topics: `issue-tracker`, `self-hosted`, `local-first`, `keyboard-first`, `project-management`, `typescript`.
   - Uncheck Releases and Packages until the first release.
 - [ ] **Features:** keep Issues on, for bug reports from outside. Turn Wiki off, because the docs live in `docs/`.
-- [ ] **Actions → General:** set workflow permissions to "Read repository contents". CI publishes nothing.
+- [ ] **Actions → General:** set workflow permissions to "Read repository contents". CI publishes nothing. The Website workflow (`pages.yml`, §6) asks for its own Pages permissions and runs only by hand.
 
 ## 4. Go public
 
@@ -61,3 +61,14 @@ Run this checklist on the day the repository goes public. Nothing in it has run 
 ## 5. Record it
 
 - [ ] Add a row to the [PLAN-017 coordination log](07-plans/sessions/p017-coordination.md) with the date, the commit pushed, and the scan result.
+
+## 6. The landing page (optional, any time after §4)
+
+The page is `apps/site/public/` ([PLAN-018](07-plans/PLAN-018-website.md)). Its address is `https://s-ayush.github.io/surface/`. To use your own domain instead, first change every place listed in [apps/site/README.md](../apps/site/README.md).
+
+- [ ] **Settings → Pages → Source: GitHub Actions.**
+- [ ] **Actions → Website → Run workflow** on `main`. It deploys only when run by hand.
+- [ ] Open the address. Check the page, the 404 page (`/surface/nope`), `robots.txt` and `sitemap.xml`.
+- [ ] Paste the address into a link preview (a chat app, or a social card validator) and check that the card shows `assets/og-image.png`.
+- [ ] **Google Search Console:** add the property, verify it with the HTML-file method (commit the file to `apps/site/public/`), and submit `sitemap.xml`. Bing Webmaster Tools can import from Search Console.
+- [ ] **Off-page:** list Surface on alternativeto.net and openalternative.co (they rank first for "Linear alternative" searches), and add the address to the repository's About box.
