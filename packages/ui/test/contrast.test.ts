@@ -36,6 +36,12 @@ const FORM_SURFACES = [
 
 const LABEL_TOKENS = LABEL_HUES.map((hue) => `label-${hue}` as const);
 
+/** What a code block sits on (`pre` in editor.css is on --bg-panel; cards and popovers are
+ *  --bg-elevated). Every colour the `hljs-*` rules use as text is checked here or by its own entry:
+ *  --accent (keywords), --text-secondary (comments) and --danger (removed lines) are checked on
+ *  --bg-panel below. */
+const CODE_SURFACES = ['bg-panel', 'bg-elevated'] as const satisfies readonly SemanticColor[];
+
 /** Banner and toast surfaces. */
 const FEEDBACK_SUBTLE = [
   'danger-subtle',
@@ -96,6 +102,9 @@ const USAGE = {
   'success-subtle': surface,
   info: { checks: [icon([...SURFACES, 'info-subtle'], 'info icon')] },
   'info-subtle': surface,
+  'syntax-string': { checks: [text(CODE_SURFACES, 'code string')] },
+  'syntax-number': { checks: [text(CODE_SURFACES, 'code number, attribute and type')] },
+  'syntax-title': { checks: [text(CODE_SURFACES, 'code title and name')] },
   'label-gray': label,
   'label-red': label,
   'label-orange': label,

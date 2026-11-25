@@ -49,8 +49,8 @@ export const scales: Readonly<Record<Theme, Readonly<Record<string, Scale>>>> = 
     },
     teal: { 1: '#F3FAFA', 3: '#E2F3F2', 8: '#16908C', 9: '#0A7A77', 10: '#086A67' },
     red: { 3: '#FDECEC', 9: '#CC3636', 10: '#B32E2E' },
-    amber: { 3: '#FDF3E3', 9: '#B86E0C' },
-    green: { 3: '#E8F6EE', 9: '#2B9255' },
+    amber: { 3: '#FDF3E3', 9: '#B86E0C', 11: '#9A5A00' },
+    green: { 3: '#E8F6EE', 9: '#2B9255', 11: '#1F7A45' },
     blue: { 3: '#EAF0FC', 9: '#3569D4' },
     // Layered surfaces (PLAN-016 S1, design-system §2.1): 1 app, 2 panel, 3 elevated, 4 hover,
     // 5 active, 6 group header band, 7 decorative hairline border, 8 hovered item inside an overlay.
@@ -82,8 +82,8 @@ export const scales: Readonly<Record<Theme, Readonly<Record<string, Scale>>>> = 
     },
     teal: { 1: '#04201F', 3: '#123130', 8: '#3ACBC6', 9: '#2EC4BF', 10: '#4ED2CD' },
     red: { 3: '#2C1517', 9: '#F06868', 10: '#F48A8A' },
-    amber: { 3: '#2A1F0E', 9: '#EBA33F' },
-    green: { 3: '#11271A', 9: '#4FC47D' },
+    amber: { 3: '#2A1F0E', 9: '#EBA33F', 11: '#EBA33F' },
+    green: { 3: '#11271A', 9: '#4FC47D', 11: '#4FC47D' },
     blue: { 3: '#141E33', 9: '#6E9EF6' },
     surface: {
       1: '#0B0D0F',

@@ -164,7 +164,7 @@
   pointer-events: none;
 }
 
-/* Code colours: lowlight's `hljs-*` classes on the semantic colours. */
+/* Code colours: lowlight's `hljs-*` classes on text-grade colours (4.5:1 on the code block, contrast.test.ts). */
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-built_in,
@@ -175,7 +175,7 @@
 .hljs-string,
 .hljs-regexp,
 .hljs-addition {
-  color: var(--success);
+  color: var(--syntax-string);
 }
 
 .hljs-number,
@@ -183,13 +183,13 @@
 .hljs-attribute,
 .hljs-symbol,
 .hljs-type {
-  color: var(--warning);
+  color: var(--syntax-number);
 }
 
 .hljs-title,
 .hljs-section,
 .hljs-name {
-  color: var(--info);
+  color: var(--syntax-title);
 }
 
 .hljs-comment,

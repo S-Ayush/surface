@@ -169,8 +169,10 @@
   --red-10: #b32e2e;
   --amber-3: #fdf3e3;
   --amber-9: #b86e0c;
+  --amber-11: #9a5a00;
   --green-3: #e8f6ee;
   --green-9: #2b9255;
+  --green-11: #1f7a45;
   --blue-3: #eaf0fc;
   --blue-9: #3569d4;
   --surface-1: #f3f4f6;
@@ -226,6 +228,9 @@
   --success-subtle: var(--green-3);
   --info: var(--blue-9);
   --info-subtle: var(--blue-3);
+  --syntax-string: var(--green-11);
+  --syntax-number: var(--amber-11);
+  --syntax-title: var(--blue-9);
   --label-gray: var(--hue-gray);
   --label-red: var(--hue-red);
   --label-orange: var(--hue-orange);
@@ -279,8 +284,10 @@
   --red-10: #f48a8a;
   --amber-3: #2a1f0e;
   --amber-9: #eba33f;
+  --amber-11: #eba33f;
   --green-3: #11271a;
   --green-9: #4fc47d;
+  --green-11: #4fc47d;
   --blue-3: #141e33;
   --blue-9: #6e9ef6;
   --surface-1: #0b0d0f;
@@ -336,6 +343,9 @@
   --success-subtle: var(--green-3);
   --info: var(--blue-9);
   --info-subtle: var(--blue-3);
+  --syntax-string: var(--green-11);
+  --syntax-number: var(--amber-11);
+  --syntax-title: var(--blue-9);
   --label-gray: var(--hue-gray);
   --label-red: var(--hue-red);
   --label-orange: var(--hue-orange);
@@ -391,8 +401,10 @@
     --red-10: #f48a8a;
     --amber-3: #2a1f0e;
     --amber-9: #eba33f;
+    --amber-11: #eba33f;
     --green-3: #11271a;
     --green-9: #4fc47d;
+    --green-11: #4fc47d;
     --blue-3: #141e33;
     --blue-9: #6e9ef6;
     --surface-1: #0b0d0f;
@@ -448,6 +460,9 @@
     --success-subtle: var(--green-3);
     --info: var(--blue-9);
     --info-subtle: var(--blue-3);
+    --syntax-string: var(--green-11);
+    --syntax-number: var(--amber-11);
+    --syntax-title: var(--blue-9);
     --label-gray: var(--hue-gray);
     --label-red: var(--hue-red);
     --label-orange: var(--hue-orange);

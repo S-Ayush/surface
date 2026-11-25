@@ -62,6 +62,13 @@ export const semanticColors = {
   info: same('blue-9'),
   'info-subtle': same('blue-3'),
 
+  // Code syntax colours that --success, --warning and --info cannot be, because those are icon
+  // colours (3:1) and code is text (4.5:1 on --bg-panel). Keywords use --accent, comments
+  // --text-secondary and removed lines --danger.
+  'syntax-string': same('green-11'),
+  'syntax-number': same('amber-11'),
+  'syntax-title': same('blue-9'),
+
   // Label, team and project palette (design-system §2.2)
   'label-gray': same('hue-gray'),
   'label-red': same('hue-red'),
