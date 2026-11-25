@@ -20,12 +20,12 @@ This spec **owns the shape of view state** (§4.1): the layout and display optio
 - The **view state** (§4.1): its fields, defaults, validation and versioning, shared by every issue list and board.
 - The **Display options** popover (`Shift+V`, §3.1) and its command-menu commands (§3.12).
 - **Board layout** (§3.5): columns, swimlanes, cards, the column menu (hide a column), create in a column, horizontal and vertical virtualisation.
-- **Grouping and sub-grouping** (§3.3) in both layouts: none, status, assignee, priority, label, a label group, and team.
-- **Ordering** (§3.4): manual, status, priority, last created, last updated, due date, estimate; reverse.
+- **Grouping and sub-grouping** (§3.3) in both layouts: none, status, status type, assignee, priority, label, a label group, and team.
+- **Ordering** (§3.4): manual, title, status, priority, assignee, estimate, last updated, last created, due date; reverse.
 - **Manual order** (§4.3): the `position` input on `issue.update`, its server rules and its optimistic update.
 - **Drag and drop** (§3.6) with the mouse, and the same moves by keyboard (§3.7).
 - **Display properties** (§3.8) and the group count (issues or estimate sum).
-- **Toggles** (§3.9): show empty groups, completed issues (all, past week, past month, none). Show sub-issues is reserved for M3.
+- **Toggles** (§3.9): show empty groups ("Show empty columns" on a board), completed issues (all, past day, past week, past month, none). Show sub-issues is reserved for M3.
 - Generalising SPEC-012's list (grouping, nested sub-group headers, visible columns) and its focus model to two dimensions on the board.
 
 **Out of scope**
@@ -34,7 +34,7 @@ This spec **owns the shape of view state** (§4.1): the layout and display optio
 - Multi-select, moving or dragging a selection, bulk edit, undo and redo of moves, the right-click menu on a card, peek (`Space`): **SPEC-022**. This spec defines what one issue's move does; SPEC-022 applies it to a selection and makes it undoable.
 - My issues tabs and whether they have display options: **SPEC-023** (this spec's view state is available to it).
 - Grouping by project, cycle or parent issue; the project, cycle and milestone display properties; the **Show sub-issues** toggle; nested sub-issues in lists: **M3**, when those fields exist (§3.10).
-- Linear options for features Surface doesn't have or won't build: customer, release, SLA status, links count, time in status, pull requests, Sentry (integrations are out of scope, CLAUDE.md). Timeline layout (FR-VIEW-13, M5). Focus grouping of My issues (SPEC-023 may take it). List density (Later, SPEC-005 §2).
+- Linear options for features Surface doesn't have or won't build: customer, release, SLA status, link count, time in status, pull requests, Sentry (integrations are out of scope, CLAUDE.md). Checked against Linear's web app on 2026-11-25, its ordering options are Manual, Title, Status, Priority, Assignee, Estimate, Updated, Created, Due date, Link count and Time in status, plus an Agent option that is left out (built-in AI is out of scope); its grouping options are No grouping, Status, Status type, Assignee, Project, Priority and Label. Of those, this spec leaves out Link count and Time in status (no data behind them in M2) and Project (M3). Timeline layout (FR-VIEW-13, M5). Focus grouping of My issues (SPEC-023 may take it). List density (Later, SPEC-005 §2).
 - Sidebar team reordering by drag (SPEC-005 §7 mentions it for M2; it isn't in this spec's requirements).
 
 ## 3. User flows
@@ -46,19 +46,19 @@ Every flow below applies to any issue view that SPEC-021 renders: a team's All i
 1. `Shift+V` (list scope), the **Display** button in the view header (design-system §3, ViewToolbar), or "Show display options" in `Mod+K` opens the Display options popover, anchored to the button. Focus goes to its first control. Linear uses the same key and command ([Linear: Display options](https://linear.app/docs/display-options), "Keyboard").
 2. The popover holds, top to bottom:
    - **Layout:** a SegmentedControl, List · Board (`Mod+B` does the same, §3.2).
-   - **Grouping** and **Sub-grouping:** two selects (§3.3).
+   - **Grouping** and **Sub-grouping:** two selects (§3.3). On a board Linear labels them **Columns** and **Rows**, and so does Surface; in a list they stay Grouping and Sub-grouping.
    - **Ordering:** a select and a reverse button (↑↓) beside it (§3.4). The reverse button is disabled for Manual, with the tooltip "Manual order can't be reversed."
-   - **Completed issues:** a select, All · Past week · Past month · None (§3.9). Hidden on views that hold no completed issues (SPEC-021: Active, Backlog).
-   - **Show empty groups:** a Switch (§3.9). Hidden while grouping is None.
+   - **Completed issues:** a select, All · Past day · Past week · Past month · None (§3.9). Hidden on views that hold no completed issues (SPEC-021: Active, Backlog).
+   - **Show empty groups:** a Switch (§3.9), named **Show empty columns** on a board. Hidden while grouping is None.
    - **Display properties:** a wrap of toggle chips, one per property (§3.8).
-   - A footer, owned by SPEC-021 §3.6: **Reset to default** (shown when the user's view state differs from the default) and **Set as default** (shown when it differs from the default, for users allowed to set it).
+   - A footer, owned by SPEC-021 §3.6: **Reset to default** (shown when the user's view state differs from the default) and **Set as default** (shown when it differs from the default, for users allowed to set it). Linear's panel words these "Reset" and "Set default for everyone" (checked 2026-11-25); SPEC-021 §3.6 owns the wording.
 3. Every change applies at once to the open view and is kept as the user's personal view state for that view (SPEC-021 §3.6: Linear's "To update for your view only, simply modify the display options"). There is no Apply button. `Esc` or a click outside closes the popover and returns focus to the Display button, or to the focused row when it was opened with `Shift+V`.
 4. Controls that don't apply right now are hidden, not disabled (Sub-grouping and Show empty groups while Grouping is None, Completed issues on Active and Backlog). The one exception is the reverse button, which stays visible and disabled for Manual, with its reason.
 
 ### 3.2 Layout: list or board (`Mod+B`)
 
 1. `Mod+B` (list scope, not while typing) toggles between list and board, as in Linear ([Linear: Board layout](https://linear.app/docs/board-layout), "Configure"). So do the Layout control in Display options and "Switch to board layout" / "Switch to list layout" in `Mod+K`.
-2. Grouping, sub-grouping, ordering, properties and toggles are **shared** by both layouts: "Board views and List view cannot be ordered independently" ([Linear: Board layout](https://linear.app/docs/board-layout), "Feature parity"). The two exceptions are **Show empty groups** and **hidden columns**, kept per layout (§4.1; Q3).
+2. Grouping, sub-grouping, ordering, properties and toggles are **shared** by both layouts: "Board views and List view cannot be ordered independently" ([Linear: Board layout](https://linear.app/docs/board-layout), "Feature parity"). The two exceptions are **Show empty groups** ("Show empty columns" on a board) and **hidden columns**, kept per layout (§4.1; D2).
 3. The focused issue stays focused across the switch, and is scrolled into view.
 4. A board with grouping None has one column, named after the view ("All issues", the custom view's name).
 5. **Below 768 px** the board isn't offered: the view renders as a list, and the Layout control and `Mod+B` are hidden (NFR-20: the small layout is for reading, commenting and changing properties). The stored layout is kept and returns at a wider width.
@@ -71,8 +71,9 @@ Every flow below applies to any issue view that SPEC-021 renders: a team's All i
 |---|---|---|---|
 | None | one | — | no header in a list; one column on a board |
 | Status | a team view: the team's statuses in workflow order (SPEC-010: category order, then position), Triage and Duplicate left out (M2 has neither); a view over several teams: **named status groups**, one per status name, in category order then name, as SPEC-012 §3.9's My issues | as listed | StatusIcon, name, count, `+` |
-| Assignee | No assignee, then users by name (Q6) | as listed | Avatar, name, count, `+` |
-| Priority | Urgent, High, Medium, Low, No priority (Q6) | as listed | PriorityIcon, name, count, `+` |
+| Status type | the status categories (Backlog, Unstarted, Started, Completed, Canceled), in workflow order; Triage is left out (M2 has none) | as listed | StatusIcon of the category, name, count, `+` |
+| Assignee | users by display name, case-insensitive and alphabetical, then No assignee last (D3) | as listed | Avatar, name, count, `+` |
+| Priority | Urgent, High, Medium, Low, No priority last (D3) | as listed | PriorityIcon, name, count, `+` |
 | Label | one group per label applied to an issue in the view, by name (a team label and a workspace label with the same name are one group, as in Linear's multi-team views, [Linear: Labels](https://linear.app/docs/labels), "Filtering and views"), then No label | as listed | LabelChip, count, `+` |
 | *Label group* (one entry per label group the view's teams can use, by name, e.g. "Type") | one group per label of that group, by name, then "No Type" | as listed | LabelChip, count, `+` |
 | Team | the teams in the view, in sidebar order. Offered only on views that can hold more than one team (SPEC-021) | as listed | team icon and key, count, `+` |
@@ -80,25 +81,28 @@ Every flow below applies to any issue view that SPEC-021 renders: a team's All i
 - **An issue appears once per group its value selects.** For Label, an issue with two labels appears in both groups, and in No label only when it has none. For a multi-select label group (SPEC-010), an issue with two of its labels appears in both; for an exclusive group, in at most one (INV-07). Counts count rows, so the groups' counts can sum to more than the view's issue count, as with `issue.groupBy` by label (SPEC-011 §6.1).
 - **Group count:** each header shows the number of issues in the group, or the sum of their estimates. Clicking the count toggles between the two for the view (`groupCount`, §4.1), as in Linear ("You can click this to toggle between either option"). The estimate sum adds the stored estimate values (SPEC-010 §4.3), skipping issues with none, and shows "12 pts". The toggle isn't shown on a view whose teams all have estimates off.
 - **Sub-grouping** offers the same options except the current grouping. In a list it is a second level of headers under each group; on a board it is **swimlanes**: horizontal lanes across every column ([Linear: Display options](https://linear.app/docs/display-options), "Sub-grouping": "available in lists and boards (as rows)"). Changing Grouping to the current sub-grouping clears the sub-grouping.
-- **Collapsing:** `T` on a focused group header, sub-group header or swimlane header collapses or expands it; a click on its chevron does the same; `Alt+T` collapses or expands all groups (SPEC-012 §3.3 item 7; [Linear: Board layout](https://linear.app/docs/board-layout), "T to toggle the collapse or expansion of a swimlane"). Board columns don't collapse; they can be hidden (§3.5 item 4). Collapse state stays in `localStorage` per device, keyed by view and grouping (SPEC-012 §3.3 item 3), not in the view state. Completed and Canceled status groups start collapsed in a list (SPEC-012 D16).
-- **Empty groups** are hidden unless Show empty groups is on (§3.9).
+- **Collapsing:** `T` on a focused group header, sub-group header or swimlane header collapses or expands it; a click on its chevron does the same; `Alt+T` collapses or expands all groups (SPEC-012 §3.3 item 7; [Linear: Board layout](https://linear.app/docs/board-layout), "T to toggle the collapse or expansion of a swimlane"). The mouse does the same on a header, as in Linear's web app (checked 2026-11-25): a Shift-click collapses or expands that group, and an Alt-click collapses or expands all groups. Board columns don't collapse; they can be hidden (§3.5 item 4). Collapse state stays in `localStorage` per device, keyed by view and grouping (SPEC-012 §3.3 item 3), not in the view state. Completed and Canceled status groups start collapsed in a list (SPEC-012 D16).
+- **Empty groups** are hidden unless Show empty groups is on (§3.9). It is off by default in both layouts (D2).
+- **Status type** puts the issues of every status of one category together, whatever the status's name. A drop into one sets the issue's status to the first status (by position) of that category in the issue's own team, and is refused when the team has none (§3.6).
 - **`+` on a header** opens the composer with that group's value set (status, assignee, priority, label, team), and the sub-group's value too when it is in a swimlane or sub-group (SPEC-012 §3.1 generalised). A named status group sets the status of that name in the composer's team when the team has one, else leaves the team's default. "No assignee", "No priority" and "No label" set nothing.
 
 ### 3.4 Ordering
 
-**Options** ([Linear: Display options](https://linear.app/docs/display-options), "Ordering": "Status, Manual, Priority, Last created, Last updated, Due date"; Estimate is the PRD's, FR-VIEW-04; Linear's Link count is left out):
+**Options** ([Linear: Display options](https://linear.app/docs/display-options), "Ordering", and the options Linear's web app shows, §2: Manual, Title, Status, Priority, Assignee, Estimate, Updated, Created, Due date; Link count and Time in status are left out, §2):
 
 | Ordering | Order within a group (not reversed) | Ties |
 |---|---|---|
 | Manual | `sortOrder` ascending, then id (SPEC-011 §4.5): the order everyone shares | — |
+| Title | title A to Z, case-insensitive (the direction is an assumption: Linear's wasn't checked) | manual order |
 | Status | Started, Unstarted, Backlog, then Completed, Canceled ("closest to done → farthest from done, followed by completed and canceled", Linear); within a category by status position | manual order |
+| Assignee | the assignee's display name A to Z, case-insensitive (as the Assignee groups, D3); no assignee last (the direction is an assumption: Linear's wasn't checked) | manual order |
 | Priority | Urgent → Low, No priority last | SPEC-012 D17: `updatedAt` newest first, then number highest first, then id (Q5) |
 | Last created | `createdAt` newest first | manual order |
 | Last updated | `updatedAt` newest first | manual order |
 | Due date | `dueDate` soonest first; no due date last | manual order |
-| Estimate | `estimate` largest first; no estimate last (Q4) | manual order |
+| Estimate | `estimate` largest first; no estimate last (Q4: Linear lists the option, but its direction wasn't observable) | manual order |
 
-- **Reverse** (↑↓ in Display options, "Reverse order" in `Mod+K`) reverses the primary key only. Issues without a value (no due date, no estimate) stay last either way, and ties keep their order. Manual can't be reversed, as in Linear ("You can also reverse the sort order of your issues, except when sorting manually").
+- **Reverse** (↑↓ in Display options, "Reverse order" in `Mod+K`) reverses the primary key only. Issues without a value (no due date, no estimate, no assignee) stay last either way, and ties keep their order. Manual can't be reversed, as in Linear ("You can also reverse the sort order of your issues, except when sorting manually").
 - On a board grouped by Status, ordering by Status orders nothing new within a column; it is still allowed.
 - Every ordering is total (the last key is the id), so equal values never swap between renders (SPEC-012 AC-4's property, extended to every ordering).
 - **Manual order is shared by everyone.** Moving an issue in manual order changes its `sortOrder` for every user and every view, as in Linear ("Manual ordering is unique in that it will update the manual order for everyone in the workspace"). There is one global order (SPEC-011 §4.5); a view shows its issues in that order. A new issue goes first (SPEC-011 Q7), so it appears at the top of its group.
@@ -106,10 +110,10 @@ Every flow below applies to any issue view that SPEC-021 renders: a team's All i
 ### 3.5 Board
 
 1. **Columns** are the groups of §3.3, left to right, each a fixed width (`--board-column-width`, proposed 320 px, a design-system token change, §12). A column header shows the group's icon, name and count (or estimate sum), a `+` that opens the composer with the column's value, and a ⋯ menu.
-2. **Cards** are the column's issues in the view's ordering. A card shows the identifier, the title (at most two lines, clamped with an ellipsis) and a row of the chosen display properties (§3.8), with the assignee's avatar at the right end. The description is never shown ([Linear: Board layout](https://linear.app/docs/board-layout), FAQ). Card heights are fixed per view: the minimum card height (72 px, design-system §2.5) holds two title lines and one property row, whatever the title's length, so the window can be computed without measuring (Q8).
+2. **Cards** are the column's issues in the view's ordering. A card shows the identifier, the title (at most two lines, clamped with an ellipsis) and a row of the chosen display properties (§3.8), with the assignee's avatar at the right end. The description is never shown ([Linear: Board layout](https://linear.app/docs/board-layout), FAQ). Card heights are fixed per view: the minimum card height (72 px, design-system §2.5) holds two title lines and one property row, whatever the title's length, so the window can be computed without measuring (Q8: Linear's cards vary in height with their labels and projects).
 3. **Scrolling.** Without swimlanes, each column scrolls vertically on its own, and the board scrolls horizontally (trackpad, `Shift`+wheel, or dragging an empty area of the board, as Linear). With swimlanes, the whole board scrolls vertically as one, the column headers stay sticky at the top and the lane headers stay sticky at the left. Both axes are virtualised (§4.4): only the columns and cards in view, plus a fixed overscan, are mounted.
 4. **Hide a column:** the column's ⋯ menu has **Hide column**. Hidden columns collapse into a narrow last column, "Hidden columns", listing each with its count; choosing one shows it again (**Show column**). An issue can be dropped onto a hidden column's entry without showing it. This copies Linear ([Linear: Board layout](https://linear.app/docs/board-layout), "Hide columns"). Hidden columns are part of the view state, kept per grouping (§4.1). A list has no hidden groups: filters do that (SPEC-021), as in Linear.
-5. **Swimlanes** (sub-grouping, §3.3) are lanes across every column. A lane header shows the sub-group's icon, name and count, and a chevron. `T` on a focused lane header, or a click on the chevron, collapses or expands the lane. Empty lanes follow Show empty groups.
+5. **Swimlanes** (sub-grouping, §3.3) are lanes across every column. A lane header shows the sub-group's icon, name and count, and a chevron. `T` on a focused lane header, or a click on the chevron, collapses or expands the lane. Empty lanes follow Show empty groups ("Show empty columns" on a board).
 6. **Empty columns** (when shown) display "No issues" and accept drops.
 7. **Focus and keys on a board** (list scope; §3.11): one focused card, with SPEC-012's focus rules (focus survives live re-sorts, follows a moved card, moves to a neighbour when its card leaves, and is restored on return). `J` / `↓` and `K` / `↑` move within the column (and on into the next or previous lane's part of the same column); `←` and `→` move to the nearest card, by index, in the previous or next visible column (skipping empty ones); `Enter` opens the focused issue; `T` on a lane header collapses it. Property shortcuts (SPEC-012 §3.6) act on the focused card.
 8. **Live updates:** a card whose issue changes column (someone changed its status) moves at once; a focused card keeps focus and scrolls into view (SPEC-012 E1). Reordering is not animated (design-system §2.6).
@@ -127,6 +131,7 @@ In both layouts the mouse can drag an issue row or card. The pointer must move 4
 |---|---|---|
 | Status (a team view) | `status: G` | never (Triage and Duplicate are not columns in M2) |
 | Status (named groups) | `status:` the issue's own team's status named G | the issue's team has no status of that name: "DES has no status named In Review." |
+| Status type | `status:` the first status (by position) of category G in the issue's own team | the issue's team has no status in that category: "DES has no Started status." |
 | Assignee | `assignee: G`, or `null` for No assignee | the issue's team is private and G isn't a member: "Ada isn't a member of DES, so they can't be assigned DES issues." (SPEC-011: the assignee must see the team) |
 | Priority | `priority: G` | never |
 | Label | `removeLabels: [source label]` (when the source is a label group, not No label), `addLabels: [G]` (when G isn't No label) | G is a team label of another team: "Frontend is an ENG label, so it can't go on DES-12."; G is archived (an archived label is a group only while some issue has it, and SPEC-010 refuses to add it): "Frontend is archived. Unarchive it in settings to add it." |
@@ -152,7 +157,7 @@ The same moves without a mouse (list scope, the focused issue; SPEC-022 extends 
 - When a command isn't available, the key shows the engine's hint, with a specific reason: "Order by Manual to move issues." or "Group the board to move cards between columns."
 - A move at a group's edge (`Alt+↑` on the first issue) does nothing. `Alt+↓` never crosses into the next group.
 - "Move to top" and "Move to bottom" are also in `Mod+K`, and in the card or row menu, which SPEC-022 owns.
-- **Changing the grouped property any other way on a manually ordered board** (the `S` status picker on a status board, the command menu, `Alt+←`/`→`) also moves the issue to the top of its new column: "when you move issues to a new column on a board, it will go to the top if you make the change with the keyboard shortcut S or command menu and to wherever you placed it if you used the mouse" ([Linear: Board layout](https://linear.app/docs/board-layout), "Move to top or bottom"). The client adds `position: {before: <the first issue of the new column in this view>}` to that `issue.update`. A list, or a board ordered any other way, sends no position (Q9).
+- **Changing the grouped property any other way on a manually ordered board** (the `S` status picker on a status board, the command menu, `Alt+←`/`→`) also moves the issue to the top of its new column: "when you move issues to a new column on a board, it will go to the top if you make the change with the keyboard shortcut S or command menu and to wherever you placed it if you used the mouse" ([Linear: Board layout](https://linear.app/docs/board-layout), "Move to top or bottom"). The client adds `position: {before: <the first issue of the new column in this view>}` to that `issue.update`. A list, or a board ordered any other way, sends no position, and no toast is shown (D4).
 
 ### 3.8 Display properties (FR-VIEW-06)
 
@@ -176,8 +181,8 @@ Display options lists the properties as toggle chips; each shows or hides that p
 
 ### 3.9 Toggles (FR-VIEW-07)
 
-- **Completed issues:** All · Past week · Past month · None. It applies to issues in the Completed and Canceled categories: All shows them; Past week shows those whose `completedAt` or `canceledAt` is within the last 7 days; Past month within the last 30 days; None hides them. Other issues always show. The window is computed against the device clock and recomputed every minute and when the view opens, so an issue leaves the window without a delta. It is evaluated on the client and never stored in a filter (SPEC-021's filters are separate). Linear documents the same choice for completed projects ("show projects that have completed in the last week, month, or year … or no completed projects"); the PRD's set is used for issues (Q2).
-- **Show empty groups:** shows every possible group of the grouping (and sub-grouping), not only those with issues: for Status every status of the view's teams (named groups across teams), for Assignee the members of the view's team (for a multi-team view, every active user) plus No assignee, for Priority all five, for Label every non-archived label the view's teams can use plus No label, for a label group its non-archived labels plus "No <group>", for Team the view's teams. Kept per layout (§4.1): an empty status column is a drop target on a board.
+- **Completed issues:** All · Past day · Past week · Past month · None, Linear's five choices (D1). It applies to issues in the Completed and Canceled categories: All shows them; Past day shows those whose `completedAt` or `canceledAt` is within the last 24 hours; Past week shows those whose `completedAt` or `canceledAt` is within the last 7 days; Past month within the last 30 days; None hides them. Other issues always show. The window is computed against the device clock and recomputed every minute and when the view opens, so an issue leaves the window without a delta. It is evaluated on the client and never stored in a filter (SPEC-021's filters are separate). Linear documents the same choice for completed projects ("show projects that have completed in the last week, month, or year … or no completed projects"); Linear's web app offers the five choices above for issues, and they are used here (D1).
+- **Show empty groups** ("Show empty columns" on a board): off by default in both layouts, with a separate switch per layout, as in Linear (D2). When on, it shows every possible group of the grouping (and sub-grouping), not only those with issues: for Status every status of the view's teams (named groups across teams), for Status type all five categories, for Assignee the members of the view's team (for a multi-team view, every active user) plus No assignee, for Priority all five, for Label every non-archived label the view's teams can use plus No label, for a label group its non-archived labels plus "No <group>", for Team the view's teams. Kept per layout (§4.1). With it off, an empty status column isn't on the board, so it isn't a drop target until the switch is turned on.
 - **Show sub-issues:** reserved for M3 (§3.10).
 
 ### 3.10 What M2 does with M3 fields
@@ -218,8 +223,8 @@ In the list context (a list or board page), copying Linear's "Show display optio
 | Group by… / Sub-group by… | a sub-page with §3.3's options; picking one sets it |
 | Order by… | a sub-page with §3.4's options |
 | Reverse order | flips `ordering.reversed`; unavailable for Manual |
-| Show empty groups / Hide empty groups | flips the toggle for the current layout |
-| Completed issues… | a sub-page: All, Past week, Past month, None |
+| Show empty groups / Hide empty groups ("empty columns" on a board) | flips the toggle for the current layout |
+| Completed issues… | a sub-page: All, Past day, Past week, Past month, None |
 | Show property… / Hide property… | a sub-page of the properties to toggle |
 | Move to top / Move to bottom / Move up / Move down | §3.7; on the focused issue |
 | Move to previous column / Move to next column | §3.7; board only |
@@ -238,15 +243,15 @@ No new synced model. One new input on `issue.update` (`position`, §4.3). The vi
 |---|---|---|---|
 | `version` | `1` | `1` | Raised only by an incompatible change |
 | `layout` | `list` \| `board` | `list` | |
-| `grouping` | `none` \| `status` \| `assignee` \| `priority` \| `label` \| `team` \| `{labelGroup: uuid}` | `status` | M3 adds `project`, `cycle`, `parent` |
+| `grouping` | `none` \| `status` \| `statusType` \| `assignee` \| `priority` \| `label` \| `team` \| `{labelGroup: uuid}` | `status` | M3 adds `project`, `cycle`, `parent` |
 | `subGrouping` | the same, or `none` | `none` | Never equal to `grouping` (except `none`); a value equal to it reads as `none` |
-| `ordering` | `{field: 'manual' \| 'status' \| 'priority' \| 'createdAt' \| 'updatedAt' \| 'dueDate' \| 'estimate', reversed: boolean}` | `{field: 'priority', reversed: false}` | `reversed` is ignored for `manual` |
-| `completedIssues` | `all` \| `pastWeek` \| `pastMonth` \| `none` | `all` | |
-| `showEmptyGroups` | `{list: boolean, board: boolean}` | `{list: false, board: true}` (Q3) | |
+| `ordering` | `{field: 'manual' \| 'title' \| 'status' \| 'priority' \| 'assignee' \| 'createdAt' \| 'updatedAt' \| 'dueDate' \| 'estimate', reversed: boolean}` | `{field: 'priority', reversed: false}` | `reversed` is ignored for `manual` |
+| `completedIssues` | `all` \| `pastDay` \| `pastWeek` \| `pastMonth` \| `none` | `all` | |
+| `showEmptyGroups` | `{list: boolean, board: boolean}` | `{list: false, board: false}` (D2) | |
 | `showSubIssues` | boolean | `true` | Reserved; no effect until M3 |
 | `groupCount` | `issues` \| `estimate` | `issues` | |
 | `properties` | array of `priority` \| `id` \| `status` \| `labels` \| `estimate` \| `dueDate` \| `assignee` \| `createdAt` \| `updatedAt`, no duplicates | the "on" set of §3.8 | Order in the array is ignored: rows and cards use §3.8's order |
-| `hiddenColumns` | `{[groupingKey]: string[]}` (`groupingKey` is the grouping's name or `labelGroup:<id>`; each value is a group key: a status id, a user id, a priority number as text, a label id, a team id, a status name for named groups, or `none` for the No-value group) | `{}` | At most 200 keys in all |
+| `hiddenColumns` | `{[groupingKey]: string[]}` (`groupingKey` is the grouping's name or `labelGroup:<id>`; each value is a group key: a status id, a status category name, a user id, a priority number as text, a label id, a team id, a status name for named groups, or `none` for the No-value group) | `{}` | At most 200 keys in all |
 
 - **Reading never fails.** `readViewState(json)` reads each field on its own and falls back to that field's default when it is missing or invalid (the pattern of `readPreferences`, `packages/operations/src/ops/preferences.ts`), and drops unknown fields. So a value written by a newer client, or an M3 value read by an M2 client, degrades field by field, and a corrupt row still renders. `ViewStateSchema` (strict) validates what an operation **writes** (SPEC-021 §6), so the server never stores a malformed value.
 - **Ids in the view state** (`{labelGroup}`, `hiddenColumns` keys) are checked by SPEC-021 for scope (a workspace view must not name a private team's label), exactly as ids in filters.
@@ -254,7 +259,7 @@ No new synced model. One new input on `issue.update` (`position`, §4.3). The vi
 
 #### 4.1.1 Built-in default
 
-`DEFAULT_VIEW_STATE` is the default above: list, grouped by status, ordered by priority, every completed issue, empty groups hidden in a list and shown on a board, the M1 columns. It reproduces M1's list exactly (SPEC-012 §3.3), so the M2 release changes nothing until a user changes something. SPEC-021 defines when a view uses a stored default instead.
+`DEFAULT_VIEW_STATE` is the default above: list, grouped by status, ordered by priority, every completed issue, empty groups hidden in both layouts, the M1 columns. It reproduces M1's list exactly (SPEC-012 §3.3), so the M2 release changes nothing until a user changes something. SPEC-021 defines when a view uses a stored default instead.
 
 ### 4.2 Pure functions in `packages/domain` (unit and property tested)
 
@@ -330,7 +335,7 @@ The header's right side (design-system §3) shows, in order: the filter button (
 | State | Shown |
 |---|---|
 | View loading (a team still loading, SPEC-021 §5.4) | The rows held so far, and the header's loading indicator (SPEC-021) |
-| No issues in the view | SPEC-021's empty state; a board shows its columns only when Show empty groups is on, else the empty state |
+| No issues in the view | SPEC-021's empty state; a board shows its columns only when Show empty columns is on, else the empty state |
 | Every group hidden on a board | "All columns are hidden." with **Show all columns** |
 | A drop refused | The card snaps back; a toast with the reason (§3.6) |
 | A move rejected by the server | Rolled back; a toast with the server's message |
@@ -385,13 +390,13 @@ The header's right side (design-system §3) shows, in order: the filter button (
 | AC | Criterion | Test |
 |---|---|---|
 | AC-1 | `readViewState` returns a valid `ViewState` for any JSON input (never throws), keeps every valid field, replaces each invalid or missing field with its default, drops unknown fields, and reads a `subGrouping` equal to `grouping` as `none`. `ViewStateSchema` refuses what `readViewState` would repair. `DEFAULT_VIEW_STATE` renders the M1 list unchanged (grouping, order, columns, collapsed groups). | unit + property |
-| AC-2 | `groupIssues` puts each issue in exactly the groups its value selects (once per label for Label grouping, once per label of a multi-select group), in the group order of §3.3, with the right counts and estimate sums; Show empty groups adds exactly the groups of §3.9; the completed window keeps exactly the closed issues within it. | unit + property |
+| AC-2 | `groupIssues` puts each issue in exactly the groups its value selects (once per label for Label grouping, once per label of a multi-select group), in the group order of §3.3, with the right counts and estimate sums; Show empty groups adds exactly the groups of §3.9; Assignee groups are alphabetical by display name (case-insensitive) with No assignee last; the completed window (past day, week, month) keeps exactly the closed issues within it. | unit + property |
 | AC-3 | Each ordering of §3.4 orders as specified, puts missing values last in both directions, reverses only the primary key, ignores `reversed` for Manual, and is total (no two distinct issues compare equal). | unit + property |
 | AC-4 | `Shift+V` and the Display button open Display options; each control changes the view at once and dispatches the personal view state (SPEC-021); `Esc` returns focus where it was; hidden controls follow §3.1 item 4. | unit (commands, popover model) + story |
 | AC-5 | `Mod+B`, the layout buttons and the command switch layouts, keep the focused issue focused, and keep grouping, ordering and properties; Show empty groups and hidden columns are kept per layout. Below 768 px only the list renders and the stored layout is kept. | unit |
 | AC-6 | The board renders the groups as columns with header, count or estimate sum (click toggles), `+` and ⋯; `+` opens the composer with the column's (and lane's) value; Hide column moves it to Hidden columns, and Show column brings it back. | unit + story |
 | AC-7 | Sub-grouping renders nested headers in a list and swimlanes on a board; `T` and the chevron collapse a lane or group; `Alt+T` collapses or expands all; collapse state survives a reload on the device. | unit + story |
-| AC-8 | `dropPatch` returns the `issue.update` input of §3.6's table for every grouping (status, named status, assignee, priority, label, label group, None) and the refusal text for every refused case; a drop changing column and lane is one input. | unit + property (a drop to the source group is a no-op patch) |
+| AC-8 | `dropPatch` returns the `issue.update` input of §3.6's table for every grouping (status, named status, status type, assignee, priority, label, label group, None) and the refusal text for every refused case; a drop changing column and lane is one input. | unit + property (a drop to the source group is a no-op patch) |
 | AC-9 | Drag and drop: a drag starts after 4 px; a drop into another group dispatches `dropPatch`'s input (plus `position` when manual); a drop in the same group dispatches only `position` when manual and nothing otherwise, with the hint; `Esc` and a drop outside cancel; a refused drop sends nothing and shows the toast. | unit (drag controller with synthetic pointer events, fake dispatcher) + e2e ⏸ |
 | AC-10 | Keyboard moves: `Alt+↑`/`↓`, `Alt+Shift+↑`/`↓` and `Alt+←`/`→` dispatch the moves of §3.7 with the right `position`; they are unavailable with the reasons of §3.7; a move at a group's edge does nothing; changing the grouped property on a manually ordered board adds `position: {before: first}`. | unit (commands, availability) |
 | AC-11 | `position`: the server places the issue strictly between the named neighbours; with only `after` directly after it (no visible issue between); with only `before` directly before; with `lo ≥ hi` directly after `after`; naming itself is `INVALID_INPUT`; an archived or deleted moved issue is `CONFLICT`; an archived or deleted neighbour still works. | unit (key functions, handler with a fake repo) + integration ⏸ |
@@ -420,14 +425,14 @@ The header's right side (design-system §3) shows, in order: the filter button (
 | # | Question | Proposed default |
 |---|---|---|
 | Q1 | **Manual order design** (needs an ADR, §12): add `position {after, before}` to `issue.update`, or a separate `issue.move` operation? And how to keep keys short: re-space up to 50 issues on each side when a key passes 128 characters (§4.3 item 6), or something else (a nightly re-key, no limit)? | `position` on `issue.update` (a drop that changes a property and the position is one operation and one undo step); the 128-character limit with neighbourhood re-spacing, retried with all locks in id order. Recorded in a new ADR, "Shared manual order of issues". |
-| Q2 | Completed issues choices: the PRD's All · Past week · Past month · None, or more (past day, past 3 months)? Linear's issue options aren't in its docs. | The PRD's four; "past month" is the last 30 days (filter durations have no months, SPEC-003 §7.4). |
-| Q3 | Show empty groups: one setting for both layouts, or one per layout? M1's list hides empty groups, but an empty status column must show on a board to be a drop target. | Per layout: list off, board on (§4.1). |
-| Q4 | Ordering by Estimate (PRD; Linear doesn't list it): largest or smallest first? | Largest first, no estimate last. |
+| Q2 | **Decided, see D1.** Completed issues choices: the PRD's All · Past week · Past month · None, or more (past day, past 3 months)? | All · Past day · Past week · Past month · None; "past month" is the last 30 days (filter durations have no months, SPEC-003 §7.4). |
+| Q3 | **Decided, see D2.** Show empty groups: one setting for both layouts, or one per layout? | One per layout, off in both (§4.1). |
+| Q4 | Ordering by Estimate (the PRD's; Linear's ordering list has it too): largest or smallest first? Direction not observable in Linear (the team checked has no estimates). | Largest first, no estimate last. |
 | Q5 | Priority ordering ties: keep M1's tie-break (most recently updated, then number, SPEC-012 D17) or use manual order like every other ordering? | Keep D17, so the M1 list doesn't change. |
-| Q6 | Group order for Assignee and Priority, which Linear's docs don't give: where do "No assignee" and "No priority" go? | No assignee first, then users by name; priority Urgent → Low, then No priority (the order of the priority picker's values, without "No priority" first). |
+| Q6 | **Decided, see D3.** Group order for Assignee and Priority: where do "No assignee" and "No priority" go? | Users by display name, then No assignee last; priority Urgent → Low, then No priority last. |
 | Q7 | Dragging within a group when ordering isn't Manual: do nothing with a hint, or switch the view to Manual? | Do nothing, with the hint "Order by Manual to move issues within a group." |
-| Q8 | Card height: fixed per view (two title lines reserved, so short titles leave space), or measured per card (Linear's cards vary)? Measuring conflicts with design-system §5.4 ("no measuring on render") and the 60 fps budget. | Fixed: 72 px with two title lines and one property row. |
-| Q9 | Copy Linear's "a keyboard or command-menu change of the grouped property on a manually ordered board moves the issue to the top of its new column" (§3.7)? It changes the shared order for everyone. | Copy it, on boards ordered manually only. |
+| Q8 | Card height: fixed per view (two title lines reserved, so short titles leave space), or measured per card? Observed in Linear's web app on 2026-11-25: its cards vary in height with their labels and projects. Still open. Measuring conflicts with design-system §5.4 ("no measuring on render") and the 60 fps budget. | Fixed: 72 px with two title lines and one property row. |
+| Q9 | **Decided, see D4.** Copy Linear's "a keyboard or command-menu change of the grouped property on a manually ordered board moves the issue to the top of its new column" (§3.7)? It changes the shared order for everyone. | Copy it, on boards ordered manually only. |
 | Q10 | Does a position-only move change `updatedAt`, write history or emit `issue.updated` (webhooks, M6)? | None of the three. |
 | Q11 | Drag and drop in-house on pointer events, or a library (for example dnd-kit)? | In-house; no new dependency. |
 | Q12 | Offer Team grouping (Linear has it; the PRD's list doesn't) on multi-team views? | Yes, on views that can hold several teams; not droppable until M3. |
@@ -435,7 +440,12 @@ The header's right side (design-system §3) shows, in order: the filter button (
 
 ## Decisions
 
-None yet. Accepted answers move here with a date.
+| # | Question | Decision |
+|---|---|---|
+| D1 | Q2: completed issues choices | **Decided by the user on 2026-11-25** ("we want same as Linear"): All, Past day, Past week, Past month, None (Past day is the last 24 hours, Past month the last 30 days). Checked in Linear's web app on 2026-11-25. |
+| D2 | Q3: show empty groups, one setting or one per layout | **Decided by the user on 2026-11-25** ("we want same as Linear"): off by default in both layouts, with a separate toggle per layout; the board calls it "Show empty columns", the list "Show empty groups". An empty column is therefore a drop target only while its toggle is on. Checked in Linear's web app on 2026-11-25. |
+| D3 | Q6: group order for Assignee and Priority | **Decided by the user on 2026-11-25** ("we want same as Linear"): grouped by assignee, members are alphabetical by display name (case-insensitive) and "No assignee" is last; "No priority" is last. Checked in Linear's web app on 2026-11-25. |
+| D4 | Q9: keyboard change of the grouped property on a manually ordered board | **Decided by the user on 2026-11-25** ("we want same as Linear"): the issue lands at the top of the new column, with no toast. This is the spec's default (§3.7). Checked in Linear's web app on 2026-11-25. |
 
 ## 12. Changes to accepted docs on acceptance
 
@@ -457,5 +467,5 @@ None yet. Accepted answers move here with a date.
 | design-system.md | §2.5 | Add `--board-column-width` (320) and the lane header height (32). | No |
 | command-menu.md | §2 Toggles | Add the display commands of SPEC-020 §3.12 (list context). | No |
 | SPEC-005 | §3 "URL state" | "filters and display (M2) are encoded in query params" → "filters (M2, SPEC-021) are encoded in the URL; display options are not (as Linear)". | No |
-| PRD | FR-VIEW-03, 04 | FR-VIEW-03: add Team and label-group grouping (Q12, Q13); project and cycle grouping arrive with M3. FR-VIEW-04: ordering names follow Linear (Last created, Last updated). | No |
-| PRD | FR-VIEW-07 | "show sub-issues" arrives with M3 (sub-issues); M2 ships empty groups and completed issues. | No |
+| PRD | FR-VIEW-03, 04 | FR-VIEW-03: add Team and label-group grouping (Q12, Q13); project and cycle grouping arrive with M3. FR-VIEW-04: ordering names follow Linear (Last created, Last updated), and Title and Assignee are added to the options (Linear's web app, 2026-11-25); FR-VIEW-03 also gains Status type grouping. | No |
+| PRD | FR-VIEW-07 | "show sub-issues" arrives with M3 (sub-issues); M2 ships empty groups (off by default in both layouts, D2) and completed issues (All, Past day, Past week, Past month, None, D1). | No |
