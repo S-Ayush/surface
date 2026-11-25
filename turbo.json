@@ -61,6 +61,14 @@
         "!.claude/worktrees/**"
       ]
     },
+    "//#licenses:check": {
+      "inputs": [
+        "$TURBO_ROOT$/pnpm-lock.yaml",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/scripts/check-licenses.mjs",
+        "$TURBO_ROOT$/packages/config/licenses.js"
+      ]
+    },
     "dev": {
       "cache": false,
       "persistent": true

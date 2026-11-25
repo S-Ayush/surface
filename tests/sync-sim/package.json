@@ -2,6 +2,7 @@
   "name": "@surface/sync-sim",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Sync simulation: real sync-client stores against a server over a controllable network (PLAN-002 S9, ADR-0016).",
   "scripts": {

@@ -13,7 +13,7 @@ Status: **Draft v0.1** · Date: 2026-11-25 · Assets: [`brand/assets/`](brand/as
 Surface keeps your team's work on the client, so nothing hides behind a spinner or a round trip. Lists, boards and searches are already there when you look. The name and the mark say the same thing: the work sits at the surface, in plain view.
 
 - **Line:** *Everything on the surface.*
-- **Descriptor:** *The only open-source issue tracker your team needs.* (Chosen by the user, 2026-11-25. Before it ships, add a LICENSE: see B-4.)
+- **Descriptor:** *The only open-source issue tracker your team needs.* (Chosen by the user, 2026-11-25. The licence question is resolved: see B-4.)
 - **One sentence:** *Surface is a fast, keyboard-first issue tracker that one team hosts for itself, on its own server.*
 
 Put the descriptor under the lockup on the sign-in page, in the README and in the docs, with the line near it. Don't use them inside the app chrome.
@@ -163,4 +163,4 @@ The SVGs are generated from the geometry in §2.1 and §3, and the PNGs are rend
 | B-1 | **The mark is the split tile with the surface line.** Two other concepts were explored and dropped. A keycap with a home-row bump read as a face at small sizes. Two stacked bars were too generic. | 2026-11-25 |
 | B-2 | **No new colours or fonts.** The brand palette is a subset of the existing tokens, and the wordmark is outlined from the bundled Inter. | 2026-11-25 |
 | B-3 | **The workspace logo comes before the Surface mark** in the sidebar, because one install is one company (VISION §3). | 2026-11-25 |
-| B-4 | **Surface is described as open source.** The descriptor is the user's. *Open:* the repo has no LICENSE file and no `license` field in any `package.json`, and VISION §5 says "an internal tool, forever". Before the descriptor appears anywhere, pick a licence, add `LICENSE`, and update VISION. | 2026-11-25 |
+| B-4 | **Surface is described as open source.** The descriptor is the user's. *Resolved by [ADR-0026](../04-architecture/adr/0026-open-source-mit.md): the licence is MIT, `LICENSE` and the `license` fields are in, and VISION §5 now reads "Free and open source, never sold".* | 2026-11-25 |

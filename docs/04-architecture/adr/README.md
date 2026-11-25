@@ -27,5 +27,6 @@
 | [0023](0023-document-migration-unlogged.md) | Document schema migrations rewrite synced rows without logging them (exception to architecture rule 2) |
 | [0024](0024-job-queues.md) | Job queue names and the M1 queues (supersedes the queue list of 0010) |
 | [0025](0025-opaque-draft-ids.md) | Opaque ids in draft operations (exception to registry rule 4) |
+| [0026](0026-open-source-mit.md) | Surface is open source under MIT |
 
 Format: context → options → decision → consequences. An accepted ADR is never edited in substance; a new ADR supersedes it.

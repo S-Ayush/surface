@@ -1,7 +1,7 @@
 # Surface
 
 Self-hosted, keyboard-first issue tracker inspired by Linear, for small teams (10–50 people, no hard cap).
-It is an internal tool: one Docker image + PostgreSQL, no commercial edition, no multi-tenancy, no telemetry.
+It is open source (MIT) and still one Docker image + PostgreSQL: no commercial edition, no multi-tenancy, no telemetry.
 Speed comes from a local-first sync engine: the client holds a replica of workspace metadata and renders from it.
 
 ## Where the truth lives

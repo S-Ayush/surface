@@ -2,6 +2,7 @@
   "name": "@surface/sync-protocol",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Sync wire types and codecs (bootstrap frames, deltas, mutation batches).",
   "files": [

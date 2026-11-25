@@ -2,6 +2,7 @@
   "name": "@surface/domain",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Entity types, enums, invariants, filter engine, fractional indexing.",
   "files": [

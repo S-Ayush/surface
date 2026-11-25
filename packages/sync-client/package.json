@@ -2,6 +2,7 @@
   "name": "@surface/sync-client",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Client store: IndexedDB, MobX object pool, mutation queue, WebSocket client.",
   "exports": {

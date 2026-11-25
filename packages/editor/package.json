@@ -2,6 +2,7 @@
   "name": "@surface/editor",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Rich text editor (TipTap): the document schema (headless, also on the server) and the React editor.",
   "files": [

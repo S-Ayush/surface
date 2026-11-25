@@ -1,16 +1,23 @@
-# Surface
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/05-design/brand/assets/surface-lockup-dark.svg">
+    <img src="docs/05-design/brand/assets/surface-lockup.svg" alt="Surface" height="48">
+  </picture>
+</p>
 
-A self-hosted, keyboard-first issue tracker for small teams. One install serves one organisation:
-a Docker image plus PostgreSQL on a machine you own. The client keeps a replica of the workspace,
-so lists, boards, filters and search work without a round-trip to the server.
+<p align="center"><strong>The only open-source issue tracker your team needs.</strong></p>
+
+Surface is a self-hosted, keyboard-first issue tracker for small teams (10 to 50 people), with
+Linear's model: teams, workflows, cycles, projects and views. One install serves one company: a
+Docker image plus PostgreSQL on a machine you own. The client keeps a replica of the workspace
+metadata, so lists, boards, filters and search work without a round-trip to the server.
 
 Surface makes no outbound network calls except to your own SMTP server. That rules out telemetry,
-update checks, CDNs and external fonts.
+update checks, CDNs and external fonts. There is no commercial edition and no multi-tenancy.
 
 > **Status: early development.** The install path below works: the image, configuration checks,
-> migrations, health checks, the `surface` CLI and first-run setup. Sign-in arrives next
-> ([PLAN-001](docs/07-plans/PLAN-001-workspace-auth-members-teams.md)); until then the app
-> shows an empty shell after setup. There is no published image yet, so step 2 builds it from source.
+> migrations, health checks, the `surface` CLI and first-run setup. There is no published image
+> yet, so step 2 builds it from source.
 
 ## Install (about 15 minutes)
 
@@ -138,12 +145,13 @@ The `surface` command inside the container: `docker compose exec app surface <co
 
 ## Development
 
-You need Node 24 ([nvm](https://github.com/nvm-sh/nvm): `nvm use`), pnpm 10 and Docker.
+You need Node 24 ([nvm](https://github.com/nvm-sh/nvm): `nvm use`), pnpm 10 and Docker (Colima
+works on macOS). Docker is only needed for the integration tests and the dev database.
 
 ```sh
 pnpm install
 pnpm dev        # dev database, migrations, server and web app: open http://localhost:5173
-pnpm check      # build, lint, typecheck and unit tests
+pnpm check      # build, lint, typecheck, licence check and unit tests
 ```
 
 `pnpm test:int` runs the integration tests against a throwaway PostgreSQL. Each checkout gets its
@@ -154,6 +162,25 @@ signs you out of the other. Give each stack its own loopback name, such as
 `SURFACE_URL=http://a.localhost:5173 pnpm dev`, and open that address (every `*.localhost` name is
 this machine).
 
-Start with [CLAUDE.md](CLAUDE.md) for the rules of the codebase, then [docs/](docs/): the product
-in `02-product`, the domain model in `03-domain`, the architecture in `04-architecture`, feature
-specs in `06-specs` and the build plan in `07-plans`.
+## Documentation map
+
+| Folder                                        | What is in it                                      |
+| --------------------------------------------- | -------------------------------------------------- |
+| [docs/01-vision](docs/01-vision/VISION.md)    | Why Surface exists, its principles and non-goals   |
+| [docs/02-product](docs/02-product/PRD.md)     | What Surface 1.0 must do (the PRD)                 |
+| [docs/03-domain](docs/03-domain/)             | Entities, invariants, state machines, permissions  |
+| [docs/04-architecture](docs/04-architecture/) | Architecture, sync protocol and decision records   |
+| [docs/05-design](docs/05-design/)             | Design tokens, components, shortcuts, brand        |
+| [docs/06-specs](docs/06-specs/)               | Feature specs with acceptance criteria             |
+| [docs/07-plans](docs/07-plans/README.md)      | Build order and slice plans                        |
+| [docs/ops](docs/ops/)                         | Reverse proxy, upgrade, backup and troubleshooting |
+
+## Contributing and security
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Report vulnerabilities
+privately, as [SECURITY.md](SECURITY.md) describes. Everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+## Licence
+
+Surface is released under the [MIT licence](LICENSE) ([ADR-0026](docs/04-architecture/adr/0026-open-source-mit.md)).

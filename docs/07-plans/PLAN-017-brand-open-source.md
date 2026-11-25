@@ -48,7 +48,7 @@ Static assets, components, docs and metadata only. Each slice is one PR, and rol
 
 SPEC-001 keeps emails image-free on purpose. This slice would put `email-lockup.png` into the magic-link, reset and invite emails as an inline CID attachment, which needs no remote fetch and so keeps CLAUDE.md rule 5. **It needs the user's decision** (a SPEC-001 decision row) before it starts.
 
-### S3: Open-source groundwork · M
+### S3: Open-source groundwork · M · ✅ Done 2026-11-25
 
 - `LICENSE`: MIT, "Copyright (c) 2026 The Surface contributors".
 - `"license": "MIT"` in the root `package.json` and every workspace package. Packages stay `"private": true`, because nothing is published to npm.
@@ -58,6 +58,15 @@ SPEC-001 keeps emails image-free on purpose. This slice would put `email-lockup.
 - **CONTRIBUTING.md** (the slice workflow, `pnpm check`, Conventional Commits, scope rules and the out-of-scope list), **SECURITY.md** (report privately through the host's private vulnerability reporting, with no personal email address; the supported version is the latest release), and **CODE_OF_CONDUCT.md** (Contributor Covenant 2.1).
 - **Licence check:** `pnpm licenses:check` fails when a production dependency has a licence outside an allowlist (MIT, ISC, BSD-2/3-Clause, Apache-2.0, 0BSD, BlueOak-1.0.0, Unlicense, MIT-0, CC0-1.0, OFL-1.1, PSF-2.0). Exceptions are named one by one: today only `@img/sharp-libvips-*` (LGPL-3.0-or-later, dynamically linked). The gate runs it.
 - brand.md B-4 becomes resolved.
+
+> **As built (2026-11-25).**
+>
+> - **Files:** `LICENSE`, `README.md` (rewritten: the install section is kept from before, with a `<picture>` lockup, the descriptor, a doc map and the licence added), `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1, enforcement through the maintainers' private reporting, no email), [ADR-0026](../04-architecture/adr/0026-open-source-mit.md) and its row in `adr/README.md`. `"license": "MIT"` is in the root and all 11 workspace `package.json` files (apps, packages and `tests/sync-sim`); `"private": true` is unchanged.
+> - **Docs changed:** VISION §5 principle 2 ("Free and open source, never sold", with the dated note), a dated note in PRD §1, CLAUDE.md line 4, and brand.md B-4 (resolved) and the descriptor line. No existing ADR said Surface was internal or proprietary, so none was superseded.
+> - **Licence check:** the policy is pure code in `packages/config/licenses.js` (`ALLOWED_LICENSES`, `LICENSE_EXCEPTIONS`, `isAllowedExpression`, `findViolations`, exported as `@surface/config/licenses`). `scripts/check-licenses.mjs` runs `pnpm licenses list --prod --json` and calls it. Root script `licenses:check`; it is a root Turbo task (`//#licenses:check` in `turbo.json`, inputs: the lockfile, root `package.json`, the script and the policy file), and `pnpm check` and `pnpm check:fast` both run it. SPDX expressions are parsed: any side of an OR, every side of an AND. `@img/sharp-libvips-*` is accepted only with `LGPL-3.0-or-later`.
+> - **Tests** (`packages/config/test/licence.test.ts`; `@surface/config` gained a `test` script and a `vitest.config.js`): "every package.json declares MIT", "LICENSE is the MIT text for the Surface contributors", "rejects GPL-3.0 and accepts the named libvips exception", "accepts OR expressions with one allowed side and rejects when none is allowed".
+> - **Deviation:** the test file sits in `packages/config/test/` (as the test plan allowed) rather than under `scripts/`, so the existing `pnpm test` gate runs it.
+> - **Notes for later:** `pnpm licenses` only lists what is installed, so on Linux the libvips package is `@img/sharp-libvips-linux-*`; the pattern covers it, but only the macOS arm64 install was checked here. Nothing was pushed, no remote was added and nothing was made public.
 
 ### S4: Publish readiness · S · _(needs S3)_
 

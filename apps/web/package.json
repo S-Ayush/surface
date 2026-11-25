@@ -2,6 +2,7 @@
   "name": "@surface/web",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Surface web app (React SPA, served by the server).",
   "scripts": {

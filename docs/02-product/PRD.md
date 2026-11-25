@@ -9,6 +9,8 @@ Next: Domain model (`03-domain/`), then feature specs (`06-specs/`).
 
 This PRD defines **what Surface 1.0 must do**: every capability, its release tier, its priority, and the milestone that delivers it. It also sets non-functional requirements and how we measure success. It does not cover *how* (that is in the architecture docs and specs).
 
+Surface is free and open source under the MIT licence ([ADR-0026](../04-architecture/adr/0026-open-source-mit.md)). *Changed 2026-11-25.* The scope in this PRD does not change: one company per install, no commercial or cloud edition, no multi-tenancy, no telemetry.
+
 ### 1.1 How to read this document
 
 **Tiers**

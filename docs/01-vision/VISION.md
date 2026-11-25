@@ -39,7 +39,7 @@ Speed is the product, and our constraints are what make it possible:
 ## 5. Principles
 
 1. **Instant or it's a bug.** Local interaction p95 < 50 ms. Opening any issue < 100 ms. Cold start < 1.5 s on a warm cache.
-2. **An internal tool, forever.** Surface is never sold, metered, or multi-tenant. Every decision optimises for *the team using it*, not for a market.
+2. **Free and open source, never sold.** Surface is MIT-licensed, and it is never sold, metered, or multi-tenant. Every decision optimises for *the team using it*, not for a market. *Changed 2026-11-25 ([ADR-0026](../04-architecture/adr/0026-open-source-mit.md)): this was "An internal tool, forever". The scope below does not change.*
 3. **Docker-native, self-hosted, free to run.** One `docker compose up` on a Linux VM brings up the app *and* the database. Every required component is open source and costs nothing to host.
 4. **Keyboard-first.** Every action is in `Cmd+K` and has a shortcut.
 5. **One operation registry.** Every action in Surface is defined once, as a typed operation. The UI, `Cmd+K`, the internal API, and the MCP server all use that same definition.

@@ -2,6 +2,7 @@
   "name": "@surface/config",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Shared TypeScript, ESLint, Prettier and Vitest presets.",
   "exports": {
@@ -12,6 +13,10 @@
     "./eslint-rules/no-synced-table-writes": "./eslint-rules/no-synced-table-writes.js",
     "./prettier": "./prettier.js",
     "./properties": "./properties.js",
-    "./vitest": "./vitest.js"
+    "./vitest": "./vitest.js",
+    "./licenses": "./licenses.js"
+  },
+  "scripts": {
+    "test": "vitest run"
   }
 }

@@ -2,6 +2,7 @@
   "name": "@surface/sync-react",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "React hooks over the sync store, and the sync inspector panel (ADR-0017).",
   "exports": {
