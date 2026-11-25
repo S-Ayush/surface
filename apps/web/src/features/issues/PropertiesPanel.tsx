@@ -50,11 +50,15 @@ export function PropertiesPanel({
       className={stacked ? `${styles.panel} ${styles.stacked}` : styles.panel}
       aria-label="Properties"
     >
+      <p className={styles.sectionLabel} aria-hidden="true">
+        Properties
+      </p>
       <dl className={styles.properties}>
         <div className={styles.property}>
           <dt>Status</dt>
           <dd>
             <PropertyPill
+              variant="panel"
               {...pill('status')}
               property="Status"
               value={view.status.name}
@@ -66,6 +70,7 @@ export function PropertiesPanel({
           <dt>Priority</dt>
           <dd>
             <PropertyPill
+              variant="panel"
               {...pill('priority')}
               property="Priority"
               value={priorityLabel(view.priority)}
@@ -77,6 +82,7 @@ export function PropertiesPanel({
           <dt>Assignee</dt>
           <dd>
             <PropertyPill
+              variant="panel"
               {...pill('assignee')}
               property="Assignee"
               value={view.assignee?.name ?? null}
@@ -90,6 +96,7 @@ export function PropertiesPanel({
           <dt>Labels</dt>
           <dd>
             <PropertyPill
+              variant="panel"
               {...pill('labels')}
               property="Labels"
               value={labelNames.length === 0 ? null : labelNames.join(', ')}
@@ -100,7 +107,12 @@ export function PropertiesPanel({
           <div className={styles.property}>
             <dt>Estimate</dt>
             <dd>
-              <PropertyPill {...pill('estimate')} property="Estimate" value={estimateText} />
+              <PropertyPill
+                variant="panel"
+                {...pill('estimate')}
+                property="Estimate"
+                value={estimateText}
+              />
               {estimate.offScale && <span className={styles.hint}>Off scale</span>}
             </dd>
           </div>
@@ -109,6 +121,7 @@ export function PropertiesPanel({
           <dt>Due date</dt>
           <dd>
             <PropertyPill
+              variant="panel"
               {...pill('dueDate')}
               property="Due date"
               value={view.dueDate === null ? null : formatDueDate(view.dueDate, todayYmd(now))}

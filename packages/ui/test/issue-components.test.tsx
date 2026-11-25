@@ -100,6 +100,11 @@ describe('PropertyPill', () => {
     expect(html).toContain('Set assignee');
   });
 
+  it('panel variant keeps the accessible name', () => {
+    const html = render(<PropertyPill variant="panel" property="Status" value="In Progress" />);
+    expect(html).toContain('>Status: In Progress, change<');
+  });
+
   it('is plain text with the property read first when read-only, and nothing when empty', () => {
     const html = render(<PropertyPill property="Status" value="Done" readOnly />);
     expect(html).not.toContain('<button');

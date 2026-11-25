@@ -68,9 +68,9 @@
   z-index: var(--z-overlay);
   width: var(--properties-width);
   padding: var(--space-12);
-  border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-lg);
-  background: var(--bg-panel);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-e2);
 }
 
 .panel {
@@ -79,28 +79,44 @@
   gap: var(--space-12);
 }
 
+/* Section heading (design-system §2.4 text-label). */
+.sectionLabel {
+  margin: 0;
+  padding-inline: var(--space-8);
+  color: var(--text-tertiary);
+  font-size: var(--text-label-size);
+  line-height: var(--text-label-line);
+  font-weight: var(--text-label-weight);
+}
+
 .properties {
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
+  align-items: flex-start;
+  gap: var(--space-2);
   margin: 0;
 }
 
 .property {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-8);
+  max-width: 100%;
 }
 
+/* The property name is in each pill's accessible name; the dt keeps the list's structure for
+   assistive tech and is not painted (the pills are left-aligned, as in Linear). */
 .property dt {
-  color: var(--text-secondary);
-  font-size: var(--text-sm-size);
-  line-height: var(--text-sm-line);
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
 }
 
 .property dd {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: var(--space-8);
   margin: 0;
@@ -113,6 +129,7 @@
 
 .meta {
   margin: 0;
+  padding-inline: var(--space-8);
   color: var(--text-tertiary);
   font-size: var(--text-sm-size);
   line-height: var(--text-sm-line);
@@ -122,8 +139,9 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-4);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: var(--text-sm-size);
+  font-weight: var(--text-sm-weight);
   font-variant-numeric: tabular-nums;
 }
 
@@ -139,7 +157,12 @@
    Nothing here has a fixed width, so 375 px never scrolls sideways. */
 .stacked .properties {
   flex-flow: row wrap;
-  gap: var(--space-8) var(--space-12);
+  align-items: center;
+  gap: var(--space-4) var(--space-8);
+}
+
+.stacked .sectionLabel {
+  display: none;
 }
 
 .stacked .property {

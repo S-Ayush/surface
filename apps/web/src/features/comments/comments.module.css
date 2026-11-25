@@ -27,7 +27,7 @@
   flex-direction: column;
   gap: var(--space-8);
   padding: var(--space-12);
-  border: var(--border-width) solid var(--border-subtle);
+  border: var(--border-width) solid var(--border-hairline);
   border-radius: var(--radius-md);
   background: var(--bg-panel);
   scroll-margin-top: var(--header-height);
@@ -65,6 +65,8 @@
 
 .time {
   color: var(--text-tertiary);
+  font-size: var(--text-sm-size);
+  font-weight: var(--text-sm-weight);
 }
 
 .spacer {
@@ -112,7 +114,7 @@
   align-items: center;
   gap: var(--space-8);
   padding: var(--space-4) var(--space-12);
-  border: var(--border-width) solid var(--border-subtle);
+  border: var(--border-width) solid var(--border-hairline);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
@@ -133,9 +135,10 @@
   flex-direction: column;
   gap: var(--space-8);
   padding: var(--space-8) var(--space-12);
-  border: var(--border-width) solid var(--border-control);
+  border: var(--border-width) solid var(--border-hairline);
   border-radius: var(--radius-md);
   background: var(--bg-panel);
+  box-shadow: var(--shadow-e1);
 }
 
 .box:focus-within {
@@ -147,9 +150,10 @@
   align-items: center;
   min-height: var(--control-lg);
   padding: var(--space-4) var(--space-12);
-  border: var(--border-width) solid var(--border-control);
+  border: var(--border-width) solid var(--border-hairline);
   border-radius: var(--radius-md);
   background: var(--bg-panel);
+  box-shadow: var(--shadow-e1);
   color: var(--text-tertiary);
   cursor: text;
   font: inherit;

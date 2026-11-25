@@ -18,4 +18,15 @@ describe('editable title css', () => {
     expect(text).toContain(`width: calc(100% + 2 * (var(${padding}) + var(--border-width)))`);
     expect(text).not.toMatch(/width:\s*auto/);
   });
+
+  // PLAN-016 S6 (audit: issue title 24/600).
+  it('title uses text-2xl and weight 600', () => {
+    const root = /(?:^|\n)\.root\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(root).toContain('font-size: var(--text-2xl-size)');
+    expect(root).toContain('line-height: var(--text-2xl-line)');
+    expect(root).toContain('font-weight: var(--text-2xl-weight)');
+    expect(root).toContain('letter-spacing: var(--tracking-tight)');
+    const tokens = readFileSync(new URL('../src/styles/tokens.css', import.meta.url), 'utf8');
+    expect(tokens).toMatch(/--text-2xl-weight:\s*600;/);
+  });
 });

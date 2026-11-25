@@ -8,6 +8,8 @@ export type IconButtonProps = Omit<ComponentPropsWithRef<'button'>, 'children' |
   icon: ReactNode;
   variant?: 'ghost' | 'secondary';
   size?: 'sm' | 'md' | 'lg';
+  /** A circle instead of a rounded square (the issue header, PLAN-016 S6). */
+  round?: boolean;
 };
 
 /** A square, icon-only button. Pair it with a <Tooltip> that names it and shows its shortcut. */
@@ -15,6 +17,7 @@ export function IconButton({
   icon,
   variant = 'ghost',
   size = 'md',
+  round = false,
   type = 'button',
   className,
   ...props
@@ -22,7 +25,7 @@ export function IconButton({
   return (
     <button
       type={type}
-      className={cx(styles.root, styles[variant], styles[size], className)}
+      className={cx(styles.root, styles[variant], styles[size], round && styles.round, className)}
       {...props}
     >
       <span aria-hidden="true" className={styles.icon}>

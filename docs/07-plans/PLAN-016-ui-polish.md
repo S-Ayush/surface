@@ -162,7 +162,7 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Dependencies:** S2.
 - **Verify:** `property-picker.test.tsx` and the command-menu unit tests for keyboard routing (`S` opens the sub-page with the chip; a number key applies; `Esc` returns focus to the row; `Backspace` on an empty query goes back); a unit test that the menu renders no backdrop element; the registry and shortcut tests unchanged; Storybook a11y; by-hand capture.
 
-### S6: Issue page: title, body type, properties, comments, activity · M · _(needs S1, S2)_
+### S6: Issue page: title, body type, properties, comments, activity · M · _(needs S1, S2)_ · ✅ Done 2026-11-25
 
 - **Changes:**
   - Title at `text-2xl`, weight 600, `--tracking-tight`, aligned with the body (the offset itself ships in S0).
@@ -174,6 +174,19 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Files:** `packages/ui/src/components/{EditableTitle,PropertyPill}/*`, `packages/editor/src/editor.css`, `apps/web/src/features/issues/{issue-page.module.css,IssuePage.tsx,activity.module.css,ActivityStream.tsx}`, `apps/web/src/features/comments/comments.module.css`.
 - **Dependencies:** S1, S2.
 - **Verify:** editor unit tests (task item DOM unchanged); the `ActivityStream` story with axe; property pill names still announce "Status: In Progress"; a CSS source test for the checklist alignment; by-hand captures of three issues, wide and narrow.
+
+> **As built (2026-11-25, `p016-s6-issue-page`):**
+>
+> - **Title:** `EditableTitle` root is `text-2xl` (24/32/600) with `--tracking-tight`; S0's calc width and negative margin are unchanged (they depend on padding, not size).
+> - **Editor and comments:** `.surface-editor-content` and `.surface-doc` use `text-md` at 450. Headings moved up one step so they stay larger than the body: H1 `text-2xl`, H2 `text-xl`, H3/H4 `text-lg` (H3 at `text-md` would equal the body; recorded in design-system §2.4). Code and quotes keep their tokens. Checklist: the label is `align-items: flex-start` with `margin-top: calc((1lh - var(--checkbox-size)) / 2)` and a 16 px box with no native margin; the DOM is unchanged.
+> - **Properties:** new `PropertyPill` `variant="panel"` (a class, so S4's row changes merge cleanly): 28 px, round, 13 px at `--weight-ui` in primary text, transparent until hover (in 0 ms, out 150 ms), the empty-value placeholder always shown in tertiary. The panel is left-aligned under a `text-label` "Properties" heading (aria-hidden; the section keeps its aria-label). The `dt` names stay in the DOM but are not painted; the pill name "Status: In Progress, change" is unchanged. The drawer is now `--bg-elevated` with `--shadow-e2`. Pills without an icon (labels, estimate, due date) start at the pill edge, so their text sits left of the icon rows' text; icons for them are not added.
+> - **Header:** `IconButton` gained `round`; the issue header's actions use it. The "N / total" counter with next/previous buttons already existed (`stepInfo`), so it only got a tertiary colour. No new behaviour.
+> - **Comments:** cards, resolved lines, the composer box and the collapsed composer use `--border-hairline` and `--radius-md`; the composer has `--shadow-e1`; timestamps are `text-sm` 450 tertiary. No new attach or send buttons (no new product behaviour).
+> - **Activity:** each history entry has a 14 px Lucide icon by kind (or first changed field) on a thin hairline rail; timestamps tertiary 12/450, full date in the existing tooltip. The rail joins history entries; comment cards break it.
+> - **S1-flagged `--text-md` screens** (profile, security, invites, empty state, attachments drop message, sync inspector, automations): checked in CSS source; all are headings or titles that grow 14 to 15 px with room to spare, so none changed. Profile, security and invites headings are at weight 450; S7's migration replaces them.
+> - **Tests:** `editor/test/editor-css.test.ts` ("body uses text-md and H3 is larger than body", "task item checkbox aligns to the first line"), `ui/test/editable-title-css.test.ts` ("title uses text-2xl and weight 600"), `ui/test/issue-components.test.tsx` ("panel variant keeps the accessible name"). Issue-page, activity and comment tests green.
+> - **By hand:** headless captures of ENG-1 and ENG-2 (dark and light at 1440, dark at 390) from Vite on 5184. Description and comments show "Available when online" there (the server rejects that origin), so body type, comment cards and the activity rail were checked by CSS source only. The narrow header's breadcrumb wraps over several lines (S3's header, not changed here).
+
 
 ### S7: Settings layout and grouped rows · L · _(needs S1 to S3)_
 

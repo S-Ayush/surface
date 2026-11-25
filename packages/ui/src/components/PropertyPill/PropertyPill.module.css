@@ -65,3 +65,34 @@ button.root:active {
 .empty:focus-visible .text {
   display: inline;
 }
+
+/* The issue page's properties column (PLAN-016 S6): 28 px round, transparent until hover (in 0 ms,
+   out 150 ms), the value in primary text and an empty value as a muted placeholder, always shown. */
+.panel {
+  height: var(--control-md);
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
+  font-size: var(--text-base-size);
+  line-height: var(--text-base-line);
+  font-weight: var(--weight-ui);
+}
+
+button.panel {
+  transition:
+    background-color var(--dur-highlight-out) var(--ease-out),
+    color var(--dur-highlight-out) var(--ease-out);
+}
+
+button.panel:hover {
+  transition-duration: var(--dur-highlight-in);
+}
+
+.panel .placeholder {
+  color: var(--text-tertiary);
+  font-weight: var(--text-base-weight);
+}
+
+.panel.empty .text {
+  display: inline;
+}

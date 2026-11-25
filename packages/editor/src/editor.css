@@ -10,8 +10,9 @@
 .surface-editor-content,
 .surface-doc {
   color: var(--text-primary);
-  font-size: var(--text-base-size);
-  line-height: var(--text-base-line);
+  font-size: var(--text-md-size);
+  line-height: var(--text-md-line);
+  font-weight: var(--text-md-weight);
   overflow-wrap: anywhere;
 }
 
@@ -42,20 +43,20 @@
 }
 
 :is(.surface-editor-content, .surface-doc) h1 {
+  font-size: var(--text-2xl-size);
+  line-height: var(--text-2xl-line);
+  font-weight: var(--weight-semibold);
+}
+
+:is(.surface-editor-content, .surface-doc) h2 {
   font-size: var(--text-xl-size);
   line-height: var(--text-xl-line);
   font-weight: var(--weight-semibold);
 }
 
-:is(.surface-editor-content, .surface-doc) h2 {
+:is(.surface-editor-content, .surface-doc) :is(h3, h4) {
   font-size: var(--text-lg-size);
   line-height: var(--text-lg-line);
-  font-weight: var(--weight-semibold);
-}
-
-:is(.surface-editor-content, .surface-doc) :is(h3, h4) {
-  font-size: var(--text-md-size);
-  line-height: var(--text-md-line);
   font-weight: var(--weight-semibold);
 }
 
@@ -133,8 +134,15 @@
 
 :is(.surface-editor-content, .surface-doc) li[data-type='taskItem'] > label {
   display: flex;
-  align-items: center;
-  height: var(--text-base-line);
+  align-items: flex-start;
+  /* Centres the box on the first line of text, whatever the body line height is. */
+  margin-top: calc((1lh - var(--checkbox-size)) / 2);
+}
+
+:is(.surface-editor-content, .surface-doc) li[data-type='taskItem'] > label > input {
+  width: var(--checkbox-size);
+  height: var(--checkbox-size);
+  margin: 0;
 }
 
 :is(.surface-editor-content, .surface-doc) li[data-type='taskItem'] > div {

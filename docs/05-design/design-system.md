@@ -95,6 +95,7 @@ Themes switch by setting `data-theme="light|dark"` on `<html>`. `system` follows
 | Mono font | **JetBrains Mono** (OFL), used for identifiers in code contexts, code blocks, and keys |
 | Features | `font-feature-settings: "cv11", "ss01", "tnum"` (tabular numbers in tables and counts) |
 | Weights | `--weight-regular: 450` (*changed 2026-11-25: was 400*) for body, metadata, identifiers, dates and menu items · `--weight-ui: 500` for nav items, row titles, breadcrumbs, pills, tabs and buttons · 600 for headings and the issue title |
+| Document headings | In the editor body and comments (`text-md`): H1 `text-2xl`, H2 `text-xl`, H3 and H4 `text-lg`, all 600, so each stays larger than the body *(PLAN-016 S6)* |
 | Tracking | `--tracking-tight: -0.0067em` for text of 15 px and up (editor body, comments, titles) · `--tracking-id: -0.02em` for identifiers · none elsewhere |
 
 | Style | Size / line height | Weight | Use |

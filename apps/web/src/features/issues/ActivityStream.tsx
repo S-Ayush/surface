@@ -3,8 +3,24 @@
 // above them. Presentational: the caller hands the items, the actor names and how a thread renders
 // (`ThreadView`, which reads the comments' context). "Show N earlier" moves focus to the first
 // item it reveals, since the button itself goes away.
-import { activityActor, activityLines } from '@surface/domain';
+import { activityActor, activityLines, parseHistoryChanges } from '@surface/domain';
 import { Button } from '@surface/ui';
+import {
+  Archive,
+  ArchiveRestore,
+  Calendar,
+  CircleDot,
+  FileText,
+  Gauge,
+  Paperclip,
+  Pencil,
+  Plus,
+  Tag,
+  Trash2,
+  Type,
+  UserRound,
+  type LucideIcon,
+} from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { absoluteTime, agoLong } from '../comments/model.js';
 import type { Thread } from '../comments/model.js';
@@ -67,6 +83,33 @@ export function ActivityStream({ items, actorName, now, renderThread }: Activity
   );
 }
 
+/** The small icon of an entry: its kind, or for an update the first field it changed. */
+function eventIcon(entry: HistoryRow): LucideIcon {
+  switch (entry.kind) {
+    case 'created':
+      return Plus;
+    case 'deleted':
+      return Trash2;
+    case 'restored':
+      return ArchiveRestore;
+    case 'archived':
+      return Archive;
+    default:
+      break;
+  }
+  const changes = parseHistoryChanges(entry.changes);
+  if (changes.title) return Type;
+  if (changes.status) return CircleDot;
+  if (changes.priority) return Gauge;
+  if (changes.assignee) return UserRound;
+  if (changes.labels) return Tag;
+  if (changes.estimate) return Gauge;
+  if (changes.dueDate) return Calendar;
+  if (changes.description) return FileText;
+  if (changes.attachments) return Paperclip;
+  return Pencil;
+}
+
 /**
  * One history entry: its lines as text (§7.4: never colour alone), the relative time with the full
  * one in a tooltip, and an `article` labelled with the actor and the time.
@@ -75,8 +118,12 @@ export function HistoryItem({ entry, name, now }: { entry: HistoryRow; name: str
   const lines = activityLines(entry, name);
   const who = entry.actorKind === 'system' ? 'Surface' : activityActor(name, entry.actorKind);
   const at = entry.createdAt;
+  const Icon = eventIcon(entry);
   return (
     <li className={styles.item}>
+      <span className={styles.icon} aria-hidden="true">
+        <Icon />
+      </span>
       <article className={styles.history} aria-label={`${who}, ${agoLong(at, now)}`} tabIndex={-1}>
         {lines.map((line, index) => (
           <p key={index} className={styles.line}>

@@ -14,6 +14,8 @@ type Common = {
   placeholder?: string;
   /** Icon only: the text stays in the accessible name (rows with little room). */
   iconOnly?: boolean;
+  /** `panel`: the issue page's 28 px round pill with the placeholder always shown (PLAN-016 S6). */
+  variant?: 'inline' | 'panel';
 };
 
 export type PropertyPillProps = Common &
@@ -35,6 +37,7 @@ export function PropertyPill({
   icon,
   placeholder,
   iconOnly = false,
+  variant = 'inline',
   className,
   ...rest
 }: PropertyPillProps) {
@@ -50,7 +53,9 @@ export function PropertyPill({
 
   if ('readOnly' in rest && rest.readOnly) {
     return (
-      <span className={cx(styles.root, styles.readOnly, className)}>
+      <span
+        className={cx(styles.root, styles.readOnly, variant === 'panel' && styles.panel, className)}
+      >
         <VisuallyHidden>{`${property}: ${value ?? 'none'}`}</VisuallyHidden>
         {value === null ? null : visual}
       </span>
@@ -64,7 +69,12 @@ export function PropertyPill({
   return (
     <button
       type="button"
-      className={cx(styles.root, value === null && styles.empty, className)}
+      className={cx(
+        styles.root,
+        value === null && styles.empty,
+        variant === 'panel' && styles.panel,
+        className,
+      )}
       {...buttonProps}
     >
       {/* The name is hidden text, not aria-label: the visible part (an avatar's initials, a label) is

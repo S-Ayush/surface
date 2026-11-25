@@ -675,6 +675,7 @@ function IssueBody({
               <span className={pageStyles.position}>
                 <span aria-live="polite">{`${position.position} / ${position.total}`}</span>
                 <IconButton
+                  round
                   aria-label="Next issue"
                   icon={<ArrowDown />}
                   disabled={position.next === undefined}
@@ -683,6 +684,7 @@ function IssueBody({
                   }}
                 />
                 <IconButton
+                  round
                   aria-label="Previous issue"
                   icon={<ArrowUp />}
                   disabled={position.previous === undefined}
@@ -692,15 +694,22 @@ function IssueBody({
                 />
               </span>
             )}
-            <IconButton aria-label="Copy link" icon={<LinkIcon />} onClick={() => copyOf('url')} />
-            <IconButton aria-label="Copy ID" icon={<Hash />} onClick={() => copyOf('id')} />
             <IconButton
+              round
+              aria-label="Copy link"
+              icon={<LinkIcon />}
+              onClick={() => copyOf('url')}
+            />
+            <IconButton round aria-label="Copy ID" icon={<Hash />} onClick={() => copyOf('id')} />
+            <IconButton
+              round
               aria-label="Copy git branch name"
               icon={<GitBranch />}
               onClick={() => copyOf('branch')}
             />
             {mode === 'drawer' && (
               <IconButton
+                round
                 aria-label="Properties"
                 aria-expanded={drawerOpen}
                 icon={<PanelRight />}
@@ -711,7 +720,7 @@ function IssueBody({
             )}
             <Menu
               align="end"
-              trigger={<IconButton aria-label="More actions" icon={<MoreHorizontal />} />}
+              trigger={<IconButton round aria-label="More actions" icon={<MoreHorizontal />} />}
               items={menu}
             />
           </>
