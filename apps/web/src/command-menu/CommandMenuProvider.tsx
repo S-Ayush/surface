@@ -4,7 +4,15 @@
 import type { Actor } from '@surface/domain';
 import { registry as defaultRegistry, type OperationRegistry } from '@surface/operations';
 import type { SyncStore } from '@surface/sync-client';
-import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { useCommand, useCommandRegistry } from '../shortcuts/ShortcutProvider.js';
 import { CommandMenu, PERF } from './CommandMenu.js';
 import { TargetContext, TargetStore, useCurrentTarget } from './context.js';
@@ -13,7 +21,7 @@ import type { CommandContext, CommandSource, CommandTarget, TeamSummary } from '
 import { appSource } from './sources/app.js';
 import { OPEN_TEAM, navigationSource, teamsPage } from './sources/navigation.js';
 import { OPERATION_COMMANDS, PROPERTY_COMMANDS } from '../features/commands.js';
-import { pickerRequests } from '../features/issues/pickers/picker-request.js';
+import { pickerRequests, type PickerRequest } from '../features/issues/pickers/picker-request.js';
 import { operationSource, type OperationCommand } from './sources/operations.js';
 import { propertySource, type PropertyCommand } from './sources/properties.js';
 import { collect, isOffered } from './ranking.js';
@@ -53,7 +61,21 @@ export function CommandMenuProvider({ children, ...props }: CommandMenuProviderP
   );
 }
 
-type OpenState = { readonly page?: 'teams' } | null;
+/**
+ * `page`: opened on a page ("Open team…"). `request`: a keyboard property request the menu adopted
+ * (command-menu.md §3.5); `released` once the user went back to the home page, which means the row
+ * no longer waits for focus when the menu closes.
+ */
+type OpenState =
+  | { readonly page?: 'teams'; readonly request?: undefined }
+  | { readonly request: PickerRequest; readonly released: boolean }
+  | null;
+
+/** The issue a request acts on as the menu's target, whatever was focused when the key went down. */
+const requestTarget = (request: PickerRequest, current: CommandTarget): CommandTarget =>
+  current.kind === 'issue' && current.ids[0] === request.issueId
+    ? current
+    : { kind: 'issue', ids: [request.issueId], label: 'Issue' };
 
 function MenuHost({
   actor = NO_ACTOR,
@@ -75,6 +97,9 @@ function MenuHost({
     pickerRequests.snapshot,
   );
   const request = picked?.frame === 'menu' ? picked : undefined;
+  const adopted = open?.request;
+  // A new key per adoption, so a second request while the menu is open shows its own page.
+  const [adoptions, setAdoptions] = useState(0);
 
   const sources = useMemo<readonly CommandSource[]>(
     () => [
@@ -104,44 +129,68 @@ function MenuHost({
     performance.mark(PERF.openStart);
     setOpen(next);
   };
-  // Mod+K opens the menu, or closes it if it is already open (command-menu.md §4).
-  useCommand('ui:command-menu', () => {
-    if (request !== undefined) pickerRequests.close();
-    else if (open === null) show({});
-    else setOpen(null);
-  });
-  useCommand('nav:open-team', () => show({ page: 'teams' }), {
-    when: () => navigate !== undefined,
-  });
-
-  // The request's issue is the menu's target, whatever was focused when the key went down.
-  const menuTarget: CommandTarget =
-    request === undefined || (target.kind === 'issue' && target.ids[0] === request.issueId)
-      ? target
-      : { kind: 'issue', ids: [request.issueId], label: 'Issue' };
-  const propertyPage = (ctx: CommandContext) => {
-    if (request === undefined) return undefined;
-    const id = `prop:issue.${request.kind}`;
+  const propertyPage = (picker: PickerRequest, ctx: CommandContext) => {
+    const id = `prop:issue.${picker.kind}`;
     const command = collect(sources, ctx).find((c) => c.id === id);
     return command?.page !== undefined && isOffered(command, ctx)
       ? { command, page: command.page(ctx) }
       : undefined;
   };
 
+  // The menu takes a keyboard request over: from then on it owns it, so a popover opened later is
+  // independent of it. A request the menu has no page for is dropped, not shown as the home page.
+  useEffect(() => {
+    if (request === undefined) return;
+    if (propertyPage(request, context(requestTarget(request, target))) === undefined) {
+      pickerRequests.close();
+      return;
+    }
+    const taken = pickerRequests.release();
+    if (taken === undefined) return;
+    if (open?.request !== undefined && !open.released) open.request.onClosed?.();
+    setAdoptions((count) => count + 1);
+    setOpen({ request: taken, released: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- adopts once per request
+  }, [request]);
+
+  // Esc reaches both the dialog and the picker, so a close can arrive twice: tell the request once.
+  const told = useRef<PickerRequest | null>(null);
+  const finish = () => {
+    // The row takes focus back (the menu's own early return does it too, this tells the list).
+    if (open?.request !== undefined && !open.released && told.current !== open.request) {
+      told.current = open.request;
+      open.request.onClosed?.();
+    }
+    setOpen(null);
+  };
+  // Mod+K opens the menu, or closes it if it is already open (command-menu.md §4).
+  useCommand('ui:command-menu', () => {
+    if (open === null) show({});
+    else finish();
+  });
+  useCommand('nav:open-team', () => show({ page: 'teams' }), {
+    when: () => navigate !== undefined,
+  });
+
+  const menuTarget = adopted === undefined ? target : requestTarget(adopted, target);
+
   return (
     <CommandMenu
-      open={open !== null || request !== undefined}
-      onClose={() => {
-        setOpen(null);
-        pickerRequests.close();
+      key={adoptions}
+      open={open !== null}
+      onClose={finish}
+      onPageBack={() => {
+        setOpen((current) =>
+          current?.request === undefined ? current : { ...current, released: true },
+        );
       }}
       sources={sources}
       context={context}
       target={menuTarget}
       frecency={frecency}
       initialPage={
-        request !== undefined
-          ? propertyPage
+        adopted !== undefined
+          ? (ctx) => propertyPage(adopted, ctx)
           : open?.page === 'teams'
             ? (ctx) => ({ command: OPEN_TEAM, page: teamsPage(ctx) })
             : undefined

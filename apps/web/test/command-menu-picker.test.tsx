@@ -18,7 +18,7 @@ import {
   type PickerRequest,
 } from '../src/features/issues/pickers/picker-request.js';
 import { ShortcutProvider } from '../src/shortcuts/ShortcutProvider.js';
-import { FakeApp, installDomShims, ISSUE_A, issueRow, TEAM } from './issue-fixtures.js';
+import { FakeApp, installDomShims, ISSUE_A, issueRow, setValue, TEAM } from './issue-fixtures.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 installDomShims();
@@ -86,10 +86,15 @@ async function open(app: FakeApp, request: Pick<PickerRequest, 'kind'> & Partial
     );
     await Promise.resolve();
   });
+  // The row the key was pressed on: it has focus when the picker is asked for.
+  const row = document.createElement('button');
+  host.append(row);
+  row.focus();
   await act(async () => {
     openPicker({ issueId: ISSUE_A, anchor: null, ...request });
     await Promise.resolve();
   });
+  return row;
 }
 
 const dialog = () => document.querySelector('[role="dialog"]');
@@ -106,13 +111,16 @@ async function key(init: KeyboardEventInit & { key: string }): Promise<void> {
 }
 
 describe('the command menu frame', () => {
-  it('the command menu has no backdrop and traps focus', async () => {
+  it('the command menu has no visible backdrop and traps focus', async () => {
     await open(makeApp(), { kind: 'status', frame: 'menu' });
     expect(dialog()).not.toBeNull();
-    expect(document.querySelector('[class*="backdrop"]')).toBeNull();
-    // Focus is inside the menu (the page behind is inert), on the picker's own field.
+    // The overlay stays (scroll lock, click outside closes) but is transparent: `.clear`, whose
+    // background is `transparent` (command-menu-css.test.ts).
+    expect(document.querySelector('[class*="backdrop"][class*="clear"]')).not.toBeNull();
+    // Focus is inside the menu, on the picker's own field, and the page behind is inert.
     expect(dialog()?.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).toBe(field());
+    expect(host?.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('a request without the menu frame still opens the anchored popover', async () => {
@@ -143,7 +151,7 @@ describe('a property key opens the picker as a menu page', () => {
     expect(app.dispatched).toEqual([
       { op: 'issue.update', input: { issue: ISSUE_A, status: DONE } },
     ]);
-    expect(pickerRequests.snapshot()).toBeUndefined();
+    expect(dialog()).toBeNull();
     // The list moves focus back to its row from this callback.
     expect(onClosed).toHaveBeenCalledTimes(1);
   });
@@ -151,9 +159,10 @@ describe('a property key opens the picker as a menu page', () => {
   it('escape closes the whole menu, tells the request and sends nothing', async () => {
     const onClosed = vi.fn();
     const app = makeApp();
-    await open(app, { kind: 'priority', frame: 'menu', onClosed });
+    const row = await open(app, { kind: 'priority', frame: 'menu', onClosed });
     await key({ key: 'Escape' });
-    expect(pickerRequests.snapshot()).toBeUndefined();
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(row);
     expect(onClosed).toHaveBeenCalledTimes(1);
     expect(app.dispatched).toEqual([]);
   });
@@ -163,8 +172,29 @@ describe('a property key opens the picker as a menu page', () => {
     await open(makeApp(), { kind: 'status', frame: 'menu', onClosed });
     await key({ key: 'Backspace' });
     expect(field()?.getAttribute('aria-label')).toBe('Command menu');
-    expect(pickerRequests.snapshot()).toBeDefined();
+    expect(dialog()).not.toBeNull();
+    // Closing from the home page no longer calls the request: it cannot take focus from a later popover.
+    await key({ key: 'Escape' });
     expect(onClosed).not.toHaveBeenCalled();
+  });
+
+  it('backspace with text in the search only deletes; it does not go back', async () => {
+    await open(makeApp(), { kind: 'status', frame: 'menu' });
+    const input = field();
+    if (input === null) throw new Error('no field');
+    await setValue(input, 'd');
+    await key({ key: 'Backspace' });
+    expect(field()?.getAttribute('aria-label')).toBe('Change status');
+  });
+
+  it('the footer shows the number range for the page until a query is typed', async () => {
+    await open(makeApp(), { kind: 'priority', frame: 'menu' });
+    // Key caps repeat their key for screen readers: "00 to 44 pick".
+    expect(dialog()?.textContent).toMatch(/0\w* to 4\w* pick/);
+    const input = field();
+    if (input === null) throw new Error('no field');
+    await setValue(input, 'u');
+    expect(dialog()?.textContent).not.toContain(' pick');
   });
 
   it('labels keep Space to toggle and Enter to apply, as one update', async () => {
@@ -176,6 +206,6 @@ describe('a property key opens the picker as a menu page', () => {
     expect(app.dispatched).toEqual([
       { op: 'issue.update', input: { issue: ISSUE_A, addLabels: [BUG] } },
     ]);
-    expect(pickerRequests.snapshot()).toBeUndefined();
+    expect(dialog()).toBeNull();
   });
 });

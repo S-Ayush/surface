@@ -196,62 +196,25 @@ describe('which property commands a context offers (§3.8, AC-16)', () => {
 });
 
 describe('what a property command sends (AC-7)', () => {
-  it('Change status… lists the team’s statuses and sends one partial update', async () => {
-    const { store, dispatched } = fakeStore([issueRow('i1')]);
+  it('Change status… opens a page with the issue chip and the bound picker, not a list', () => {
+    const { store } = fakeStore([issueRow('i1')]);
     const ctx = ctxOf(store);
     const picker = command(ctx, 'Change status…');
     const page = 'page' in picker ? picker.page?.(ctx) : undefined;
-    expect(page?.items().map((item) => item.title)).toEqual(['Todo', 'Done']);
-    await page
-      ?.items()
-      .find((item) => item.title === 'Done')
-      ?.run();
-    expect(dispatched).toEqual([
-      { op: 'issue.update', input: { issue: 'i1', status: 'eng-done' } },
-    ]);
+    expect(page?.chip).toBe('ENG-42 · Fix login');
+    expect(page?.body).toBeTypeOf('function');
+    // The options, quick keys and updates belong to the picker (issue-pickers.test.tsx).
+    expect(page?.items()).toEqual([]);
   });
 
-  it('choosing the current value sends nothing', async () => {
-    const { store, dispatched } = fakeStore([issueRow('i1')]);
+  it('every list picker command opens a body page; the due date stays a run command', () => {
+    const { store } = fakeStore([issueRow('i1')]);
     const ctx = ctxOf(store);
-    const picker = command(ctx, 'Set priority…');
-    const page = 'page' in picker ? picker.page?.(ctx) : undefined;
-    await page
-      ?.items()
-      .find((item) => item.title === 'High')
-      ?.run();
-    expect(dispatched).toEqual([]);
-    await page
-      ?.items()
-      .find((item) => item.title === 'Low')
-      ?.run();
-    expect(dispatched).toEqual([{ op: 'issue.update', input: { issue: 'i1', priority: 4 } }]);
-  });
-
-  it('Labels… toggles one label per pick; an exclusive group keeps one (INV-07)', async () => {
-    const { store, dispatched } = fakeStore([issueRow('i1', { labelIds: ['l-s'] })]);
-    const ctx = ctxOf(store);
-    const picker = command(ctx, 'Labels…');
-    const page = 'page' in picker ? picker.page?.(ctx) : undefined;
-    const titles = page?.items().map((item) => item.title);
-    expect(titles).toEqual(['Bug', 'Size: Large', 'Size: Small (applied)']);
-    await page
-      ?.items()
-      .find((item) => item.title === 'Size: Large')
-      ?.run();
-    await page
-      ?.items()
-      .find((item) => item.title === 'Bug')
-      ?.run();
-    await page
-      ?.items()
-      .find((item) => item.title.startsWith('Size: Small'))
-      ?.run();
-    expect(dispatched.map((d) => d.input)).toEqual([
-      { issue: 'i1', addLabels: ['l-l'], removeLabels: ['l-s'] },
-      { issue: 'i1', addLabels: ['l-bug'] },
-      { issue: 'i1', removeLabels: ['l-s'] },
-    ]);
+    for (const title of ['Set priority…', 'Assign…', 'Labels…']) {
+      const picker = command(ctx, title);
+      expect('page' in picker ? picker.page?.(ctx).body : undefined).toBeTypeOf('function');
+    }
+    expect('run' in command(ctx, 'Set due date…')).toBe(true);
   });
 
   it('Assign to me and Remove due date send one update; Set due date… opens the picker', async () => {

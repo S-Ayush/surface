@@ -29,6 +29,17 @@ export class PickerRequests {
     this.#emit();
   }
 
+  /**
+   * Takes the open request without closing it or calling `onClosed`: the command menu adopts a
+   * keyboard request this way and owns it from then on, so a later popover is independent of it.
+   */
+  release(): PickerRequest | undefined {
+    const request = this.#current;
+    this.#current = undefined;
+    if (request !== undefined) this.#emit();
+    return request;
+  }
+
   /** Closes the open picker. Says whether there was one. */
   close(): boolean {
     const request = this.#current;

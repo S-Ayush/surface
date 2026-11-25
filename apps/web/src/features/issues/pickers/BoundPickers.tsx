@@ -33,6 +33,8 @@ export interface BoundPickerProps {
   readonly onClose: () => void;
   /** Set by the command-menu frame: `Backspace` on an empty search goes back a page (§3.5). */
   readonly onBack?: () => void;
+  /** The search text changed (the menu frame's number-key hint). */
+  readonly onQueryChange?: (query: string) => void;
 }
 
 /** The options with the icon each kind shows (status icon, priority bars, avatar). */
@@ -99,6 +101,7 @@ function SingleBound({
   issueId,
   onClose,
   onBack,
+  onQueryChange,
 }: BoundPickerProps & { readonly kind: 'status' | 'priority' | 'assignee' | 'estimate' }) {
   const { current, send } = useBoundSpec(kind, issueId);
   useCloseWhenGone(current === undefined, onClose);
@@ -115,6 +118,7 @@ function SingleBound({
       }}
       onClose={onClose}
       {...(onBack === undefined ? {} : { onBack })}
+      {...(onQueryChange === undefined ? {} : { onQueryChange })}
     />
   );
 }
@@ -130,7 +134,7 @@ export const EstimatePicker = (props: BoundPickerProps) => (
   <SingleBound kind="estimate" {...props} />
 );
 
-export function LabelsPicker({ issueId, onClose, onBack }: BoundPickerProps) {
+export function LabelsPicker({ issueId, onClose, onBack, onQueryChange }: BoundPickerProps) {
   const { current, send } = useBoundSpec('labels', issueId);
   useCloseWhenGone(current === undefined, onClose);
   // What the picker opened with, kept: the toggles are measured against it, not against the issue
@@ -149,6 +153,7 @@ export function LabelsPicker({ issueId, onClose, onBack }: BoundPickerProps) {
       }}
       onClose={onClose}
       {...(onBack === undefined ? {} : { onBack })}
+      {...(onQueryChange === undefined ? {} : { onQueryChange })}
     />
   );
 }

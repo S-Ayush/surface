@@ -102,6 +102,8 @@ describe('the issue keys on a list act on the focused row (AC-8)', () => {
     expect(pickerRequests.snapshot()).toMatchObject({ kind, issueId: bravo.id });
     // Compared by identity: a deep match of two DOM nodes never ends.
     expect(pickerRequests.snapshot()?.anchor === row).toBe(true);
+    // PLAN-016 D-e: the property keys show in the command menu's frame; the calendar stays anchored.
+    expect(pickerRequests.snapshot()?.frame).toBe(kind === 'dueDate' ? undefined : 'menu');
   });
 
   it('I assigns the focused issue to me, and does nothing when it is already mine', async () => {
@@ -255,6 +257,7 @@ describe('the issue keys on the page act on the open issue (AC-8, E22)', () => {
     expect(pickerRequests.snapshot()).toMatchObject({ kind: 'priority', issueId: ISSUE_A });
     const pill = document.querySelector('[data-property="priority"]');
     expect(pickerRequests.snapshot()?.anchor === pill).toBe(true);
+    expect(pickerRequests.snapshot()?.frame).toBe('menu');
   });
 
   it('Mod+Backspace opens the delete dialog for the open issue', async () => {
@@ -328,5 +331,7 @@ describe('the issue keys on the page act on the open issue (AC-8, E22)', () => {
     });
     expect(pickerRequests.snapshot()).toMatchObject({ kind: 'priority', issueId: ISSUE_A });
     expect(pickerRequests.snapshot()?.anchor === pill).toBe(true);
+    // A pill click is pointer use: the anchored popover, never the command menu's frame.
+    expect(pickerRequests.snapshot()?.frame).toBeUndefined();
   });
 });

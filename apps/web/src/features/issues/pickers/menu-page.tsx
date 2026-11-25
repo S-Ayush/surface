@@ -10,5 +10,7 @@ export type MenuPickerKind = Exclude<PickerKind, 'dueDate'>;
 
 export function pickerBody(kind: MenuPickerKind, issueId: string): (host: PageHost) => ReactNode {
   const Picker = LIST_PICKERS[kind];
-  return (host) => <Picker issueId={issueId} onClose={host.close} onBack={host.back} />;
+  return (host) => (
+    <Picker issueId={issueId} onClose={host.close} onBack={host.back} onQueryChange={host.query} />
+  );
 }

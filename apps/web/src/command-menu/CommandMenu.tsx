@@ -62,6 +62,8 @@ export type CommandMenuProps = {
   frecency: Frecency;
   /** Open straight on a page ("Open team…" from O T). */
   initialPage?: (ctx: CommandContext) => Omit<Frame, 'query'> | undefined;
+  /** The user went back from a page the menu opened on (Backspace). */
+  onPageBack?: () => void;
 };
 
 export function CommandMenu({ open, onClose, ...props }: CommandMenuProps) {
@@ -172,6 +174,7 @@ function MenuBody({
   target,
   frecency,
   initialPage,
+  onPageBack,
   onRun,
   onDismiss,
 }: Omit<CommandMenuProps, 'open' | 'onClose'> & {
@@ -315,6 +318,8 @@ function MenuBody({
 
   const page = state.pages.at(-1);
   const bodyPage = page?.page.body;
+  // The search text of a component page (it owns the field), for the footer's number-key hint.
+  const [pageQuery, setPageQuery] = useState('');
   const chipLabel =
     page?.page.chip ?? (state.chip && target.kind !== 'global' ? target.label : null);
   const resultsLabel =
@@ -362,7 +367,15 @@ function MenuBody({
       {bodyPage !== undefined && (
         // The Property picker, as in the anchored popover (command-menu.md §3.5): one component.
         <div className={styles.picker}>
-          {bodyPage({ close: onDismiss, back: () => dispatch({ type: 'back' }) })}
+          {bodyPage({
+            close: onDismiss,
+            back: () => {
+              setPageQuery('');
+              dispatch({ type: 'back' });
+              onPageBack?.();
+            },
+            query: setPageQuery,
+          })}
         </div>
       )}
       <div
@@ -451,7 +464,7 @@ function MenuBody({
         </p>
       )}
       <VisuallyHidden>
-        <p role="status">{resultsLabel}</p>
+        {bodyPage === undefined && <p role="status">{resultsLabel}</p>}
         {sections.map((section) => (
           <span key={section} id={sectionId(section)}>
             {SECTION_LABELS[section]}
@@ -466,9 +479,9 @@ function MenuBody({
         <span>
           <Kbd keys="Enter" /> select
         </span>
-        {bodyPage !== undefined && (
+        {bodyPage !== undefined && page?.page.quickKeys !== undefined && pageQuery === '' && (
           <span>
-            <Kbd keys="1" /> to <Kbd keys="9" /> pick
+            <Kbd keys={page.page.quickKeys[0]} /> to <Kbd keys={page.page.quickKeys[1]} /> pick
           </span>
         )}
         {state.pages.length > 0 && (

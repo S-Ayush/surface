@@ -77,11 +77,12 @@ export function Dialog({
     <RadixDialog.Root open={open} onOpenChange={requestOpenChange}>
       {trigger !== undefined && <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger>}
       <RadixDialog.Portal>
-        {/* The command menu has none (PLAN-016 D-d): the page stays visible but is still modal
-            (focus trapped, page inert, Esc or a click outside closes). */}
-        {variant !== 'command' && (
-          <RadixDialog.Overlay key={`backdrop-${generation}`} className={styles.backdrop} />
-        )}
+        {/* The command menu's overlay is fully transparent (PLAN-016 D-d): the page is not dimmed,
+            but the overlay still locks scroll and takes the click outside that closes the menu. */}
+        <RadixDialog.Overlay
+          key={`backdrop-${generation}`}
+          className={cx(styles.backdrop, variant === 'command' && styles.clear)}
+        />
         {variant === 'command' ? (
           <RadixDialog.Content
             key={generation}

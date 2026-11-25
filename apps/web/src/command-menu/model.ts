@@ -70,6 +70,8 @@ export type CommandPage = {
    * only supplies the frame, the chip, the breadcrumb and the footer.
    */
   readonly body?: (host: PageHost) => ReactNode;
+  /** The number-key range of a `body` page, for the footer hint: ["1", "9"], priority ["0", "4"]. */
+  readonly quickKeys?: readonly [string, string];
 };
 
 /** What a `body` page asks of the menu around it. */
@@ -78,6 +80,8 @@ export type PageHost = {
   readonly close: () => void;
   /** Goes back a page (`Backspace` on an empty query). */
   readonly back: () => void;
+  /** Reports the page's search text, so the footer hides the number-key hint once it is set. */
+  readonly query: (text: string) => void;
 };
 
 export type PageItem = {

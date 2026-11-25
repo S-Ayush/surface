@@ -107,59 +107,23 @@ function pickerFrame(kind: Exclude<PickerKind, 'dueDate'>, ctx: CommandContext) 
 }
 
 /**
- * A command-menu sub-page for a single-value picker or the labels (§3.8): the same options as the
- * anchored picker. Labels toggle one at a time here (the page closes after a pick), so each pick
- * is one `issue.update` with that label added or removed.
+ * A command-menu sub-page for a list picker (status, priority, assignee, estimate, labels): the
+ * bound Property picker, the same component as the anchored popover (command-menu.md §3.5,
+ * SPEC-012 D28 and D32). It owns its options and keys, so the page lists no items of its own;
+ * labels keep Space to toggle and Enter to apply one `issue.update`.
  */
 function pickerPage(kind: Exclude<PickerKind, 'dueDate'>, title: string, placeholder: string) {
   return (ctx: CommandContext): CommandPage => ({
     title,
     placeholder,
-    // The context chip and the picker itself (§3.5): the options below are the fallback list.
     ...pickerFrame(kind, ctx),
-    items: (): readonly PageItem[] => {
-      const found = currentIssue(ctx);
-      const me = ctx.actor?.userId;
-      if (found === undefined || me === undefined) return [];
-      const { store, facts } = found;
-      const spec = pickerSpec(kind, readComposerWorld(store.pool, me, null, []), facts);
-      if (spec === undefined || spec.mode === 'date') return [];
-      return spec.options.map((option): PageItem => {
-        const base = {
-          id: `${kind}:${option.id}`,
-          keywords: [...(option.keywords === undefined ? [] : [option.keywords])],
-        };
-        if (spec.mode === 'multi') {
-          const applied = spec.values.includes(option.id);
-          const group = option.group === undefined ? '' : `${option.group}: `;
-          return {
-            ...base,
-            title: `${group}${option.label}${applied ? ' (applied)' : ''}`,
-            run: () => {
-              // An exclusive group keeps one label: choosing one drops the group's other (INV-07).
-              const kept = spec.values.filter(
-                (id) =>
-                  id !== option.id &&
-                  (applied ||
-                    option.exclusiveGroup === undefined ||
-                    spec.options.find((o) => o.id === id)?.exclusiveGroup !==
-                      option.exclusiveGroup),
-              );
-              return sendIssueUpdate(
-                store,
-                labelsInput(facts, facts.labelIds, applied ? kept : [...kept, option.id]),
-              );
-            },
-          };
-        }
-        const single = spec.kind;
-        return {
-          ...base,
-          title: option.label,
-          run: () => sendIssueUpdate(store, singleInput(single, facts, option.id)),
-        };
-      });
-    },
+    // Where the picker takes a number key: positions (1 to 9), priority's own values (0 to 4).
+    ...(kind === 'status' || kind === 'assignee'
+      ? { quickKeys: ['1', '9'] as const }
+      : kind === 'priority'
+        ? { quickKeys: ['0', '4'] as const }
+        : {}),
+    items: (): readonly PageItem[] => [],
   });
 }
 

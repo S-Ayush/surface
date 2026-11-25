@@ -35,6 +35,8 @@ type Common = {
    * (command-menu.md §3.5); the popover frame leaves it unset and `Backspace` only edits.
    */
   onBack?: () => void;
+  /** The search text changed. The command-menu frame hides its number-key hint once it is set. */
+  onQueryChange?: (query: string) => void;
   className?: string;
 };
 
@@ -222,7 +224,10 @@ export function PropertyPicker(props: PropertyPickerProps) {
         className={styles.search}
         placeholder={placeholder}
         value={state.query}
-        onChange={(event) => setState(setQuery(state, event.target.value, options))}
+        onChange={(event) => {
+          setState(setQuery(state, event.target.value, options));
+          props.onQueryChange?.(event.target.value);
+        }}
         onKeyDown={handleKeyDown}
       />
       {visible.length > 0 ? (

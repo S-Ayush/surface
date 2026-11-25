@@ -5,6 +5,12 @@
   background: var(--backdrop);
 }
 
+/* The command menu: same layer, no dim and no blur (command-menu.md §1, PLAN-016 D-d). */
+.backdrop.clear {
+  background: transparent;
+  backdrop-filter: none;
+}
+
 /* Radix keeps the content mounted until the exit animation ends (PLAN-016 S2); focus has already
    gone back to the trigger by then (overlays/layer.tsx). */
 .backdrop[data-state='open'] {

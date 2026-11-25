@@ -33,8 +33,12 @@ describe('command menu frame css', () => {
     expect(rule(dialogCss, '\\.command')).toMatch(/max-width:\s*var\(--command-menu-width\)/);
   });
 
-  it('renders the backdrop only for the other dialogs', () => {
-    expect(dialogTsx).toMatch(/variant !== 'command' && \(\s*<RadixDialog\.Overlay/);
+  it('keeps the overlay for the command menu but makes it fully transparent', () => {
+    // Scroll lock and click-outside-closes need the layer; D-d only removes the dim and blur.
+    const clear = rule(dialogCss, '\\.backdrop\\.clear');
+    expect(clear).toMatch(/background:\s*transparent/);
+    expect(clear).toMatch(/backdrop-filter:\s*none/);
+    expect(dialogTsx).toMatch(/variant === 'command' && styles\.clear/);
   });
 
   it('has a 15px input, 40px options and a neutral active option', () => {
