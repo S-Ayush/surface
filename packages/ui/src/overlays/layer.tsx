@@ -62,19 +62,53 @@ function usableTarget(target: HTMLElement | null): HTMLElement | null {
   return next instanceof HTMLElement ? next : null;
 }
 
+const FADING = "[data-state='closed']:is([role='menu'], [role='dialog'], [role='alertdialog'])";
+
+/**
+ * Is focus still inside this layer, or inside a layer that opened from it (a submenu, a menu in a
+ * dialog) or is fading with it? Nested layers are separate portals, so walk out through their
+ * return targets (the same chain `resolveReturnTarget` follows). Call before the layer leaves
+ * `records`.
+ */
+function focusIsOurs(active: Element | null, inside: (element: Element) => boolean): boolean {
+  if (active === null || active === document.body) return true;
+  let current: Element | null = active;
+  for (let step = 0; step <= records.size + 1 && current !== null; step++) {
+    if (inside(current) || current.closest(FADING) !== null) return true;
+    const element: Element = current;
+    const owner = [...records.values()].reverse().find((r) => r.container?.contains(element));
+    if (owner === undefined) return false;
+    current = owner.returnFocus;
+  }
+  return false;
+}
+
+/**
+ * Radix Dialog hides everything outside the dialog with `aria-hidden` until the content unmounts,
+ * which is after the exit. Focus returns when the close starts, so lift the hiding from the return
+ * target and its ancestors first (axe aria-hidden-focus); Radix removes the rest at unmount.
+ */
+function revealForFocus(element: Element): void {
+  for (let node: Element | null = element; node !== null; node = node.parentElement) {
+    if (node.getAttribute('data-aria-hidden') === 'true') {
+      node.removeAttribute('aria-hidden');
+      node.removeAttribute('data-aria-hidden');
+    }
+  }
+}
+
 /**
  * Returns focus the moment a layer starts closing, not when its exit animation ends: Radix keeps
  * the content (and its focus scope) mounted for `--dur-exit`, and `onCloseAutoFocus` only fires
  * after that. Focus that already moved on (a dialog opened from a menu item, a click elsewhere)
  * is left alone.
  */
-function restoreFocusNow(handle: Handle, ownsFocus: (active: Element | null) => boolean): void {
+function restoreFocusNow(handle: Handle, inside: (element: Element) => boolean): void {
   if (handle.restored || handle.outside) return;
   const target = handle.returnFocus;
   // Nothing was focused: leave it to Radix's default (the trigger) once the content unmounts.
   if (target === null) return;
-  const active = document.activeElement;
-  if (active !== null && active !== document.body && !ownsFocus(active)) {
+  if (!focusIsOurs(document.activeElement, inside)) {
     // Focus moved on by itself; do not pull it back later either.
     handle.returnFocus = null;
     return;
@@ -82,6 +116,7 @@ function restoreFocusNow(handle: Handle, ownsFocus: (active: Element | null) => 
   const next = usableTarget(target);
   if (next === null) return;
   handle.restored = true;
+  revealForFocus(next);
   next.focus({ preventScroll: true });
 }
 
@@ -105,21 +140,37 @@ function restoreFocus(handle: Handle, event: Event): void {
   next.focus({ preventScroll: true });
 }
 
+const setInert = (element: Element, inert: boolean) =>
+  inert ? element.setAttribute('inert', '') : element.removeAttribute('inert');
+
+/** Radix focuses a menu or popover as it opens; a content that reopens mid-fade is not remounted. */
+function focusInto(container: HTMLElement): void {
+  const first = container.querySelector<HTMLElement>(
+    '[tabindex]:not([tabindex="-1"]), button:not([disabled]), input:not([disabled]), select, textarea, a[href]',
+  );
+  (first ?? container).focus({ preventScroll: true });
+}
+
 export type ModalLayerHandle = { onCloseAutoFocus: (event: Event) => void };
+
+export type ModalLayerOptions = {
+  /** false skips returning focus (the dialog underneath closes too). */
+  shouldRestore?: () => boolean;
+  /** Called once as the close starts, after focus has gone back (not after the exit). */
+  onClosed?: () => void;
+};
 
 /**
  * A modal layer (Dialog). Radix returns focus only to a Radix trigger, so a dialog opened by a
  * shortcut or a menu item would drop focus on <body>. The focused element is captured in a layout
- * effect, before Radix moves focus into the dialog.
+ * effect, before Radix moves focus into the dialog. When it closes, focus returns at once and the
+ * fading content goes inert, so a click or key cannot reach it during the exit.
  */
-export function useModalLayer(
-  open: boolean,
-  shouldRestore: () => boolean = () => true,
-): ModalLayerHandle {
+export function useModalLayer(open: boolean, options: ModalLayerOptions = {}): ModalLayerHandle {
   const handle = useRef<Handle>(freshHandle());
-  const restoreWanted = useRef(shouldRestore);
+  const latest = useRef(options);
   useLayoutEffect(() => {
-    restoreWanted.current = shouldRestore;
+    latest.current = options;
   });
   useLayoutEffect(() => {
     if (!open) return;
@@ -133,11 +184,15 @@ export function useModalLayer(
     if (!open) return;
     const current = handle.current;
     return () => {
-      if (!restoreWanted.current()) return;
-      restoreFocusNow(
-        current,
-        (active) => active?.closest('[role="dialog"], [role="alertdialog"]') != null,
-      );
+      const { shouldRestore, onClosed } = latest.current;
+      if (shouldRestore?.() !== false) {
+        restoreFocusNow(
+          current,
+          (el) => el.closest('[role="dialog"], [role="alertdialog"]') !== null,
+        );
+      }
+      for (const node of document.querySelectorAll(FADING)) setInert(node, true);
+      onClosed?.();
     };
   }, [open]);
   return { onCloseAutoFocus: (event) => restoreFocus(handle.current, event) };
@@ -193,16 +248,23 @@ export function LayerMarker({
     let unregister: (() => void) | null = register(kind, record);
     // Radix sets data-state on the content element itself.
     const observer = new MutationObserver(() => {
-      const closed = container?.getAttribute('data-state') === 'closed';
+      if (container === null) return;
+      const closed = container.getAttribute('data-state') === 'closed';
       if (closed && unregister !== null) {
+        // Before leaving the stack: submenus are found through it (focusIsOurs).
+        if (handleRef !== undefined) {
+          restoreFocusNow(handleRef.current, (el) => container.contains(el));
+        }
+        setInert(container, true);
         unregister();
         unregister = null;
-        if (handleRef !== undefined)
-          restoreFocusNow(handleRef.current, (active) => container?.contains(active) === true);
       } else if (!closed && unregister === null) {
-        // Reopened while it was still fading out.
+        // Reopened while it was still fading out: the node is reused, so Radix does not focus it.
+        setInert(container, false);
+        const refocus = handleRef?.current.restored === true;
         if (handleRef !== undefined) handleRef.current = freshHandle(returnFocus);
         unregister = register(kind, record);
+        if (refocus) focusInto(container);
       }
     });
     if (container !== null) {

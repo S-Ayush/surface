@@ -60,11 +60,11 @@ export function Dialog({
   const [confirming, setConfirming] = useState(false);
   // Closed by its owner while asking (e.g. the issue was deleted elsewhere): drop the question too.
   if (!open && confirming) setConfirming(false);
-  const layer = useModalLayer(open);
-  const onCloseAutoFocus = (event: Event) => {
-    layer.onCloseAutoFocus(event);
-    onClosed?.();
-  };
+  const layer = useModalLayer(open, onClosed === undefined ? {} : { onClosed });
+  const onCloseAutoFocus = layer.onCloseAutoFocus;
+  // Reopening during the exit would reuse the fading content, whose focus scope does not run its
+  // open focus again: a new key mounts it afresh (and cuts the exit short).
+  const generation = useOpenGeneration(open);
 
   // Every way of closing goes through Radix onOpenChange, so this one guard covers them all.
   const requestOpenChange = (next: boolean) => {
@@ -76,9 +76,10 @@ export function Dialog({
     <RadixDialog.Root open={open} onOpenChange={requestOpenChange}>
       {trigger !== undefined && <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger>}
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className={styles.backdrop} />
+        <RadixDialog.Overlay key={`backdrop-${generation}`} className={styles.backdrop} />
         {variant === 'command' ? (
           <RadixDialog.Content
+            key={generation}
             className={cx(styles.content, styles.command)}
             onCloseAutoFocus={onCloseAutoFocus}
             {...(description === undefined ? { 'aria-describedby': undefined } : {})}
@@ -93,6 +94,7 @@ export function Dialog({
           </RadixDialog.Content>
         ) : (
           <RadixDialog.Content
+            key={generation}
             className={cx(styles.content, styles[size], fullScreenOnSmall && styles.fullSmall)}
             onCloseAutoFocus={onCloseAutoFocus}
             // Without a description, opt out explicitly so Radix does not point at a missing element.
@@ -128,6 +130,15 @@ export function Dialog({
   );
 }
 
+/** Counts openings, so each one can mount its content afresh. */
+function useOpenGeneration(open: boolean): number {
+  const [state, setState] = useState({ open, generation: 0 });
+  if (state.open !== open) {
+    setState({ open, generation: open ? state.generation + 1 : state.generation });
+  }
+  return state.generation;
+}
+
 /** Closes the dialog it is in (through the dirty guard). Wrap a single button. */
 export function DialogClose({ children }: { children: ReactElement }) {
   return <RadixDialog.Close asChild>{children}</RadixDialog.Close>;
@@ -147,7 +158,7 @@ function DiscardConfirm({
 }) {
   const discarding = useRef(false);
   // On discard the dialog underneath closes too and returns focus to its own trigger.
-  const layer = useModalLayer(open, () => !discarding.current);
+  const layer = useModalLayer(open, { shouldRestore: () => !discarding.current });
   return (
     <RadixAlertDialog.Root
       open={open}
@@ -156,9 +167,9 @@ function DiscardConfirm({
       }}
     >
       <RadixAlertDialog.Portal>
-        <RadixAlertDialog.Overlay className={styles.backdrop} />
+        <RadixAlertDialog.Overlay className={cx(styles.backdrop, styles.instant)} />
         <RadixAlertDialog.Content
-          className={cx(styles.content, styles.sm)}
+          className={cx(styles.content, styles.sm, styles.instant)}
           onCloseAutoFocus={(event) => {
             // On discard the dialog underneath closes too and restores focus itself.
             if (discarding.current) {

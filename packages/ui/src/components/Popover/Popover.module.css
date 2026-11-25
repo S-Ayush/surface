@@ -30,6 +30,7 @@
 
 .content[data-state='closed'] {
   animation: exit var(--dur-exit) var(--ease-in) forwards;
+  pointer-events: none;
 }
 
 .content:focus-visible {

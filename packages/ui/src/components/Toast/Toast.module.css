@@ -38,6 +38,7 @@
 /* ToastRegion keeps a dismissed toast mounted (closed) until this ends. */
 .toast[data-state='closed'] {
   animation: exit var(--dur-exit) var(--ease-in) forwards;
+  pointer-events: none;
 }
 
 .toast[data-swipe='move'] {

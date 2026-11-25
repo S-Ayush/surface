@@ -65,8 +65,8 @@ export type CommandMenuProps = {
 };
 
 export function CommandMenu({ open, onClose, ...props }: CommandMenuProps) {
-  // The command chosen with Enter. It runs once the menu has closed and focus is back where it
-  // was (§3.4), so a dialog it opens returns focus there, and focus it moves is not taken back.
+  // The command chosen with Enter. It runs as the menu starts to close, once focus is back where it
+  // was (§3.4; the exit animation does not delay it), so a dialog it opens returns focus there, and focus it moves is not taken back.
   const pending = useRef<Effect | null>(null);
   return (
     <Dialog
@@ -82,15 +82,14 @@ export function CommandMenu({ open, onClose, ...props }: CommandMenuProps) {
       title="Command menu"
       variant="command"
     >
-      {open && (
-        <MenuBody
-          {...props}
-          onRun={(effect) => {
-            pending.current = effect;
-            onClose();
-          }}
-        />
-      )}
+      {/* Mounted with the dialog content, so it stays while the dialog fades out. */}
+      <MenuBody
+        {...props}
+        onRun={(effect) => {
+          pending.current = effect;
+          onClose();
+        }}
+      />
     </Dialog>
   );
 }

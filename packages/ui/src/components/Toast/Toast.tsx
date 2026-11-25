@@ -169,10 +169,15 @@ function ClosingGuard({
   onExited: () => void;
   children: ReactNode;
 }) {
+  // The callback is a new closure every render; the timer must not restart with it.
+  const exit = useRef(onExited);
+  useEffect(() => {
+    exit.current = onExited;
+  });
   useEffect(() => {
     if (open) return;
-    const timer = setTimeout(onExited, EXIT_FALLBACK_MS);
+    const timer = setTimeout(() => exit.current(), EXIT_FALLBACK_MS);
     return () => clearTimeout(timer);
-  }, [open, onExited]);
+  }, [open]);
   return children;
 }

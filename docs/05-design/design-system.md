@@ -143,7 +143,7 @@ The user preference "font size" (FR-AUTH-10) scales the root by 12 / 13 / 14 px.
 | `--dur-slow` | 240 ms | Large layout transitions (rare) |
 | `--dur-highlight-in` | 0 ms | Hover, focus and selection fills turning on *(added 2026-11-25)* |
 | `--dur-highlight-out` | 150 ms | The same fills fading out *(added 2026-11-25)* |
-| `--dur-exit` | 80 ms | Overlays leaving: opacity plus a 2 px shift *(added 2026-11-25)* |
+| `--dur-exit` | 80 ms | Overlays leaving: opacity plus `--motion-shift` (4 px; Dialog and Toast) or `--motion-scale` (Menu, Popover, Tooltip) *(added 2026-11-25)* |
 | `--ease-out` | `cubic-bezier(0.2, 0.8, 0.2, 1)` | Entering elements |
 | `--ease-in` | `cubic-bezier(0.4, 0, 1, 1)` | Leaving elements |
 
@@ -152,6 +152,7 @@ Rules: animation **never delays input**. Exit animations are shorter than enter 
 *Changed 2026-11-25 (PLAN-016, D-a):*
 - **Highlights turn on at once and fade out.** Rows, nav items, menu items, pills and buttons use `transition: background-color var(--dur-highlight-out)`, with `transition-duration: var(--dur-highlight-in)` on `:hover`. A hover therefore never feels late, and moving the pointer leaves no hard edge.
 - **Overlays have an exit.** Dialog, AlertDialog, Menu, ContextMenu, Popover, Tooltip and Toast animate `[data-state='closed']` for `--dur-exit` (80 ms, shorter than the 100–160 ms enter). Focus returns to the trigger at once, not after the animation, and the next overlay can open while the last one fades.
+  As built: a fading overlay is inert, takes no pointer events, and has left the overlay stack, so a second click or Esc cannot reach it; the aria-hidden that Radix puts on the page behind a dialog is lifted from the return target when focus goes back. The discard question has no exit at all. Known limit: Radix keeps the fading layer in its own dismiss stack, so an Esc pressed within the 80 ms does not close the dialog underneath. Menu and picker items are `--menu-item-height` (30 px).
 - **Reduced motion** keeps every new animation, exits included, inside the `--motion-*` token system: movement collapses to 0 and only opacity changes. A unit test checks that no keyframe moves an element except through those tokens.
 - Before v0.2, overlays unmounted at once on close, by design (PLAN-005 S3).
 

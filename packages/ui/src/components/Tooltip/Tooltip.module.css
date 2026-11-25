@@ -19,6 +19,7 @@
 /* Radix keeps the tooltip mounted until the exit ends. */
 .content[data-state='closed'] {
   animation: exit var(--dur-exit) var(--ease-in) forwards;
+  pointer-events: none;
 }
 
 .kbd kbd {

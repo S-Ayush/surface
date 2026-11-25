@@ -35,6 +35,7 @@
 
 .content[data-state='closed'] {
   animation: exit var(--dur-exit) var(--ease-in) forwards;
+  pointer-events: none;
 }
 
 /* Submenus float over their parent: e2 (design-system §2.5). */

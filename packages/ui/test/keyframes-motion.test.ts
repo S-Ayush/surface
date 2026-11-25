@@ -77,7 +77,9 @@ describe('keyframes', () => {
     }
   });
 
-  it('every overlay has an exit that is shorter than its enter and ends on --ease-in', () => {
+  it('every overlay has an exit on --dur-exit and --ease-in that takes no clicks and is shorter than its enter', () => {
+    const tokens = readFileSync(new URL('styles/tokens.css', ROOT), 'utf8');
+    const ms = (name: string) => Number(new RegExp(`--${name}:\\s*(\\d+)ms`).exec(tokens)?.[1]);
     for (const file of [
       'Dialog/Dialog.module.css',
       'Menu/Menu.module.css',
@@ -87,8 +89,15 @@ describe('keyframes', () => {
     ]) {
       const source = readFileSync(new URL(`components/${file}`, ROOT), 'utf8');
       expect(source, file).toMatch(
-        /\[data-state='closed'\]\s*\{[^}]*animation:\s*[\w-]+\s+var\(--dur-exit\)\s+var\(--ease-in\)/,
+        /\[data-state='closed'\]\s*\{\s*animation:\s*[\w-]+\s+var\(--dur-exit\)\s+var\(--ease-in\)[^;]*;\s*pointer-events:\s*none/,
       );
+      const enter = /animation:\s*[\w-]+\s+var\(--(dur-\w+)\)\s+var\(--ease-out\)/.exec(source);
+      expect(ms('dur-exit'), file).toBeLessThan(ms(enter?.[1] ?? 'dur-fast'));
     }
+  });
+
+  it('the discard question has no exit, so nothing can be clicked while it fades', () => {
+    const source = readFileSync(new URL('components/Dialog/Dialog.module.css', ROOT), 'utf8');
+    expect(source).toMatch(/\.content\.instant\[data-state='closed'\]\s*\{[^}]*animation:\s*none/);
   });
 });

@@ -13,6 +13,14 @@
 
 .backdrop[data-state='closed'] {
   animation: fade-out var(--dur-exit) var(--ease-in) forwards;
+  pointer-events: none;
+}
+
+.backdrop.instant[data-state='closed'],
+.content.instant[data-state='closed'] {
+  /* The discard question goes at once: it is a destructive choice, so no second click lands on it
+     while it fades, and Esc is not swallowed by a fading layer. */
+  animation: none;
 }
 
 /* Top-aligned rather than centred, so a dialog does not jump while its content grows. */
@@ -38,6 +46,7 @@
 
 .content[data-state='closed'] {
   animation: exit var(--dur-exit) var(--ease-in) forwards;
+  pointer-events: none;
 }
 
 .content:focus-visible {
