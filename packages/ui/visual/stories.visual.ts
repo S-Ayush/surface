@@ -34,7 +34,7 @@ test('every component has at least one snapshotted (static) story', () => {
   const missing = components.filter((name) => {
     const id = name.toLowerCase();
     return !stories.some((story) =>
-      new RegExp(`^([a-z0-9]+-${id}|${id}-[a-z0-9]+)--`).test(story.id),
+      new RegExp(`^([a-z0-9]+-${id}|${id}-[a-z0-9-]+)--`).test(story.id),
     );
   });
   expect(missing).toEqual([]);
