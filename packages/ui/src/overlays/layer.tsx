@@ -169,8 +169,10 @@ export type ModalLayerOptions = {
 export function useModalLayer(open: boolean, options: ModalLayerOptions = {}): ModalLayerHandle {
   const handle = useRef<Handle>(freshHandle());
   const latest = useRef(options);
+  const isOpen = useRef(open);
   useLayoutEffect(() => {
     latest.current = options;
+    isOpen.current = open;
   });
   useLayoutEffect(() => {
     if (!open) return;
@@ -195,7 +197,17 @@ export function useModalLayer(open: boolean, options: ModalLayerOptions = {}): M
       onClosed?.();
     };
   }, [open]);
-  return { onCloseAutoFocus: (event) => restoreFocus(handle.current, event) };
+  return {
+    onCloseAutoFocus: (event) => {
+      // Reopened during the exit: the old content is gone and Radix reports its close, but
+      // `handle` is the new opening's. Leave focus where the new dialog put it.
+      if (isOpen.current) {
+        event.preventDefault();
+        return;
+      }
+      restoreFocus(handle.current, event);
+    },
+  };
 }
 
 export type AnchoredLayerHandle = {

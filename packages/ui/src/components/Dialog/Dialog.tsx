@@ -34,9 +34,9 @@ export type DialogProps = {
   /** Below 768 px the dialog fills the screen (the composer, SPEC-012 §7.3). */
   fullScreenOnSmall?: boolean;
   /**
-   * Called once the dialog has closed and focus has been restored, after Radix's own deferred
-   * focus handling. Work that moves focus or opens another overlay belongs here, not in the
-   * close handler, or focus restoration would undo it.
+   * Called once as the dialog starts to close, right after focus has been restored (the exit
+   * animation does not delay it). Work that moves focus or opens another overlay belongs here,
+   * not in the close handler, or focus restoration would undo it.
    */
   onClosed?: () => void;
   children?: ReactNode;

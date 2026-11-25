@@ -392,7 +392,7 @@ describe('focus with exits running', () => {
 
   it('reopening a dialog while it fades focuses the new one', async () => {
     await render(
-      <Harness open>
+      <Harness open={false}>
         {({ open, setOpen }) => (
           <Dialog open={open} onOpenChange={setOpen} title="Rename">
             <input aria-label="Title" />
@@ -400,13 +400,26 @@ describe('focus with exits running', () => {
         )}
       </Harness>,
     );
-    await run(() => document.getElementById('outside')?.click());
+    vi.useFakeTimers();
+    const outside = document.getElementById('outside');
+    outside?.focus();
+    await run(() => outside?.click());
+    await run(() => outside?.click());
     expect(document.querySelector("[role='dialog']")?.getAttribute('data-state')).toBe('closed');
-    await run(() => document.getElementById('outside')?.click());
+    expect(document.activeElement).toBe(outside);
+    await run(() => outside?.click());
+    // Radix reports the old content's close from a timer once it unmounts.
+    await run(() => vi.advanceTimersByTime(50));
+    vi.useRealTimers();
     const dialog = document.querySelector("[role='dialog']");
     expect(dialog?.getAttribute('data-state')).toBe('open');
     expect(dialog?.hasAttribute('inert')).toBe(false);
     expect(document.activeElement?.closest("[role='dialog']")).toBe(dialog);
+    expect(document.activeElement).not.toBe(outside);
+    // The new opening kept its own return target, so its close still returns focus at once.
+    await run(() => outside?.click());
+    expect(document.querySelector("[role='dialog']")?.getAttribute('data-state')).toBe('closed');
+    expect(document.activeElement).toBe(outside);
   });
 
   it('reopening a menu while it fades keeps focus inside it', async () => {
