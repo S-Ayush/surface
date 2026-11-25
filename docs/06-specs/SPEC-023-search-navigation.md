@@ -395,7 +395,7 @@ Each has a proposed default, so they can be accepted in bulk. Q1–Q3 are the de
 | Q6 | Ranking | (a) **Linear's**: state bucket first (started/unstarted, backlog, completed, canceled, archived), then match quality. (b) Match quality first, state as a tie-break. | **(a)**, as Linear documents. |
 | Q7 | Archived issues | Included by the UI always, ranked last with a badge; the API keeps SPEC-003's `includeArchived: false` default. Alternative: a display option to hide them. | **As stated**: always included in the UI (FR-ISS-10, Linear), API default false. |
 | Q8 | Deleted issues (Recently deleted) | (a) **Not searchable**; found on the team's Recently deleted tab. (b) Searchable with a badge. | **(a)**. Linear's docs list archived, not deleted, in search order. |
-| Q9 | The timing channel (§5.3 item 8) | (a) **Accept** as a residual risk, with the mitigations listed; record it next to SPEC-001 D2 in permissions §5. (b) Pad every answer to a fixed time (slower for everyone, and still imperfect under load). | **(a)**. |
+| Q9 | **Decided, see D1.** The timing channel (§5.3 item 8) | (a) **Accept** as a residual risk, with the mitigations listed; record it next to SPEC-001 D2 in permissions §5. (b) Pad every answer to a fixed time (slower for everyone, and still imperfect under load). | **(a)**. |
 | Q10 | Editing rows the replica doesn't hold (Search page, profiles) | (a) **Like Linear, edit anywhere**: the first property key or menu action loads the issue as opening it would (on-demand subscription for a public team's live issue) and opens the picker when the row is local. (b) Read-only, with the hint "Open ENG-42 to edit it." | **(a)**. It can evict an on-demand team (the 5-team limit, SPEC-011 §5.7); that is the same cost as opening the issue. |
 | Q11 | Subscribed tab (FR-NAV-10) | (a) **Hidden until M4** subscriptions; PRD milestone M1, M4. (b) An approximation now (assigned, created or commented). | **(a)**. |
 | Q12 | Where is the members directory? | (a) **A new page `/members`** for everyone ("Go to members" in `Mod+K`, no sidebar item); Settings → Members stays Admin-only (SPEC-001 unchanged). (b) Open Settings → Members read-only to Members, hiding Admin controls (changes SPEC-001 §7 and AC-14). (c) Also a sidebar item. | **(a)**. Linear's docs describe Settings → Members as admin management and the profile page as where a member's issues are seen. |
@@ -407,13 +407,21 @@ Each has a proposed default, so they can be accepted in bulk. Q1–Q3 are the de
 | Q18 | Labels in `Mod+K` (`l `) and NFR-05's "search by label" | (a) **Label results open the current team's (else the home team's) issue list filtered by the label**, using SPEC-021's URL filters; left out of M2 if SPEC-021 has no URL filters. (b) Not in M2. | **(a)**. |
 | Q19 | Error for a search timeout | (a) **No new error code**: 3 s statement timeout, `INTERNAL` with the specific message (§6). (b) A new code (`TIMEOUT`, 503/504) in SPEC-003. | **(a)**. |
 | Q20 | Accent folding (`unaccent`) | (a) **Not in M2** (one less required extension; hosted Postgres variants differ). (b) Add `unaccent` now. | **(a)**; revisit if dogfooding shows a need. |
-| Q21 | Find in view (`Mod+F`, Linear) | Here, in SPEC-021 (views), or later. | **Not in this spec**; offered to SPEC-021. |
+| Q21 | **Decided, see D3.** Find in view (`Mod+F`, Linear) | Here, in SPEC-021 (views), or later. | **Not in this spec**; offered to SPEC-021. |
 | Q22 | Projects and documents in search | M3 adds `project.search`, a Projects section in `Mod+K` (`p `) and the Search page type switch; M4 adds `document.search` and Documents (`d `). Same leak rules (§5.3). | **As stated**; each spec names its leak test. |
-| Q23 | Testing hold for search SQL | AC-6 and AC-8 can only be tested on Postgres. (a) **Grant an exception** for `issue-search.int.test.ts` (matching, ranking, archived, deleted, paging, snippets), as SPEC-011 Q13 did for filter conformance. (b) Keep held; only the leak tests cover the SQL. | **(a)**: without it, ranking and matching would ship with only unit tests of the SQL builder. |
+| Q23 | **Decided, see D2.** Testing hold for search SQL | AC-6 and AC-8 can only be tested on Postgres. (a) **Grant an exception** for `issue-search.int.test.ts` (matching, ranking, archived, deleted, paging, snippets), as SPEC-011 Q13 did for filter conformance. (b) Keep held; only the leak tests cover the SQL. | **(a)**: without it, ranking and matching would ship with only unit tests of the SQL builder. |
 
 ### Decisions
 
 None yet.
+
+## Decisions
+
+| # | Question | Decision |
+|---|---|---|
+| D1 | Q9: the timing channel | **Decided by the user on 2026-11-25:** accepted as a residual risk, recorded beside SPEC-001 D2. Every other channel in §5.3 (results, counts, ranking, snippets, suggestions, logs) stays leak-tested. |
+| D2 | Q23: testing hold for search SQL | **Decided by the user on 2026-11-25:** exception granted for `issue-search.int.test.ts` against real Postgres, like SPEC-011 Q13. README §6 lists it at the acceptance gate. |
+| D3 | Q21: find in view (`Mod+F`) | **Decided by the user on 2026-11-25:** not in M2. It goes into the PRD as a Later item at the acceptance gate. |
 
 ## 12. Changes to accepted docs on acceptance
 

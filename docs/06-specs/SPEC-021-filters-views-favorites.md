@@ -24,6 +24,7 @@ Surface's client doesn't hold every issue (ADR-0020). This spec decides how a vi
 - **Display defaults** (FR-VIEW-11): personal overrides (`ViewPreference`), "Set as default" for built-in team views (`ViewDefault`) and custom views, "Reset to default".
 - **Favorites** (FR-NAV-08): the `Favorite` model and operations, the sidebar section, `Alt+F`, `O` `F`, reordering.
 - The **sidebar** entries Views (workspace), Favorites, and the team item Views (FR-NAV-01).
+- **Reordering teams in the sidebar** by drag (SPEC-005 §7, D2). *Still to be specified.*
 - **Where a view's issues come from** under partial issue loading (§5.4).
 - The leak tests these models need (permissions.md §5).
 
@@ -497,7 +498,7 @@ New `packages/ui` components: **FilterChip** (three-part button: property, opera
 
 | # | Question | Proposed default |
 |---|---|---|
-| Q1 | **Views over teams the client doesn't hold** (§5.4; needs an ADR): subscribe to and pin every public team a view can match while it is open (one rendering path; supersedes ADR-0020's 5-team limit for open views; a workspace-wide view loads every public team's live issues), or a **server-backed** path with `issue.list` / `issue.groupBy` for teams not held (keeps the limit and budget; two rendering paths, no optimistic edits on those rows)? | Pin the teams (§5.4), recorded in a new ADR, "Views pin the teams they show", which supersedes ADR-0020's on-demand limit clause for teams needed by an open view. |
+| Q1 | **Decided, see D1.** **Views over teams the client doesn't hold** (§5.4; needs an ADR): subscribe to and pin every public team a view can match while it is open (one rendering path; supersedes ADR-0020's 5-team limit for open views; a workspace-wide view loads every public team's live issues), or a **server-backed** path with `issue.list` / `issue.groupBy` for teams not held (keeps the limit and budget; two rendering paths, no optimistic edits on those rows)? | Pin the teams (§5.4), recorded in a new ADR, "Views pin the teams they show", which supersedes ADR-0020's on-demand limit clause for teams needed by an open view. |
 | Q2 | Personal views (only their owner sees them): ship them in M2? domain-model §4.15 already plans `personal`; Linear's docs describe workspace and team views and personal dashboards, not personal views. | Ship them, as the Personal scope. |
 | Q3 | Route of All issues: keep M1's `/team/:key/issues`, or Linear's `/team/:key/all` (with a redirect from `/issues`)? | Keep `/team/:key/issues`; add `/active` and `/backlog`. |
 | Q4 | URL encoding: base64url JSON of the Filter tree (compact, opaque), or a readable query form (`?assignee=me&label=…`)? | base64url JSON (§3.3), the same tree the API takes. |
@@ -517,7 +518,10 @@ New `packages/ui` components: **FilterChip** (three-part button: property, opera
 
 ## Decisions
 
-None yet. Accepted answers move here with a date.
+| # | Question | Decision |
+|---|---|---|
+| D1 | Q1: views over teams the client doesn't hold | **Decided by the user on 2026-11-25:** pin the view's teams. An open view subscribes to and pins every public team it can match (one local rendering path, instant and offline), recorded in ADR-0027. The guard against the 35 MB replica budget is the size-based on-demand team limit planned as an M1 follow-up (SPEC-011 D19), not a second, server-backed rendering path. |
+| D2 | Scope: reordering teams in the sidebar | **Decided by the user on 2026-11-25:** SPEC-005 §7's M2 promise (drag to reorder the teams in the sidebar) belongs to this spec, which owns the sidebar. Its flows, operation, ACs and edge cases are still to be written before review (the coordinator, 2026-11-25). |
 
 ## 12. Changes to accepted docs on acceptance
 
