@@ -18,6 +18,8 @@ export type GroupHeaderProps = {
   /** Roving tabindex from VirtualList. */
   tabIndex?: 0 | -1;
   focused?: boolean;
+  /** Draw the keyboard-focus treatment for a focused header (the list turns it off until the first key press). Default true. */
+  showFocus?: boolean;
   style?: CSSProperties;
   className?: string;
 };
@@ -38,6 +40,7 @@ export function GroupHeader({
   rowIndex,
   tabIndex = -1,
   focused = false,
+  showFocus = true,
   style,
   className,
 }: GroupHeaderProps) {
@@ -51,6 +54,7 @@ export function GroupHeader({
       aria-label={`${name}, ${plural(count)}, ${collapsed ? 'collapsed' : 'expanded'}`}
       tabIndex={tabIndex}
       data-focused={focused || undefined}
+      data-focus-visible={(focused && showFocus) || undefined}
       className={cx(styles.root, className)}
       style={style}
       onClick={onToggle}

@@ -3,10 +3,10 @@
  * fixed heights, so the window comes from prefix sums and a binary search; nothing is measured.
  */
 
-/** Row and header heights in px: the numbers behind `--row-height` and `--control-lg` (tested). */
-export const ROW_HEIGHT = 36;
-export const ROW_HEIGHT_COMPACT = 32;
-export const GROUP_HEADER_HEIGHT = 32;
+/** Row and header heights in px: the numbers behind `--row-height`, `--row-height-compact` and `--group-header-height` (tested). */
+export const ROW_HEIGHT = 44;
+export const ROW_HEIGHT_COMPACT = 36;
+export const GROUP_HEADER_HEIGHT = 36;
 /** Rows kept mounted beyond each edge of the view. */
 export const DEFAULT_OVERSCAN = 8;
 

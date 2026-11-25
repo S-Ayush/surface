@@ -57,9 +57,13 @@ import { COPY_ITEMS, planCopy, runCopy } from './copy-actions.js';
 import { askDelete } from './delete-flow.js';
 import {
   EDIT_TITLE_STATE_KEY,
+  INITIAL_MODALITY,
   LIST_SOURCE_STATE_KEY,
+  focusIsVisible,
   focusMemory,
+  nextModality,
   resolveFocus,
+  type InputModality,
   type IssueListSource,
 } from './focus-model.js';
 import { openComposerWith } from './composer-request.js';
@@ -196,6 +200,23 @@ export function IssueList({ ariaLabel, listKey, href, groups, archive }: IssueLi
     setFocus({ id: resolveFocus(focus.order, ids, focus.id), order: ids });
   }
   const focusedId = focus.id;
+  // The focus treatment shows only after the first key press (design-system §4, audit row 13).
+  const [modality, setModality] = useState<InputModality>(INITIAL_MODALITY);
+  useEffect(() => {
+    const onKey = () => {
+      setModality((current) => nextModality(current, 'key'));
+    };
+    const onPointer = () => {
+      setModality((current) => nextModality(current, 'pointer'));
+    };
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('pointerdown', onPointer, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('pointerdown', onPointer, true);
+    };
+  }, []);
+  const showFocus = focusIsVisible(modality);
   const focusedIndex = focusedId === null ? -1 : ids.indexOf(focusedId);
   const focusedIndexRef = useRef(focusedIndex);
   useEffect(() => {
@@ -546,6 +567,7 @@ export function IssueList({ ariaLabel, listKey, href, groups, archive }: IssueLi
           rowIndex={index + 1}
           tabIndex={tabIndex}
           focused={focused}
+          showFocus={showFocus}
           style={style}
         />
       );
@@ -576,6 +598,7 @@ export function IssueList({ ariaLabel, listKey, href, groups, archive }: IssueLi
             compact={compact}
             pending={row.pending}
             focused={focused}
+            showFocus={showFocus}
             tabIndex={tabIndex}
             style={{ height: '100%' }}
             onOpen={() => {

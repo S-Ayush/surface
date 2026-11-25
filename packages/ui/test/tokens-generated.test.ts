@@ -65,9 +65,10 @@ describe('PLAN-016 S1 tokens', () => {
     expect(componentTokens['text-md-line']).toBe(`${Number((24 / 13).toFixed(4))}rem`);
   });
 
-  it('keeps list row heights at 36 and 32 until S4', () => {
-    expect(componentTokens['row-height']).toBe('36px');
-    expect(componentTokens['row-height-compact']).toBe('32px');
+  it('sets list rows to 44 (comfortable) and 36 (compact), group headers to 36 (D-c)', () => {
+    expect(componentTokens['row-height']).toBe('44px');
+    expect(componentTokens['row-height-compact']).toBe('36px');
+    expect(componentTokens['group-header-height']).toBe('36px');
   });
 });
 

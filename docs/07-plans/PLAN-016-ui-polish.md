@@ -127,7 +127,7 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 > - **Tests:** the plan named `shell-layout.test.ts`; they live in `web/test/shell-css.test.ts` (CSS-source: card, full-bleed drawer, sidebar no border, nav items use `--nav-item-height` and `--weight-ui`, current item fill, label style, header 44 + hairline). Existing shell tests unchanged and green.
 > - **Not done:** no by-hand headless capture (no dev server was run from this worktree); no axe or visual baselines re-run. The sidebar-search `⌘K` row and the narrow (< 768) mode are checked only by CSS source.
 
-### S4: Issue list: inset rows, states, group headers · M · _(needs S1, S3)_
+### S4: Issue list: inset rows, states, group headers · M · _(needs S1, S3)_ · ✅ Done 2026-11-25
 
 - **Changes:**
   - **Row height 44 px comfortable and 36 px compact (D-c)**, transparent, borderless, inset 8 px, with `--radius-md` state fills. `VirtualList` constants follow the new heights.
@@ -139,6 +139,18 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Files:** `packages/ui/src/components/{IssueRow,GroupHeader,LabelChip,PropertyPill,VirtualList}/*`, `apps/web/src/features/issues/IssueList.module.css`, `apps/web/src/features/issues/focus-model.ts`.
 - **Dependencies:** S1, S3.
 - **Verify:** `issue-components.test.tsx` (extended); `components.perf.test.tsx` (the < 1 ms per row budget, deep tier, run by hand); a jsdom test that hover, focus and selected render different classes and `data-*`; a focus-model unit test for no focus-visible on mount; the focus bar against `--bg-active` added to `contrast.test.ts`; by-hand capture of the list at both heights.
+
+> **As built (2026-11-25, `p016-s4-list`):**
+> - **Tokens:** `--row-height` 44, `--row-height-compact` 36 (were 36/32), new `--group-header-height` 36, `--row-inset` 8, `--focus-bar-width` 2. `ROW_HEIGHT`, `ROW_HEIGHT_COMPACT` and `GROUP_HEADER_HEIGHT` in `VirtualList/window.ts` are 44/36/36 and are tested against the tokens (the header no longer follows `--control-lg`).
+> - **Rows:** transparent, `margin: 0 var(--row-inset)`, `--radius-md`, no border. Hover `--bg-hover` (in `--dur-highlight-in`, out `--dur-highlight-out`). Keyboard focus is `[data-focus-visible]`: `--bg-active` plus `box-shadow: inset var(--focus-bar-width) 0 0 var(--accent), inset 0 0 0 1px var(--focus-ring)`; the global 2 px outline is switched off on rows and headers (`.root:focus-visible { outline: none }`). Selected is `[data-selected]` (new `selected` prop, also `aria-selected`): `--bg-selected` plus a 1 px accent ring; nothing sets it yet (M2). Typography: title `--weight-ui`, identifier 450 + `--tracking-id` + tabular nums, dates, estimate and created 450 tertiary.
+> - **Group header:** 36 px band on `--bg-group`, inset, `--radius-md`, label 13/500 (`--text-base-size`, `--weight-ui`), count 450 tertiary, `+` on the right (hover `--bg-hover`). Never the hover colour. Same focus treatment as rows.
+> - **No focus on first load:** `IssueRow` and `GroupHeader` take `showFocus` (default true; `data-focused` stays for the command code). `IssueList` keeps an input modality (`focus-model.ts`: `INITIAL_MODALITY`, `nextModality`, `focusIsVisible`) fed by capturing `keydown` and `pointerdown` listeners on the document, so nothing looks focused until the first key press and a pointer press hides it again. Key behaviour, roving tabindex and aria are unchanged. Limit: a key press made before the list mounted (for example `G I`) does not count.
+> - **Shared CSS touched (minimal, for S6):** `PropertyPill`: only its hover fill changed, to `--bg-active` (a pill inside a hovered row would vanish on `--bg-hover`); the row tints date and estimate pills tertiary from its own CSS (`.date > :not(.overdue)`). `LabelChip` uses a hairline border (`--hairline` / `--border-hairline`) and weight 450.
+> - **Deviation:** the hairline under a sticky group header while stuck is not built. `VirtualList` pins the sticky header from state and does not expose "stuck" to the item; add it with S8 or later if wanted.
+> - **Perf:** states change `background-color` and `box-shadow` only; heights are constants, so the window stays arithmetic. `components.perf.test.tsx` was not run (deep tier, shared machine). By hand in headless Chromium the 26-issue list rendered with rows 44 px and headers 36 px, left edge 248 px (card edge plus 8).
+> - **Tests:** `ui/test/issue-components.test.tsx` "row states" (hover, focus and selected differ; `showFocus` off hides focus; CSS-source checks for the transparent inset row, the `--bg-group` header, no outline, hairline chips), `ui/test/virtual-window.test.ts` "row and header heights follow the density tokens" (the plan named `virtual-list.test.tsx`), `ui/test/contrast.test.ts` "row focus bar passes 3:1" and the selected and group pairs, `web/test/issue-focus-model.test.ts` "nothing is focus-visible before the first key press" (the plan named `focus-model.test.ts`), and `tokens-generated.test.ts` for the new values.
+> - **Screenshots** (headless, dark; the light run came out dark too, so light is unchecked by eye): `/private/tmp/claude-501/-Users-admin-Desktop-Learning-surface/1cfc3873-e082-44f3-b5f5-eb592716fa31/scratchpad/surface-capture/shots-s3/s4-*` (list wide, narrow, mid; load, hover, keyboard).
+> - **Notes:** S5 context-menu rows can reuse `data-focus-visible`. S8's skeleton uses `--row-height`, which is now 44. M2 multi-select only needs to pass `selected`.
 
 ### S5: Command menu and keyboard pickers · M · _(needs S2)_
 

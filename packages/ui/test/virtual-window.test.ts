@@ -20,18 +20,25 @@ describe('layout constants', () => {
   it('equal the design tokens they stand for (CSS and arithmetic must agree)', () => {
     expect(ROW_HEIGHT).toBe(px('row-height'));
     expect(ROW_HEIGHT_COMPACT).toBe(px('row-height-compact'));
-    expect(GROUP_HEADER_HEIGHT).toBe(px('control-lg'));
+    expect(GROUP_HEADER_HEIGHT).toBe(px('group-header-height'));
+  });
+});
+
+describe('density tokens', () => {
+  it('row and header heights follow the density tokens (44 comfortable, 36 compact, 36 header)', () => {
+    expect([ROW_HEIGHT, ROW_HEIGHT_COMPACT, GROUP_HEADER_HEIGHT]).toEqual([44, 36, 36]);
+    expect(buildOffsets([GROUP_HEADER_HEIGHT, ROW_HEIGHT, ROW_HEIGHT_COMPACT]).at(-1)).toBe(116);
   });
 });
 
 describe('buildOffsets and indexAt', () => {
   it('builds prefix sums and finds the item containing a position', () => {
-    const offsets = buildOffsets([32, 36, 36, 32]);
-    expect(Array.from(offsets)).toEqual([0, 32, 68, 104, 136]);
+    const offsets = buildOffsets([36, 44, 44, 36]);
+    expect(Array.from(offsets)).toEqual([0, 36, 80, 124, 160]);
     expect(indexAt(offsets, 0)).toBe(0);
-    expect(indexAt(offsets, 31.9)).toBe(0);
-    expect(indexAt(offsets, 32)).toBe(1);
-    expect(indexAt(offsets, 135)).toBe(3);
+    expect(indexAt(offsets, 35.9)).toBe(0);
+    expect(indexAt(offsets, 36)).toBe(1);
+    expect(indexAt(offsets, 159)).toBe(3);
     expect(indexAt(offsets, 9999)).toBe(3);
     expect(indexAt(offsets, -5)).toBe(0);
   });
@@ -50,10 +57,10 @@ describe('computeWindow', () => {
     const win = computeWindow({
       offsets: rows(10_000),
       scrollTop: 0,
-      viewportHeight: 360,
+      viewportHeight: 10 * ROW_HEIGHT,
       overscan: 5,
     });
-    // 360 / 36 = 10 rows fully in view; the row at the bottom edge counts; then 5 more.
+    // 10 rows in view rows fully in view; the row at the bottom edge counts; then 5 more.
     expect(win.start).toBe(0);
     expect(win.end).toBe(10 + 1 + 5);
     expect(win.indices).toHaveLength(16);
@@ -63,8 +70,8 @@ describe('computeWindow', () => {
   it('starts the overscan above the first visible row when scrolled', () => {
     const win = computeWindow({
       offsets: rows(1_000),
-      scrollTop: 36 * 100,
-      viewportHeight: 360,
+      scrollTop: ROW_HEIGHT * 100,
+      viewportHeight: 10 * ROW_HEIGHT,
       overscan: 5,
     });
     expect(win.start).toBe(95);
@@ -76,7 +83,7 @@ describe('computeWindow', () => {
     const win = computeWindow({
       offsets: rows(50),
       scrollTop: 1_000_000,
-      viewportHeight: 360,
+      viewportHeight: 10 * ROW_HEIGHT,
       overscan: 5,
     });
     expect(win.end).toBe(50);
@@ -86,8 +93,8 @@ describe('computeWindow', () => {
   it('keeps the pinned row mounted when it is far outside the window, in order', () => {
     const above = computeWindow({
       offsets: rows(1_000),
-      scrollTop: 36 * 500,
-      viewportHeight: 360,
+      scrollTop: ROW_HEIGHT * 500,
+      viewportHeight: 10 * ROW_HEIGHT,
       overscan: 2,
       pinnedIndex: 3,
     });
@@ -96,7 +103,7 @@ describe('computeWindow', () => {
     const below = computeWindow({
       offsets: rows(1_000),
       scrollTop: 0,
-      viewportHeight: 360,
+      viewportHeight: 10 * ROW_HEIGHT,
       overscan: 2,
       pinnedIndex: 900,
     });
@@ -108,7 +115,7 @@ describe('computeWindow', () => {
     const win = computeWindow({
       offsets: rows(20),
       scrollTop: 0,
-      viewportHeight: 360,
+      viewportHeight: 10 * ROW_HEIGHT,
       pinnedIndex: 99,
     });
     expect(win.indices.every((i) => i < 20)).toBe(true);
@@ -157,7 +164,7 @@ describe('stickyHeader', () => {
     const win = computeWindow({
       offsets: big,
       scrollTop: big[275] ?? 0,
-      viewportHeight: 360,
+      viewportHeight: 10 * ROW_HEIGHT,
       overscan: 2,
       headerIndices,
     });

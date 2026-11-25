@@ -110,3 +110,19 @@ export function readListSource(state: unknown): IssueListSource | undefined {
   }
   return { href, routeKey, issueIds };
 }
+
+/**
+ * Whether the list draws its keyboard-focus treatment (design-system §4, PLAN-016 S4). It is off on
+ * first load (the list takes DOM focus on arrival, which must not look like a keyboard user's
+ * focus), turns on at the first key press and off again at a pointer press.
+ */
+export type InputModality = 'initial' | 'keyboard' | 'pointer';
+
+export const INITIAL_MODALITY: InputModality = 'initial';
+
+export function nextModality(_current: InputModality, input: 'key' | 'pointer'): InputModality {
+  return input === 'key' ? 'keyboard' : 'pointer';
+}
+
+/** Only a keyboard user sees the focus ring. */
+export const focusIsVisible = (modality: InputModality): boolean => modality === 'keyboard';

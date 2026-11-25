@@ -23,7 +23,7 @@ button.root {
 }
 
 button.root:hover {
-  background: var(--bg-hover);
+  background: var(--bg-active);
   color: var(--text-primary);
 }
 

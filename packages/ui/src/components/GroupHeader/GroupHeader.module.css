@@ -1,20 +1,25 @@
+/* PLAN-016 S4: a 36 px band on --bg-group, inset in the card. It never takes the hover colour. */
 .root {
   display: flex;
   align-items: stretch;
-  border-bottom: var(--border-width) solid var(--border-subtle);
-  background: var(--bg-panel);
+  margin: 0 var(--row-inset);
+  border-radius: var(--radius-md);
+  background: var(--bg-group);
   cursor: pointer;
+  outline: none;
   user-select: none;
 }
 
-.root:hover,
-.root[data-focused] {
-  background: var(--bg-hover);
+.root:focus-visible {
+  outline: none;
 }
 
-.root:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring);
-  outline-offset: calc(-1 * var(--focus-ring-width));
+/* Keyboard focus (D-f), the same treatment as a row, shown after keyboard use only. */
+.root[data-focus-visible] {
+  background: var(--bg-active);
+  box-shadow:
+    inset var(--focus-bar-width) 0 0 var(--accent),
+    inset 0 0 0 var(--border-width) var(--focus-ring);
 }
 
 .cell {
@@ -23,7 +28,7 @@
   min-width: 0;
   align-items: center;
   gap: var(--space-8);
-  padding: 0 var(--space-16);
+  padding: 0 var(--space-8) 0 var(--space-12);
 }
 
 .chevron {
@@ -42,7 +47,7 @@
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--text-base-size);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -51,6 +56,7 @@
   color: var(--text-tertiary);
   font-feature-settings: var(--font-features-numeric);
   font-size: var(--text-sm-size);
+  font-weight: var(--weight-regular);
 }
 
 .add {
@@ -69,7 +75,7 @@
 }
 
 .add:hover {
-  background: var(--bg-active);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 

@@ -1,24 +1,49 @@
+/* PLAN-016 S4: a transparent row, inset in the card, no separators. Each state is a fill and a
+   box-shadow only, so none of them costs layout (design-system §4, D-f). */
 .root {
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  padding: 0 var(--space-16);
-  border-bottom: var(--border-width) solid var(--border-subtle);
-  background: var(--bg-app);
+  margin: 0 var(--row-inset);
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-md);
+  background: transparent;
   color: var(--text-primary);
   font-size: var(--text-base-size);
   line-height: var(--text-base-line);
   cursor: pointer;
+  outline: none;
+  transition: background-color var(--dur-highlight-out) var(--ease-out);
 }
 
-.root:hover,
-.root[data-focused] {
-  background: var(--bg-hover);
-}
-
+/* The list draws focus itself (data-focus-visible), so the global ring is off here. */
 .root:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring);
-  outline-offset: calc(-1 * var(--focus-ring-width));
+  outline: none;
+}
+
+/* Hover: on at once, out over 150 ms. */
+.root:hover {
+  background: var(--bg-hover);
+  transition-duration: var(--dur-highlight-in);
+}
+
+/* Selected (M2 multi-select): a fill and a 1 px accent ring. */
+.root[data-selected] {
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 var(--border-width) var(--accent);
+}
+
+/* Keyboard focus (D-f): distinct from hover. Shown only after keyboard use (`data-focus-visible`). */
+.root[data-focus-visible] {
+  background: var(--bg-active);
+  box-shadow:
+    inset var(--focus-bar-width) 0 0 var(--accent),
+    inset 0 0 0 var(--border-width) var(--focus-ring);
+  transition-duration: var(--dur-highlight-in);
+}
+
+.root[data-selected][data-focus-visible] {
+  background: var(--bg-selected);
 }
 
 .cell {
@@ -36,6 +61,8 @@
   color: var(--text-tertiary);
   font-feature-settings: var(--font-features-numeric);
   font-size: var(--text-sm-size);
+  font-weight: var(--weight-regular);
+  letter-spacing: var(--tracking-id);
   white-space: nowrap;
 }
 
@@ -49,6 +76,7 @@
 }
 
 .titleText {
+  font-weight: var(--weight-ui);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -76,6 +104,18 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
+}
+
+/* Dates and the estimate: 450, tertiary. */
+.estimate,
+.date {
+  font-weight: var(--weight-regular);
+}
+
+/* Tertiary pills; overdue and off-scale keep their own colours. */
+.estimate > :not(.offScale),
+.date > :not(.overdue) {
+  color: var(--text-tertiary);
 }
 
 .estimate {
@@ -115,11 +155,12 @@
   justify-content: flex-end;
   color: var(--text-tertiary);
   font-size: var(--text-sm-size);
+  font-weight: var(--weight-regular);
   white-space: nowrap;
 }
 
 .compact {
-  padding: 0 var(--space-12);
+  padding: 0 var(--space-8);
   gap: var(--space-6);
 }
 

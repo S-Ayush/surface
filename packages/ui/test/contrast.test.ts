@@ -157,3 +157,31 @@ describe('usage contract', () => {
     expect(exempt.filter((name) => !allowed.test(name))).toEqual([]);
   });
 });
+
+describe('row focus bar (PLAN-016 S4, D-f)', () => {
+  it.each(THEMES)(
+    'row focus bar passes 3:1 (accent and focus ring on --bg-active, %s)',
+    (theme) => {
+      const active = resolveColor(theme, 'bg-active');
+      expect(contrastRatio(resolveColor(theme, 'accent'), active)).toBeGreaterThanOrEqual(NON_TEXT);
+      expect(contrastRatio(resolveColor(theme, 'focus-ring'), active)).toBeGreaterThanOrEqual(
+        NON_TEXT,
+      );
+    },
+  );
+
+  it.each(THEMES)(
+    'the selected ring and row text pass on --bg-selected and --bg-group (%s)',
+    (theme) => {
+      const selected = resolveColor(theme, 'bg-selected');
+      const group = resolveColor(theme, 'bg-group');
+      expect(contrastRatio(resolveColor(theme, 'accent'), selected)).toBeGreaterThanOrEqual(
+        NON_TEXT,
+      );
+      for (const token of ['text-primary', 'text-secondary', 'text-tertiary'] as const) {
+        expect(contrastRatio(resolveColor(theme, token), selected)).toBeGreaterThanOrEqual(TEXT);
+        expect(contrastRatio(resolveColor(theme, token), group)).toBeGreaterThanOrEqual(TEXT);
+      }
+    },
+  );
+});

@@ -55,8 +55,11 @@
   --control-sm: 24px;
   --control-md: 28px;
   --control-lg: 32px;
-  --row-height: 36px;
-  --row-height-compact: 32px;
+  --row-height: 44px;
+  --row-height-compact: 36px;
+  --group-header-height: 36px;
+  --row-inset: 8px;
+  --focus-bar-width: 2px;
   --nav-item-height: 28px;
   --settings-column: 640px;
   --settings-row-min-height: 60px;

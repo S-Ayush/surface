@@ -3,6 +3,9 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import {
   FocusMemory,
+  INITIAL_MODALITY,
+  focusIsVisible,
+  nextModality,
   LIST_SOURCE_STATE_KEY,
   readListSource,
   resolveFocus,
@@ -79,5 +82,18 @@ describe('readListSource', () => {
     expect(
       readListSource({ [LIST_SOURCE_STATE_KEY]: { href: '/x', routeKey: 'k', issueIds: [1] } }),
     ).toBeUndefined();
+  });
+});
+
+describe('input modality', () => {
+  it('nothing is focus-visible before the first key press', () => {
+    expect(focusIsVisible(INITIAL_MODALITY)).toBe(false);
+    expect(focusIsVisible(nextModality(INITIAL_MODALITY, 'pointer'))).toBe(false);
+  });
+
+  it('a key press shows focus and a pointer press hides it again', () => {
+    const keyed = nextModality(INITIAL_MODALITY, 'key');
+    expect(focusIsVisible(keyed)).toBe(true);
+    expect(focusIsVisible(nextModality(keyed, 'pointer'))).toBe(false);
   });
 });

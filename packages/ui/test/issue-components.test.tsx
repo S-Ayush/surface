@@ -1,6 +1,6 @@
 // Server-rendered markup of the PLAN-012 S2 components: roles, names and states (AC-19). Interaction
 // and axe run in the browser (`pnpm test:storybook`); visuals in `pnpm test:visual`.
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { EditableTitle } from '../src/components/EditableTitle/EditableTitle.js';
@@ -199,6 +199,76 @@ describe('IssueRow', () => {
     expect(html).toContain('data-focused');
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('ENG-…');
+  });
+});
+
+describe('row states (PLAN-016 S4, D-f)', () => {
+  const row = {
+    rowIndex: 2,
+    identifier: 'ENG-1',
+    title: 'Row',
+    priority: 1 as const,
+    status: { name: 'Todo', category: 'unstarted' as const, color: 'gray' as const },
+  };
+  const css = (name: string) =>
+    readFileSync(new URL(`../src/components/${name}/${name}.module.css`, import.meta.url), 'utf8');
+
+  it('hover, focus and selected rows render different classes and data attributes', () => {
+    const plain = render(<IssueRow {...row} />);
+    const focused = render(<IssueRow {...row} focused />);
+    const selected = render(<IssueRow {...row} selected />);
+    expect(plain).not.toMatch(/data-focus-visible|data-selected|data-focused/);
+    expect(focused).toContain('data-focus-visible');
+    expect(focused).not.toContain('data-selected');
+    expect(selected).toContain('data-selected');
+    expect(selected).not.toContain('data-focus-visible');
+    // Hover has no attribute at all: it is the `:hover` rule, so it can't be mistaken for either.
+    const styles = css('IssueRow');
+    expect(styles).toMatch(/\.root:hover\s*\{[^}]*--bg-hover/);
+    expect(styles).toMatch(
+      /\.root\[data-focus-visible\]\s*\{[^}]*--bg-active[^}]*inset var\(--focus-bar-width\) 0 0 var\(--accent\)/,
+    );
+    expect(styles).toMatch(/\.root\[data-selected\]\s*\{[^}]*--bg-selected[^}]*var\(--accent\)/);
+  });
+
+  it('keeps a focused row looking unfocused until the list says keyboard focus is visible', () => {
+    const html = render(<IssueRow {...row} focused showFocus={false} />);
+    expect(html).toContain('data-focused');
+    expect(html).not.toContain('data-focus-visible');
+    const header = render(
+      <GroupHeader
+        name="Todo"
+        count={1}
+        collapsed={false}
+        onToggle={() => undefined}
+        rowIndex={1}
+        focused
+      />,
+    );
+    expect(header).toContain('data-focus-visible');
+  });
+
+  it('rows are transparent, inset and borderless; headers are an inset --bg-group band', () => {
+    const rowCss = css('IssueRow');
+    expect(rowCss).toMatch(
+      /\.root\s*\{[^}]*margin: 0 var\(--row-inset\)[^}]*border-radius: var\(--radius-md\)[^}]*background: transparent/,
+    );
+    expect(rowCss).not.toMatch(/border-bottom/);
+    expect(rowCss).toMatch(/--dur-highlight-in/);
+    expect(rowCss).toMatch(/--dur-highlight-out/);
+    const headerCss = css('GroupHeader');
+    expect(headerCss).toMatch(
+      /\.root\s*\{[^}]*margin: 0 var\(--row-inset\)[^}]*border-radius: var\(--radius-md\)[^}]*background: var\(--bg-group\)/,
+    );
+    expect(headerCss).not.toMatch(/border-bottom|outline: var/);
+    for (const styles of [rowCss, headerCss]) {
+      expect(styles).toMatch(/\.root:focus-visible\s*\{\s*outline: none/);
+    }
+    expect(headerCss).not.toMatch(/\.root:hover/);
+  });
+
+  it('label chips use the hairline border', () => {
+    expect(css('LabelChip')).toMatch(/border: var\(--hairline\) solid var\(--border-hairline\)/);
   });
 });
 

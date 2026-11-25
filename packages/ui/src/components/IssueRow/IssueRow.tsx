@@ -35,6 +35,13 @@ export type IssueRowProps = {
   pending?: boolean;
   /** The row has keyboard focus (set by the list's focus model; the DOM focus follows tabIndex). */
   focused?: boolean;
+  /**
+   * Draw the keyboard-focus treatment (D-f) for a focused row. The list turns it off until the
+   * first key press, so nothing looks focused on first load. Default true.
+   */
+  showFocus?: boolean;
+  /** The row is in the multi-select set (M2): `--bg-selected` and an accent ring. */
+  selected?: boolean;
   /** Roving tabindex from VirtualList. */
   tabIndex?: 0 | -1;
   /** `aria-level` in a treegrid: group headers are 1, so rows default to 2. */
@@ -69,6 +76,8 @@ export function IssueRow(props: IssueRowProps) {
     compact = false,
     pending = false,
     focused = false,
+    showFocus = true,
+    selected = false,
     tabIndex = -1,
     level = 2,
     style,
@@ -121,6 +130,9 @@ export function IssueRow(props: IssueRowProps) {
       aria-level={level}
       tabIndex={tabIndex}
       data-focused={focused || undefined}
+      data-focus-visible={(focused && showFocus) || undefined}
+      data-selected={selected || undefined}
+      aria-selected={selected || undefined}
       data-compact={compact || undefined}
       data-pending={pending || undefined}
       className={cx(styles.root, compact && styles.compact, className)}
