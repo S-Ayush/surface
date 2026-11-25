@@ -127,7 +127,7 @@ Surface speaks like a calm, competent teammate. The product's content rules ([de
 | Docs and README | `surface-lockup.svg` / `-dark.svg` in a `<picture>` that switches on `prefers-color-scheme` | |
 | Docker image | `org.opencontainers.image.title=Surface` and the descriptor as `…description` | |
 
-**Wired (PLAN-017 S1, 2026-11-25):** the favicon, icons and manifest (`apps/web/src/brand/`), the sidebar fallback and the lockup on sign-in, the other public pages and the setup wizard (`SurfaceMark` and `SurfaceLockup` in `packages/ui`). **Not wired yet:** the email header (PLAN-017 S2, held), the README and the Docker labels. The assets live under `docs/05-design/brand/assets/`; the app's copies in `apps/web/src/brand/` must match them.
+**Wired (PLAN-017 S1, 2026-11-25):** the favicon, icons and manifest (`apps/web/src/brand/`), the sidebar fallback and the lockup on sign-in, the other public pages and the setup wizard (`SurfaceMark` and `SurfaceLockup` in `packages/ui`). The README shows the lockup and the descriptor (PLAN-017 S3). **Not wired yet:** the email header (PLAN-017 S2, held) and the Docker labels. The assets live under `docs/05-design/brand/assets/`; the app's copies in `apps/web/src/brand/` must match them.
 
 ## 8. Don'ts
 

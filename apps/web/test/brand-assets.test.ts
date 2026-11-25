@@ -1,7 +1,7 @@
 // PLAN-017 S1: the build hashes the brand icons into assets/, so the offline cache (ADR-0019,
 // which keeps only /index.html and assets/) has them. `withIconUrls` is the step that rewrites the
 // manifest's icon paths to those hashed files.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { appBuild } from '../vite-app-cache.js';
 import { withIconUrls } from '../vite-brand.js';
@@ -55,6 +55,24 @@ describe('brand icons are hashed into assets', () => {
       'manifest.webmanifest',
     ]) {
       expect(existsSync(new URL(`../src/brand/${file}`, import.meta.url)), file).toBe(true);
+    }
+  });
+
+  // brand.md §9: the brand folder is the source of truth, and the app ships copies of it.
+  it('ships icon files identical to the brand assets', () => {
+    for (const file of [
+      'favicon.svg',
+      'favicon.ico',
+      'apple-touch-icon.png',
+      'icon-192.png',
+      'icon-512.png',
+      'icon-maskable-512.png',
+    ]) {
+      const app = readFileSync(new URL(`../src/brand/${file}`, import.meta.url));
+      const brand = readFileSync(
+        new URL(`../../../docs/05-design/brand/assets/${file}`, import.meta.url),
+      );
+      expect(app.equals(brand), file).toBe(true);
     }
   });
 });
