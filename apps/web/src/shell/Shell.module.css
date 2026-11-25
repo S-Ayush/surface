@@ -328,6 +328,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-6);
+  min-width: 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -338,6 +339,34 @@
   content: '›';
   margin-right: var(--space-6);
   color: var(--text-tertiary);
+}
+
+/* One line at every width: earlier crumbs keep their size, the last one truncates. */
+.crumbs li {
+  flex: none;
+  white-space: nowrap;
+}
+
+.crumbs li[aria-current='page'] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Below 768 px only the last crumb shows; the earlier ones stay in the accessibility tree. */
+@media (max-width: 767px) {
+  .crumbs li:not([aria-current='page']) {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .crumbs li[aria-current='page']::before {
+    content: none;
+  }
 }
 
 .crumbs a {
@@ -359,10 +388,12 @@
   display: inline;
   margin: 0;
   font: inherit;
+  white-space: inherit;
 }
 
 .actions {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-8);
 }

@@ -25,9 +25,9 @@ afterEach(async () => {
   localStorage.clear();
 });
 
-const dispatch = async (event: Event) => {
+const dispatch = async (event: Event, target: EventTarget = document.body) => {
   await act(async () => {
-    document.body.dispatchEvent(event);
+    target.dispatchEvent(event);
     await Promise.resolve();
   });
 };
@@ -47,5 +47,26 @@ describe('list focus treatment', () => {
     await dispatch(new Event('pointerdown', { bubbles: true }));
     expect(grid.querySelector('[data-focus-visible]')).toBeNull();
     expect(grid.querySelector('[data-focused]')).not.toBeNull();
+  });
+
+  it('Mod+K, C and typing in a field outside the list leave focus hidden; J shows it', async () => {
+    mounted = await mountLists(
+      new IssueApp([issue({ title: 'Alpha', number: 1, statusId: ENG_TODO })]),
+      '/team/ENG/issues',
+    );
+    const grid = mounted.host;
+    const input = document.createElement('input');
+    document.body.append(input);
+    try {
+      await dispatch(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }));
+      await dispatch(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true, bubbles: true }));
+      await dispatch(new KeyboardEvent('keydown', { key: 'c', bubbles: true }));
+      await dispatch(new KeyboardEvent('keydown', { key: 'j', bubbles: true }), input);
+      expect(grid.querySelector('[data-focus-visible]')).toBeNull();
+      await dispatch(new KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+      expect(grid.querySelector('[data-focus-visible]')).not.toBeNull();
+    } finally {
+      input.remove();
+    }
   });
 });

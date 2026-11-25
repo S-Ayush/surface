@@ -124,5 +124,29 @@ export function modalityAfter(input: 'key' | 'pointer'): InputModality {
   return input === 'key' ? 'keyboard' : 'pointer';
 }
 
+const MODIFIER_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift', 'AltGraph', 'CapsLock', 'OS']);
+// Global shortcuts that open an overlay over the list: the ring must not show behind it.
+const GLOBAL_KEYS = new Set(['c', 'C', '/', '?', 'g', 'G']);
+
+/**
+ * Whether a key press makes the list focus visible: a navigation or row key aimed at the list (or
+ * the page body it takes focus from), not a chord with Mod/Alt (Mod+K), a lone modifier, a global
+ * shortcut that opens an overlay (C), or typing in a field or overlay outside the list.
+ */
+export function keyShowsFocus(press: {
+  readonly key: string;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  /** The target is inside the list, or is the page body. */
+  readonly inListOrBody: boolean;
+  /** The target is a text field or editable region. */
+  readonly editable: boolean;
+}): boolean {
+  if (press.metaKey || press.ctrlKey || press.altKey) return false;
+  if (MODIFIER_KEYS.has(press.key) || GLOBAL_KEYS.has(press.key)) return false;
+  return press.inListOrBody && !press.editable;
+}
+
 /** Only a keyboard user sees the focus ring. */
 export const focusIsVisible = (modality: InputModality): boolean => modality === 'keyboard';

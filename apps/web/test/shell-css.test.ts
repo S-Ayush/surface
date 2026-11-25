@@ -82,3 +82,22 @@ describe('shell breadcrumb css', () => {
     expect(body('.crumbs a:hover')).toMatch(/color:\s*var\(--text-primary\)/);
   });
 });
+
+describe('breadcrumb on narrow widths', () => {
+  it('stays on one line and truncates the last crumb with an ellipsis', () => {
+    const last = body(".crumbs li[aria-current='page']");
+    expect(last).toMatch(/min-width:\s*0/);
+    expect(last).toMatch(/overflow:\s*hidden/);
+    expect(last).toMatch(/text-overflow:\s*ellipsis/);
+    expect(body('.crumbs li')).toMatch(/white-space:\s*nowrap/);
+    expect(body('.crumbs')).toMatch(/min-width:\s*0/);
+    expect(body('.header')).toMatch(/min-height:\s*var\(--header-height\)/);
+  });
+
+  it('below 768px shows only the last crumb, keeping the others for screen readers', () => {
+    const query = /@media \(max-width: 767px\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
+    expect(query).toMatch(/\.crumbs li:not\(\[aria-current='page'\]\)/);
+    expect(query).toMatch(/clip-path:\s*inset\(50%\)/);
+    expect(query).not.toMatch(/display:\s*none/);
+  });
+});

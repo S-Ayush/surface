@@ -5,6 +5,7 @@ import {
   FocusMemory,
   INITIAL_MODALITY,
   focusIsVisible,
+  keyShowsFocus,
   modalityAfter,
   LIST_SOURCE_STATE_KEY,
   readListSource,
@@ -95,5 +96,35 @@ describe('input modality', () => {
     const keyed = modalityAfter('key');
     expect(focusIsVisible(keyed)).toBe(true);
     expect(focusIsVisible(modalityAfter('pointer'))).toBe(false);
+  });
+});
+
+describe('which key presses show focus', () => {
+  const press = (over: Partial<Parameters<typeof keyShowsFocus>[0]> = {}) =>
+    keyShowsFocus({
+      key: 'j',
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      inListOrBody: true,
+      editable: false,
+      ...over,
+    });
+
+  it('J and the arrows in the list show focus', () => {
+    expect(press()).toBe(true);
+    expect(press({ key: 'ArrowDown' })).toBe(true);
+  });
+
+  it('Mod+K, a lone modifier and C do not', () => {
+    expect(press({ key: 'k', metaKey: true })).toBe(false);
+    expect(press({ key: 'k', ctrlKey: true })).toBe(false);
+    expect(press({ key: 'Meta', metaKey: true })).toBe(false);
+    expect(press({ key: 'c' })).toBe(false);
+  });
+
+  it('typing in a field or a key aimed outside the list does not', () => {
+    expect(press({ editable: true })).toBe(false);
+    expect(press({ inListOrBody: false })).toBe(false);
   });
 });

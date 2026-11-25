@@ -44,6 +44,7 @@ import { useApp, useObserved } from '../../app/context.js';
 import { useCommandContext } from '../../command-menu/context.js';
 import { shortcutsFor } from '../../command-menu/sources/shortcuts.js';
 import type { CommandId } from '../../commands/catalog.js';
+import { isTypingTarget } from '../../shortcuts/engine.js';
 import { useCommand, useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
 import { RESTORE_NEEDS_NETWORK, restoreIssue } from '../archive/restore-flow.js';
 import {
@@ -61,6 +62,7 @@ import {
   LIST_SOURCE_STATE_KEY,
   focusIsVisible,
   focusMemory,
+  keyShowsFocus,
   modalityAfter,
   resolveFocus,
   type InputModality,
@@ -203,8 +205,21 @@ export function IssueList({ ariaLabel, listKey, href, groups, archive }: IssueLi
   // The focus treatment shows only after the first key press (design-system §4, audit row 13).
   const [modality, setModality] = useState<InputModality>(INITIAL_MODALITY);
   useEffect(() => {
-    const onKey = () => {
-      setModality(modalityAfter('key'));
+    // Only list keys count: Mod+K, C or typing in the command menu must not ring a row behind it.
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      const inListOrBody =
+        target === document.body ||
+        (target instanceof Node && (grid.current?.contains(target) ?? false));
+      const shows = keyShowsFocus({
+        key: event.key,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        inListOrBody,
+        editable: isTypingTarget(target),
+      });
+      if (shows) setModality(modalityAfter('key'));
     };
     const onPointer = () => {
       setModality(modalityAfter('pointer'));
