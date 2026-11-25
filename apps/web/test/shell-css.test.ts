@@ -21,12 +21,17 @@ describe('shell card and sidebar css', () => {
     const rule = body('.main');
     expect(rule).toMatch(/background:\s*var\(--bg-panel\)/);
     expect(rule).toMatch(/border-radius:\s*var\(--radius-lg\)/);
-    expect(rule).toMatch(/border:\s*var\(--hairline\)\s+solid\s+var\(--border-hairline\)/);
+    // The hairline edge is e0's ring: no border, so the list area needs no border allowance.
+    expect(rule).not.toMatch(/\bborder:/);
     expect(rule).toMatch(/box-shadow:\s*var\(--shadow-e0\)/);
     expect(rule).toMatch(
       /margin:\s*var\(--shell-inset\)\s+var\(--shell-inset\)\s+var\(--shell-inset\)\s+0/,
     );
     expect(tokens).toMatch(/'shell-inset':\s*px\(8\)/);
+  });
+
+  it('the card takes no focus ring when <main> is focused after navigation', () => {
+    expect(body('.main:focus,\n.main:focus-visible')).toMatch(/outline:\s*none/);
   });
 
   it('the card goes full-bleed below 1024px (drawer mode)', () => {

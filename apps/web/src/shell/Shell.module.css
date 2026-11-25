@@ -200,10 +200,6 @@
   padding-left: var(--space-24);
 }
 
-.pages .item {
-  color: var(--text-secondary);
-}
-
 .bottom {
   margin-top: auto;
 }
@@ -288,10 +284,16 @@
   height: calc(100dvh - 2 * var(--shell-inset));
   margin: var(--shell-inset) var(--shell-inset) var(--shell-inset) 0;
   overflow-y: auto;
-  border: var(--hairline) solid var(--border-hairline);
   border-radius: var(--radius-lg);
   background: var(--bg-panel);
+  /* The hairline edge is --shadow-e0's ring, so the card takes no border space. */
   box-shadow: var(--shadow-e0);
+}
+
+/* <main> takes programmatic focus after navigation (SPEC-005 §6) for screen readers; it is not a
+   control, so the global focus ring must not draw around the whole card. */
+.main:focus,
+.main:focus-visible {
   outline: none;
 }
 
@@ -300,7 +302,6 @@
   min-height: 100dvh;
   margin: 0;
   overflow-y: visible;
-  border: none;
   border-radius: 0;
   box-shadow: none;
 }
@@ -367,7 +368,7 @@
 }
 
 /* Header icon buttons are round, 28 px (design-system §3). */
-.header :is(button[aria-controls='sidebar']) {
+.header button[aria-controls='sidebar'] {
   border-radius: var(--radius-full);
 }
 

@@ -98,6 +98,22 @@ describe('team issue list', () => {
     pickerRequests.close();
   });
 
+  it('labels the header count: 1 issue, 26 issues, 1,234 issues', async () => {
+    const countText = (host: HTMLElement) =>
+      [...host.querySelectorAll('header span')].find((el) => /issues?$/.test(el.textContent))
+        ?.textContent;
+    const many = (n: number) =>
+      Array.from({ length: n }, (_, i) => issue({ number: 1000 + i, statusId: ENG_TODO }));
+    mounted = await mountLists(new IssueApp(many(1)), '/team/ENG/issues');
+    expect(countText(mounted.host)).toBe('1 issue');
+    await mounted.unmount();
+    mounted = await mountLists(new IssueApp(many(26)), '/team/ENG/issues');
+    expect(countText(mounted.host)).toBe('26 issues');
+    await mounted.unmount();
+    mounted = await mountLists(new IssueApp(many(1234)), '/team/ENG/issues');
+    expect(countText(mounted.host)).toBe('1,234 issues');
+  });
+
   it('states an empty team and offers no Create button before the composer exists', async () => {
     mounted = await mountLists(new IssueApp([]), '/team/ENG/issues');
     expect(mounted.host.textContent).toContain('No issues in ENG yet');
