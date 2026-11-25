@@ -4,7 +4,7 @@
 import type { Actor } from '@surface/domain';
 import { registry as defaultRegistry, type OperationRegistry } from '@surface/operations';
 import type { SyncStore } from '@surface/sync-client';
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useCommand, useCommandRegistry } from '../shortcuts/ShortcutProvider.js';
 import { CommandMenu, PERF } from './CommandMenu.js';
 import { TargetContext, TargetStore, useCurrentTarget } from './context.js';
@@ -13,8 +13,10 @@ import type { CommandContext, CommandSource, CommandTarget, TeamSummary } from '
 import { appSource } from './sources/app.js';
 import { OPEN_TEAM, navigationSource, teamsPage } from './sources/navigation.js';
 import { OPERATION_COMMANDS, PROPERTY_COMMANDS } from '../features/commands.js';
+import { pickerRequests } from '../features/issues/pickers/picker-request.js';
 import { operationSource, type OperationCommand } from './sources/operations.js';
 import { propertySource, type PropertyCommand } from './sources/properties.js';
+import { collect, isOffered } from './ranking.js';
 
 export type CommandMenuProviderProps = {
   children: ReactNode;
@@ -66,6 +68,13 @@ function MenuHost({
   const commands = useCommandRegistry();
   const target = useCurrentTarget();
   const [open, setOpen] = useState<OpenState>(null);
+  // A property key opens its picker as a page of this menu (command-menu.md §3.5, PLAN-016 D-e).
+  const picked = useSyncExternalStore(
+    pickerRequests.subscribe,
+    pickerRequests.snapshot,
+    pickerRequests.snapshot,
+  );
+  const request = picked?.frame === 'menu' ? picked : undefined;
 
   const sources = useMemo<readonly CommandSource[]>(
     () => [
@@ -97,23 +106,45 @@ function MenuHost({
   };
   // Mod+K opens the menu, or closes it if it is already open (command-menu.md §4).
   useCommand('ui:command-menu', () => {
-    if (open === null) show({});
+    if (request !== undefined) pickerRequests.close();
+    else if (open === null) show({});
     else setOpen(null);
   });
   useCommand('nav:open-team', () => show({ page: 'teams' }), {
     when: () => navigate !== undefined,
   });
 
+  // The request's issue is the menu's target, whatever was focused when the key went down.
+  const menuTarget: CommandTarget =
+    request === undefined || (target.kind === 'issue' && target.ids[0] === request.issueId)
+      ? target
+      : { kind: 'issue', ids: [request.issueId], label: 'Issue' };
+  const propertyPage = (ctx: CommandContext) => {
+    if (request === undefined) return undefined;
+    const id = `prop:issue.${request.kind}`;
+    const command = collect(sources, ctx).find((c) => c.id === id);
+    return command?.page !== undefined && isOffered(command, ctx)
+      ? { command, page: command.page(ctx) }
+      : undefined;
+  };
+
   return (
     <CommandMenu
-      open={open !== null}
-      onClose={() => setOpen(null)}
+      open={open !== null || request !== undefined}
+      onClose={() => {
+        setOpen(null);
+        pickerRequests.close();
+      }}
       sources={sources}
       context={context}
-      target={target}
+      target={menuTarget}
       frecency={frecency}
       initialPage={
-        open?.page === 'teams' ? (ctx) => ({ command: OPEN_TEAM, page: teamsPage(ctx) }) : undefined
+        request !== undefined
+          ? propertyPage
+          : open?.page === 'teams'
+            ? (ctx) => ({ command: OPEN_TEAM, page: teamsPage(ctx) })
+            : undefined
       }
     />
   );

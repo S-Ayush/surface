@@ -85,6 +85,7 @@ export function CommandMenu({ open, onClose, ...props }: CommandMenuProps) {
       {/* Mounted with the dialog content, so it stays while the dialog fades out. */}
       <MenuBody
         {...props}
+        onDismiss={onClose}
         onRun={(effect) => {
           pending.current = effect;
           onClose();
@@ -172,7 +173,12 @@ function MenuBody({
   frecency,
   initialPage,
   onRun,
-}: Omit<CommandMenuProps, 'open' | 'onClose'> & { onRun: (effect: Effect) => void }) {
+  onDismiss,
+}: Omit<CommandMenuProps, 'open' | 'onClose'> & {
+  onRun: (effect: Effect) => void;
+  /** Closes without running anything: a component page has already done its work (§3.5). */
+  onDismiss: () => void;
+}) {
   const platform = usePlatform();
   const listId = useId();
   const listRef = useRef<HTMLDivElement>(null);
@@ -308,7 +314,9 @@ function MenuBody({
     : { first: 0, last: rows.length };
 
   const page = state.pages.at(-1);
-  const chipLabel = state.chip && target.kind !== 'global' ? target.label : null;
+  const bodyPage = page?.page.body;
+  const chipLabel =
+    page?.page.chip ?? (state.chip && target.kind !== 'global' ? target.label : null);
   const resultsLabel =
     options.length === 0
       ? 'No results'
@@ -320,7 +328,7 @@ function MenuBody({
 
   return (
     <div className={styles.root}>
-      <div className={styles.head}>
+      <div className={styles.head} data-bare={bodyPage === undefined ? undefined : ''}>
         {(chipLabel !== null || state.pages.length > 0) && (
           <div className={styles.trail}>
             {chipLabel !== null && <span className={styles.chip}>{chipLabel}</span>}
@@ -332,32 +340,42 @@ function MenuBody({
             ))}
           </div>
         )}
-        <input
-          className={styles.input}
-          role="combobox"
-          aria-expanded="true"
-          aria-controls={listId}
-          aria-autocomplete="list"
-          aria-activedescendant={activeRow ? optionId(activeRow) : undefined}
-          aria-label={page ? page.page.title : 'Command menu'}
-          placeholder={page?.page.placeholder ?? 'Type a command or search…'}
-          value={state.query}
-          onChange={(event) => dispatch({ type: 'query', query: event.target.value })}
-          onKeyDown={onKeyDown}
-          autoComplete="off"
-          spellCheck={false}
-        />
+        {bodyPage === undefined && (
+          <input
+            className={styles.input}
+            autoFocus
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={activeRow ? optionId(activeRow) : undefined}
+            aria-label={page ? page.page.title : 'Command menu'}
+            placeholder={page?.page.placeholder ?? 'Type a command or search…'}
+            value={state.query}
+            onChange={(event) => dispatch({ type: 'query', query: event.target.value })}
+            onKeyDown={onKeyDown}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        )}
       </div>
+      {bodyPage !== undefined && (
+        // The Property picker, as in the anchored popover (command-menu.md §3.5): one component.
+        <div className={styles.picker}>
+          {bodyPage({ close: onDismiss, back: () => dispatch({ type: 'back' }) })}
+        </div>
+      )}
       <div
         ref={listRef}
         id={listId}
         role="listbox"
         aria-label={page ? page.page.title : 'Commands'}
         className={styles.list}
+        hidden={bodyPage !== undefined}
         onScroll={windowed ? (event) => setScrollTop(event.currentTarget.scrollTop) : undefined}
       >
         {windowed && <div className={styles.spacer} style={{ height: first * rowHeight }} />}
-        {rows.slice(first, last).map((row) => {
+        {(bodyPage === undefined ? rows.slice(first, last) : []).map((row) => {
           if (row.kind === 'header') {
             return (
               <div
@@ -422,7 +440,7 @@ function MenuBody({
         )}
       </div>
       {/* Outside the listbox, which may own options only (axe aria-required-children). */}
-      {options.length === 0 && (
+      {bodyPage === undefined && options.length === 0 && (
         <p className={styles.empty}>
           {page && state.query === '' && page.page.empty ? page.page.empty : 'No results'}
         </p>
@@ -448,6 +466,11 @@ function MenuBody({
         <span>
           <Kbd keys="Enter" /> select
         </span>
+        {bodyPage !== undefined && (
+          <span>
+            <Kbd keys="1" /> to <Kbd keys="9" /> pick
+          </span>
+        )}
         {state.pages.length > 0 && (
           <span>
             <Kbd keys="Backspace" /> back

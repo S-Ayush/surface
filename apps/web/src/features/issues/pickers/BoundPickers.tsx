@@ -31,6 +31,8 @@ export interface BoundPickerProps {
   readonly issueId: string;
   /** The host closes its popover. Called after a pick or an apply, and on `Esc`. */
   readonly onClose: () => void;
+  /** Set by the command-menu frame: `Backspace` on an empty search goes back a page (§3.5). */
+  readonly onBack?: () => void;
 }
 
 /** The options with the icon each kind shows (status icon, priority bars, avatar). */
@@ -96,6 +98,7 @@ function SingleBound({
   kind,
   issueId,
   onClose,
+  onBack,
 }: BoundPickerProps & { readonly kind: 'status' | 'priority' | 'assignee' | 'estimate' }) {
   const { current, send } = useBoundSpec(kind, issueId);
   useCloseWhenGone(current === undefined, onClose);
@@ -111,6 +114,7 @@ function SingleBound({
         send((facts) => singleInput(kind, facts, id));
       }}
       onClose={onClose}
+      {...(onBack === undefined ? {} : { onBack })}
     />
   );
 }
@@ -126,7 +130,7 @@ export const EstimatePicker = (props: BoundPickerProps) => (
   <SingleBound kind="estimate" {...props} />
 );
 
-export function LabelsPicker({ issueId, onClose }: BoundPickerProps) {
+export function LabelsPicker({ issueId, onClose, onBack }: BoundPickerProps) {
   const { current, send } = useBoundSpec('labels', issueId);
   useCloseWhenGone(current === undefined, onClose);
   // What the picker opened with, kept: the toggles are measured against it, not against the issue
@@ -144,9 +148,19 @@ export function LabelsPicker({ issueId, onClose }: BoundPickerProps) {
         send((facts) => labelsInput(facts, opened, ids));
       }}
       onClose={onClose}
+      {...(onBack === undefined ? {} : { onBack })}
     />
   );
 }
+
+/** The list pickers by kind (the due date is a calendar and stays anchored, SPEC-012 D28). */
+export const LIST_PICKERS = {
+  status: StatusPicker,
+  priority: PriorityPicker,
+  assignee: AssigneePicker,
+  labels: LabelsPicker,
+  estimate: EstimatePicker,
+} as const;
 
 export function DueDatePicker({ issueId, onClose }: BoundPickerProps) {
   const { current, send } = useBoundSpec('dueDate', issueId);

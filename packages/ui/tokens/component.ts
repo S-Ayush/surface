@@ -114,6 +114,7 @@ export const componentTokens: Readonly<Record<string, string>> = {
   // 60% of the viewport tall.
   'command-menu-width': px(720),
   'command-menu-top': px(87),
+  'command-option-height': px(40),
   'menu-min-width': px(200),
   'menu-item-height': px(30),
   'popover-max-width': px(360),

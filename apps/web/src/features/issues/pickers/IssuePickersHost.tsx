@@ -4,23 +4,11 @@
 // a click outside) tells the request, so a list can move focus back to its row.
 import { Popover, PopoverAnchor, PopoverContent } from '@surface/ui';
 import { useSyncExternalStore } from 'react';
-import {
-  AssigneePicker,
-  DueDatePicker,
-  EstimatePicker,
-  LabelsPicker,
-  PriorityPicker,
-  StatusPicker,
-  type BoundPickerProps,
-} from './BoundPickers.js';
+import { DueDatePicker, LIST_PICKERS, type BoundPickerProps } from './BoundPickers.js';
 import { pickerRequests, type PickerRequest } from './picker-request.js';
 
 const PICKERS = {
-  status: StatusPicker,
-  priority: PriorityPicker,
-  assignee: AssigneePicker,
-  labels: LabelsPicker,
-  estimate: EstimatePicker,
+  ...LIST_PICKERS,
   dueDate: DueDatePicker,
 } as const satisfies Record<PickerRequest['kind'], (props: BoundPickerProps) => React.ReactNode>;
 
@@ -52,7 +40,8 @@ export function IssuePickersHost() {
     pickerRequests.snapshot,
     pickerRequests.snapshot,
   );
-  if (request === undefined) return null;
+  // A keyboard request is shown by the command menu (command-menu.md §3.5), not here.
+  if (request === undefined || request.frame === 'menu') return null;
   const Picker = PICKERS[request.kind];
   return (
     <Popover

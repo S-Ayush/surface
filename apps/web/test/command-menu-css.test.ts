@@ -14,3 +14,32 @@ describe('command menu css', () => {
     expect(match?.[1] ?? '').toMatch(/outline:\s*none/);
   });
 });
+
+// PLAN-016 S5 (command-menu.md §1): no backdrop, top-anchored, 15px input, 40px neutral options.
+describe('command menu frame css', () => {
+  const dialogCss = readFileSync(
+    new URL('../../../packages/ui/src/components/Dialog/Dialog.module.css', import.meta.url),
+    'utf8',
+  );
+  const dialogTsx = readFileSync(
+    new URL('../../../packages/ui/src/components/Dialog/Dialog.tsx', import.meta.url),
+    'utf8',
+  );
+  const rule = (source: string, selector: string) =>
+    new RegExp(`(?:^|\\n)${selector}\\s*\\{([^}]*)\\}`).exec(source)?.[1] ?? '';
+
+  it('is anchored at --command-menu-top, not centred', () => {
+    expect(rule(dialogCss, '\\.command')).toMatch(/top:\s*var\(--command-menu-top\)/);
+    expect(rule(dialogCss, '\\.command')).toMatch(/max-width:\s*var\(--command-menu-width\)/);
+  });
+
+  it('renders the backdrop only for the other dialogs', () => {
+    expect(dialogTsx).toMatch(/variant !== 'command' && \(\s*<RadixDialog\.Overlay/);
+  });
+
+  it('has a 15px input, 40px options and a neutral active option', () => {
+    expect(rule(css, '\\.input')).toMatch(/font-size:\s*var\(--text-md-size\)/);
+    expect(css).toMatch(/height:\s*var\(--command-option-height\)/);
+    expect(rule(css, "\\.option\\[aria-selected='true'\\]")).toMatch(/var\(--bg-active\)/);
+  });
+});

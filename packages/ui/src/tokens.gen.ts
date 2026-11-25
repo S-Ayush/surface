@@ -140,6 +140,7 @@ export const token = {
   dialogLg: 'var(--dialog-lg)',
   commandMenuWidth: 'var(--command-menu-width)',
   commandMenuTop: 'var(--command-menu-top)',
+  commandOptionHeight: 'var(--command-option-height)',
   menuMinWidth: 'var(--menu-min-width)',
   menuItemHeight: 'var(--menu-item-height)',
   popoverMaxWidth: 'var(--popover-max-width)',

@@ -22,6 +22,7 @@ import {
   type IssueFacts,
   type PickerKind,
 } from './issue-pickers.js';
+import { pickerBody } from './pickers/menu-page.js';
 import { openPicker } from './pickers/picker-request.js';
 import { sendIssueUpdate } from './pickers/send.js';
 
@@ -91,6 +92,20 @@ function currentIssue(ctx: CommandContext): { store: SyncStore; facts: IssueFact
   return facts === undefined ? undefined : { store: ctx.store, facts };
 }
 
+/** "ENG-142 · Fix login redirect" and the bound picker, for the issue the menu acts on. */
+function pickerFrame(kind: Exclude<PickerKind, 'dueDate'>, ctx: CommandContext) {
+  const found = currentIssue(ctx);
+  if (found === undefined) return {};
+  const { facts, store } = found;
+  const key = store.pool.get(Team, facts.teamId)?.key;
+  const identifier =
+    key === undefined || facts.number === null ? undefined : `${key}-${facts.number}`;
+  return {
+    chip: identifier === undefined ? facts.title : `${identifier} · ${facts.title}`,
+    body: pickerBody(kind, facts.id),
+  };
+}
+
 /**
  * A command-menu sub-page for a single-value picker or the labels (§3.8): the same options as the
  * anchored picker. Labels toggle one at a time here (the page closes after a pick), so each pick
@@ -100,6 +115,8 @@ function pickerPage(kind: Exclude<PickerKind, 'dueDate'>, title: string, placeho
   return (ctx: CommandContext): CommandPage => ({
     title,
     placeholder,
+    // The context chip and the picker itself (§3.5): the options below are the fallback list.
+    ...pickerFrame(kind, ctx),
     items: (): readonly PageItem[] => {
       const found = currentIssue(ctx);
       const me = ctx.actor?.userId;

@@ -77,6 +77,8 @@ export function useIssueCommands(
       kind,
       issueId: current.id,
       anchor: options.anchor(kind),
+      // A property key opens the picker in the command menu's frame; the calendar stays anchored.
+      ...(kind === 'dueDate' ? {} : { frame: 'menu' as const }),
       ...(options.onOverlayClosed === undefined ? {} : { onClosed: options.onOverlayClosed }),
     });
   };

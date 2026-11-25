@@ -3,6 +3,7 @@
 import type { Actor } from '@surface/domain';
 import type { UiContext } from '@surface/operations';
 import type { SyncStore } from '@surface/sync-client';
+import type { ReactNode } from 'react';
 
 /** Sections, in display order (command-menu.md §1). Search sections arrive in M2. */
 export const SECTIONS = ['suggested', 'navigation', 'create', 'settings', 'help'] as const;
@@ -58,6 +59,25 @@ export type CommandPage = {
   readonly items: () => readonly PageItem[];
   /** Shown when there is nothing to choose: "No teams yet". */
   readonly empty?: string;
+  /**
+   * The context chip for this page, replacing the target's label: "ENG-142 · Fix login redirect"
+   * (command-menu.md §3.5), so it is clear which issue a key press changes.
+   */
+  readonly chip?: string;
+  /**
+   * A page that is a component, not a filtered list: the Property picker, the same one the
+   * anchored popover shows (§3.5). It owns the search field, the options and their keys; the menu
+   * only supplies the frame, the chip, the breadcrumb and the footer.
+   */
+  readonly body?: (host: PageHost) => ReactNode;
+};
+
+/** What a `body` page asks of the menu around it. */
+export type PageHost = {
+  /** Closes the whole menu (a pick, `Enter`, `Esc`). Focus goes back to where it came from. */
+  readonly close: () => void;
+  /** Goes back a page (`Backspace` on an empty query). */
+  readonly back: () => void;
 };
 
 export type PageItem = {

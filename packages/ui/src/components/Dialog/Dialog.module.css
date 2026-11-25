@@ -66,6 +66,8 @@
 }
 
 .command {
+  /* Anchored at a fixed offset, not centred: the box grows and shrinks below the input (§1). */
+  top: var(--command-menu-top);
   max-width: var(--command-menu-width);
   max-height: 60vh;
   overflow: hidden;

@@ -30,6 +30,11 @@ type Common = {
   emptyText?: string;
   /** Called after a pick or an apply, and on `Esc`: the host closes its popover or sub-page. */
   onClose?: () => void;
+  /**
+   * `Backspace` on an empty search field. Set by the command-menu frame, where it goes back a page
+   * (command-menu.md §3.5); the popover frame leaves it unset and `Backspace` only edits.
+   */
+  onBack?: () => void;
   className?: string;
 };
 
@@ -111,6 +116,11 @@ export function PropertyPicker(props: PropertyPickerProps) {
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === 'Backspace' && state.query === '' && props.onBack !== undefined) {
+      event.preventDefault();
+      props.onBack();
+      return;
+    }
     const result = onKey(state, event.key, options, mode);
     if (!result.handled) return;
     event.preventDefault();

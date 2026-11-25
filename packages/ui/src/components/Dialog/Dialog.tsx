@@ -27,8 +27,9 @@ export type DialogProps = {
   /** Right-aligned actions, e.g. Cancel (<DialogClose>) and the primary button. */
   footer?: ReactNode;
   /**
-   * `command`: the command menu's frame (command-menu.md §1). 640 px, no header, close button or
-   * padding: the title is only announced, and the content lays itself out. `Esc` still closes it.
+   * `command`: the command menu's frame (command-menu.md §1). `--command-menu-width` wide, anchored
+   * at `--command-menu-top`, no backdrop, header, close button or padding: the title is only
+   * announced, and the content lays itself out. `Esc` still closes it.
    */
   variant?: 'default' | 'command';
   /** Below 768 px the dialog fills the screen (the composer, SPEC-012 §7.3). */
@@ -76,7 +77,11 @@ export function Dialog({
     <RadixDialog.Root open={open} onOpenChange={requestOpenChange}>
       {trigger !== undefined && <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger>}
       <RadixDialog.Portal>
-        <RadixDialog.Overlay key={`backdrop-${generation}`} className={styles.backdrop} />
+        {/* The command menu has none (PLAN-016 D-d): the page stays visible but is still modal
+            (focus trapped, page inert, Esc or a click outside closes). */}
+        {variant !== 'command' && (
+          <RadixDialog.Overlay key={`backdrop-${generation}`} className={styles.backdrop} />
+        )}
         {variant === 'command' ? (
           <RadixDialog.Content
             key={generation}

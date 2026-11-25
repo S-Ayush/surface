@@ -8,6 +8,12 @@ export interface PickerRequest {
   readonly issueId: string;
   /** What the popover is anchored to: the pill, the row or the panel. Null: the top left. */
   readonly anchor: Element | null;
+  /**
+   * Where it shows. Unset: the anchored popover (a pill click, the row menu). `menu`: a sub-page of
+   * the command menu with the issue chip (a property key, command-menu.md §3.5). The due date is a
+   * calendar and always stays anchored (SPEC-012 D28).
+   */
+  readonly frame?: 'menu';
   /** Called once the picker has closed, in any way: the list moves focus back to its row. */
   readonly onClosed?: () => void;
 }

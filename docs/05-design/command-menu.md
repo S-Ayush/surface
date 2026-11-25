@@ -77,6 +77,7 @@ Commands that need a value open a **sub-page** in the same menu, using the share
 - **Options:** the list of SPEC-012 §3.5 for that property, in the same component as the anchored picker. Each option shows its icon, its name, the **number key cap** for the quick keys (empty query only: `1`–`9` by position, priority `0`–`4`) and a **check on the current value**.
 - **Keys:** `Enter` or a number key applies the change as one `issue.update`. The menu closes and focus returns to the row or issue page it came from, at once. `Esc` closes the whole menu. `Backspace` on an empty query goes back to the home page. A multi-select picker (labels) keeps its `Space` toggle and `Enter` apply rules (SPEC-012 D28).
 - **Pickers that don't fit a list page** (the due-date calendar) still close the menu and open anchored to the issue, as SPEC-012 D28 says.
+- *As built (PLAN-016 S5):* the page is a component page (`CommandPage.body`): the Property picker's own search field replaces the menu input, and the chip reads "ENG-142 · title". The footer adds "1 to 9 pick".
 - **Same behaviour as the pointer picker:** search, options, empty state and the "No X" entry. Only the frame differs, so there is one component to test.
 
 ### 3.3 Context rules
