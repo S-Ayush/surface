@@ -123,6 +123,12 @@ export class World {
   readonly #problems: string[] = [];
   readonly #webLocks: boolean;
   readonly #states = new Map<Tab, TabState>();
+  /**
+   * Dispatches each tab accepted but hasn't queued yet: a content mutation waits for its issue's
+   * content, which may wait for the team's `subscribed` ack, before it takes a seq (SPEC-011 §5.3
+   * step 6). Until it is queued it isn't `pending`, so quiescence waits for these too.
+   */
+  readonly #unqueued = new Map<Tab, number>();
   /** Faults have stopped: from here, a failed start is a bug. */
   #healed = false;
 
@@ -278,20 +284,31 @@ export class World {
     // A content mutation may wait for its issue's content before it is queued (SPEC-011 §5.3
     // step 6, PLAN-011 S5b): it counts from its seq on.
     let record: Dispatched | undefined;
+    let waiting = true;
+    const queuedOrRefused = () => {
+      if (!waiting) return;
+      waiting = false;
+      this.#unqueued.set(tab, (this.#unqueued.get(tab) ?? 1) - 1);
+    };
+    this.#unqueued.set(tab, (this.#unqueued.get(tab) ?? 0) + 1);
     const onQueued = ({ clientId, seq }: { clientId: string; seq: number }) => {
+      queuedOrRefused();
       record = { tab: tab.name, op: op.name, input, key: `${clientId}:${String(seq)}` };
       this.dispatched.push(record);
     };
     try {
       outcome = tab.store.dispatch(op, input, { onQueued });
     } catch {
+      queuedOrRefused();
       return false;
     }
     outcome.then(
       (result) => {
+        queuedOrRefused();
         if (record !== undefined) record.outcome = result;
       },
       (error: unknown) => {
+        queuedOrRefused();
         // Refused before it was queued, as a synchronous throw is, only offline on an issue never
         // loaded ("Available when online", E11). Any other refusal is a problem.
         const offline = tab.store.connection === 'offline';
@@ -360,9 +377,9 @@ export class World {
 
   /**
    * Stop every fault and run until no request is on its way to the server,
-   * each live tab is loaded, online, has nothing pending and has caught up,
-   * and no replica holds work for a tab that is gone; fail after `limitMs` of
-   * virtual time.
+   * each live tab is loaded, online, has no dispatch waiting to be queued and
+   * nothing pending, and has caught up, and no replica holds work for a tab
+   * that is gone; fail after `limitMs` of virtual time.
    */
   async quiesce(limitMs = 10 * 60_000): Promise<void> {
     this.network.heal();
@@ -405,11 +422,13 @@ export class World {
     }
     // A tab never receives another user's drafts (PLAN-012 S5), so it is caught up once it holds
     // everything its user can see, whether or not the hub has moved it past the rest.
-    return this.live.every(({ store, user }) => {
+    return this.live.every((tab) => {
+      const { store, user } = tab;
       const at = store.position?.lastSyncId;
       return (
         store.status === 'ready' &&
         store.connection === 'online' &&
+        (this.#unqueued.get(tab) ?? 0) === 0 &&
         store.pending.length === 0 &&
         at !== undefined &&
         at >= (heads.get(user.id) ?? head) &&
@@ -582,8 +601,8 @@ export class World {
     const head = await this.server.head();
     const requests = `${this.network.requestsInFlight} requests in flight`;
     const tabs = this.live.map(
-      ({ name, store }) =>
-        `${name}: ${store.status}/${store.connection}, at ${String(store.position?.lastSyncId)} of ${head}, ${store.pending.length} pending${store.error === undefined ? '' : `, error "${store.error}"`}`,
+      (tab) =>
+        `${tab.name}: ${tab.store.status}/${tab.store.connection}, at ${String(tab.store.position?.lastSyncId)} of ${head}, ${this.#unqueued.get(tab) ?? 0} waiting to queue, ${tab.store.pending.length} pending${tab.store.error === undefined ? '' : `, error "${tab.store.error}"`}`,
     );
     return [requests, ...tabs].join('; ');
   }

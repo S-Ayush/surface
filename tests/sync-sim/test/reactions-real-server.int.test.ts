@@ -111,6 +111,51 @@ describe('reactions against the real server', () => {
     ]);
   });
 
+  /**
+   * `pnpm sim:deep` seed 20261107, path `196:2:6:5:9:16:18:15:14:14:15:8:9:9:9`. User 1's only tab
+   * drops its socket under 3 s delays and reacts to Alpha while it redials. The socket counts as
+   * online when it opens, but the `subscribed` ack is still on its way, and the reaction waits for
+   * Alpha's content, which waits for that ack (SPEC-011 §5.3 step 6, §5.7): it is neither queued
+   * nor pending yet. The run must not count as settled until that dispatch is queued and confirmed.
+   */
+  it('waits for a reaction still waiting on its issue’s content before settling (AC-22)', async () => {
+    const servers = reactionServers();
+    const redialing: Case = {
+      seed: -2147483635,
+      users: 3,
+      lateUsers: 2,
+      webLocks: false,
+      steps: [
+        { t: 'issueCreate', tab: 0, title: 'Alpha', status: 'default', labels: [] },
+        { t: 'issueCreate', tab: 1, title: 'Beta', status: 'default', labels: [] },
+        { t: 'wait', ms: 3_000 },
+        { t: 'disconnect', tab: 0 },
+        {
+          t: 'faults',
+          faults: { dropRequest: 0, dropResponse: 0, hangResponse: 0, maxDelayMs: 3_000 },
+        },
+        { t: 'wait', ms: 1_368 },
+        react(0, 'issue', THUMBS),
+      ],
+    };
+    const result = await simulate(
+      redialing,
+      { ...reactionConvergence.options, server: servers.server },
+      async (outcome) => {
+        await reactionConvergence.check(outcome);
+        const stored = Object.values((await servers.last()?.reactions()) ?? {});
+        return {
+          outcomes: outcome.world.dispatched
+            .filter((d) => d.op === 'reaction.set')
+            .map((d) => `${d.tab} ${String(d.outcome?.status)}`),
+          stored: stored.map((r) => [r.commentId, r.emoji]),
+        };
+      },
+    );
+    expect(result.outcomes).toEqual(['user-1/tab-1 confirmed']);
+    expect(result.stored).toEqual([[null, '👍']]);
+  });
+
   it('every tab converges on the comments and reactions, which keep §4.2’s rules, after any faults (AC-5, AC-22)', async () => {
     const servers = reactionServers();
     // What the runs changed on the server, so a generator that stops reaching it fails here, not
