@@ -18,9 +18,12 @@ const SPACING = [0, 2, 4, 6, 8, 12, 16, 20, 24, 32, 40, 48, 64] as const;
 /** Type ramp (§2.4): size / line height in px, and weight. */
 const TYPE = {
   xs: [11, 16, 500],
-  sm: [12, 16, 400],
-  base: [13, 20, 400],
-  md: [14, 22, 400],
+  sm: [12, 16, 450],
+  // Section labels (sidebar, command-menu groups, settings sections, property headings); the
+  // colour is --text-tertiary, set where the style is used.
+  label: [12, 16, 500],
+  base: [13, 20, 450],
+  md: [15, 24, 450],
   lg: [16, 24, 600],
   xl: [20, 28, 600],
   '2xl': [24, 32, 600],
@@ -48,9 +51,14 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'font-size-root': px(ROOT_FONT_SIZE_PX),
   'font-size-root-small': px(ROOT_FONT_SIZE_SMALL_PX),
   'font-size-root-large': px(ROOT_FONT_SIZE_LARGE_PX),
-  'weight-regular': '400',
+  // 450 for body text, 500 for UI labels (PLAN-016 S1); Inter Variable covers both.
+  'weight-regular': '450',
+  'weight-ui': '500',
   'weight-medium': '500',
   'weight-semibold': '600',
+  // Tracking: tight for text of 15 px and up, a little more for identifiers. None elsewhere.
+  'tracking-tight': '-0.0067em',
+  'tracking-id': '-0.02em',
   ...typeTokens(),
 
   // Spacing (§2.5)
@@ -62,11 +70,16 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'control-lg': px(32),
   'row-height': px(36),
   'row-height-compact': px(32),
+  'nav-item-height': px(28),
+  'settings-column': px(640),
+  'settings-row-min-height': px(60),
   'board-card-min-height': px(72),
   'icon-sm': px(14),
   'icon-md': px(16),
   'icon-lg': px(20),
   'border-width': px(1),
+  // Decorative border width (§2.5): 1 px here, 0.5 px on 2x screens (`hiResTokens`).
+  hairline: px(1),
   'focus-ring-width': px(2),
   'focus-ring-offset': px(2),
 
@@ -92,8 +105,10 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'dialog-sm': px(420),
   'dialog-md': px(560),
   'dialog-lg': px(720),
-  // The command menu (command-menu.md §1): 640 px wide, at most 60% of the viewport tall.
-  'command-menu-width': px(640),
+  // The command menu (command-menu.md §1): about 720 px wide, anchored 87 px from the top, at most
+  // 60% of the viewport tall.
+  'command-menu-width': px(720),
+  'command-menu-top': px(87),
   'menu-min-width': px(200),
   'popover-max-width': px(360),
   'toast-width': px(360),
@@ -108,8 +123,10 @@ export const componentTokens: Readonly<Record<string, string>> = {
 
   // Radius (§2.5)
   'radius-xs': px(4),
+  'radius-kbd': px(3),
   'radius-sm': px(6),
   'radius-md': px(8),
+  'radius-group': px(10),
   'radius-lg': px(12),
   'radius-full': px(9999),
 
@@ -138,6 +155,10 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'dur-fast': '100ms',
   'dur-base': '160ms',
   'dur-slow': '240ms',
+  // Highlights turn on at once and fade out; overlays leave faster than they enter (§2.6).
+  'dur-highlight-in': '0ms',
+  'dur-highlight-out': '150ms',
+  'dur-exit': '80ms',
   'ease-out': 'cubic-bezier(0.2, 0.8, 0.2, 1)',
   'ease-in': 'cubic-bezier(0.4, 0, 1, 1)',
   // Movement of entering overlays. Reduced motion swaps in `reducedMotionTokens`, leaving only the
@@ -156,17 +177,27 @@ export const componentTokens: Readonly<Record<string, string>> = {
  * `--border-default` ring plus a deeper shadow, because shadows read poorly on dark backgrounds.
  */
 export const themedComponentTokens: Readonly<Record<string, Readonly<Record<Theme, string>>>> = {
+  // Stacked low-alpha layers, the first being a hairline ring (PLAN-016 S1, design-system §2.5).
+  'shadow-e0': {
+    light:
+      '0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04), 0 3px 6px -2px rgb(0 0 0 / 0.02)',
+    dark: '0 0 0 var(--hairline) var(--border-hairline), 0 0.5px 1px 1px rgb(0 0 0 / 0.3)',
+  },
   'shadow-e1': {
-    light: '0 0 0 1px rgb(22 24 29 / 0.06), 0 4px 12px rgb(22 24 29 / 0.08)',
-    dark: '0 0 0 1px var(--border-default), 0 4px 16px rgb(0 0 0 / 0.4)',
+    light:
+      '0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 3px 9px rgb(0 0 0 / 0.04), 0 6px 18px rgb(0 0 0 / 0.02)',
+    dark: '0 0 0 var(--hairline) var(--border-default), 0 1px 1px rgb(0 0 0 / 0.12), 0 2px 5px rgb(0 0 0 / 0.12), 0 3px 8px rgb(0 0 0 / 0.12)',
   },
   'shadow-e2': {
-    light: '0 0 0 1px rgb(22 24 29 / 0.06), 0 12px 32px rgb(22 24 29 / 0.14)',
-    dark: '0 0 0 1px var(--border-default), 0 16px 40px rgb(0 0 0 / 0.55)',
+    light:
+      '0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08)',
+    dark: '0 0 0 var(--hairline) var(--border-default), 0 1px 1px rgb(0 0 0 / 0.12), 0 2px 8px rgb(0 0 0 / 0.12), 0 3px 12px rgb(0 0 0 / 0.12), 0 3px 20px rgb(0 0 0 / 0.12), 0 4px 40px rgb(0 0 0 / 0.1)',
   },
+  // Toasts sit at the same depth as modals.
   'shadow-e3': {
-    light: '0 0 0 1px rgb(22 24 29 / 0.08), 0 8px 24px rgb(22 24 29 / 0.16)',
-    dark: '0 0 0 1px var(--border-default), 0 12px 32px rgb(0 0 0 / 0.6)',
+    light:
+      '0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08)',
+    dark: '0 0 0 var(--hairline) var(--border-default), 0 1px 1px rgb(0 0 0 / 0.12), 0 2px 8px rgb(0 0 0 / 0.12), 0 3px 12px rgb(0 0 0 / 0.12), 0 3px 20px rgb(0 0 0 / 0.12), 0 4px 40px rgb(0 0 0 / 0.1)',
   },
   // Darkens a solid button while pressed.
   'pressed-shade': {
@@ -186,4 +217,9 @@ export const themedComponentTokens: Readonly<Record<string, Readonly<Record<Them
 export const reducedMotionTokens: Readonly<Record<string, string>> = {
   'motion-shift': px(0),
   'motion-scale': '1',
+};
+
+/** Overrides on screens at 2x or more, where a half pixel renders as a crisp line (§2.5). */
+export const hiResTokens: Readonly<Record<string, string>> = {
+  hairline: '0.5px',
 };

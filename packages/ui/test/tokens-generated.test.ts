@@ -32,6 +32,45 @@ describe('generated tokens', () => {
   });
 });
 
+describe('PLAN-016 S1 tokens', () => {
+  it('expose the new type, motion, radius, size and surface tokens', () => {
+    const names = [
+      'weightRegular',
+      'weightUi',
+      'trackingTight',
+      'trackingId',
+      'textLabelSize',
+      'radiusGroup',
+      'radiusKbd',
+      'shadowE0',
+      'durHighlightIn',
+      'durHighlightOut',
+      'durExit',
+      'navItemHeight',
+      'headerHeight',
+      'settingsColumn',
+      'settingsRowMinHeight',
+      'commandMenuTop',
+      'hairline',
+      'bgGroup',
+      'borderHairline',
+    ] as const;
+    for (const name of names) expect(token[name], name).toMatch(/^var\(--/);
+  });
+
+  it('sets regular text to 450, UI labels to 500 and text-md to 15/24', () => {
+    expect(componentTokens['weight-regular']).toBe('450');
+    expect(componentTokens['weight-ui']).toBe('500');
+    expect(componentTokens['text-md-size']).toBe(`${Number((15 / 13).toFixed(4))}rem`);
+    expect(componentTokens['text-md-line']).toBe(`${Number((24 / 13).toFixed(4))}rem`);
+  });
+
+  it('keeps list row heights at 36 and 32 until S4', () => {
+    expect(componentTokens['row-height']).toBe('36px');
+    expect(componentTokens['row-height-compact']).toBe('32px');
+  });
+});
+
 describe('token generator', () => {
   it('reports a name declared by two layers, so one cannot silently override the other', () => {
     expect(

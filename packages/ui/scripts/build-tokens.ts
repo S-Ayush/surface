@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { format, resolveConfig } from 'prettier';
 import {
   componentTokens,
+  hiResTokens,
   reducedMotionTokens,
   themedComponentTokens,
 } from '../tokens/component.js';
@@ -56,6 +57,9 @@ function validate(): void {
     themed: Object.keys(themedComponentTokens),
   });
   if (duplicates.length > 0) throw new Error(`Defined twice: ${duplicates.join(', ')}`);
+  for (const name of Object.keys(hiResTokens)) {
+    if (!(name in componentTokens)) throw new Error(`2x override --${name} has no default`);
+  }
   for (const name of Object.keys(reducedMotionTokens)) {
     if (!(name in componentTokens))
       throw new Error(`Reduced-motion override --${name} has no default`);
@@ -98,6 +102,13 @@ ${themeBody('dark')}
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
 ${themeBody('dark')}
+  }
+}
+
+/* Hairlines are half a pixel on 2x screens and 1 px elsewhere (design-system §2.5). */
+@media (min-resolution: 2dppx) {
+  :root {
+${declarations(Object.entries(hiResTokens))}
   }
 }
 

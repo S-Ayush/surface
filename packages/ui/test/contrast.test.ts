@@ -21,6 +21,7 @@ const SURFACES = [
   'bg-elevated',
   'bg-hover',
   'bg-active',
+  'bg-group',
   'bg-selected',
 ] as const satisfies readonly SemanticColor[];
 
@@ -57,8 +58,10 @@ const USAGE = {
   'bg-elevated': surface,
   'bg-hover': surface,
   'bg-active': surface,
+  'bg-group': surface,
   'bg-selected': surface,
   'border-subtle': { exempt: 'decorative row separator (WCAG 1.4.11 does not apply)' },
+  'border-hairline': { exempt: 'decorative hairline at half width (WCAG 1.4.11 does not apply)' },
   'border-default': { exempt: 'decorative card and panel edge; controls use --border-control' },
   'border-strong': { exempt: 'decorative menu divider; controls use --border-control' },
   'border-control': { checks: [icon(FORM_SURFACES, 'control boundary (WCAG 1.4.11)')] },
@@ -147,7 +150,8 @@ describe('usage contract', () => {
     const exempt = Object.entries(USAGE)
       .filter(([, usage]) => 'exempt' in usage)
       .map(([name]) => name);
-    const allowed = /^(bg-.*|.*-subtle|border-(subtle|default|strong)|text-disabled|danger-hover)$/;
+    const allowed =
+      /^(bg-.*|.*-subtle|border-(subtle|hairline|default|strong)|text-disabled|danger-hover)$/;
     expect(exempt.filter((name) => !allowed.test(name))).toEqual([]);
   });
 });

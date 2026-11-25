@@ -63,9 +63,11 @@ Themes switch by setting `data-theme="light|dark"` on `<html>`. `system` follows
 | `--on-accent` | `#FFFFFF` | `#04201F` | Text on the accent colour |
 | `--focus-ring` | `#16908C` | `#4ED2CD` | 2 px ring with a 2 px offset |
 | `--on-label` | `#16181D` | `#0E1013` | Avatar initials on a `--label-<hue>` fill |
-| `--danger` / `--warning` / `--success` / `--info` | `#D03A3A` / `#B86E0C` / `#2B9255` / `#3569D4` | `#F06868` / `#EBA33F` / `#4FC47D` / `#6E9EF6` | Feedback, and semantic icons |
+| `--danger` / `--warning` / `--success` / `--info` | `#CC3636` ◆ / `#B86E0C` / `#2B9255` / `#3569D4` | `#F06868` / `#EBA33F` / `#4FC47D` / `#6E9EF6` | Feedback, and semantic icons |
 
 > **Corrections (2026-11-06, PLAN-005 S1):** the contrast test failed four light-theme proposals: `--accent` `#0E8A87` (white text on it was 4.2:1, and as link text 4.2:1), `--focus-ring` `#2BB0AC` (2.7:1), and `--text-tertiary` `#666D7C` (4.3:1 on `--bg-active`); `--accent-hover` darkened with the accent. `--bg-selected` was merged with `--accent-subtle` and dark `--bg-hover` with `--border-subtle` (each within 2 RGB steps) so the primitive scales stay at 12 steps. Added tokens: `--danger-hover`, `--on-danger`, `--{danger,warning,success,info}-subtle`, `--label-<hue>`, and `--border-control` (inputs need a 3:1 edge, WCAG 1.4.11; `--text-disabled` shares its new, darker value). `tnum` is applied only where numbers align (`--font-features-numeric`), not to all text. The source of truth is `packages/ui/tokens/*.ts`.
+
+> **Changed 2026-11-25 (PLAN-016 S1):** one proposal failed the contrast test. Light `--danger` `#D03A3A` was 4.39:1 on the new `--bg-app` `#F3F4F6` (field error text needs 4.5:1), so it is now `#CC3636` (4.60:1 on app, 5.06:1 on white). `--danger-hover` `#B32E2E` stays darker. Every other ◆ value passes as proposed. In the token source the new surfaces are a `surface` primitive scale (`--surface-1` app, `-2` panel, `-3` elevated, `-4` hover, `-5` active, `-6` group, `-7` hairline), so the gray scale and everything built on it did not move. `--header-height` stays 48 until S3 moves it to 44 (the shell and `IssueList` size from it). `--command-menu-top` is 87 px.
 
 ### 2.2 Domain colours
 

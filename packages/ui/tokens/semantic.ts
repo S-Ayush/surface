@@ -15,16 +15,21 @@ const same = (ref: PrimitiveRef): Themed => ({ light: ref, dark: ref });
 
 export const semanticColors = {
   // Surfaces
-  'bg-app': { light: 'gray-2', dark: 'gray-1' },
-  'bg-sidebar': { light: 'gray-3', dark: 'gray-2' },
-  'bg-panel': { light: 'gray-1', dark: 'gray-3' },
-  'bg-elevated': { light: 'gray-1', dark: 'gray-4' },
-  'bg-hover': { light: 'gray-4', dark: 'gray-5' },
-  'bg-active': same('gray-6'),
+  'bg-app': same('surface-1'),
+  // The sidebar sits on the app layer; the content is an inset card on --bg-panel (PLAN-016 S1).
+  'bg-sidebar': same('surface-1'),
+  'bg-panel': same('surface-2'),
+  'bg-elevated': same('surface-3'),
+  'bg-hover': same('surface-4'),
+  'bg-active': same('surface-5'),
+  // Group header band: between panel and hover, never the hover colour.
+  'bg-group': same('surface-6'),
   'bg-selected': same('teal-3'),
 
   // Borders
   'border-subtle': same('gray-5'),
+  // Decorative hairlines (panel, header, chips, menus): drawn at --hairline width.
+  'border-hairline': same('surface-7'),
   'border-default': same('gray-7'),
   'border-strong': same('gray-8'),
   // Boundary of a control (input, checkbox, switch) whose edge is its only outline: WCAG 1.4.11.

@@ -34,6 +34,15 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Form controls do not inherit the app font by default (audit row 38). */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  letter-spacing: inherit;
+}
+
 code,
 kbd,
 pre,

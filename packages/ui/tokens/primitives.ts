@@ -48,10 +48,21 @@ export const scales: Readonly<Record<Theme, Readonly<Record<string, Scale>>>> = 
       12: '#16181D',
     },
     teal: { 1: '#F3FAFA', 3: '#E2F3F2', 8: '#16908C', 9: '#0A7A77', 10: '#086A67' },
-    red: { 3: '#FDECEC', 9: '#D03A3A', 10: '#B32E2E' },
+    red: { 3: '#FDECEC', 9: '#CC3636', 10: '#B32E2E' },
     amber: { 3: '#FDF3E3', 9: '#B86E0C' },
     green: { 3: '#E8F6EE', 9: '#2B9255' },
     blue: { 3: '#EAF0FC', 9: '#3569D4' },
+    // Layered surfaces (PLAN-016 S1, design-system §2.1): 1 app, 2 panel, 3 elevated, 4 hover,
+    // 5 active, 6 group header band, 7 decorative hairline border.
+    surface: {
+      1: '#F3F4F6',
+      2: '#FCFCFD',
+      3: '#FFFFFF',
+      4: '#EFF1F3',
+      5: '#E6E9ED',
+      6: '#F7F8F9',
+      7: '#DCDFE4',
+    },
   },
   dark: {
     gray: {
@@ -73,6 +84,15 @@ export const scales: Readonly<Record<Theme, Readonly<Record<string, Scale>>>> = 
     amber: { 3: '#2A1F0E', 9: '#EBA33F' },
     green: { 3: '#11271A', 9: '#4FC47D' },
     blue: { 3: '#141E33', 9: '#6E9EF6' },
+    surface: {
+      1: '#0B0D0F',
+      2: '#121518',
+      3: '#1A1E22',
+      4: '#1A1E23',
+      5: '#22272D',
+      6: '#16191D',
+      7: '#262B31',
+    },
   },
 };
 
