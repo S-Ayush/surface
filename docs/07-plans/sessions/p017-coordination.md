@@ -1,0 +1,21 @@
+# PLAN-017 Brand and open source: coordination log
+
+Coordinator session started 2026-11-25. Plan: [PLAN-017](../PLAN-017-brand-open-source.md). Brand: [brand.md](../../05-design/brand.md).
+
+**How slices run:** the same way as PLAN-016 ([p016-coordination.md](p016-coordination.md)). Each slice is one agent on Sonnet, in its own worktree and branch (`p017-sN-topic`). The coordinator reviews and merges with `--ff-only` once `pnpm check` is green.
+
+**The user's decisions, 2026-11-25:**
+- The descriptor is "The only open-source issue tracker your team needs".
+- The licence is MIT.
+- Prepare the repo for publishing, but publish nothing yet.
+- Put the icons in the app.
+
+## Log (append-only)
+
+| Date | Event | Notes |
+|---|---|---|
+| 2026-11-25 | Docs merged (`5aa349c`) | brand.md, the brand assets, PLAN-017 and its row in the plans README. |
+| 2026-11-25 | S1 and S3 started in parallel | Worktrees `.claude/worktrees/p017-s1-brand-web` and `.claude/worktrees/p017-s3-open-source`. S2 (logo in emails) is held for the user's decision. |
+| 2026-11-25 | S4 history scan (read-only, ahead of S3) | 380 commits, every branch. **No real secrets found.** No AWS, GitHub, Slack, Google or LLM API keys, no private keys and no JWTs. The 18 weak hits are all test fixtures (`seed.ts`, `*-routes.test.ts`, `mail-*.test.ts`), documented examples (`smtp://user:…@host` in `config.ts` and `docker/.env.example`), or `apps/server/dev.env`'s `SESSION_SECRET`, which is 64 zeros and dev-only. **Needs the user's decision before publishing:** all 380 commits carry the author's personal Gmail address, and the 10 `docs/07-plans/sessions/session-*.md` files plus their README contain local `/Users/admin/...` paths. 19 files are tracked under `.claude/`. |
+| 2026-11-25 | S3 merged (`bc3bb90`, rebased onto `2be32c8`, a docs-only commit; gate green 41/41 before the rebase) | Open-source groundwork: MIT `LICENSE`, a `license` field in every `package.json`, ADR-0026 (no ADR superseded), VISION §5 principle 2 now "Free and open source, never sold", PRD and CLAUDE.md lines, a public README (a `<picture>` lockup and the descriptor, install steps kept), CONTRIBUTING, SECURITY and CODE_OF_CONDUCT (Contributor Covenant 2.1, with no personal email). `licenses:check`: the policy is pure functions in `@surface/config/licenses`, with 4 tests; the command is `scripts/check-licenses.mjs`; a root Turbo task in `check` and `check:fast`. Coordinator review (read the diff): no blockers. Unverified: a run with no network; the Linux `sharp-libvips` packages (covered by a unit test only). |
+| 2026-11-25 | S1 merged (`255a34d`, rebased onto S3, gate green 41/41 after the rebase) | Brand in the web app. `SurfaceMark` and `SurfaceLockup` in `packages/ui`, with the path data extracted from the brand SVGs and a test that they match. The favicon (svg and ico), apple-touch icon and manifest are linked from `index.html` and hashed into `assets/`. `vite-brand.ts` emits the manifest's icons as hashed assets and rewrites their URLs, and `assetsInlineLimit` keeps the brand files as files. The sidebar shows the mark when there is no workspace logo or it fails to load. The lockup sits above the sign-in page, the other public pages and the setup wizard. Change from the plan: sign-in is `LoginPage`, not `PublicPage`; both have the lockup. **Coordinator review:** read the plugin, the components and the sidebar, login and public-page diffs. Checked the built `dist/`: every icon and the manifest are hashed under `assets/`, and the manifest points at them. `@fastify/static` sends `.webmanifest` as `application/manifest+json`. Headless screenshots of the built app against a fake `/auth/capabilities`: the lockup is centred above the sign-in card in light and dark, and shows on the setup wizard. Not seen: the sidebar fallback (needs a signed-in session; covered by jsdom tests), and installing the PWA. Added a test that the app's icon copies are byte-identical to `docs/05-design/brand/assets/`; it fails on drift. Fixed brand.md §7, because the README is wired by S3. **Open, not from this slice (agent's report, not confirmed on `main`):** `pnpm test:storybook` fails 6 `editor.stories.tsx` cases on an axe `aria-allowed-attr` violation (`aria-expanded` on the `.tiptap` textbox). |
