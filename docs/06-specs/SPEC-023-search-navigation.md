@@ -465,7 +465,7 @@ Each has a proposed default, so they can be accepted in bulk. Q1–Q3 are the de
 | Q21 | **Decided, see D3.** Find in view (`Mod+F`, Linear) | Here, in SPEC-021 (views), or later. | **Not in this spec**; offered to SPEC-021. |
 | Q22 | **Decided, see D23.** Projects and documents in search | M3 adds `project.search`, a Projects section in `Mod+K` (`p `) and the Search page type switch; M4 adds `document.search` and Documents (`d `). Same leak rules (§5.3). | **As stated**; each spec names its leak test. |
 | Q23 | **Decided, see D2.** Testing hold for search SQL | AC-6 and AC-8 can only be tested on Postgres. (a) **Grant an exception** for `issue-search.int.test.ts` (matching, ranking, archived, deleted, paging, snippets), as SPEC-011 Q13 did for filter conformance. (b) Keep held; only the leak tests cover the SQL. | **(a)**: without it, ranking and matching would ship with only unit tests of the SQL builder. |
-| Q24 | **Recent searches:** synced with the other recents, or kept on the device? Synced recents hold ids only (§4.5). A synced recent search would store the query text on the server, in the user's own group and in `sync_log`, which §5.3 item 9 keeps out of logs because it may hold anything. Linear's docs say only that "you'll be shown recent searches". | (a) **On the device** (`localStorage`, the last 5, cleared on sign-out), so query text never leaves the `issue.search` request. (b) Synced: `Recent` gains a `search` target with the query text, never logged, deleted with the row. | **(a)**: the user's other recents follow them across devices, their searches don't. |
+| Q24 | **Decided, see D24.** **Recent searches:** synced with the other recents, or kept on the device? Synced recents hold ids only (§4.5). A synced recent search would store the query text on the server, in the user's own group and in `sync_log`, which §5.3 item 9 keeps out of logs because it may hold anything. Linear's docs say only that "you'll be shown recent searches". | (a) **On the device** (`localStorage`, the last 5, cleared on sign-out), so query text never leaves the `issue.search` request. (b) Synced: `Recent` gains a `search` target with the query text, never logged, deleted with the row. | **(a)**: the user's other recents follow them across devices, their searches don't. |
 
 ## Decisions
 
@@ -494,6 +494,7 @@ Each has a proposed default, so they can be accepted in bulk. Q1–Q3 are the de
 | D21 | Q19: error for a search timeout | **Decided by the user on 2026-11-25:** accepted the proposed default: (a) no new error code; a 3 s statement timeout answers `INTERNAL` with the specific message of §6. |
 | D22 | Q20: accent folding | **Decided by the user on 2026-11-25:** accepted the proposed default: (a) not in M2; revisit if dogfooding shows a need. |
 | D23 | Q22: projects and documents in search | **Decided by the user on 2026-11-25:** accepted the proposed default: as stated, M3 adds `project.search` and M4 `document.search`, each with its own leak test under §5.3's rules. |
+| D24 | Q24: recent searches | **Decided by the user on 2026-11-25:** accepted the proposed default: (a) kept on the device (`localStorage`, the last 5, cleared on sign-out), so query text never leaves the `issue.search` request. |
 
 ## 12. Changes to accepted docs on acceptance
 
