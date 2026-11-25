@@ -1,18 +1,5 @@
-/* Settings → Members and Settings → Workspace (SPEC-001 §3.6). Plain and functional until
-   SPEC-005's design pass (SPEC-001 §7), in the team screens' style; tokens only. */
-
-.screen {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-  max-width: var(--content-max-width);
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-}
+/* Settings → Members (SPEC-001 §3.6): the filter toolbar, notes and the dialogs. Rows and the
+   list card are the SettingsGroup and SettingsRow primitives. Tokens only. */
 
 .toolbar {
   display: flex;
@@ -22,46 +9,10 @@
   gap: var(--space-8);
 }
 
-.list {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  min-height: var(--row-height);
-  padding: var(--space-8) var(--space-12);
-}
-
-.row + .row {
-  border-top: var(--border-width) solid var(--border-subtle);
-}
-
-.rowMain {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.rowTitle {
+/* One line of a member's hint: the email, then the teams and join date. */
+.metaLine {
+  display: block;
   overflow: hidden;
-  color: var(--text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rowMeta {
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--text-sm-size);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -77,7 +28,6 @@
   color: var(--danger);
 }
 
-.actions,
 .dialogActions {
   display: flex;
   justify-content: flex-end;

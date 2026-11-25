@@ -2,7 +2,7 @@
 // The parent owns the PendingInvites flow, so a new invite reloads this list.
 import { Team } from '@surface/domain/model';
 import { LIST_LIMIT_MAX } from '@surface/operations';
-import { Button, Spinner } from '@surface/ui';
+import { Button, SettingsGroup, SettingsPanel, SettingsRow, Spinner } from '@surface/ui';
 import { useCallback } from 'react';
 import { useApp, useObserved } from '../../app/context.js';
 import { pendingInviteRow } from './invite-form.js';
@@ -27,30 +27,35 @@ export function PendingInvitesList({
     }, [app]),
   );
 
+  const loading = view.loading && view.invites.length === 0;
+  const empty = !loading && view.invites.length === 0;
   return (
-    <section className={styles.section} aria-labelledby="pending-invites">
-      <h2 id="pending-invites" className={styles.heading}>
-        Pending invites
-      </h2>
+    <div className={styles.stack}>
       {view.error !== null && (
         <p role="alert" className={styles.formError}>
           {view.error}
         </p>
       )}
-      {view.loading && view.invites.length === 0 ? (
-        <Spinner />
-      ) : view.invites.length === 0 ? (
-        <p className={styles.note}>No pending invites.</p>
-      ) : (
-        <ul className={styles.list} aria-label="Pending invites">
-          {view.invites.map((invite) => {
+      <SettingsGroup title="Pending invites" list={!loading && !empty} listLabel="Pending invites">
+        {loading ? (
+          <SettingsPanel>
+            <Spinner />
+          </SettingsPanel>
+        ) : empty ? (
+          <SettingsPanel>
+            <p className={styles.note}>No pending invites.</p>
+          </SettingsPanel>
+        ) : (
+          view.invites.map((invite) => {
             const row = pendingInviteRow(invite, teamKeys, now);
             return (
-              <li key={invite.id} className={styles.row}>
-                <span className={styles.rowMain}>
-                  <span className={styles.rowTitle}>{row.title}</span>
-                  <span className={styles.rowMeta}>{row.meta}</span>
-                </span>
+              <SettingsRow
+                as="li"
+                key={invite.id}
+                id={`invite-${invite.id}`}
+                label={row.title}
+                hint={row.meta}
+              >
                 <Button
                   size="sm"
                   variant="ghost"
@@ -61,12 +66,12 @@ export function PendingInvitesList({
                 >
                   Revoke
                 </Button>
-              </li>
+              </SettingsRow>
             );
-          })}
-        </ul>
-      )}
+          })
+        )}
+      </SettingsGroup>
       {view.more && <p className={styles.note}>Showing the newest {LIST_LIMIT_MAX}.</p>}
-    </section>
+    </div>
   );
 }

@@ -198,7 +198,7 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 > - **By hand:** headless captures of ENG-1 and ENG-2 (dark and light at 1440, dark at 390) from Vite on 5184. Description and comments show "Available when online" there (the server rejects that origin), so body type, comment cards and the activity rail were checked by CSS source only. The narrow header's breadcrumb wraps over several lines (S3's header, not changed here).
 
 
-### S7: Settings layout and grouped rows · L · _(needs S1 to S3)_
+### S7: Settings layout and grouped rows · L · _(needs S1 to S3)_ · ✅ Done 2026-11-25
 
 - **Changes:**
   - A `SettingsLayout`: the settings sidebar replaces the app sidebar, with "Back to app"; a 640 px column; a page header with a title and a one-line description. `Esc` and the global shortcuts still work from settings. Each settings row has a stable anchor URL (audit §4 idea 11).
@@ -207,6 +207,15 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Files:** `apps/web/src/pages/{SettingsPage.tsx,Pages.module.css}`, `apps/web/src/app/{router.tsx,settings.ts}`, the new `packages/ui/src/components/Settings*`, `apps/web/src/features/{members,labels,statuses,teams,security,invites,profile,workspace,estimates,automations}/*.module.css`.
 - **Dependencies:** S1, S2, S3.
 - **Verify:** router unit tests (each settings URL renders inside the layout; `Esc` and global shortcuts work from settings); the settings feature tests unchanged; Storybook stories for `SettingsGroup` and `SettingsRow` with axe; by-hand captures of every settings page. This slice may split into two PRs (layout, then migration) if it grows.
+
+> **As built (2026-11-25, `p016-s7-settings`):**
+> - **Layout:** `Shell` shows `shell/SettingsSidebar.tsx` instead of `Sidebar` while the path is `/settings` or below (same `#sidebar`, width, resize and drawer behaviour). It holds "Back to app" (to `ShellStore.lastAppPath`, the last href outside settings, or `/`), then the sections under **Account** and **Workspace** headings (`group` added to `app/settings.ts`, which also gains a one-line `description` per section). `SettingsPage` is a centred column (`--settings-column`, no viewport-height assumption, so it scrolls inside S3's card) with the page's `<h1>` (24, `--weight-ui`) and the description; `PageHeader` got `heading={false}` so the breadcrumb is plain text and there is one `<h1>`. Below 768 px it is a single column with 16 px padding. `Esc` and the global shortcuts are the registry's `global` scope, untouched; the layout adds no key listeners.
+> - **Primitives:** `SettingsGroup` (`text-label` heading, optional `actions`, `list`/`listLabel` for a `<ul>` of rows; card on `--bg-elevated`, `--radius-group`, `--shadow-e0` ring), `SettingsPanel` (padded block for a form) and `SettingsRow` (label 13/`--weight-ui`, hint 12/450, `leading`, controls right, `--settings-row-min-height`, hairline between rows; `controlId` makes the label a `<label for>`, otherwise the row is a named group described by its hint; `id` is the row's anchor, with `scroll-margin`). Stories: `SettingsGroup`, `SettingsRow` (the row story asserts name and description).
+> - **Migrated:** profile, preferences, security (password, sessions), workspace, members (with pending invites), team list, team members and team general onto the primitives; estimates and automations as rows (selects with `controlId`, switches with `aria-label` plus a `label for`); labels and workflow (status groups) keep their interactive listbox rows (inline edit, drag, keys) but sit in the same card (labels inside a `SettingsGroup`, statuses styled as one: `--bg-elevated`, `--radius-group`, hairline separators, `text-label` headers). Screens return fragments so the column's gap spaces the groups.
+> - **CSS deleted:** about 460 lines of duplicated list, row, card, section and heading rules across the members, invites, profile, security, workspace, preferences, teams, estimates, automations, labels and statuses modules, and the settings nav rules in `Pages.module.css`.
+> - **Not done:** stable anchors are `id`s on rows (`#theme`, `#member-…`, `#team-ENG`, …); no scroll-to-hash handling beyond the browser's. No by-hand headless capture (Docker, so the capture server, was down); the layout, rows and narrow mode are checked by unit and CSS-source tests only. Axe on the two stories is not run here (`pnpm test:storybook`).
+> - **Tests:** `web/test/settings-layout.test.tsx` (the plan's row, split into several behaviours: each section and URL, Back to app, global shortcuts registered, no ad-hoc key listeners, column CSS) and `ui/test/settings-rows.test.tsx`. Existing settings tests unchanged except two lookup helpers that found a select through a wrapping `<label>` (`team-automations.test.tsx` now uses `select.labels`); no assertion changed.
+
 
 ### S8: Empty, loading and toast states · S · ✅ Done 2026-11-25 · _(needs S1, S2)_
 

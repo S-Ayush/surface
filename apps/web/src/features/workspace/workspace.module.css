@@ -1,19 +1,4 @@
-/* Settings → Workspace (SPEC-001 §3.6). Plain and functional until SPEC-005's design pass
-   (SPEC-001 §7), in the team screens' style; tokens only. */
-
-.screen {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-  max-width: var(--content-max-width);
-}
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-  max-width: var(--content-max-width);
-}
+/* Settings → Workspace (SPEC-001 §3.6): what the settings group doesn't cover. */
 
 .note {
   margin: 0;

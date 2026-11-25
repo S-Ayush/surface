@@ -26,6 +26,8 @@ export class ShellStore {
   readonly expanded = observable.set<string>();
   /** The live region's text: the page title after a navigation (SPEC-005 §6). */
   announcement = '';
+  /** Where "Back to app" goes from settings: the last page outside /settings (PLAN-016 S7). */
+  lastAppPath = '/';
   #shownTitle: string | undefined;
   readonly #storage: StorageLike | null;
 

@@ -2,7 +2,7 @@
 // read-only. Members of the team and Admins may change them (`team.update`); everyone else sees
 // them read-only. Changes show at once (optimistic) and in other clients as their delta lands.
 import { teamUpdate } from '@surface/operations';
-import { Button, ColorPicker, Input } from '@surface/ui';
+import { Button, ColorPicker, Input, SettingsGroup, SettingsPanel } from '@surface/ui';
 import { useState, type FormEvent } from 'react';
 import { useApp } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
@@ -61,87 +61,91 @@ function GeneralForm({ details }: { readonly details: TeamDetails }) {
   };
 
   return (
-    <form className={styles.form} onSubmit={(event) => void save(event)} noValidate>
-      {readOnly && (
-        <p className={styles.note}>
-          Only members of {team.key} and Admins can change these settings.
-        </p>
-      )}
-      {error !== undefined && (
-        <p role="alert" className={styles.formError}>
-          {error}
-        </p>
-      )}
-      <Input
-        label="Name"
-        value={form.name}
-        readOnly={readOnly}
-        error={problems.name}
-        onChange={(event) => edit({ name: event.target.value })}
-      />
-      <Input
-        label="Key"
-        value={team.key}
-        readOnly
-        hint="The key prefixes issue ids, like ENG-123. It can't be changed."
-      />
-      <Input
-        label="Icon"
-        value={form.icon}
-        placeholder="An emoji, optional"
-        readOnly={readOnly}
-        error={problems.icon}
-        onChange={(event) => edit({ icon: event.target.value })}
-      />
-      <div className={styles.field}>
-        <span className={styles.fieldLabel} aria-hidden="true">
-          Color
-        </span>
-        {readOnly ? (
-          // Not a picker: a read-only radio group would still take arrow keys (design-system §5.4).
-          <span className={styles.colorValue}>
-            <span
-              className={styles.swatch}
-              style={{ backgroundColor: `var(--label-${form.color})` }}
-              aria-hidden="true"
-            />
-            {form.color}
-          </span>
-        ) : (
-          <ColorPicker
-            aria-label="Team color"
-            value={form.color}
-            onValueChange={(color) => edit({ color })}
+    <SettingsGroup title="General">
+      <form onSubmit={(event) => void save(event)} noValidate>
+        <SettingsPanel>
+          {readOnly && (
+            <p className={styles.note}>
+              Only members of {team.key} and Admins can change these settings.
+            </p>
+          )}
+          {error !== undefined && (
+            <p role="alert" className={styles.formError}>
+              {error}
+            </p>
+          )}
+          <Input
+            label="Name"
+            value={form.name}
+            readOnly={readOnly}
+            error={problems.name}
+            onChange={(event) => edit({ name: event.target.value })}
           />
-        )}
-      </div>
-      <Input
-        label="Time zone"
-        value={form.timezone}
-        placeholder="Europe/Berlin"
-        readOnly={readOnly}
-        error={problems.timezone}
-        onChange={(event) => edit({ timezone: event.target.value })}
-      />
-      {!readOnly && (
-        <div className={styles.actions}>
-          <Button
-            variant="ghost"
-            type="button"
-            disabled={Object.keys(edits).length === 0}
-            onClick={() => {
-              setEdits({});
-              setTouched(false);
-              setError(undefined);
-            }}
-          >
-            Discard
-          </Button>
-          <Button type="submit" loading={busy} disabled={changes === undefined}>
-            Save changes
-          </Button>
-        </div>
-      )}
-    </form>
+          <Input
+            label="Key"
+            value={team.key}
+            readOnly
+            hint="The key prefixes issue ids, like ENG-123. It can't be changed."
+          />
+          <Input
+            label="Icon"
+            value={form.icon}
+            placeholder="An emoji, optional"
+            readOnly={readOnly}
+            error={problems.icon}
+            onChange={(event) => edit({ icon: event.target.value })}
+          />
+          <div className={styles.field}>
+            <span className={styles.fieldLabel} aria-hidden="true">
+              Color
+            </span>
+            {readOnly ? (
+              // Not a picker: a read-only radio group would still take arrow keys (design-system §5.4).
+              <span className={styles.colorValue}>
+                <span
+                  className={styles.swatch}
+                  style={{ backgroundColor: `var(--label-${form.color})` }}
+                  aria-hidden="true"
+                />
+                {form.color}
+              </span>
+            ) : (
+              <ColorPicker
+                aria-label="Team color"
+                value={form.color}
+                onValueChange={(color) => edit({ color })}
+              />
+            )}
+          </div>
+          <Input
+            label="Time zone"
+            value={form.timezone}
+            placeholder="Europe/Berlin"
+            readOnly={readOnly}
+            error={problems.timezone}
+            onChange={(event) => edit({ timezone: event.target.value })}
+          />
+          {!readOnly && (
+            <div className={styles.actions}>
+              <Button
+                variant="ghost"
+                type="button"
+                disabled={Object.keys(edits).length === 0}
+                onClick={() => {
+                  setEdits({});
+                  setTouched(false);
+                  setError(undefined);
+                }}
+              >
+                Discard
+              </Button>
+              <Button type="submit" loading={busy} disabled={changes === undefined}>
+                Save changes
+              </Button>
+            </div>
+          )}
+        </SettingsPanel>
+      </form>
+    </SettingsGroup>
   );
 }

@@ -28,6 +28,8 @@ const S2_COMPONENTS = [
   'SegmentedControl',
   'Skeleton',
   'Spinner',
+  'SettingsGroup',
+  'SettingsRow',
   'Switch',
   'Tabs',
   'Textarea',

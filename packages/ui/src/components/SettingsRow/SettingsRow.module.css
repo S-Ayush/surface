@@ -1,0 +1,80 @@
+/* One row of a settings group (design-system §3). Tokens only. */
+
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: var(--settings-row-min-height);
+  padding: var(--space-12) var(--space-16);
+  scroll-margin-top: var(--space-64);
+}
+
+.root + .root {
+  border-top: var(--hairline) solid var(--border-hairline);
+}
+
+.leading {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  color: var(--text-primary);
+  font-size: var(--text-base-size);
+  font-weight: var(--weight-ui);
+  line-height: var(--text-base-line);
+}
+
+.hint {
+  color: var(--text-secondary);
+  font-size: var(--text-sm-size);
+  font-weight: var(--text-sm-weight);
+  line-height: var(--text-sm-line);
+}
+
+.control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  max-width: 100%;
+}
+
+.stacked {
+  flex-wrap: wrap;
+}
+
+.stacked .text {
+  flex-basis: 100%;
+}
+
+.stacked .control {
+  flex: 1 1 100%;
+  justify-content: stretch;
+}
+
+/* Narrow: the control drops under the text rather than squeezing it. */
+@media (max-width: 767.98px) {
+  .root {
+    flex-wrap: wrap;
+  }
+
+  .text {
+    flex-basis: 12rem;
+  }
+
+  .control {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+}

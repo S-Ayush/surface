@@ -1,7 +1,15 @@
 // Settings → Account → Security (SPEC-001 §3.5, §7; PLAN-001 S6): change your password, and the
 // sessions signed in to your account, with Revoke and Revoke all others. Neither is in the
 // replica: both ask the server (files/api.ts), and the flows live outside React to test.
-import { Badge, Button, Input, Spinner } from '@surface/ui';
+import {
+  Badge,
+  Button,
+  Input,
+  SettingsGroup,
+  SettingsPanel,
+  SettingsRow,
+  Spinner,
+} from '@surface/ui';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { ScreenProps } from '../../app/screens.js';
 import { SESSIONS_PAGE, useSettingsApi } from '../files/api.js';
@@ -19,10 +27,10 @@ export function SecurityScreen(_props: ScreenProps) {
   }, [flow]);
 
   return (
-    <div className={styles.screen}>
+    <>
       <PasswordSection onChanged={() => void flow.load()} />
       <SessionsSection view={view} flow={flow} />
-    </div>
+    </>
   );
 }
 
@@ -54,52 +62,51 @@ function PasswordSection({ onChanged }: { readonly onChanged: () => void }) {
   };
 
   return (
-    <section className={styles.section} aria-labelledby="change-password">
-      <h2 id="change-password" className={styles.heading}>
-        Change password
-      </h2>
-      <form className={styles.form} onSubmit={(event) => void submit(event)} noValidate>
-        {view.phase === 'changed' && (
-          <p role="status" className={styles.success}>
-            {changedText(view.endedSessions)}
-          </p>
-        )}
-        {problem !== undefined && problem.field === null && (
-          <p role="alert" className={styles.formError}>
-            {problem.message}
-          </p>
-        )}
-        <Input
-          label="Current password"
-          type="password"
-          autoComplete="current-password"
-          value={current}
-          error={problem?.field === 'currentPassword' ? problem.message : undefined}
-          onChange={(event) => edit(setCurrent)(event.target.value)}
-        />
-        <Input
-          label="New password"
-          type="password"
-          autoComplete="new-password"
-          value={next}
-          hint="At least 10 characters. Your other sessions are logged out."
-          error={problem?.field === 'newPassword' ? problem.message : undefined}
-          onChange={(event) => edit(setNext)(event.target.value)}
-        />
-        <Input
-          label="New password again"
-          type="password"
-          autoComplete="new-password"
-          value={again}
-          onChange={(event) => edit(setAgain)(event.target.value)}
-        />
-        <div className={styles.actions}>
-          <Button type="submit" loading={view.phase === 'editing' && view.busy}>
-            Change password
-          </Button>
-        </div>
+    <SettingsGroup title="Change password">
+      <form onSubmit={(event) => void submit(event)} noValidate>
+        <SettingsPanel>
+          {view.phase === 'changed' && (
+            <p role="status" className={styles.success}>
+              {changedText(view.endedSessions)}
+            </p>
+          )}
+          {problem !== undefined && problem.field === null && (
+            <p role="alert" className={styles.formError}>
+              {problem.message}
+            </p>
+          )}
+          <Input
+            label="Current password"
+            type="password"
+            autoComplete="current-password"
+            value={current}
+            error={problem?.field === 'currentPassword' ? problem.message : undefined}
+            onChange={(event) => edit(setCurrent)(event.target.value)}
+          />
+          <Input
+            label="New password"
+            type="password"
+            autoComplete="new-password"
+            value={next}
+            hint="At least 10 characters. Your other sessions are logged out."
+            error={problem?.field === 'newPassword' ? problem.message : undefined}
+            onChange={(event) => edit(setNext)(event.target.value)}
+          />
+          <Input
+            label="New password again"
+            type="password"
+            autoComplete="new-password"
+            value={again}
+            onChange={(event) => edit(setAgain)(event.target.value)}
+          />
+          <div className={styles.actions}>
+            <Button type="submit" loading={view.phase === 'editing' && view.busy}>
+              Change password
+            </Button>
+          </div>
+        </SettingsPanel>
       </form>
-    </section>
+    </SettingsGroup>
   );
 }
 
@@ -113,11 +120,9 @@ export function SessionsSection({
   readonly now?: Date;
 }) {
   const others = view.sessions.filter((session) => !session.current).length;
+  const loading = view.loading && view.sessions.length === 0;
   return (
-    <section className={styles.section} aria-labelledby="sessions">
-      <h2 id="sessions" className={styles.heading}>
-        Sessions
-      </h2>
+    <div className={styles.stack}>
       <p className={styles.note}>
         Browsers signed in to your account. Revoke one you don’t recognise; it is logged out at
         once.
@@ -127,22 +132,44 @@ export function SessionsSection({
           {view.error}
         </p>
       )}
-      {view.loading && view.sessions.length === 0 ? (
-        <Spinner />
-      ) : (
-        <ul className={styles.list} aria-label="Sessions">
-          {view.sessions.map((session) => {
+      <SettingsGroup
+        title="Sessions"
+        list={!loading}
+        listLabel="Sessions"
+        actions={
+          others > 0 && (
+            <Button
+              variant="ghost"
+              loading={view.revoking === 'others'}
+              disabled={view.revoking !== null && view.revoking !== 'others'}
+              onClick={() => void flow.revokeOthers()}
+            >
+              Revoke all others
+            </Button>
+          )
+        }
+      >
+        {loading ? (
+          <SettingsPanel>
+            <Spinner />
+          </SettingsPanel>
+        ) : (
+          view.sessions.map((session) => {
             const device = deviceName(session.userAgent);
             const meta = [session.ip ?? 'Unknown address', lastActiveText(session.lastUsedAt, now)];
             return (
-              <li key={session.id} className={styles.row}>
-                <span className={styles.rowMain}>
+              <SettingsRow
+                as="li"
+                key={session.id}
+                id={`session-${session.id}`}
+                label={
                   <span className={styles.rowTitle}>
                     {device}
                     {session.current && <Badge variant="accent">This device</Badge>}
                   </span>
-                  <span className={styles.rowMeta}>{meta.join(' · ')}</span>
-                </span>
+                }
+                hint={meta.join(' · ')}
+              >
                 {!session.current && (
                   <Button
                     size="sm"
@@ -155,24 +182,12 @@ export function SessionsSection({
                     Revoke
                   </Button>
                 )}
-              </li>
+              </SettingsRow>
             );
-          })}
-        </ul>
-      )}
+          })
+        )}
+      </SettingsGroup>
       {view.more && <p className={styles.note}>Showing the {SESSIONS_PAGE} most recent.</p>}
-      {others > 0 && (
-        <div className={styles.toolbar}>
-          <Button
-            variant="ghost"
-            loading={view.revoking === 'others'}
-            disabled={view.revoking !== null && view.revoking !== 'others'}
-            onClick={() => void flow.revokeOthers()}
-          >
-            Revoke all others
-          </Button>
-        </div>
-      )}
-    </section>
+    </div>
   );
 }

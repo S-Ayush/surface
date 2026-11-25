@@ -1,7 +1,8 @@
-/* The workflow page (SPEC-010 §3.1). Tokens only. */
+/* The workflow page (SPEC-010 §3.1): one grouped card per status category, styled like a
+   SettingsGroup (design-system §3). Tokens only. */
 
 .note {
-  margin: 0 0 var(--space-12);
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
 }
@@ -15,8 +16,10 @@
 .group {
   display: flex;
   flex-direction: column;
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  overflow: hidden;
+  border-radius: var(--radius-group);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-e0);
 }
 
 .groupHeader {
@@ -24,17 +27,16 @@
   align-items: center;
   gap: var(--space-8);
   min-height: var(--row-height);
-  padding: var(--space-4) var(--space-12);
-  background: var(--bg-panel);
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: var(--space-4) var(--space-16);
 }
 
 .groupTitle {
   flex: 1;
   margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--text-sm-size);
-  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: var(--text-label-size);
+  font-weight: var(--text-label-weight);
+  line-height: var(--text-label-line);
 }
 
 .row {
@@ -42,8 +44,8 @@
   align-items: center;
   gap: var(--space-12);
   min-height: var(--row-height);
-  padding: var(--space-4) var(--space-12);
-  border-top: var(--border-width) solid var(--border-subtle);
+  padding: var(--space-4) var(--space-16);
+  border-top: var(--hairline) solid var(--border-hairline);
 }
 
 .row:hover,
@@ -133,8 +135,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-12);
-  padding: var(--space-12);
-  border-top: var(--border-width) solid var(--border-subtle);
+  padding: var(--space-16);
+  border-top: var(--hairline) solid var(--border-hairline);
 }
 
 .formFields {

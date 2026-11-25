@@ -2,7 +2,7 @@
 // and time zone. Read from the replica, so a change from another tab shows as its delta lands;
 // saved with `user.updateProfile` (save.ts), live for everyone (AC-15).
 import { User } from '@surface/domain/model';
-import { Button, Input, Spinner } from '@surface/ui';
+import { Button, Input, SettingsGroup, SettingsPanel, Spinner } from '@surface/ui';
 import { useCallback, useState, type FormEvent } from 'react';
 import { useApp, useObserved } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
@@ -51,17 +51,13 @@ export function ProfileScreen(_props: ScreenProps) {
     }, [app]),
   );
   if (me === undefined) {
-    return (
-      <div className={styles.screen}>
-        <Spinner />
-      </div>
-    );
+    return <Spinner />;
   }
   return (
-    <div className={styles.screen}>
+    <>
       <AvatarSection me={me} />
       <ProfileForm saved={me} />
-    </div>
+    </>
   );
 }
 
@@ -85,21 +81,20 @@ function AvatarSection({ me }: { readonly me: Me }) {
   };
 
   return (
-    <section className={styles.section} aria-labelledby="avatar">
-      <h2 id="avatar" className={styles.heading}>
-        Avatar
-      </h2>
-      <ImagePicker
-        label="avatar"
-        alt="Your avatar"
-        name={me.name}
-        src={fileUrl(me.avatarFileId)}
-        busy={busy}
-        error={error}
-        onPick={(file) => void run((store) => changeAvatar(api, store, file, shows))}
-        onRemove={() => void run((store) => removeAvatar(store, shows))}
-      />
-    </section>
+    <SettingsGroup title="Avatar">
+      <SettingsPanel>
+        <ImagePicker
+          label="avatar"
+          alt="Your avatar"
+          name={me.name}
+          src={fileUrl(me.avatarFileId)}
+          busy={busy}
+          error={error}
+          onPick={(file) => void run((store) => changeAvatar(api, store, file, shows))}
+          onRemove={() => void run((store) => removeAvatar(store, shows))}
+        />
+      </SettingsPanel>
+    </SettingsGroup>
   );
 }
 
@@ -148,59 +143,58 @@ function ProfileForm({ saved }: { readonly saved: ProfileValues }) {
     problems[field] ?? (error?.field === field ? error.message : undefined);
 
   return (
-    <section className={styles.section} aria-labelledby="profile">
-      <h2 id="profile" className={styles.heading}>
-        Profile
-      </h2>
-      <form className={styles.form} onSubmit={(event) => void save(event)} noValidate>
-        {error !== undefined && error.field === undefined && (
-          <p role="alert" className={styles.formError}>
-            {error.message}
-          </p>
-        )}
-        <Input
-          label="Name"
-          autoComplete="name"
-          value={values.name}
-          error={fieldError('name')}
-          onChange={(event) => edit('name', event.target.value)}
-        />
-        <Input
-          label="Display name"
-          autoComplete="username"
-          value={values.displayName}
-          error={fieldError('displayName')}
-          hint="How people @mention you. Letters, digits, dots, dashes and underscores."
-          onChange={(event) => edit('displayName', event.target.value)}
-        />
-        <Input
-          label="Time zone"
-          list="profile-time-zones"
-          value={values.timezone}
-          error={fieldError('timezone')}
-          hint={`An IANA name, like Europe/Berlin. This browser is in ${browserZone}.`}
-          onChange={(event) => edit('timezone', event.target.value)}
-        />
-        <datalist id="profile-time-zones">
-          {timeZones().map((zone) => (
-            <option key={zone} value={zone} />
-          ))}
-        </datalist>
-        {note !== undefined && <p className={styles.note}>{note}</p>}
-        <div className={styles.actions}>
-          {values.timezone !== browserZone && (
-            <Button variant="ghost" type="button" onClick={() => edit('timezone', browserZone)}>
-              Use this browser’s time zone
-            </Button>
+    <SettingsGroup title="Profile">
+      <form onSubmit={(event) => void save(event)} noValidate>
+        <SettingsPanel>
+          {error !== undefined && error.field === undefined && (
+            <p role="alert" className={styles.formError}>
+              {error.message}
+            </p>
           )}
-          <Button variant="ghost" type="button" disabled={!changed} onClick={reset}>
-            Discard
-          </Button>
-          <Button type="submit" loading={busy} disabled={!changed}>
-            Save changes
-          </Button>
-        </div>
+          <Input
+            label="Name"
+            autoComplete="name"
+            value={values.name}
+            error={fieldError('name')}
+            onChange={(event) => edit('name', event.target.value)}
+          />
+          <Input
+            label="Display name"
+            autoComplete="username"
+            value={values.displayName}
+            error={fieldError('displayName')}
+            hint="How people @mention you. Letters, digits, dots, dashes and underscores."
+            onChange={(event) => edit('displayName', event.target.value)}
+          />
+          <Input
+            label="Time zone"
+            list="profile-time-zones"
+            value={values.timezone}
+            error={fieldError('timezone')}
+            hint={`An IANA name, like Europe/Berlin. This browser is in ${browserZone}.`}
+            onChange={(event) => edit('timezone', event.target.value)}
+          />
+          <datalist id="profile-time-zones">
+            {timeZones().map((zone) => (
+              <option key={zone} value={zone} />
+            ))}
+          </datalist>
+          {note !== undefined && <p className={styles.note}>{note}</p>}
+          <div className={styles.actions}>
+            {values.timezone !== browserZone && (
+              <Button variant="ghost" type="button" onClick={() => edit('timezone', browserZone)}>
+                Use this browser’s time zone
+              </Button>
+            )}
+            <Button variant="ghost" type="button" disabled={!changed} onClick={reset}>
+              Discard
+            </Button>
+            <Button type="submit" loading={busy} disabled={!changed}>
+              Save changes
+            </Button>
+          </div>
+        </SettingsPanel>
       </form>
-    </section>
+    </SettingsGroup>
   );
 }

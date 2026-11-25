@@ -19,7 +19,7 @@ export function TeamSettingsLayout({
   if (details === undefined) return <NotFoundPage />;
   const { team } = details;
   return (
-    <div className={styles.screen}>
+    <>
       <div className={styles.toolbar}>
         <h2 className={styles.rowTitle}>
           {team.icon === null ? '' : `${team.icon} `}
@@ -47,6 +47,6 @@ export function TeamSettingsLayout({
         </nav>
       </div>
       {children(details)}
-    </div>
+    </>
   );
 }

@@ -65,11 +65,7 @@ export function TeamLabelsScreen({ params }: ScreenProps) {
 }
 
 export function WorkspaceLabelsScreen() {
-  return (
-    <div className={styles.screen}>
-      <Labels scope={{ kind: 'workspace' }} />
-    </div>
-  );
+  return <Labels scope={{ kind: 'workspace' }} />;
 }
 
 /** Plain ↑/↓ (and Home/End) move focus between rows, as in any listbox (see `rowFocusTarget`). */

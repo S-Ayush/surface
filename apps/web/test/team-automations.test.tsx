@@ -59,7 +59,7 @@ async function mount(app: EstimateApp, page: () => ReactNode): Promise<void> {
 const page = () => <TeamAutomationsScreen params={{ key: 'ENG' }} />;
 const selects = () => [...document.querySelectorAll<HTMLSelectElement>('select')];
 const selectLabelled = (text: string) =>
-  selects().find((s) => s.closest('label')?.textContent?.startsWith(text));
+  selects().find((s) => s.labels?.[0]?.textContent?.startsWith(text));
 const switches = () => [...document.querySelectorAll<HTMLElement>('[role="switch"]')];
 const optionTexts = (el: HTMLSelectElement | undefined) =>
   [...(el?.options ?? [])].map((o) => o.textContent);

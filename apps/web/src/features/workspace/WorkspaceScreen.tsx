@@ -2,7 +2,7 @@
 // the sidebar and the browser tab show, and its logo (PLAN-001 S6). Saving waits for the server
 // (save.ts).
 import { Workspace } from '@surface/domain/model';
-import { Button, Input, Spinner } from '@surface/ui';
+import { Button, Input, SettingsGroup, SettingsPanel, Spinner } from '@surface/ui';
 import { useCallback, useState, type FormEvent } from 'react';
 import { useApp, useObserved } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
@@ -30,26 +30,20 @@ export function WorkspaceScreen(_props: ScreenProps) {
     }, [app]),
   );
   if (saved === undefined) {
-    return (
-      <div className={styles.screen}>
-        <Spinner />
-      </div>
-    );
+    return <Spinner />;
   }
   if (saved === null) {
     return (
-      <div className={styles.screen}>
-        <p role="alert" className={styles.formError}>
-          {NO_WORKSPACE}
-        </p>
-      </div>
+      <p role="alert" className={styles.formError}>
+        {NO_WORKSPACE}
+      </p>
     );
   }
   return (
-    <div className={styles.screen}>
+    <>
       <LogoSection name={saved.name} logoFileId={saved.logoFileId} />
       <WorkspaceForm saved={saved.name} />
-    </div>
+    </>
   );
 }
 
@@ -79,17 +73,21 @@ function LogoSection({
   };
 
   return (
-    <ImagePicker
-      label="logo"
-      alt="The workspace logo"
-      name={name}
-      src={fileUrl(logoFileId)}
-      square
-      busy={busy}
-      error={error}
-      onPick={(file) => void run((store) => changeLogo(api, store, file, shows))}
-      onRemove={() => void run((store) => removeLogo(store, shows))}
-    />
+    <SettingsGroup title="Logo">
+      <SettingsPanel>
+        <ImagePicker
+          label="logo"
+          alt="The workspace logo"
+          name={name}
+          src={fileUrl(logoFileId)}
+          square
+          busy={busy}
+          error={error}
+          onPick={(file) => void run((store) => changeLogo(api, store, file, shows))}
+          onRemove={() => void run((store) => removeLogo(store, shows))}
+        />
+      </SettingsPanel>
+    </SettingsGroup>
   );
 }
 
@@ -129,31 +127,35 @@ function WorkspaceForm({ saved }: { readonly saved: string }) {
   };
 
   return (
-    <form className={styles.form} onSubmit={(event) => void save(event)} noValidate>
-      {error !== undefined && (
-        <p role="alert" className={styles.formError}>
-          {error}
-        </p>
-      )}
-      <Input
-        label="Workspace name"
-        value={name}
-        error={problem}
-        hint="Shown in the sidebar, the browser tab and emails."
-        onChange={(event) => {
-          setError(undefined);
-          setEdit(event.target.value);
-        }}
-      />
-      {note !== undefined && <p className={styles.note}>{note}</p>}
-      <div className={styles.actions}>
-        <Button variant="ghost" type="button" disabled={edit === undefined} onClick={reset}>
-          Discard
-        </Button>
-        <Button type="submit" loading={busy} disabled={!changed}>
-          Save changes
-        </Button>
-      </div>
-    </form>
+    <SettingsGroup title="Name">
+      <form onSubmit={(event) => void save(event)} noValidate>
+        <SettingsPanel>
+          {error !== undefined && (
+            <p role="alert" className={styles.formError}>
+              {error}
+            </p>
+          )}
+          <Input
+            label="Workspace name"
+            value={name}
+            error={problem}
+            hint="Shown in the sidebar, the browser tab and emails."
+            onChange={(event) => {
+              setError(undefined);
+              setEdit(event.target.value);
+            }}
+          />
+          {note !== undefined && <p className={styles.note}>{note}</p>}
+          <div className={styles.actions}>
+            <Button variant="ghost" type="button" disabled={edit === undefined} onClick={reset}>
+              Discard
+            </Button>
+            <Button type="submit" loading={busy} disabled={!changed}>
+              Save changes
+            </Button>
+          </div>
+        </SettingsPanel>
+      </form>
+    </SettingsGroup>
   );
 }

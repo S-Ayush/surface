@@ -3,7 +3,7 @@
 // rolls back.
 import { canEndMembership } from '@surface/domain';
 import { teamJoin } from '@surface/operations';
-import { Badge, Button, EmptyState, Skeleton } from '@surface/ui';
+import { Badge, Button, EmptyState, SettingsGroup, SettingsRow, Skeleton } from '@surface/ui';
 import { Link } from '@tanstack/react-router';
 import { Users } from 'lucide-react';
 import { useCallback, useId, useState } from 'react';
@@ -25,25 +25,36 @@ export function TeamsScreen(_props: ScreenProps) {
   );
 
   return (
-    <div className={styles.screen}>
-      <div className={styles.toolbar}>
-        <p className={styles.note}>Join a team to see it in your sidebar.</p>
-        <Button disabled={!canCreate} onClick={() => commands.run('form:create-team')}>
-          Create team
-        </Button>
-      </div>
+    <>
+      <p className={styles.note}>Join a team to see it in your sidebar.</p>
       {teams === null ? (
         <Skeleton shape="row" aria-label="Loading teams" />
       ) : teams.length === 0 ? (
         <EmptyState icon={<Users />} title="No teams yet" description="Create the first one." />
       ) : (
-        <ul className={styles.list} aria-label="Teams">
+        <SettingsGroup
+          title="Teams"
+          list
+          listLabel="Teams"
+          actions={
+            <Button disabled={!canCreate} onClick={() => commands.run('form:create-team')}>
+              Create team
+            </Button>
+          }
+        >
           {teams.map((team) => (
             <TeamRow key={team.id} team={team} />
           ))}
-        </ul>
+        </SettingsGroup>
       )}
-    </div>
+      {(teams === null || teams.length === 0) && (
+        <div className={styles.actions}>
+          <Button disabled={!canCreate} onClick={() => commands.run('form:create-team')}>
+            Create team
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -65,27 +76,28 @@ function TeamRow({ team }: { readonly team: TeamListItem }) {
   };
 
   return (
-    <li className={styles.row}>
-      <span className={styles.key}>{team.key}</span>
-      <span className={styles.rowMain}>
-        <Link
-          to="/settings/teams/$key/general"
-          params={{ key: team.key }}
-          className={styles.rowTitle}
-        >
+    <SettingsRow
+      as="li"
+      id={`team-${team.key}`}
+      leading={<span className={styles.key}>{team.key}</span>}
+      label={
+        <Link to="/settings/teams/$key/general" params={{ key: team.key }} className={styles.link}>
           {team.icon === null ? team.name : `${team.icon} ${team.name}`}
         </Link>
-        <span className={styles.rowMeta}>
+      }
+      hint={
+        <>
           {memberCountText(team.memberCount)}
           {team.private ? ' · Private' : ''}
-        </span>
-        {blocked && (
-          // Visible, not only a tooltip: a disabled button takes no focus (E12).
-          <span id={reasonId} className={styles.reason}>
-            {LAST_PRIVATE_MEMBER}
-          </span>
-        )}
-      </span>
+          {blocked && (
+            // Visible, not only a tooltip: a disabled button takes no focus (E12).
+            <span id={reasonId} className={styles.reason}>
+              {LAST_PRIVATE_MEMBER}
+            </span>
+          )}
+        </>
+      }
+    >
       {team.member && <Badge>Member</Badge>}
       <Button
         variant={team.member ? 'ghost' : 'secondary'}
@@ -99,6 +111,6 @@ function TeamRow({ team }: { readonly team: TeamListItem }) {
         {team.member ? 'Leave' : 'Join'}
       </Button>
       {leaving.dialog}
-    </li>
+    </SettingsRow>
   );
 }

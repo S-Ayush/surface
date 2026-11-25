@@ -1,13 +1,8 @@
-/* The labels pages (SPEC-010 §3.2). Tokens only. */
-
-.screen {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-}
+/* The labels pages (SPEC-010 §3.2). The table sits in a SettingsGroup card; its rows keep their
+   own columns. Tokens only. */
 
 .note {
-  margin: 0 0 var(--space-12);
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
 }
@@ -16,7 +11,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  margin-bottom: var(--space-12);
 }
 
 .toolbar > :first-child {
@@ -26,8 +20,6 @@
 .list {
   display: flex;
   flex-direction: column;
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-md);
 }
 
 .header {
@@ -35,12 +27,11 @@
   align-items: center;
   gap: var(--space-12);
   min-height: var(--row-height);
-  padding: var(--space-4) var(--space-12);
-  color: var(--text-secondary);
-  font-size: var(--text-sm-size);
-  font-weight: 600;
-  background: var(--bg-panel);
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  padding: var(--space-4) var(--space-16);
+  color: var(--text-tertiary);
+  font-size: var(--text-label-size);
+  font-weight: var(--text-label-weight);
+  line-height: var(--text-label-line);
 }
 
 .headerName {
@@ -57,12 +48,12 @@
   align-items: center;
   gap: var(--space-12);
   min-height: var(--row-height);
-  padding: var(--space-4) var(--space-12);
-  border-top: var(--border-width) solid var(--border-subtle);
+  padding: var(--space-4) var(--space-16);
+  border-top: var(--hairline) solid var(--border-hairline);
 }
 
 .row[data-depth='1'] {
-  padding-inline-start: var(--space-32);
+  padding-inline-start: var(--space-40);
 }
 
 .row:hover,
@@ -227,10 +218,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-12);
-  padding: var(--space-12);
-  margin-bottom: var(--space-12);
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  padding: var(--space-16);
+  border-radius: var(--radius-group);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-e0);
 }
 
 .formFields {
@@ -251,7 +242,7 @@
 }
 
 .footer {
-  margin: var(--space-12) 0 0;
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
 }

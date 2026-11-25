@@ -3,7 +3,7 @@
 // (optimistic); a refusal rolls back. The last member of a private team can't be removed
 // or leave (E12, D3). Leaving yourself works as everywhere else (useLeaveTeam).
 import { teamAddMember, teamRemoveMember } from '@surface/operations';
-import { Avatar, Button, Dialog, DialogClose, Menu } from '@surface/ui';
+import { Avatar, Button, Dialog, DialogClose, Menu, SettingsGroup, SettingsRow } from '@surface/ui';
 import { useId, useState } from 'react';
 import { useApp } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
@@ -52,20 +52,7 @@ function Members({ details }: { readonly details: TeamDetails }) {
 
   return (
     <>
-      <div className={styles.toolbar}>
-        <p className={styles.note}>{memberCountText(members.length)}</p>
-        {access.manageMembers && (
-          <Menu
-            align="end"
-            trigger={<Button disabled={addable.length === 0}>Add member</Button>}
-            items={addable.map((user) => ({
-              type: 'item' as const,
-              label: `${user.name} (${user.email})`,
-              onSelect: () => void add(user),
-            }))}
-          />
-        )}
-      </div>
+      <p className={styles.note}>{memberCountText(members.length)}</p>
       {!access.manageMembers && (
         <p className={styles.note}>
           Only members of {team.key} and Admins can add or remove members.
@@ -77,22 +64,41 @@ function Members({ details }: { readonly details: TeamDetails }) {
           {LAST_PRIVATE_MEMBER}
         </p>
       )}
-      <ul className={styles.list} aria-label={`Members of ${team.name}`}>
+      <SettingsGroup
+        title="Members"
+        list
+        listLabel={`Members of ${team.name}`}
+        actions={
+          access.manageMembers && (
+            <Menu
+              align="end"
+              trigger={<Button disabled={addable.length === 0}>Add member</Button>}
+              items={addable.map((user) => ({
+                type: 'item' as const,
+                label: `${user.name} (${user.email})`,
+                onSelect: () => void add(user),
+              }))}
+            />
+          )
+        }
+      >
         {members.map((user) => {
           const self = user.id === me;
           const allowed = self || access.manageMembers;
           return (
-            <li key={user.id} className={styles.row}>
-              <Avatar name={user.name} />
-              <span className={styles.rowMain}>
-                <span className={styles.rowTitle}>
+            <SettingsRow
+              as="li"
+              key={user.id}
+              id={`member-${user.id}`}
+              leading={<Avatar name={user.name} />}
+              label={
+                <>
                   {user.name}
                   {self ? ' (you)' : ''}
-                </span>
-                <span className={styles.rowMeta}>
-                  @{user.displayName} · {user.email}
-                </span>
-              </span>
+                </>
+              }
+              hint={`@${user.displayName} · ${user.email}`}
+            >
               {allowed && (
                 <Button
                   variant="ghost"
@@ -112,10 +118,10 @@ function Members({ details }: { readonly details: TeamDetails }) {
                   {self ? 'Leave' : 'Remove'}
                 </Button>
               )}
-            </li>
+            </SettingsRow>
           );
         })}
-      </ul>
+      </SettingsGroup>
       {leaving.dialog}
       <Dialog
         open={asking}

@@ -2,7 +2,15 @@
 // Each control saves at once with `user.updatePreferences`; the change shows optimistically and
 // syncs to the user's other tabs and devices (AC-10).
 import type { FontSize, ThemePreferenceValue } from '@surface/operations';
-import { Button, Menu, SegmentedControl, Spinner, toast } from '@surface/ui';
+import {
+  Button,
+  Menu,
+  SegmentedControl,
+  SettingsGroup,
+  SettingsRow,
+  Spinner,
+  toast,
+} from '@surface/ui';
 import { ChevronDown } from 'lucide-react';
 import { useCallback } from 'react';
 import type { AppModel } from '../app/AppModel.js';
@@ -65,12 +73,8 @@ export function PreferencesScreen(_props: ScreenProps) {
   const homeLabel = options.find((option) => option.value === home)?.label ?? 'My issues';
 
   return (
-    <ul className={styles.list}>
-      <li className={styles.row}>
-        <div className={styles.text}>
-          <span className={styles.label}>Theme</span>
-          <span className={styles.hint}>System follows your computer’s setting.</span>
-        </div>
+    <SettingsGroup title="Appearance">
+      <SettingsRow id="theme" label="Theme" hint="System follows your computer’s setting.">
         <SegmentedControl
           aria-label="Theme"
           options={THEMES}
@@ -79,12 +83,8 @@ export function PreferencesScreen(_props: ScreenProps) {
             chooseTheme(app.readyStore, browserThemeEnvironment(), theme);
           }}
         />
-      </li>
-      <li className={styles.row}>
-        <div className={styles.text}>
-          <span className={styles.label}>Font size</span>
-          <span className={styles.hint}>Changes the size of text.</span>
-        </div>
+      </SettingsRow>
+      <SettingsRow id="font-size" label="Font size" hint="Changes the size of text.">
         <SegmentedControl
           aria-label="Font size"
           options={FONT_SIZES}
@@ -93,12 +93,8 @@ export function PreferencesScreen(_props: ScreenProps) {
             save(app, { fontSize });
           }}
         />
-      </li>
-      <li className={styles.row}>
-        <div className={styles.text}>
-          <span className={styles.label}>Home view</span>
-          <span className={styles.hint}>The page Surface opens on.</span>
-        </div>
+      </SettingsRow>
+      <SettingsRow id="home-view" label="Home view" hint="The page Surface opens on.">
         <Menu
           align="end"
           trigger={
@@ -119,7 +115,7 @@ export function PreferencesScreen(_props: ScreenProps) {
             },
           ]}
         />
-      </li>
-    </ul>
+      </SettingsRow>
+    </SettingsGroup>
   );
 }

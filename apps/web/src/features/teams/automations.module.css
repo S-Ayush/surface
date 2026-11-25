@@ -1,38 +1,7 @@
-/* The team Automations page (SPEC-015 §3.2). Tokens only. */
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-24);
-}
-
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-12);
-  max-width: var(--content-max-width);
-}
-
-.sectionTitle {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: var(--text-md-size);
-  font-weight: var(--weight-medium);
-}
+/* The team Automations page (SPEC-015 §3.2): notes and the selects; rows are SettingsRow. */
 
 .note {
   margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--text-sm-size);
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.fieldLabel {
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
 }

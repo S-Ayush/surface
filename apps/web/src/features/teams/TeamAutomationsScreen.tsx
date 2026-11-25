@@ -6,7 +6,8 @@
 // Readers of a public team see the page read-only.
 import { AUTOMATION_MONTHS, DEFAULT_AUTO_CLOSE_MONTHS } from '@surface/domain';
 import { teamUpdateAutomations, type InputOf } from '@surface/operations';
-import { Switch } from '@surface/ui';
+import { SettingsGroup, SettingsRow, Switch } from '@surface/ui';
+import { useId } from 'react';
 import { useApp } from '../../app/context.js';
 import type { ScreenProps } from '../../app/screens.js';
 import styles from './automations.module.css';
@@ -32,6 +33,10 @@ function Automations({ details }: { readonly details: TeamDetails }) {
   const { team, access } = details;
   const settings = useAutomations(team.id);
   const readOnly = !access.edit;
+  const archiveId = useId();
+  const closeOnId = useId();
+  const closeAfterId = useId();
+  const closeStatusId = useId();
 
   const save = async (change: Change) => {
     const store = app.store;
@@ -54,24 +59,22 @@ function Automations({ details }: { readonly details: TeamDetails }) {
   ));
 
   return (
-    <div className={styles.form}>
+    <>
       {readOnly && (
         <p className={styles.note}>
           Only members of {team.key} and Admins can change these settings.
         </p>
       )}
 
-      <section className={styles.section} aria-labelledby="auto-archive-title">
-        <h3 id="auto-archive-title" className={styles.sectionTitle}>
-          Auto-archive
-        </h3>
-        <p className={styles.note}>
-          Automatically archive closed issues (completed, canceled, or duplicate) after the selected
-          period. Changes apply within a day.
-        </p>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Auto-archive closed items after</span>
+      <SettingsGroup title="Auto-archive">
+        <SettingsRow
+          id="auto-archive"
+          label="Auto-archive closed items after"
+          hint="Automatically archive closed issues (completed, canceled, or duplicate) after the selected period. Changes apply within a day."
+          controlId={archiveId}
+        >
           <select
+            id={archiveId}
             className={styles.select}
             value={settings.autoArchiveMonths}
             disabled={readOnly}
@@ -82,26 +85,35 @@ function Automations({ details }: { readonly details: TeamDetails }) {
           >
             {monthOptions}
           </select>
-        </label>
-      </section>
+        </SettingsRow>
+      </SettingsGroup>
 
-      <section className={styles.section} aria-labelledby="auto-close-title">
-        <h3 id="auto-close-title" className={styles.sectionTitle}>
-          Auto-close issues
-        </h3>
-        <Switch
+      <SettingsGroup title="Auto-close issues">
+        <SettingsRow
+          id="auto-close"
+          controlId={closeOnId}
           label="Auto-close stale issues"
-          checked={closeOn}
-          disabled={readOnly || (!closeOn && settings.canceled.length === 0)}
-          onCheckedChange={(on) =>
-            void save({ autoCloseMonths: on ? DEFAULT_AUTO_CLOSE_MONTHS : null })
-          }
-        />
+          hint="Close issues that have had no activity for a while."
+        >
+          <Switch
+            id={closeOnId}
+            aria-label="Auto-close stale issues"
+            checked={closeOn}
+            disabled={readOnly || (!closeOn && settings.canceled.length === 0)}
+            onCheckedChange={(on) =>
+              void save({ autoCloseMonths: on ? DEFAULT_AUTO_CLOSE_MONTHS : null })
+            }
+          />
+        </SettingsRow>
         {closeOn && settings.autoCloseMonths !== null && (
           <>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Close after being stale for</span>
+            <SettingsRow
+              id="auto-close-after"
+              label="Close after being stale for"
+              controlId={closeAfterId}
+            >
               <select
+                id={closeAfterId}
                 className={styles.select}
                 value={settings.autoCloseMonths}
                 disabled={readOnly}
@@ -112,10 +124,14 @@ function Automations({ details }: { readonly details: TeamDetails }) {
               >
                 {monthOptions}
               </select>
-            </label>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>When closing stale issues, set status to</span>
+            </SettingsRow>
+            <SettingsRow
+              id="auto-close-status"
+              label="When closing stale issues, set status to"
+              controlId={closeStatusId}
+            >
               <select
+                id={closeStatusId}
                 className={styles.select}
                 value={closeStatus}
                 disabled={readOnly}
@@ -127,15 +143,15 @@ function Automations({ details }: { readonly details: TeamDetails }) {
                   </option>
                 ))}
               </select>
-            </label>
+            </SettingsRow>
           </>
         )}
-        {!closeOn && settings.canceled.length === 0 && (
-          <p className={styles.note}>
-            Auto-close needs a Canceled status. Add one in Workflow first.
-          </p>
-        )}
-      </section>
-    </div>
+      </SettingsGroup>
+      {!closeOn && settings.canceled.length === 0 && (
+        <p className={styles.note}>
+          Auto-close needs a Canceled status. Add one in Workflow first.
+        </p>
+      )}
+    </>
   );
 }

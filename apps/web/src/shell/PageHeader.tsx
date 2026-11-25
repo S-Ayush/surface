@@ -14,9 +14,14 @@ export type PageHeaderProps = {
   /** The plain-text page title (document title, announced on navigation). */
   title: string;
   actions?: ReactNode;
+  /**
+   * Whether the last crumb is the page's `<h1>` (default). A page that shows its own large title
+   * (settings) turns it off and renders the `<h1>` itself.
+   */
+  heading?: boolean;
 };
 
-export function PageHeader({ crumbs, title, actions }: PageHeaderProps) {
+export function PageHeader({ crumbs, title, actions, heading = true }: PageHeaderProps) {
   const shell = useShell();
   const mode = useLayoutMode();
   const visible = useObserved(useCallback(() => shell.sidebarVisible(mode), [shell, mode]));
@@ -39,7 +44,11 @@ export function PageHeader({ crumbs, title, actions }: PageHeaderProps) {
           {crumbs.map((crumb, i) => (
             <li key={i} aria-current={i === crumbs.length - 1 ? 'page' : undefined}>
               {/* The current page is the page's one level-one heading (axe page-has-heading-one). */}
-              {i === crumbs.length - 1 ? <h1 className={styles.pageTitle}>{crumb}</h1> : crumb}
+              {heading && i === crumbs.length - 1 ? (
+                <h1 className={styles.pageTitle}>{crumb}</h1>
+              ) : (
+                crumb
+              )}
             </li>
           ))}
         </ol>

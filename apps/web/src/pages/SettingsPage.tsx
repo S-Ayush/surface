@@ -1,12 +1,11 @@
-// Settings (SPEC-005 §3, SPEC-001 §7): a section nav beside the PLAN-001 screen for the route.
+// Settings (SPEC-005 §3, SPEC-001 §7): the PLAN-001 screen for the route in a centred column.
 // Admin-only sections are left out of the nav for Members, and their URLs are not found
 // (SPEC-005 §3 guards, permissions.md §5).
 import { Spinner } from '@surface/ui';
-import { Link } from '@tanstack/react-router';
 import { useCallback } from 'react';
 import { useApp, useObserved } from '../app/context.js';
 import { adminAccess } from '../app/guards.js';
-import { settingsNav, type SettingsSection } from '../app/settings.js';
+import type { SettingsSection } from '../app/settings.js';
 import { SCREENS } from '../features/screens.js';
 import { PageHeader } from '../shell/PageHeader.js';
 import { NotFoundPage } from './NotFoundPage.js';
@@ -32,20 +31,17 @@ export function SettingsPage({ section, params = {} }: SettingsPageProps) {
     );
   }
   const Screen = SCREENS[section.screen];
+  // The settings nav lives in the shell's sidebar (shell/SettingsSidebar.tsx); the page is one
+  // centred column under its own title (PLAN-016 S7, design-system §3).
   return (
     <>
-      <PageHeader crumbs={['Settings', section.title]} title={section.title} />
+      <PageHeader crumbs={['Settings', section.title]} title={section.title} heading={false} />
       <div className={styles.settings}>
-        <nav aria-label="Settings" className={styles.settingsNav}>
-          <ul>
-            {settingsNav(isAdmin).map((item) => (
-              <li key={item.nav}>
-                <Link to={item.nav}>{item.title}</Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <section className={styles.settingsBody} aria-label={section.title}>
+        <section className={styles.settingsColumn} aria-label={section.title}>
+          <header className={styles.settingsHeader}>
+            <h1 className={styles.settingsTitle}>{section.title}</h1>
+            <p className={styles.settingsDescription}>{section.description}</p>
+          </header>
           {Screen === undefined ? (
             <Unavailable title={section.title} />
           ) : (

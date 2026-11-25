@@ -15,6 +15,8 @@ import {
   IconButton,
   Menu,
   SegmentedControl,
+  SettingsGroup,
+  SettingsRow,
   Spinner,
   type MenuEntry,
 } from '@surface/ui';
@@ -110,11 +112,7 @@ export function MembersScreen(_props: ScreenProps) {
   );
 
   if (members === null) {
-    return (
-      <div className={styles.screen}>
-        <Spinner />
-      </div>
-    );
+    return <Spinner />;
   }
 
   const setRole = async (member: MemberListItem, role: UserRole) => {
@@ -139,7 +137,7 @@ export function MembersScreen(_props: ScreenProps) {
   const onlyAdmin = members.some((member) => member.lastAdmin);
 
   return (
-    <div className={styles.screen}>
+    <>
       <div className={styles.toolbar}>
         <SegmentedControl
           aria-label="Show"
@@ -159,23 +157,33 @@ export function MembersScreen(_props: ScreenProps) {
           {LAST_ADMIN_MESSAGE}
         </p>
       )}
-      <ul className={styles.list} aria-label="Members">
+      <SettingsGroup title="Members" list listLabel="Members">
         {members.map((member) => (
-          <li key={member.id} className={styles.row}>
-            <Avatar name={member.name} {...(member.avatarUrl ? { src: member.avatarUrl } : {})} />
-            <span className={styles.rowMain}>
-              <span className={styles.rowTitle}>
+          <SettingsRow
+            as="li"
+            key={member.id}
+            id={`member-${member.id}`}
+            leading={
+              <Avatar name={member.name} {...(member.avatarUrl ? { src: member.avatarUrl } : {})} />
+            }
+            label={
+              <>
                 {member.name}
                 {member.self ? ' (you)' : ''}
-              </span>
-              <span className={styles.rowMeta}>
-                @{member.displayName} · {member.email}
-              </span>
-              <span className={styles.rowMeta}>
-                {member.teams.length === 0 ? 'No teams' : member.teams.join(', ')} ·{' '}
-                {joinedText(member.joined)}
-              </span>
-            </span>
+              </>
+            }
+            hint={
+              <>
+                <span className={styles.metaLine}>
+                  @{member.displayName} · {member.email}
+                </span>
+                <span className={styles.metaLine}>
+                  {member.teams.length === 0 ? 'No teams' : member.teams.join(', ')} ·{' '}
+                  {joinedText(member.joined)}
+                </span>
+              </>
+            }
+          >
             <Badge variant={member.role === 'admin' ? 'accent' : 'neutral'}>
               {ROLE_LABEL[member.role]}
             </Badge>
@@ -197,9 +205,9 @@ export function MembersScreen(_props: ScreenProps) {
                 },
               })}
             />
-          </li>
+          </SettingsRow>
         ))}
-      </ul>
+      </SettingsGroup>
       {members.length === 0 && <p className={styles.note}>Nobody has this role.</p>}
       <PendingInvitesList view={pendingView} onRevoke={(id) => void pending.revoke(id)} />
       <InviteDialog
@@ -225,6 +233,6 @@ export function MembersScreen(_props: ScreenProps) {
           </>
         }
       />
-    </div>
+    </>
   );
 }

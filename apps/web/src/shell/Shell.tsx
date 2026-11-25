@@ -17,6 +17,7 @@ import { useCommand } from '../shortcuts/ShortcutProvider.js';
 import { SIDEBAR_MAX, SIDEBAR_MIN } from './layout.js';
 import { ShellContext, useLayoutMode } from './ShellContext.js';
 import { ShellStore } from './ShellStore.js';
+import { SettingsSidebar, inSettings } from './SettingsSidebar.js';
 import { Sidebar } from './Sidebar.js';
 import styles from './Shell.module.css';
 
@@ -63,6 +64,12 @@ export function Shell({ children, docked }: { children: ReactNode; docked?: Reac
   // After a navigation: close the drawer and focus <main> (§6). Not on the first render. The new
   // title is announced when the page sets it (usePageTitle → ShellStore.showTitle).
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const href = useRouterState({ select: (state) => state.location.href });
+  const settings = inSettings(pathname);
+  // "Back to app" returns to the last page outside settings (PLAN-016 S7).
+  useEffect(() => {
+    if (!settings) shell.lastAppPath = href;
+  }, [shell, settings, href]);
   const mainRef = useRef<HTMLElement>(null);
   const shownPath = useRef(pathname);
   useEffect(() => {
@@ -121,7 +128,11 @@ export function Shell({ children, docked }: { children: ReactNode; docked?: Reac
                 }}
               />
             )}
-            <Sidebar width={width} autoFocus={mode === 'drawer' && drawerOpen} />
+            {settings ? (
+              <SettingsSidebar width={width} />
+            ) : (
+              <Sidebar width={width} autoFocus={mode === 'drawer' && drawerOpen} />
+            )}
             {mode === 'full' && <ResizeHandle shell={shell} width={width} />}
           </>
         )}

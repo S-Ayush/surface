@@ -2,6 +2,7 @@
 // of rows in the `settings-row` scope, with the inline edit form replacing the row being edited.
 // The page owns the state; this renders it.
 import type { LabelScopeInfo } from '@surface/domain';
+import { SettingsGroup } from '@surface/ui';
 import { ChevronRight } from 'lucide-react';
 import { LabelForm, type LabelFormValues } from './LabelForm.js';
 import { LabelRow } from './LabelRow.js';
@@ -112,22 +113,24 @@ export function LabelTable(props: LabelTableProps) {
   };
   return (
     <>
-      <div
-        role="listbox"
-        aria-label={props.ariaLabel}
-        className={styles.list}
-        onKeyDown={props.onKeyDown}
-      >
-        <div className={styles.header} aria-hidden="true">
-          <span className={styles.headerName}>Name</span>
-          <span className={styles.headerDescription}>Description</span>
-          <span className={styles.column}>Used in</span>
-          <span className={styles.column}>Issues</span>
-          <span className={styles.column}>Last applied</span>
-          <span className={styles.column}>Created</span>
+      <SettingsGroup>
+        <div
+          role="listbox"
+          aria-label={props.ariaLabel}
+          className={styles.list}
+          onKeyDown={props.onKeyDown}
+        >
+          <div className={styles.header} aria-hidden="true">
+            <span className={styles.headerName}>Name</span>
+            <span className={styles.headerDescription}>Description</span>
+            <span className={styles.column}>Used in</span>
+            <span className={styles.column}>Issues</span>
+            <span className={styles.column}>Last applied</span>
+            <span className={styles.column}>Created</span>
+          </div>
+          {entries.map(renderEntry)}
         </div>
-        {entries.map(renderEntry)}
-      </div>
+      </SettingsGroup>
       {/* Outside the listbox, whose only children are rows; a native button, so Tab and Enter work. */}
       {props.archived.length > 0 && (
         <section aria-label="Archived labels">
@@ -145,14 +148,16 @@ export function LabelTable(props: LabelTableProps) {
             Archived ({archivedCount(props.archived)})
           </button>
           {props.archivedOpen && (
-            <div
-              role="listbox"
-              aria-label={`Archived ${props.ariaLabel}`}
-              className={styles.list}
-              onKeyDown={props.onKeyDown}
-            >
-              {props.archived.map(renderEntry)}
-            </div>
+            <SettingsGroup>
+              <div
+                role="listbox"
+                aria-label={`Archived ${props.ariaLabel}`}
+                className={styles.list}
+                onKeyDown={props.onKeyDown}
+              >
+                {props.archived.map(renderEntry)}
+              </div>
+            </SettingsGroup>
           )}
         </section>
       )}

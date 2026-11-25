@@ -1,46 +1,4 @@
-/* Settings → Preferences (SPEC-005 §6): one bordered list, a setting per row. Tokens only. */
-
-.list {
-  display: flex;
-  flex-direction: column;
-  max-width: var(--content-max-width);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
-
-.row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-12);
-  padding: var(--space-12) var(--space-16);
-}
-
-.row + .row {
-  border-top: var(--border-width) solid var(--border-subtle);
-}
-
-.text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.label {
-  color: var(--text-primary);
-  font-weight: var(--weight-medium);
-}
-
-.hint {
-  color: var(--text-secondary);
-  font-size: var(--text-sm-size);
-  line-height: var(--text-sm-line);
-}
+/* Settings → Preferences: the loading state and the home view button's chevron. Tokens only. */
 
 .loading {
   display: flex;

@@ -58,70 +58,46 @@
 .settings {
   display: flex;
   flex: 1;
-  gap: var(--space-24);
-  padding: var(--space-24);
+  justify-content: center;
+  padding: var(--space-32) var(--space-24) var(--space-48);
 }
 
-.settingsNav {
-  flex: none;
-  width: var(--sidebar-min-width);
-}
-
-.settingsNav ul {
+/* The 640 px column (design-system §3); no viewport-height assumptions, the card scrolls. */
+.settingsColumn {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.settingsNav a {
-  display: flex;
-  align-items: center;
-  min-height: var(--row-height);
-  padding: 0 var(--space-8);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.settingsNav a:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.settingsNav a[aria-current='page'] {
-  background: var(--bg-active);
-  color: var(--text-primary);
-}
-
-.settingsNav a:focus-visible {
-  outline: var(--focus-ring-width) solid var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.settingsBody {
-  flex: 1;
+  gap: var(--space-24);
+  width: 100%;
+  max-width: var(--settings-column);
   min-width: 0;
 }
 
-/* SPEC-005 E6, AC-16: below 768 px the settings nav becomes a scrolling row above the page. */
+.settingsHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.settingsTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-2xl-size);
+  font-weight: var(--weight-ui);
+  line-height: var(--text-2xl-line);
+  letter-spacing: var(--tracking-tight);
+}
+
+.settingsDescription {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-base-size);
+  line-height: var(--text-base-line);
+}
+
+/* SPEC-005 E6, AC-16: below 768 px the settings are a single column. */
 @media (max-width: 767.98px) {
   .settings {
-    flex-direction: column;
-    gap: var(--space-16);
     padding: var(--space-16);
-  }
-
-  .settingsNav {
-    width: auto;
-    overflow-x: auto;
-  }
-
-  .settingsNav ul {
-    flex-direction: row;
   }
 
   .body {

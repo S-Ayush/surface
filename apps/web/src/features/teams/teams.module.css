@@ -1,5 +1,5 @@
-/* The team screens and dialogs (SPEC-001 §3.7). Plain and functional until SPEC-005's design pass
-   (SPEC-001 §7); tokens only. */
+/* The team screens and dialogs (SPEC-001 §3.7): the header, tabs and form bits; rows and cards are
+   SettingsRow and SettingsGroup. Tokens only. */
 
 .form {
   display: flex;
@@ -23,59 +23,29 @@
   color: var(--danger);
 }
 
-.screen {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-16);
-  max-width: var(--content-max-width);
-}
-
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-8);
 }
 
-.list {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: var(--border-width) solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-12);
-  min-height: var(--row-height);
-  padding: var(--space-8) var(--space-12);
-}
-
-.row + .row {
-  border-top: var(--border-width) solid var(--border-subtle);
-}
-
-.rowMain {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
 .rowTitle {
   overflow: hidden;
   color: var(--text-primary);
+  font-weight: var(--weight-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.rowMeta {
-  color: var(--text-secondary);
-  font-size: var(--text-sm-size);
+.link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
 }
 
 .key {
@@ -93,6 +63,7 @@
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-12);
 }
 
@@ -127,6 +98,7 @@
 }
 
 .reason {
+  display: block;
   margin: 0;
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
