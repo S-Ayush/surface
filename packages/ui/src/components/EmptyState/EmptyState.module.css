@@ -15,21 +15,25 @@
 }
 
 .icon > svg {
-  width: var(--icon-lg);
-  height: var(--icon-lg);
+  width: var(--empty-state-icon);
+  height: var(--empty-state-icon);
 }
 
 .title {
   margin: 0;
   color: var(--text-primary);
   font-size: var(--text-md-size);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-ui);
   line-height: var(--text-md-line);
 }
 
 .description {
   margin: var(--space-4) 0 0;
   color: var(--text-secondary);
+}
+
+.description > kbd {
+  vertical-align: baseline;
 }
 
 .action {

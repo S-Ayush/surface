@@ -1,9 +1,9 @@
 // My issues (SPEC-012 §3.9): Assigned at `/my-issues`, Created at `/my-issues/created`. Both render
 // from the replica, offline too: it holds every issue assigned to or created by the user.
-import { EmptyState } from '@surface/ui';
+import { EmptyState, Kbd } from '@surface/ui';
 import { Link } from '@tanstack/react-router';
 import { Inbox } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import { useApp } from '../../app/context.js';
 import { PageHeader } from '../../shell/PageHeader.js';
 import { IssueList } from './IssueList.js';
@@ -14,12 +14,19 @@ import type { ListScope } from './list-model.js';
 import { myIssuesPath, rememberMyIssuesTab, type MyIssuesTab } from './my-issues-tab.js';
 import { useIssueRows } from './useIssueRows.js';
 
-const EMPTY: Record<MyIssuesTab, { title: string; description?: string }> = {
+const EMPTY: Record<MyIssuesTab, { title: string; description?: ReactNode }> = {
   assigned: {
     title: 'Nothing is assigned to you',
     description: 'Issues assigned to you show up here.',
   },
-  created: { title: "You haven't created any issues yet" },
+  created: {
+    title: "You haven't created any issues yet",
+    description: (
+      <>
+        Create one with <Kbd keys="C" />
+      </>
+    ),
+  },
 };
 
 export function MyIssuesPage({ tab = 'assigned' }: { tab?: MyIssuesTab }) {

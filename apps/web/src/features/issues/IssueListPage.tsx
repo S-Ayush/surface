@@ -1,7 +1,7 @@
 // The team issue list, `/team/:key/issues` (SPEC-012 §3.3). Member teams render from the replica
 // at once, offline too; a public team the user hasn't joined shows the states of §7.2 from the
 // load seam (`team-load.ts`).
-import { EmptyState, toast } from '@surface/ui';
+import { EmptyState, Kbd, toast } from '@surface/ui';
 import { useNavigate } from '@tanstack/react-router';
 import { CircleDot, CloudOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -88,7 +88,11 @@ export function IssueListPage({ teamKey }: { teamKey: string }) {
           <EmptyState
             icon={<CircleDot />}
             title={`No issues in ${team.key} yet`}
-            description="Create one with C."
+            description={
+              <>
+                Create one with <Kbd keys="C" />
+              </>
+            }
             action={<CreateIssueButton />}
           />
         </div>

@@ -1,0 +1,8 @@
+/* Skeleton rows inset like the final rows (PLAN-016 S8); each row takes its height from the
+   density tokens inside Skeleton. */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-8);
+}

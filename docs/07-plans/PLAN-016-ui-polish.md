@@ -185,7 +185,7 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Dependencies:** S1, S2, S3.
 - **Verify:** router unit tests (each settings URL renders inside the layout; `Esc` and global shortcuts work from settings); the settings feature tests unchanged; Storybook stories for `SettingsGroup` and `SettingsRow` with axe; by-hand captures of every settings page. This slice may split into two PRs (layout, then migration) if it grows.
 
-### S8: Empty, loading and toast states · S · _(needs S1, S2)_
+### S8: Empty, loading and toast states · S · ✅ Done 2026-11-25 · _(needs S1, S2)_
 
 - **Changes:**
   - Empty states: the shortcut as a `Kbd` in the sentence ("Create one with [C]") and in the button (`Button` `shortcut` prop), a 24 px tertiary icon, one primary action.
@@ -195,6 +195,13 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Files:** `packages/ui/src/components/{EmptyState,Skeleton,Toast}/*`, `apps/web/src/features/issues/IssueListPage.tsx`, `apps/web/src/pages/NotFoundPage.tsx`.
 - **Dependencies:** S1, S2.
 - **Verify:** component tests that the empty state renders its shortcut as a `kbd` with spoken text; a skeleton-delay unit test (150 ms, fake timers); Storybook a11y.
+
+> **As built (2026-11-25, `p016-s8-states`):**
+>
+> - **EmptyState:** `description` is now a `ReactNode`, so the sentence carries a `<Kbd>` ("Create one with C", spoken text through Kbd). Icon is 24 px via the new token `--empty-state-icon`; title weight `--weight-ui`. Team list empty, My issues Created and `CreateIssueButton` (now `shortcut="C"`) use it. Drafts, archive (SPEC-015 title "No matching issues") and the not-found pages have no shortcut to show (no "go home" or archive key exists), so they keep icon, sentence and action. In-shell and standalone not-found already share one body.
+> - **Skeleton:** the `row` shape uses `--row-height` (`--row-height-compact` under an ancestor `[data-density='compact']`, which S4 can set) and `--radius-md`; `ListSkeleton` shows 8 inset rows (new `ListParts.module.css`, so `IssueList.module.css` is untouched; its old `.skeleton` rule is now unused, S4 may delete it). Reduced motion already dropped the pulse (there is no shimmer); the 150 ms delay is unchanged.
+> - **Toast:** nothing left after S2 (radius, hairline via e3, exit). The Banner (a full-width strip) was not given a radius or shadow.
+> - **Tests:** `ui/test/empty-state.test.tsx`, `ui/test/skeleton-density.test.ts`, `web/test/skeleton-delay.test.tsx` ("skeleton shows after 150ms with fake timers"; in web because `useAfter` lives there). Two existing list-page assertions adjusted for the Kbd text. By-hand headless capture of the empty and not-found pages in both themes.
 
 ### Order and parallelism
 
@@ -244,7 +251,7 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 | S7    | `SettingsGroup` and `SettingsRow` pass axe in both themes                                                | their stories (new, run by the existing story tests)                                                                                                                        |
 | S7    | The existing settings features behave as before                                                          | `web/test/settings-*.test.tsx` and feature tests (existing, unchanged)                                                                                                      |
 | S8    | The empty state shows its shortcut as a `kbd` with spoken text                                           | `ui/test/empty-state.test.tsx`: "the shortcut renders as a kbd with spoken text"                                                                                            |
-| S8    | A skeleton appears only after 150 ms                                                                     | `ui/test/skeleton-delay.test.ts`: "skeleton shows after 150ms with fake timers"                                                                                             |
+| S8    | A skeleton appears only after 150 ms                                                                     | `web/test/skeleton-delay.test.tsx`: "skeleton shows after 150ms with fake timers"                                                                                             |
 | All   | By-hand headless captures (1440 and 390 px, both themes)                                                 | Recorded in each slice's "As built"; not committed as tests                                                                                                                 |
 
 ## 6. Risks & mitigations

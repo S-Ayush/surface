@@ -117,7 +117,7 @@ describe('team issue list', () => {
   it('states an empty team and offers no Create button before the composer exists', async () => {
     mounted = await mountLists(new IssueApp([]), '/team/ENG/issues');
     expect(mounted.host.textContent).toContain('No issues in ENG yet');
-    expect(mounted.host.textContent).toContain('Create one with C.');
+    expect(mounted.host.textContent).toContain('Create one with ');
     expect(mounted.host.querySelector('button')).toBeNull();
   });
 
@@ -133,7 +133,7 @@ describe('team issue list', () => {
       });
     });
     const button = [...mounted.host.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Create issue',
+      (b) => b.textContent.startsWith('Create issue'),
     );
     expect(button).toBeDefined();
     await inAct(() => button?.click());

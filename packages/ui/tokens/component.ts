@@ -105,6 +105,7 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'spinner-stroke': px(2),
   'tooltip-max-width': px(280),
   'empty-state-max-width': px(360),
+  'empty-state-icon': px(24),
   // Overlays (§5.2): dialog widths sm/md/lg, and anchored surfaces.
   'dialog-sm': px(420),
   'dialog-md': px(560),

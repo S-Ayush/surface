@@ -14,9 +14,14 @@
   margin: calc((var(--text-base-line) - var(--text-base-size)) / 2) 0;
 }
 
+/* The final list-row geometry: the density tokens, so the skeleton and the rows agree (PLAN-016 S8). */
 .row {
   height: var(--row-height);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+}
+
+[data-density='compact'] .row {
+  height: var(--row-height-compact);
 }
 
 .circle {

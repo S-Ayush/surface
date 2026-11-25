@@ -134,6 +134,7 @@ export const token = {
   spinnerStroke: 'var(--spinner-stroke)',
   tooltipMaxWidth: 'var(--tooltip-max-width)',
   emptyStateMaxWidth: 'var(--empty-state-max-width)',
+  emptyStateIcon: 'var(--empty-state-icon)',
   dialogSm: 'var(--dialog-sm)',
   dialogMd: 'var(--dialog-md)',
   dialogLg: 'var(--dialog-lg)',

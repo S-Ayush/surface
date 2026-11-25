@@ -3,7 +3,7 @@ import { Button, Skeleton, VisuallyHidden } from '@surface/ui';
 import { useCallback, useEffect, useState } from 'react';
 import { useObserved } from '../../app/context.js';
 import { useCommandRegistry } from '../../shortcuts/ShortcutProvider.js';
-import styles from './IssueList.module.css';
+import styles from './ListParts.module.css';
 
 /** Shows a skeleton only if the wait outlasts `ms` (design-system §4: nothing flashes). */
 export function useAfter(ms: number): boolean {
@@ -27,8 +27,8 @@ export function ListSkeleton() {
         <p role="status">Loading…</p>
       </VisuallyHidden>
       {show &&
-        [0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} shape="text" width="100%" aria-hidden="true" />
+        [0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+          <Skeleton key={i} shape="row" aria-hidden="true" />
         ))}
     </div>
   );
@@ -47,6 +47,7 @@ export function CreateIssueButton() {
   return (
     <Button
       variant="primary"
+      shortcut="C"
       onClick={() => {
         commands.run('issue:create');
       }}
