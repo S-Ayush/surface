@@ -1,7 +1,7 @@
 // The sidebar (SPEC-005 §7, M0): workspace and avatar menu, search, My issues, the user's teams
 // (live, expandable to their pages) with "Browse teams", and Settings. PLAN-012 S5 adds Drafts and
 // the New issue button. PLAN-015 S4 adds each team's Archive page (SPEC-015 §3.3; `G` `X`).
-import { IconButton, Kbd } from '@surface/ui';
+import { IconButton, Kbd, SurfaceMark } from '@surface/ui';
 import { Link } from '@tanstack/react-router';
 import {
   Archive,
@@ -222,13 +222,16 @@ export function CreateTeamButton() {
 }
 
 /**
- * The logo before the workspace name (SPEC-005 §7), decorative since the name follows. Hidden when
- * it can't load (offline, where the worker doesn't keep /files/, or the server can't send it),
- * rather than a broken image.
+ * The logo before the workspace name (SPEC-005 §7), decorative since the name follows. The Surface
+ * mark stands in when there is no logo or it can't load (offline, where the worker doesn't keep
+ * /files/, or the server can't send it), rather than a broken image (brand.md B-3).
  */
 function WorkspaceLogo({ src }: { readonly src: string | undefined }) {
   const [failed, setFailed] = useState<string>();
-  if (src === undefined || src === failed) return null;
+  // Brand.md B-3: the workspace's own logo comes first; the Surface mark stands in for it.
+  if (src === undefined || src === failed) {
+    return <SurfaceMark className={styles.workspaceLogo} />;
+  }
   return (
     <img
       className={styles.workspaceLogo}

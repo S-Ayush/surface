@@ -40,6 +40,8 @@ export { SettingsRow, settingsHintId } from './components/SettingsRow/SettingsRo
 export type { SettingsRowProps } from './components/SettingsRow/SettingsRow.js';
 export { Skeleton } from './components/Skeleton/Skeleton.js';
 export type { SkeletonProps } from './components/Skeleton/Skeleton.js';
+export { SurfaceLockup, SurfaceMark } from './components/Brand/Brand.js';
+export type { SurfaceLockupProps, SurfaceMarkProps } from './components/Brand/Brand.js';
 export { Spinner } from './components/Spinner/Spinner.js';
 export type { SpinnerProps } from './components/Spinner/Spinner.js';
 export { Switch } from './components/Switch/Switch.js';

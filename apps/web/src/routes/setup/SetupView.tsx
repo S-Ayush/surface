@@ -1,4 +1,4 @@
-import { Button, Input, ProgressBar } from '@surface/ui';
+import { Button, Input, ProgressBar, SurfaceLockup } from '@surface/ui';
 import type { FormEvent } from 'react';
 import styles from './SetupView.module.css';
 import type { SetupScreen } from './state.js';
@@ -176,6 +176,8 @@ function StepFields({ step, values, errors, onChange }: SetupViewProps & { step:
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <main className={styles.page} tabIndex={-1}>
+      {/* Brand.md §7: the lockup above the screen, 24 px tall. */}
+      <SurfaceLockup height={24} title="Surface" />
       <section className={styles.card} aria-labelledby="setup-title">
         <h1 id="setup-title" className={styles.title}>
           {title}

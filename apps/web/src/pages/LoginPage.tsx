@@ -3,7 +3,7 @@
 // server's message as it is: the generic wrong-password one (AC-5), or how long a lockout lasts
 // (E13). Below the form, session E's `LoginOptions` (PLAN-001 S4): "Email me a login link" when
 // the server sends email (AC-3), and "Forgot password?".
-import { Button, Input } from '@surface/ui';
+import { Button, Input, SurfaceLockup } from '@surface/ui';
 import { useState, type FormEvent } from 'react';
 import { LOGIN_FAILED, type LoginResult } from '../app/auth.js';
 import { useApp } from '../app/context.js';
@@ -73,46 +73,50 @@ export function LoginPage() {
 
   return (
     <main className={styles.public} tabIndex={-1}>
-      <section className={styles.card} aria-labelledby="login-title">
-        <h1 id="login-title" className={styles.title}>
-          Log in to Surface
-        </h1>
-        <form className={styles.form} onSubmit={submit} noValidate aria-labelledby="login-title">
-          <Input
-            label="Email"
-            type="email"
-            autoComplete="username"
-            autoFocus
-            value={email}
-            onChange={(event) => {
-              setEmail(event.target.value);
+      <div className={styles.publicColumn}>
+        {/* Brand.md §7: the lockup above the form, 24 px tall. */}
+        <SurfaceLockup height={24} title="Surface" />
+        <section className={styles.card} aria-labelledby="login-title">
+          <h1 id="login-title" className={styles.title}>
+            Log in to Surface
+          </h1>
+          <form className={styles.form} onSubmit={submit} noValidate aria-labelledby="login-title">
+            <Input
+              label="Email"
+              type="email"
+              autoComplete="username"
+              autoFocus
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+              }}
+            />
+            <Input
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+              }}
+            />
+            {error !== null && (
+              <p className={styles.formError} role="alert">
+                {error}
+              </p>
+            )}
+            <Button type="submit" variant="primary" loading={pending}>
+              Log in
+            </Button>
+          </form>
+          <LoginOptions
+            email={email}
+            onError={(message) => {
+              setView({ error: message, pending: false });
             }}
           />
-          <Input
-            label="Password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => {
-              setPassword(event.target.value);
-            }}
-          />
-          {error !== null && (
-            <p className={styles.formError} role="alert">
-              {error}
-            </p>
-          )}
-          <Button type="submit" variant="primary" loading={pending}>
-            Log in
-          </Button>
-        </form>
-        <LoginOptions
-          email={email}
-          onError={(message) => {
-            setView({ error: message, pending: false });
-          }}
-        />
-      </section>
+        </section>
+      </div>
     </main>
   );
 }

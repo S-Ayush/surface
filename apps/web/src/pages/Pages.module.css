@@ -21,6 +21,16 @@
   color: var(--text-primary);
 }
 
+/* The lockup above the screen, in one column as wide as the card. */
+.publicColumn {
+  display: flex;
+  width: 100%;
+  max-width: var(--dialog-sm);
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-24);
+}
+
 /* A form on a public page (login): one card, centred by .public. */
 .card {
   display: flex;
