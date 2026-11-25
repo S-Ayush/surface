@@ -91,6 +91,7 @@
   --command-menu-width: 720px;
   --command-menu-top: 87px;
   --menu-min-width: 200px;
+  --menu-item-height: 30px;
   --popover-max-width: 360px;
   --toast-width: 360px;
   --picker-width: 280px;

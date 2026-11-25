@@ -21,13 +21,13 @@
   min-width: var(--kbd-height);
   height: var(--kbd-height);
   padding: 0 var(--space-4);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--radius-xs);
+  border: var(--hairline) solid var(--border-hairline);
+  border-radius: var(--radius-kbd);
   background: var(--bg-panel);
   color: var(--text-secondary);
   font-family: var(--font-sans);
   font-size: var(--text-xs-size);
-  font-weight: var(--text-xs-weight);
+  font-weight: var(--weight-regular);
   line-height: 1;
 }
 

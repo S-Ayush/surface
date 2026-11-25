@@ -110,6 +110,7 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'command-menu-width': px(720),
   'command-menu-top': px(87),
   'menu-min-width': px(200),
+  'menu-item-height': px(30),
   'popover-max-width': px(360),
   'toast-width': px(360),
   // Property picker and issue rows (SPEC-012 §3.3, §3.5).

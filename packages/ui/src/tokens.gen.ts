@@ -137,6 +137,7 @@ export const token = {
   commandMenuWidth: 'var(--command-menu-width)',
   commandMenuTop: 'var(--command-menu-top)',
   menuMinWidth: 'var(--menu-min-width)',
+  menuItemHeight: 'var(--menu-item-height)',
   popoverMaxWidth: 'var(--popover-max-width)',
   toastWidth: 'var(--toast-width)',
   pickerWidth: 'var(--picker-width)',

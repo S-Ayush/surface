@@ -4,14 +4,21 @@
   align-items: center;
   gap: var(--space-8);
   max-width: var(--tooltip-max-width);
+  box-sizing: border-box;
+  min-height: var(--control-md);
   padding: var(--space-4) var(--space-8);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-e1);
   color: var(--text-primary);
   font-size: var(--text-sm-size);
   line-height: var(--text-sm-line);
   animation: enter var(--dur-fast) var(--ease-out);
+}
+
+/* Radix keeps the tooltip mounted until the exit ends. */
+.content[data-state='closed'] {
+  animation: exit var(--dur-exit) var(--ease-in) forwards;
 }
 
 .kbd kbd {
@@ -22,5 +29,12 @@
   from {
     opacity: 0;
     transform: translateY(var(--motion-shift));
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: 0;
+    transform: scale(var(--motion-scale));
   }
 }

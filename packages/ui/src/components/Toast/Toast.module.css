@@ -28,11 +28,16 @@
   align-items: center;
   gap: var(--space-8);
   padding: var(--space-8) var(--space-8) var(--space-8) var(--space-12);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-e3);
   color: var(--text-primary);
   animation: enter var(--dur-base) var(--ease-out);
+}
+
+/* ToastRegion keeps a dismissed toast mounted (closed) until this ends. */
+.toast[data-state='closed'] {
+  animation: exit var(--dur-exit) var(--ease-in) forwards;
 }
 
 .toast[data-swipe='move'] {
@@ -71,6 +76,13 @@
 
 @keyframes enter {
   from {
+    opacity: 0;
+    transform: translateY(var(--motion-shift));
+  }
+}
+
+@keyframes exit {
+  to {
     opacity: 0;
     transform: translateY(var(--motion-shift));
   }

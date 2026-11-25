@@ -145,8 +145,9 @@ function DiscardConfirm({
   onKeep: () => void;
   onDiscard: () => void;
 }) {
-  const layer = useModalLayer(open);
   const discarding = useRef(false);
+  // On discard the dialog underneath closes too and returns focus to its own trigger.
+  const layer = useModalLayer(open, () => !discarding.current);
   return (
     <RadixAlertDialog.Root
       open={open}

@@ -7,7 +7,7 @@
   );
   overflow-y: auto;
   padding: var(--space-4);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-e1);
   color: var(--text-primary);
@@ -15,19 +15,44 @@
   line-height: var(--text-base-line);
 }
 
-/* Only while open: a closing overlay has no animation, so Radix unmounts it at once. */
+/* Enter follows the side the overlay opens to (Radix data-side). Radix keeps the content mounted
+   until the exit ends, and focus has already gone back to the trigger (overlays/layer.tsx). */
 .content[data-state='open'] {
-  animation: enter var(--dur-fast) var(--ease-out);
+  animation: enter-from-top var(--dur-fast) var(--ease-out);
+}
+
+.content[data-state='open'][data-side='top'] {
+  animation-name: enter-from-bottom;
+}
+
+.content[data-state='open'][data-side='right'] {
+  animation-name: enter-from-left;
+}
+
+.content[data-state='open'][data-side='left'] {
+  animation-name: enter-from-right;
+}
+
+.content[data-state='closed'] {
+  animation: exit var(--dur-exit) var(--ease-in) forwards;
+}
+
+/* Submenus float over their parent: e2 (design-system §2.5). */
+.content[data-side='right'],
+.content[data-side='left'] {
+  box-shadow: var(--shadow-e2);
 }
 
 .item {
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  height: var(--control-md);
+  height: var(--menu-item-height);
   padding: 0 var(--space-8);
   border-radius: var(--radius-sm);
+  font-weight: var(--weight-regular);
   outline: none;
+  transition: background var(--dur-highlight-out) var(--ease-out);
   cursor: default;
   user-select: none;
 }
@@ -36,6 +61,7 @@
 .item[data-highlighted],
 .item[data-state='open'] {
   background: var(--bg-elevated-hover);
+  transition-duration: var(--dur-highlight-in);
 }
 
 .item[data-highlighted]:focus-visible {
@@ -96,14 +122,43 @@
 }
 
 .separator {
-  height: var(--border-width);
+  height: var(--hairline);
   margin: var(--space-4) calc(-1 * var(--space-4));
-  background: var(--border-strong);
+  background: var(--border-hairline);
 }
 
-@keyframes enter {
+/* Movement comes from --motion-shift, which reduced motion sets to 0 (design-system §2.6). */
+@keyframes enter-from-top {
   from {
     opacity: 0;
     transform: translateY(calc(-1 * var(--motion-shift)));
+  }
+}
+
+@keyframes enter-from-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-shift));
+  }
+}
+
+@keyframes enter-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(calc(-1 * var(--motion-shift)));
+  }
+}
+
+@keyframes enter-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(var(--motion-shift));
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: 0;
+    transform: scale(var(--motion-scale));
   }
 }

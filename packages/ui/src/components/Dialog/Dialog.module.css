@@ -5,9 +5,14 @@
   background: var(--backdrop);
 }
 
-/* Only while open: a closing dialog has no animation, so Radix unmounts it at once. */
+/* Radix keeps the content mounted until the exit animation ends (PLAN-016 S2); focus has already
+   gone back to the trigger by then (overlays/layer.tsx). */
 .backdrop[data-state='open'] {
   animation: fade var(--dur-base) var(--ease-out);
+}
+
+.backdrop[data-state='closed'] {
+  animation: fade-out var(--dur-exit) var(--ease-in) forwards;
 }
 
 /* Top-aligned rather than centred, so a dialog does not jump while its content grows. */
@@ -29,6 +34,10 @@
 
 .content[data-state='open'] {
   animation: enter var(--dur-base) var(--ease-out);
+}
+
+.content[data-state='closed'] {
+  animation: exit var(--dur-exit) var(--ease-in) forwards;
 }
 
 .content:focus-visible {
@@ -94,6 +103,20 @@
 @keyframes fade {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Exits are shorter than enters and keep the end state, so nothing flashes back before unmount. */
+@keyframes exit {
+  to {
+    opacity: 0;
+    transform: translate(-50%, var(--motion-shift)) scale(var(--motion-scale));
   }
 }
 

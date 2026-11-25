@@ -4,15 +4,32 @@
   max-height: var(--radix-popover-content-available-height);
   overflow: auto;
   padding: var(--space-12);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-e1);
   color: var(--text-primary);
 }
 
-/* Only while open: a closing overlay has no animation, so Radix unmounts it at once. */
+/* Enter follows the side the overlay opens to (Radix data-side). Radix keeps the content mounted
+   until the exit ends, and focus has already gone back to the trigger (overlays/layer.tsx). */
 .content[data-state='open'] {
-  animation: enter var(--dur-fast) var(--ease-out);
+  animation: enter-from-top var(--dur-fast) var(--ease-out);
+}
+
+.content[data-state='open'][data-side='top'] {
+  animation-name: enter-from-bottom;
+}
+
+.content[data-state='open'][data-side='right'] {
+  animation-name: enter-from-left;
+}
+
+.content[data-state='open'][data-side='left'] {
+  animation-name: enter-from-right;
+}
+
+.content[data-state='closed'] {
+  animation: exit var(--dur-exit) var(--ease-in) forwards;
 }
 
 .content:focus-visible {
@@ -21,9 +38,37 @@
 }
 
 /* Movement comes from --motion-shift, which reduced motion sets to 0 (design-system §2.6). */
-@keyframes enter {
+@keyframes enter-from-top {
   from {
     opacity: 0;
     transform: translateY(calc(-1 * var(--motion-shift)));
+  }
+}
+
+@keyframes enter-from-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-shift));
+  }
+}
+
+@keyframes enter-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(calc(-1 * var(--motion-shift)));
+  }
+}
+
+@keyframes enter-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(var(--motion-shift));
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: 0;
+    transform: scale(var(--motion-scale));
   }
 }

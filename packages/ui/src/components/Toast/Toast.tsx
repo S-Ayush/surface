@@ -1,6 +1,6 @@
 import { CircleCheck, CircleExclamationPoint, X } from 'lucide-react';
 import { Toast as RadixToast } from 'radix-ui';
-import { useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { cx } from '../../internal/cx.js';
 import {
   overlayManager,
@@ -34,7 +34,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
  * One toast (design-system §5.1). Announced politely (`type="background"` is aria-live polite);
  * the timer pauses while the pointer or focus is on it.
  */
-export function ToastView({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
+export function ToastView({
+  toast,
+  onDismiss,
+  open = true,
+  onExited,
+}: {
+  toast: Toast;
+  onDismiss: () => void;
+  /** false while the toast plays its exit (Radix keeps it mounted until the animation ends). */
+  open?: boolean;
+  onExited?: () => void;
+}) {
   const ref = useRef<HTMLLIElement>(null);
   const ignoreClose = useRef(false);
   return (
@@ -53,11 +64,14 @@ export function ToastView({ toast, onDismiss }: { toast: Toast; onDismiss: () =>
       }}
       type="background"
       duration={toast.duration}
-      // Always open while the manager lists it; closing is the manager's call.
-      open
-      onOpenChange={(open) => {
-        if (open || ignoreClose.current) return;
+      // Open while the manager lists it; closing is the manager's call.
+      open={open}
+      onOpenChange={(next) => {
+        if (next || ignoreClose.current) return;
         onDismiss();
+      }}
+      onAnimationEnd={() => {
+        if (!open) onExited?.();
       }}
       className={styles.toast}
     >
@@ -81,6 +95,38 @@ export function ToastView({ toast, onDismiss }: { toast: Toast; onDismiss: () =>
   );
 }
 
+type Shown = { toast: Toast; open: boolean };
+
+/** How long a closing toast may stay mounted if its animation never reports an end. */
+const EXIT_FALLBACK_MS = 400;
+
+/**
+ * Keeps a toast the manager dropped mounted, closed, so it can play its exit (PLAN-016 S2). A
+ * replaced toast (same id, new revision) swaps in place instead of fading beside its successor.
+ */
+function useShownToasts(visible: readonly Toast[]) {
+  const [shown, setShown] = useState<readonly Shown[]>(() =>
+    visible.map((toast) => ({ toast, open: true })),
+  );
+  const [seen, setSeen] = useState(visible);
+  if (seen !== visible) {
+    setSeen(visible);
+    const kept = shown
+      .filter((entry) => entry.open || !visible.some((t) => t.id === entry.toast.id))
+      .map((entry) => {
+        const current = visible.find((t) => t.id === entry.toast.id);
+        return current === undefined ? { ...entry, open: false } : { toast: current, open: true };
+      });
+    const added = visible
+      .filter((t) => !kept.some((entry) => entry.toast.id === t.id))
+      .map((toast) => ({ toast, open: true }));
+    setShown([...kept, ...added]);
+  }
+  const exited = (toast: Toast) =>
+    setShown((list) => list.filter((entry) => entry.open || entry.toast !== toast));
+  return { shown, exited };
+}
+
 /**
  * The manager's visible toasts (at most three; the rest wait). `F8` moves focus to the region
  * (Radix default), which is how keyboard users reach a toast's action.
@@ -91,16 +137,42 @@ export function ToastRegion({ className }: { className?: string }) {
     overlayManager.getSnapshot,
     overlayManager.getSnapshot,
   );
+  const { shown, exited } = useShownToasts(visibleToasts);
   return (
     <>
-      {visibleToasts.map((toast) => (
-        <ToastView
+      {shown.map(({ toast, open }) => (
+        <ClosingGuard
           key={`${toast.id}:${toast.revision}`}
-          toast={toast}
-          onDismiss={() => overlayManager.dismissToast(toast.id)}
-        />
+          open={open}
+          onExited={() => exited(toast)}
+        >
+          <ToastView
+            toast={toast}
+            open={open}
+            onDismiss={() => overlayManager.dismissToast(toast.id)}
+            onExited={() => exited(toast)}
+          />
+        </ClosingGuard>
       ))}
       <RadixToast.Viewport className={cx(styles.viewport, className)} />
     </>
   );
+}
+
+/** Drops a closed toast even when no animationend arrives (no animation, hidden tab). */
+function ClosingGuard({
+  open,
+  onExited,
+  children,
+}: {
+  open: boolean;
+  onExited: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (open) return;
+    const timer = setTimeout(onExited, EXIT_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [open, onExited]);
+  return children;
 }
