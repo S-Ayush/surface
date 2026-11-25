@@ -113,7 +113,7 @@ describe('the properties panel (§7.4)', () => {
 
   it('keeps every value a term and a definition, so it reads as text and not colour alone', () => {
     const html = renderToString(<PropertiesPanel view={view} now={now} />);
-    expect(html.match(/<dt>/g)?.length).toBe(html.match(/<dd>/g)?.length);
+    expect(html.match(/<dt[ >]/g)?.length).toBe(html.match(/<dd[ >]/g)?.length);
   });
 });
 
