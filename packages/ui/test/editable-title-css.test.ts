@@ -15,6 +15,7 @@ describe('editable title css', () => {
     expect(padding).toBeDefined();
     // The 1px transparent border also sits between the box edge and the glyphs.
     expect(text).toContain(`margin-inline: calc(-1 * (var(${padding}) + var(--border-width)))`);
-    expect(text).toMatch(/width:\s*auto/);
+    expect(text).toContain(`width: calc(100% + 2 * (var(${padding}) + var(--border-width)))`);
+    expect(text).not.toMatch(/width:\s*auto/);
   });
 });
