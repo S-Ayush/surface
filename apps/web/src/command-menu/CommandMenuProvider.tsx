@@ -148,8 +148,11 @@ function MenuHost({
     const taken = pickerRequests.release();
     if (taken === undefined) return;
     if (open?.request !== undefined && !open.released) open.request.onClosed?.();
+    // A hand-over from an external store (the request), not state derived from props.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setAdoptions((count) => count + 1);
     setOpen({ request: taken, released: false });
+    /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps -- adopts once per request
   }, [request]);
 

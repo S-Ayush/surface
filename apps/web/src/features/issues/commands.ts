@@ -15,10 +15,7 @@ import type { PropertyCommand, PropertyTarget } from '../../command-menu/sources
 import { readComposerWorld } from './composer-world.js';
 import {
   assignToMeInput,
-  labelsInput,
-  pickerSpec,
   readIssueFacts,
-  singleInput,
   type IssueFacts,
   type PickerKind,
 } from './issue-pickers.js';
