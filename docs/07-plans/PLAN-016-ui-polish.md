@@ -90,7 +90,7 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Dependencies:** S1.
 - **Verify:** jsdom tests that each overlay sets the closing `data-state` and that focus returns to the trigger synchronously; `overlay-manager.test.ts` stays green; a unit test that every `@keyframes` in `packages/ui` moves only through `--motion-*` tokens; the existing Storybook a11y tests for all overlay stories in both themes.
 
-### S3: Shell: inset panel, sidebar rhythm, header · M · *(needs S1)*
+### S3: Shell: inset panel, sidebar rhythm, header · M · *(needs S1)* · ✅ Done 2026-11-25
 - **Changes:**
   - `.main` becomes the content card (`--bg-panel`, `--radius-lg`, hairline, `--shadow-e0`, margin `8px 8px 8px 0`). The sidebar sits on the app layer with no border and no background of its own. Narrow and drawer modes (< 1024 px) keep full-bleed.
   - Sidebar items 28 px at `--weight-ui` with the highlight motion, 6 px icon gap, `text-label` section labels, the team name at `--text-primary`. The sidebar search stays a ⌘K-hinted row, as a 28 px ghost row with a hairline.
@@ -98,6 +98,16 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 - **Files:** `apps/web/src/shell/{Shell.module.css,Sidebar.tsx,PageHeader.tsx}`, `packages/ui/tokens/component.ts`.
 - **Dependencies:** S1.
 - **Verify:** existing shell tests for `aria-current`, drawer mode and resize stay green; a unit test that the narrow and drawer breakpoints drop the card's margin and radius; axe on the shell story; by-hand headless capture at 1440 and 390 px in both themes.
+
+> **As built (2026-11-25, `p016-s3-shell`):**
+> - **Card:** `.main` is the card (`--bg-panel`, `--radius-lg`, `--hairline` in `--border-hairline`, `--shadow-e0`, margin `8 8 8 0`). It scrolls itself (`height: calc(100dvh - 2 * inset)`, `overflow-y: auto`), so the sticky header stays inside the rounded corners. New token `--shell-inset` (8); `.shell[data-mode='drawer']` sets it to 0 and drops margin, radius, border and shadow (drawer mode is below 1024 px, narrow included). The drawer sidebar gets a hairline on its right edge, since it has no neighbour card.
+> - **Sidebar:** on `--bg-sidebar` (app) with no border; items `--nav-item-height` 28, 6 px icon gap, `--weight-ui`, 12 px gutter (6 sidebar + 6 item), highlight motion (in 0, out 150 ms), current item `--bg-active` with primary text, section labels in the text-label style, search as a transparent row with a hairline. The resize handle is unchanged and still shows on hover and focus.
+> - **Header:** `--header-height` 44 (regenerated `tokens.css`), hairline below, `--bg-panel`. The Issues list count now reads "26 issues" (`IssueListPage`). The sidebar-toggle button in the header is round.
+> - **Touched outside the shell (minimal):** `IssueList.module.css` `.area` height now subtracts `2 * --shell-inset`, or the list would overflow the card by 16 px and give it a stray scrollbar.
+> - **Notes for S4:** rows and group headers still paint their own backgrounds; make them transparent on the card. Check `IssueRow` and the other pages' sizing against the card (anything using `100dvh` should subtract `--shell-inset`). Only the Issues list shows a count; other headers have none.
+> - **Notes for S7:** settings pages sit inside the card; check their `min-height`/`100dvh` assumptions.
+> - **Tests:** `web/test/shell-css.test.ts` (CSS-source: card, full-bleed drawer, sidebar no border, nav items use `--nav-item-height` and `--weight-ui`, current item fill, label style, header 44 + hairline). Existing shell tests unchanged and green.
+> - **Not done:** no by-hand headless capture (no dev server was run from this worktree); no axe or visual baselines re-run. The sidebar-search `⌘K` row and the narrow (< 768) mode are checked only by CSS source.
 
 ### S4: Issue list: inset rows, states, group headers · M · *(needs S1, S3)*
 - **Changes:**

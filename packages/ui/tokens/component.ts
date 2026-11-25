@@ -134,7 +134,9 @@ export const componentTokens: Readonly<Record<string, string>> = {
   'sidebar-width': px(240),
   'sidebar-min-width': px(200),
   'sidebar-max-width': px(360),
-  'header-height': px(48),
+  'header-height': px(44),
+  // The content card's margin (§3); the shell sets it to 0 when full-bleed.
+  'shell-inset': px(8),
   'peek-width': px(480),
   'properties-width': px(280),
   'content-max-width': px(760),

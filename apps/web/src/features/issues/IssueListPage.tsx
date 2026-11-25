@@ -54,7 +54,7 @@ export function IssueListPage({ teamKey }: { teamKey: string }) {
     <PageHeader
       crumbs={[team.name, 'Issues']}
       title={`${team.name} issues`}
-      actions={<span className={styles.count}>{count}</span>}
+      actions={<span className={styles.count}>{count === 1 ? '1 issue' : `${count} issues`}</span>}
     />
   );
 

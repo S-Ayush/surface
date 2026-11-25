@@ -110,7 +110,8 @@
   --sidebar-width: 240px;
   --sidebar-min-width: 200px;
   --sidebar-max-width: 360px;
-  --header-height: 48px;
+  --header-height: 44px;
+  --shell-inset: 8px;
   --peek-width: 480px;
   --properties-width: 280px;
   --content-max-width: 760px;

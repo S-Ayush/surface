@@ -1,10 +1,11 @@
 /* The issue lists (SPEC-012 §3.3). Tokens only. */
 
-/* The shell scrolls the document; the list scrolls itself, below the sticky page header. */
+/* The shell's card scrolls; the list scrolls itself, below the sticky page header. */
 .area {
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - var(--header-height));
+  /* Inside the shell's card: minus its margin top and bottom (0 when full-bleed). */
+  height: calc(100dvh - var(--header-height) - 2 * var(--shell-inset, var(--space-0)));
   min-height: 0;
 }
 
@@ -35,7 +36,7 @@
 }
 
 .count {
-  margin-left: var(--space-8);
+  white-space: nowrap;
   color: var(--text-tertiary);
   font-size: var(--text-sm-size);
 }

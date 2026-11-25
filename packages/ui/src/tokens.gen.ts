@@ -157,6 +157,7 @@ export const token = {
   sidebarMinWidth: 'var(--sidebar-min-width)',
   sidebarMaxWidth: 'var(--sidebar-max-width)',
   headerHeight: 'var(--header-height)',
+  shellInset: 'var(--shell-inset)',
   peekWidth: 'var(--peek-width)',
   propertiesWidth: 'var(--properties-width)',
   contentMaxWidth: 'var(--content-max-width)',
