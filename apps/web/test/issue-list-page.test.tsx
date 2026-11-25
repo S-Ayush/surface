@@ -132,8 +132,8 @@ describe('team issue list', () => {
         },
       });
     });
-    const button = [...mounted.host.querySelectorAll('button')].find(
-      (b) => b.textContent.startsWith('Create issue'),
+    const button = [...mounted.host.querySelectorAll('button')].find((b) =>
+      b.textContent.startsWith('Create issue'),
     );
     expect(button).toBeDefined();
     await inAct(() => button?.click());

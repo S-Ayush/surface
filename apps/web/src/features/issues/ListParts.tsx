@@ -27,9 +27,7 @@ export function ListSkeleton() {
         <p role="status">Loading…</p>
       </VisuallyHidden>
       {show &&
-        [0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-          <Skeleton key={i} shape="row" aria-hidden="true" />
-        ))}
+        [0, 1, 2, 3, 4, 5, 6, 7].map((i) => <Skeleton key={i} shape="row" aria-hidden="true" />)}
     </div>
   );
 }
