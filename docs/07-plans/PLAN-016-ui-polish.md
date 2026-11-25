@@ -56,7 +56,7 @@ Same-day PR ahead of S1, so users stop seeing the bugs. Audit rows 6, 18 (the ri
 ### S1: Foundation tokens · M
 - **Changes:**
   - New tokens: `--hairline` (0.5 px under `min-resolution: 2dppx`, else 1 px), `--border-hairline`, `--bg-group`, `--weight-regular: 450`, `--weight-ui: 500`, `--tracking-tight`, `--tracking-id`, the `text-label` style, `--radius-group`, `--radius-kbd`, `--shadow-e0` to `--shadow-e3` as stacked layers, `--dur-highlight-in`, `--dur-highlight-out`, `--dur-exit`, `--nav-item-height`, `--header-height`, `--settings-column`, `--settings-row-min-height`, `--command-menu-top`.
-  - New surface values (`--bg-app`, `--bg-sidebar` = app, `--bg-panel`, `--bg-elevated`, `--bg-hover`, `--bg-active`) and `text-md` at 15/24, per design-system §2.1 and §2.4. Row heights 44/36 and the command-menu width (about 720) as component tokens.
+  - New surface values (`--bg-app`, `--bg-sidebar` = app, `--bg-panel`, `--bg-elevated`, `--bg-hover`, `--bg-active`) and `text-md` at 15/24, per design-system §2.1 and §2.4. The command-menu width (about 720) as a component token. The row heights stay 36/32 here: S4 changes them to 44/36 together with the inset, borderless rows, so the list never shows tall rows with separators in between.
   - Global fixes: `button, input, select, textarea { font: inherit; letter-spacing: inherit }` (audit row 38) in `base.css`.
   - The `text-md` change reaches the editor and comments in S6, not here, so S1 leaves screens as they are except for the new surface colours.
 - **Files:** `packages/ui/tokens/{primitives,semantic,component,contrast}.ts`, `packages/ui/src/styles/{tokens.css,base.css}` (generated and hand-written), `packages/ui/src/tokens.gen.ts`, `docs/05-design/design-system.md` §2.
