@@ -441,7 +441,7 @@ None yet. Accepted answers move here with a date.
 
 | Doc | Section | Exact change | Superseding ADR? |
 |---|---|---|---|
-| ADR (new) | — | **"Shared manual order of issues"**: one global `sortOrder` moved by `issue.update {position}` with neighbour refs; bounds computed over visible issues only; the 128-character limit and neighbourhood re-spacing; no history or `updatedAt` for a position-only change (Q1, Q10). Add it to `adr/README.md`. | New ADR (doesn't supersede one) |
+| ADR-0026 (new) | — | **"Shared manual order of issues"**: one global `sortOrder` moved by `issue.update {position}` with neighbour refs; bounds computed over visible issues only; the 128-character limit and neighbourhood re-spacing; no history or `updatedAt` for a position-only change (Q1, Q10). Add it to `adr/README.md`. | New ADR (doesn't supersede one) |
 | SPEC-011 | §6.1 `issue.update` | Add `position?: {after?: IssueRef \| null, before?: IssueRef \| null}` and §4.3's rules; `issue.list` `orderBy` gains `estimate`. Dated "Changed (SPEC-020)". | No (the ADR above) |
 | SPEC-011 | §4.5 Sort key, §6.2 | A person can now move an issue (SPEC-020 §4.3); keys are at most 128 characters; the optimistic `position` uses `jitterFromId`. Q7's "until M2 adds manual ordering controls" is fulfilled. | No |
 | SPEC-011 | §4.8 lock table | Add the re-spacing writer: the moved issue and its run, `FOR UPDATE` in ascending id (retry with the full set). | No |

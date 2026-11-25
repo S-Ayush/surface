@@ -153,7 +153,7 @@ Pure, unit and property tested: `toggle(id)`, `extendTo(id, viewOrder)`, `rangeT
 
 ### 4.2 Bulk edit semantics
 
-- **One operation per chunk** of at most 250 issues (`issue.bulkUpdate`, `issue.bulkDelete`, `issue.bulkRestore`), not one `issue.update` per issue (Q13, ADR-0026). Reasons: the server's per-actor mutation limit is 120 per minute (SPEC-003 §9, `rate-limit.ts`), so 250 single updates would wait two minutes; one queue entry and one optimistic layer per chunk instead of 250; the operation is the `issue.bulkUpdate` that domain-model §7 and mcp-design §5 rule 2 already plan for MCP.
+- **One operation per chunk** of at most 250 issues (`issue.bulkUpdate`, `issue.bulkDelete`, `issue.bulkRestore`), not one `issue.update` per issue (Q13, ADR-0028). Reasons: the server's per-actor mutation limit is 120 per minute (SPEC-003 §9, `rate-limit.ts`), so 250 single updates would wait two minutes; one queue entry and one optimistic layer per chunk instead of 250; the operation is the `issue.bulkUpdate` that domain-model §7 and mcp-design §5 rule 2 already plan for MCP.
 - **Per-issue outcomes.** The server checks each issue under its own row lock and applies it only if it passes (visible, live, the change valid for its team: status, labels, estimate scale, a private team's assignee). An issue that fails is **skipped**, with the code and message `issue.update` would have given; the others commit together. A database error fails the whole operation and writes nothing.
 - **Invisible is unknown.** A ref that doesn't resolve, or resolves to an issue the actor can't see, is skipped as `NOT_FOUND` with the message SPEC-012 §3.4 item 7 uses ("ENG-99 doesn't exist, or you don't have access to it."), byte-identical for both (rule 4).
 - **Chunks** are dispatched in view order, consecutive seqs, so the queue sends them in order; each is its own transaction. The client sums their outcomes into one toast and one undo entry.
@@ -221,7 +221,7 @@ The replica holds no archived or deleted issue, and not every issue of a server-
 
 Each has a summary, description, ≥ 2 keywords and examples that run against the seed fixture (SPEC-003 §11). Names follow domain-model §7 and mcp-design §5 rule 2; the field is `issues` (reference types), not mcp-design's illustrative `ids` (§12).
 
-### 6.2 Executor and protocol changes (ADR-0026)
+### 6.2 Executor and protocol changes (ADR-0028)
 
 1. **Lenient reference arrays.** A reference array may be declared `eachOrSkip` (SPEC-003 §4): an element that doesn't resolve, or isn't visible, is passed to the handler as unresolved instead of failing the call, and the handler reports it in `skipped` with the unknown-ref `NOT_FOUND` message. Only the three bulk operations may use it (`LENIENT_REF_OPERATIONS`, pinned by a lint test, like `OPAQUE_ID_OPERATIONS`).
 2. **Per-issue checks in one transaction.** The handler composes `issue.update`'s, `issue.delete`'s and `issue.restore`'s internal functions (SPEC-003 Q2), checking each issue under its lock before writing it, so a refused issue writes nothing and the rest commit.
@@ -367,7 +367,7 @@ Each has a proposed default; the user can accept them in bulk.
 | Q10 | Does attachment removal join the undo stack? | Yes: `Mod+Z` re-creates it as SPEC-014's Undo toast does; the toast's **Undo** button stays. |
 | Q11 | Redo of a delete | Deletes again without the dialog (the user confirmed it once). |
 | Q12 | Is peek editable (pills open pickers, description editable)? | Read-only panel in M2; property keys act on the peeked issue; the description is edited on the issue page. |
-| Q13 | Bulk edit as one `issue.bulkUpdate` per chunk with per-issue skips (needs lenient ref arrays and sync protocol v0.9), or one `issue.update` per issue (no protocol change, but needs the session mutation rate limit raised or lifted, and 250 queue entries per chunk)? | `issue.bulkUpdate` with per-issue skips, recorded in ADR-0026. |
+| Q13 | Bulk edit as one `issue.bulkUpdate` per chunk with per-issue skips (needs lenient ref arrays and sync protocol v0.9), or one `issue.update` per issue (no protocol change, but needs the session mutation rate limit raised or lifted, and 250 queue entries per chunk)? | `issue.bulkUpdate` with per-issue skips, recorded in ADR-0028. |
 | Q14 | Chunk size per bulk operation | 250 issues. |
 | Q15 | Undo stack scope | Per tab, memory only, 100 entries, cleared on reload, sign-out and resync (sync-protocol §5.5 as accepted). Not shared across tabs or devices. |
 | Q16 | Are bulk delete and restore new operations (`issue.bulkDelete`, `issue.bulkRestore`) rather than N single calls? | Yes, for the same reasons as Q13. |
@@ -388,13 +388,13 @@ Behaviour copied from Linear's public docs under the standing rule "copy Linear"
 
 | Doc | Section | Exact change | Superseding ADR? |
 |---|---|---|---|
-| ADR | new | **ADR-0026 Bulk issue operations with per-issue outcomes:** `issue.bulkUpdate`, `issue.bulkDelete`, `issue.bulkRestore` as one operation per chunk of ≤ 250, per-issue checks in one transaction, lenient reference arrays limited to `LENIENT_REF_OPERATIONS`, `skipped` on `ok` mutation results (sync protocol v0.9); the rejected option (one `issue.update` per issue) and the rate-limit reason. | New ADR |
-| ADR | new | **ADR-0027 Undo and redo as inverse operations:** inverses are registry operations built at dispatch from the pre-dispatch store (`inverse(input, read) → calls[]`), a per-tab memory stack of 100, the "changed since" client check, barriers for missing pre-state, what is and isn't undoable. Elaborates sync-protocol §5.5 without changing it. | New ADR (no supersession) |
-| SPEC-003 | §3.1 `inverse` | `inverse(input, read)` returns `OperationCall[] \| null` (was one call); `read` is the pre-dispatch store view; implemented in M2 for the operations of this spec's §4.3. Add `UNDOABLE_OPERATIONS` and a lint rule: each listed mutation declares `inverse`. | No (ADR-0027) |
-| SPEC-003 | §4 | Add lenient reference arrays (`eachOrSkip`) for `LENIENT_REF_OPERATIONS` only (§6.2), with the unknown-ref `NOT_FOUND` message per skipped element. | No (ADR-0026) |
+| ADR | new | **ADR-0028 Bulk issue operations with per-issue outcomes:** `issue.bulkUpdate`, `issue.bulkDelete`, `issue.bulkRestore` as one operation per chunk of ≤ 250, per-issue checks in one transaction, lenient reference arrays limited to `LENIENT_REF_OPERATIONS`, `skipped` on `ok` mutation results (sync protocol v0.9); the rejected option (one `issue.update` per issue) and the rate-limit reason. | New ADR |
+| ADR | new | **ADR-0029 Undo and redo as inverse operations:** inverses are registry operations built at dispatch from the pre-dispatch store (`inverse(input, read) → calls[]`), a per-tab memory stack of 100, the "changed since" client check, barriers for missing pre-state, what is and isn't undoable. Elaborates sync-protocol §5.5 without changing it. | New ADR (no supersession) |
+| SPEC-003 | §3.1 `inverse` | `inverse(input, read)` returns `OperationCall[] \| null` (was one call); `read` is the pre-dispatch store view; implemented in M2 for the operations of this spec's §4.3. Add `UNDOABLE_OPERATIONS` and a lint rule: each listed mutation declares `inverse`. | No (ADR-0029) |
+| SPEC-003 | §4 | Add lenient reference arrays (`eachOrSkip`) for `LENIENT_REF_OPERATIONS` only (§6.2), with the unknown-ref `NOT_FOUND` message per skipped element. | No (ADR-0028) |
 | SPEC-003 | §11 | New rule 9: lenient reference arrays only in `LENIENT_REF_OPERATIONS`; every mutation in `UNDOABLE_OPERATIONS` declares `inverse`. | No |
 | SPEC-003 | §2 Out of scope | Remove "`inverse()` for undo (… implemented in M2)". | No |
-| sync-protocol.md | §4.4, §11 | v0.9, additive: an `ok` result may carry `skipped: [{index, code, message, path?}]`, stored for replay. | No (ADR-0026) |
+| sync-protocol.md | §4.4, §11 | v0.9, additive: an `ok` result may carry `skipped: [{index, code, message, path?}]`, stored for replay. | No (ADR-0028) |
 | sync-protocol.md | §5.5 | Add: "one user action is one entry, whatever number of mutations it sent; the inverse is computed before the dispatch's optimistic; fields changed since are skipped (SPEC-022 §3.6)". | No |
 | sync-protocol.md | §10 | Test obligation 9: bulk operations and undo/redo interleaved with other clients converge (SPEC-022 AC-9). | No |
 | SPEC-015 | §4.3 table | Rows: `issue.bulkUpdate` as `issue.update`, per issue; `issue.bulkDelete` as `issue.delete`, per issue; `issue.bulkRestore` as `issue.restore`, per issue. | No |
