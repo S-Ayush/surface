@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { useState, type KeyboardEvent } from 'react';
 import { LABEL_ROW_ATTRIBUTE } from './rowKeys.js';
-import { dayText, UNKNOWN_USAGE, type LabelItem, type UsageColumns } from './model.js';
+import { dayText, fullDayText, UNKNOWN_USAGE, type LabelItem, type UsageColumns } from './model.js';
 import styles from './labels.module.css';
 
 export type LabelRowProps = {
@@ -179,6 +179,7 @@ export function LabelRow({
       {canEdit ? (
         <input
           className={styles.description}
+          data-column="description"
           aria-label={`Description of ${label.name}`}
           placeholder="Add description…"
           value={draft ?? saved}
@@ -188,7 +189,13 @@ export function LabelRow({
           onKeyDown={onKeyDown}
         />
       ) : (
-        <span className={styles.descriptionText}>{saved}</span>
+        <span
+          className={styles.descriptionText}
+          data-column="description"
+          title={saved || undefined}
+        >
+          {saved}
+        </span>
       )}
       <span className={styles.column} data-column="used-in">
         {usage.usedIn}
@@ -196,10 +203,12 @@ export function LabelRow({
       <span className={styles.column} data-column="issues">
         {usage.issues}
       </span>
-      <span className={styles.column} data-column="last-applied">
+      <span className={styles.column} data-column="last-applied" title={usage.lastAppliedFull}>
         {usage.lastApplied}
       </span>
-      <span className={styles.column}>{dayText(label.createdAt)}</span>
+      <span className={styles.column} data-column="created" title={fullDayText(label.createdAt)}>
+        {dayText(label.createdAt)}
+      </span>
       {canEdit ? (
         <Menu
           align="end"

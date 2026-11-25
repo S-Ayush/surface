@@ -13,6 +13,7 @@ import {
   type ResolvedRefs,
 } from '@surface/domain';
 import { labelCreate, labelDelete, labelMoveToWorkspace, labelUpdate } from '@surface/operations';
+import { formatCreated } from '../issues/list-model.js';
 
 export type LabelItem = {
   readonly id: string;
@@ -246,9 +247,19 @@ export function groupChoices(items: readonly LabelItem[], current?: string | nul
     .sort(byName);
 }
 
-/** The text of a date as the table shows it: the day, or "—". */
-export function dayText(iso: string | null | undefined): string {
-  return iso === null || iso === undefined || iso.length < 10 ? '—' : iso.slice(0, 10);
+const LONG_DAY = new Intl.DateTimeFormat('en-US', { dateStyle: 'long' });
+
+/** The full day ("November 25, 2026", the viewer's zone) of a date, or undefined: the cell's tooltip. */
+export function fullDayText(iso: string | null | undefined): string | undefined {
+  if (iso === null || iso === undefined) return undefined;
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? undefined : LONG_DAY.format(date);
+}
+
+/** The text of a date as the table shows it, like the issue list's: "Nov 25", or "—". */
+export function dayText(iso: string | null | undefined, now: Date = new Date()): string {
+  if (iso === null || iso === undefined || iso.length < 10) return '—';
+  return formatCreated(iso, String(now.getFullYear())) || '—';
 }
 
 /** One label's `label.usage` answer (SPEC-010 §5, D15). */
@@ -263,6 +274,8 @@ export interface UsageColumns {
   readonly usedIn: string;
   readonly issues: string;
   readonly lastApplied: string;
+  /** The full day, for the cell's tooltip. */
+  readonly lastAppliedFull?: string | undefined;
 }
 
 /** Until `label.usage` answers, and offline, every usage column is "—" (§3.2). */
@@ -279,6 +292,7 @@ export function usageColumns(usage: LabelUsage | undefined): UsageColumns {
     usedIn: usage.teams.map((t) => t.key).join(', '),
     issues: String(usage.issues),
     lastApplied: usage.lastAppliedAt === null ? '' : dayText(usage.lastAppliedAt),
+    lastAppliedFull: fullDayText(usage.lastAppliedAt),
   };
 }
 

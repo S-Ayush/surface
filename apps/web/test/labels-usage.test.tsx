@@ -128,7 +128,7 @@ describe('the usage columns (§3.2, AC-26)', () => {
     });
     await mount(app, teamPage, reads);
     expect(asked).toEqual([{ team: 'ENG', scope: 'team' }]);
-    expect(columns('Perf')).toEqual(['ENG, DES', '3', '2026-11-10']);
+    expect(columns('Perf')).toEqual(['ENG, DES', '3', expect.stringMatching(/^Nov 1/)]);
     expect(columns('bug fix')).toEqual(['', '0', '']);
   });
 
@@ -139,7 +139,7 @@ describe('the usage columns (§3.2, AC-26)', () => {
     });
     await mount(app, workspacePage, reads);
     expect(asked).toEqual([{ scope: 'workspace' }]);
-    expect(columns('Bug')).toEqual(['ENG', '7', '2026-11-12']);
+    expect(columns('Bug')).toEqual(['ENG', '7', expect.stringMatching(/^Nov 1/)]);
   });
 
   it('shows "—" in every usage column until label.usage answers', async () => {

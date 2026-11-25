@@ -18,6 +18,9 @@
 }
 
 .list {
+  /* The Name column never shrinks below this; it takes the flexible space first. */
+  --labels-name-min: calc(var(--space-64) * 2);
+
   display: flex;
   flex-direction: column;
   overflow-x: auto;
@@ -36,12 +39,14 @@
 }
 
 .headerName {
-  flex: 1;
+  flex: 1 0 var(--labels-name-min);
+  min-width: var(--labels-name-min);
   padding-inline-start: var(--space-24);
 }
 
 .headerDescription {
   flex: 1;
+  min-width: 0;
 }
 
 .row {
@@ -117,8 +122,8 @@
 }
 
 .name {
-  flex: 1;
-  min-width: 0;
+  flex: 2 0 var(--labels-name-min);
+  min-width: var(--labels-name-min);
   overflow: hidden;
   color: var(--text-primary);
   text-overflow: ellipsis;
@@ -134,6 +139,7 @@
 .description {
   flex: 1;
   min-width: 0;
+  text-overflow: ellipsis;
   padding: var(--space-4);
   color: var(--text-secondary);
   font: inherit;
@@ -154,11 +160,16 @@
 
 .descriptionText {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .column {
   flex: none;
   min-width: var(--space-64);
+  white-space: nowrap;
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
   text-align: end;
@@ -246,4 +257,40 @@
   margin: 0;
   color: var(--text-secondary);
   font-size: var(--text-sm-size);
+}
+
+/* SPEC-005 AC-16: below 768px a row keeps Name, Issues and the row menu on its first line; the
+   description (editable in place, so it has no other home) wraps to a line of its own, and Used
+   in, Last applied and Created are left out. */
+@media (width < 768px) {
+  .list [data-column='used-in'],
+  .list [data-column='last-applied'],
+  .list [data-column='created'],
+  .header [data-column='description'] {
+    display: none;
+  }
+
+  .list {
+    overflow-x: visible;
+  }
+
+  .row {
+    flex-wrap: wrap;
+  }
+
+  .row .select {
+    order: 1;
+  }
+
+  .row [data-column='description'] {
+    order: 2;
+    flex: 1 0 100%;
+  }
+}
+
+/* Between 768px and a wide window the settings column is cramped: drop Used in first. */
+@media (width < 1100px) {
+  .list [data-column='used-in'] {
+    display: none;
+  }
 }

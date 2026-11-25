@@ -122,11 +122,22 @@ export function LabelTable(props: LabelTableProps) {
         >
           <div className={styles.header} aria-hidden="true">
             <span className={styles.headerName}>Name</span>
-            <span className={styles.headerDescription}>Description</span>
-            <span className={styles.column}>Used in</span>
-            <span className={styles.column}>Issues</span>
-            <span className={styles.column}>Last applied</span>
-            <span className={styles.column}>Created</span>
+            <span className={styles.headerDescription} data-column="description">
+              Description
+            </span>
+            <span className={styles.column} data-column="used-in">
+              Used in
+            </span>
+            <span className={styles.column} data-column="issues">
+              Issues
+            </span>
+            <span className={styles.column} data-column="last-applied">
+              Last applied
+            </span>
+            <span className={styles.column} data-column="created">
+              Created
+            </span>
+            <span className={styles.menuSpace} />
           </div>
           {entries.map(renderEntry)}
         </div>

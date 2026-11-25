@@ -39,7 +39,7 @@ describe('Settings → Team → Labels', () => {
     const html = await render(new FakeApp([TEAM]), teamPage);
     expect(html).toContain('value="Slow things"');
     expect(html).toContain('placeholder="Add description…"');
-    expect(html).toContain('2026-11-13');
+    expect(html).toMatch(/>Nov 1[2-4]<\/span>/);
     expect(html).toContain('>Used in</span>');
     expect(html).toContain('>Last applied</span>');
     expect(html).toContain('>—</span>');
