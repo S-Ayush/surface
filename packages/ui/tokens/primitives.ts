@@ -53,7 +53,7 @@ export const scales: Readonly<Record<Theme, Readonly<Record<string, Scale>>>> = 
     green: { 3: '#E8F6EE', 9: '#2B9255' },
     blue: { 3: '#EAF0FC', 9: '#3569D4' },
     // Layered surfaces (PLAN-016 S1, design-system §2.1): 1 app, 2 panel, 3 elevated, 4 hover,
-    // 5 active, 6 group header band, 7 decorative hairline border.
+    // 5 active, 6 group header band, 7 decorative hairline border, 8 hovered item inside an overlay.
     surface: {
       1: '#F3F4F6',
       2: '#FCFCFD',
@@ -62,6 +62,7 @@ export const scales: Readonly<Record<Theme, Readonly<Record<string, Scale>>>> = 
       5: '#E6E9ED',
       6: '#F7F8F9',
       7: '#DCDFE4',
+      8: '#EEF0F3',
     },
   },
   dark: {
@@ -92,6 +93,7 @@ export const scales: Readonly<Record<Theme, Readonly<Record<string, Scale>>>> = 
       5: '#22272D',
       6: '#16191D',
       7: '#262B31',
+      8: '#272C33',
     },
   },
 };

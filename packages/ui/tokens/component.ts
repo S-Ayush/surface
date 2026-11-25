@@ -185,18 +185,18 @@ export const themedComponentTokens: Readonly<Record<string, Readonly<Record<Them
   },
   'shadow-e1': {
     light:
-      '0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 3px 9px rgb(0 0 0 / 0.04), 0 6px 18px rgb(0 0 0 / 0.02)',
+      '0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04), 0 3px 9px rgb(0 0 0 / 0.04), 0 6px 18px rgb(0 0 0 / 0.02)',
     dark: '0 0 0 var(--hairline) var(--border-default), 0 1px 1px rgb(0 0 0 / 0.12), 0 2px 5px rgb(0 0 0 / 0.12), 0 3px 8px rgb(0 0 0 / 0.12)',
   },
   'shadow-e2': {
     light:
-      '0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08)',
+      '0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08)',
     dark: '0 0 0 var(--hairline) var(--border-default), 0 1px 1px rgb(0 0 0 / 0.12), 0 2px 8px rgb(0 0 0 / 0.12), 0 3px 12px rgb(0 0 0 / 0.12), 0 3px 20px rgb(0 0 0 / 0.12), 0 4px 40px rgb(0 0 0 / 0.1)',
   },
   // Toasts sit at the same depth as modals.
   'shadow-e3': {
     light:
-      '0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08)',
+      '0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08)',
     dark: '0 0 0 var(--hairline) var(--border-default), 0 1px 1px rgb(0 0 0 / 0.12), 0 2px 8px rgb(0 0 0 / 0.12), 0 3px 12px rgb(0 0 0 / 0.12), 0 3px 20px rgb(0 0 0 / 0.12), 0 4px 40px rgb(0 0 0 / 0.1)',
   },
   // Darkens a solid button while pressed.

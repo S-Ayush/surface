@@ -173,6 +173,7 @@
   --surface-5: #e6e9ed;
   --surface-6: #f7f8f9;
   --surface-7: #dcdfe4;
+  --surface-8: #eef0f3;
   --hue-gray: #7c8492;
   --hue-red: #df5656;
   --hue-orange: #d36317;
@@ -190,6 +191,7 @@
   --bg-panel: var(--surface-2);
   --bg-elevated: var(--surface-3);
   --bg-hover: var(--surface-4);
+  --bg-elevated-hover: var(--surface-8);
   --bg-active: var(--surface-5);
   --bg-group: var(--surface-6);
   --bg-selected: var(--teal-3);
@@ -234,13 +236,13 @@
     0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04),
     0 3px 6px -2px rgb(0 0 0 / 0.02);
   --shadow-e1:
-    0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04),
+    0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04),
     0 3px 9px rgb(0 0 0 / 0.04), 0 6px 18px rgb(0 0 0 / 0.02);
   --shadow-e2:
-    0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04),
+    0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04),
     0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08);
   --shadow-e3:
-    0 0 0 var(--hairline) rgb(22 24 29 / 0.1), 0 1px 1px rgb(0 0 0 / 0.04),
+    0 0 0 var(--hairline) var(--border-hairline), 0 1px 1px rgb(0 0 0 / 0.04),
     0 6px 24px rgb(0 0 0 / 0.1), 0 9px 48px rgb(0 0 0 / 0.08);
   --pressed-shade: rgb(0 0 0 / 0.14);
   --backdrop: rgb(22 24 29 / 0.32);
@@ -281,6 +283,7 @@
   --surface-5: #22272d;
   --surface-6: #16191d;
   --surface-7: #262b31;
+  --surface-8: #272c33;
   --hue-gray: #8e95a1;
   --hue-red: #e47272;
   --hue-orange: #e7752a;
@@ -298,6 +301,7 @@
   --bg-panel: var(--surface-2);
   --bg-elevated: var(--surface-3);
   --bg-hover: var(--surface-4);
+  --bg-elevated-hover: var(--surface-8);
   --bg-active: var(--surface-5);
   --bg-group: var(--surface-6);
   --bg-selected: var(--teal-3);
@@ -391,6 +395,7 @@
     --surface-5: #22272d;
     --surface-6: #16191d;
     --surface-7: #262b31;
+    --surface-8: #272c33;
     --hue-gray: #8e95a1;
     --hue-red: #e47272;
     --hue-orange: #e7752a;
@@ -408,6 +413,7 @@
     --bg-panel: var(--surface-2);
     --bg-elevated: var(--surface-3);
     --bg-hover: var(--surface-4);
+    --bg-elevated-hover: var(--surface-8);
     --bg-active: var(--surface-5);
     --bg-group: var(--surface-6);
     --bg-selected: var(--teal-3);

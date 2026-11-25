@@ -230,7 +230,7 @@
 }
 
 .surface-editor-bubble button:hover {
-  background: var(--bg-hover);
+  background: var(--bg-elevated-hover);
 }
 
 .surface-editor-bubble button[aria-pressed='true'] {

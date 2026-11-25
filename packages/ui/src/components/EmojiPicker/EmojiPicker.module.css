@@ -58,7 +58,7 @@
 }
 
 .cell[data-highlighted] {
-  background: var(--bg-hover);
+  background: var(--bg-elevated-hover);
 }
 
 .message {

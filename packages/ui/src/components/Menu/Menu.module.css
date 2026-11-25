@@ -35,7 +35,7 @@
 /* Radix moves focus to the highlighted item (arrow keys or pointer). */
 .item[data-highlighted],
 .item[data-state='open'] {
-  background: var(--bg-hover);
+  background: var(--bg-elevated-hover);
 }
 
 .item[data-highlighted]:focus-visible {

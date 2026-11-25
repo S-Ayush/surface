@@ -96,7 +96,7 @@
 }
 
 .day:hover {
-  background: var(--bg-hover);
+  background: var(--bg-elevated-hover);
 }
 
 .day[aria-current='date'] {

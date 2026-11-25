@@ -20,6 +20,7 @@ const SURFACES = [
   'bg-panel',
   'bg-elevated',
   'bg-hover',
+  'bg-elevated-hover',
   'bg-active',
   'bg-group',
   'bg-selected',
@@ -57,6 +58,7 @@ const USAGE = {
   'bg-panel': surface,
   'bg-elevated': surface,
   'bg-hover': surface,
+  'bg-elevated-hover': surface,
   'bg-active': surface,
   'bg-group': surface,
   'bg-selected': surface,
@@ -71,7 +73,7 @@ const USAGE = {
   'text-disabled': { exempt: 'disabled controls are exempt from contrast (WCAG 1.4.3)' },
   accent: {
     checks: [
-      text(['bg-app', 'bg-panel', 'bg-elevated', 'bg-hover'], 'link text'),
+      text(['bg-app', 'bg-panel', 'bg-elevated', 'bg-hover', 'bg-elevated-hover'], 'link text'),
       icon(SURFACES, 'accent icon or selection mark'),
     ],
   },

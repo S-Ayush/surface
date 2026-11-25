@@ -50,7 +50,7 @@
 }
 
 .option[data-highlighted] {
-  background: var(--bg-hover);
+  background: var(--bg-elevated-hover);
 }
 
 .option[aria-disabled='true'] {

@@ -7,6 +7,7 @@ export const token = {
   bgPanel: 'var(--bg-panel)',
   bgElevated: 'var(--bg-elevated)',
   bgHover: 'var(--bg-hover)',
+  bgElevatedHover: 'var(--bg-elevated-hover)',
   bgActive: 'var(--bg-active)',
   bgGroup: 'var(--bg-group)',
   bgSelected: 'var(--bg-selected)',

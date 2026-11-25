@@ -21,6 +21,8 @@ export const semanticColors = {
   'bg-panel': same('surface-2'),
   'bg-elevated': same('surface-3'),
   'bg-hover': same('surface-4'),
+  // Hovered or highlighted item on --bg-elevated (menus, pickers): --bg-hover is a step from it.
+  'bg-elevated-hover': same('surface-8'),
   'bg-active': same('surface-5'),
   // Group header band: between panel and hover, never the hover colour.
   'bg-group': same('surface-6'),

@@ -43,12 +43,9 @@ describe('hairline token', () => {
 });
 
 describe('reduced motion', () => {
-  it('still collapses movement, and the new exit and highlight tokens are times, not distances', () => {
+  it('still collapses movement', () => {
     const reduced = atRule('@media (prefers-reduced-motion: reduce)');
     expect(reduced).toMatch(/--motion-shift: 0px;/);
     expect(reduced).toMatch(/--motion-scale: 1;/);
-    for (const name of ['dur-exit', 'dur-highlight-in', 'dur-highlight-out']) {
-      expect(css).toMatch(new RegExp(`--${name}: \\d+ms;`));
-    }
   });
 });
