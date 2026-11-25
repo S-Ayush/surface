@@ -129,7 +129,7 @@ describe('the settings sidebar', () => {
   it('sends Back to app to the last page outside settings, or home', async () => {
     const shell = new ShellStore(null);
     expect(await render(() => <SettingsSidebar width={240} />, true, shell)).toContain('href="/"');
-    shell.lastAppPath = '/team/ENG/issues?view=1';
+    shell.rememberAppPath('/team/ENG/issues?view=1');
     expect(await render(() => <SettingsSidebar width={240} />, true, shell)).toContain(
       'href="/team/ENG/issues?view=1"',
     );

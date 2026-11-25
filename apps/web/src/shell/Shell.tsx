@@ -68,7 +68,7 @@ export function Shell({ children, docked }: { children: ReactNode; docked?: Reac
   const settings = inSettings(pathname);
   // "Back to app" returns to the last page outside settings (PLAN-016 S7).
   useEffect(() => {
-    if (!settings) shell.lastAppPath = href;
+    if (!settings) shell.rememberAppPath(href);
   }, [shell, settings, href]);
   const mainRef = useRef<HTMLElement>(null);
   const shownPath = useRef(pathname);

@@ -28,6 +28,9 @@ export class ShellStore {
   announcement = '';
   /** Where "Back to app" goes from settings: the last page outside /settings (PLAN-016 S7). */
   lastAppPath = '/';
+  rememberAppPath(href: string): void {
+    this.lastAppPath = href;
+  }
   #shownTitle: string | undefined;
   readonly #storage: StorageLike | null;
 
