@@ -1,8 +1,10 @@
 # Publishing Surface
 
-Status: **Ready, not run** · Date: 2026-11-25 · Related: [ADR-0026](04-architecture/adr/0026-open-source-mit.md) (MIT), [PLAN-017](07-plans/PLAN-017-brand-open-source.md) S4, [SECURITY.md](../SECURITY.md)
+Status: **§1, §2 and §4 done 2026-11-26 (pushed public); §3 settings with the owner** · Date: 2026-11-25 · Related: [ADR-0026](04-architecture/adr/0026-open-source-mit.md) (MIT), [PLAN-017](07-plans/PLAN-017-brand-open-source.md) S4, [SECURITY.md](../SECURITY.md)
 
 Run this checklist on the day the repository goes public. Nothing in it has run yet: the repository has no remote. Tick each box, then record the date and the commit at the end.
+
+**2026-11-26:** the user created `github.com/S-Ayush/surface` as a **public** repository with a GitHub-made "Initial commit" (an MIT `LICENSE` naming the owner), and chose to push public at once rather than private first. `main` (`ff44d55`) replaced that commit with one force push, guarded by a lease on its hash and approved by the user; `main` is never force-pushed again. The copyright line stays "The Surface contributors". The push runs as the collaborator account `cw-ashrivastav`. The §3 settings need the owner account. See the [coordination log](07-plans/sessions/p017-coordination.md).
 
 ## The user's decisions (2026-11-25)
 
