@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const SITE = 'https://s-ayush.github.io/surface/';
+const SITE = 'https://surface.pages.dev/';
 const PUBLIC = join(import.meta.dirname, '..', 'public');
 const BRAND = join(import.meta.dirname, '..', '..', '..', 'docs', '05-design', 'brand', 'assets');
 
@@ -87,7 +87,6 @@ describe('the landing page for search engines', () => {
   it('lists the canonical address in the sitemap and robots.txt', () => {
     expect(read('sitemap.xml')).toContain(`<loc>${SITE}</loc>`);
     expect(read('robots.txt')).toContain(`Sitemap: ${SITE}sitemap.xml`);
-    expect(existsSync(join(PUBLIC, '.nojekyll'))).toBe(true);
   });
 
   it('keeps the not-found page out of the index', () => {
@@ -119,6 +118,23 @@ describe('the landing page as a self-contained site', () => {
       expect(policy).not.toMatch(/script-src[^;]*unsafe-inline/);
     },
   );
+
+  it('sends the same policy as a header, plus the anti-framing rule a meta tag cannot set', () => {
+    // Cloudflare Pages reads public/_headers (PLAN-018 S2).
+    const headers = read('_headers');
+    const header =
+      /^\/\*\n(?:[ \t]+.*\n)*?[ \t]+Content-Security-Policy: (.+)$/m.exec(headers)?.[1] ?? '';
+    const directives = (policy: string): string[] =>
+      policy
+        .split(';')
+        .map((d) => d.trim())
+        .filter(Boolean);
+    const page = directives(meta(index, 'meta[http-equiv="Content-Security-Policy"]'));
+    expect(directives(header).filter((d) => !d.startsWith('frame-ancestors'))).toEqual(page);
+    expect(directives(header)).toContain("frame-ancestors 'none'");
+    expect(headers).toMatch(/^[ \t]+Strict-Transport-Security: max-age=\d+/m);
+    expect(headers).toMatch(/^[ \t]+X-Content-Type-Options: nosniff$/m);
+  });
 
   it('resolves every local link, file and in-page anchor', () => {
     for (const el of index.querySelectorAll('[href], [src]')) {

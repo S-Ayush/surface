@@ -6,9 +6,10 @@ The public landing page ([PLAN-018](../../docs/07-plans/PLAN-018-website.md)). `
 | ------------------- | --------------------------------------------------------------------------------------------- |
 | `public/index.html` | The page: markup, inline CSS, structured data, and the logo as an inline SVG sprite           |
 | `public/site.js`    | The keyboard demo, the sync simulation, the install terminal and the shortcut keys            |
-| `public/404.html`   | Self-contained not-found page (GitHub Pages serves it for any missing path)                   |
+| `public/404.html`   | Self-contained not-found page (Cloudflare Pages serves it for any missing path)               |
 | `public/assets/`    | Favicons and lockups copied from `docs/05-design/brand/assets/`, and the 1200 × 630 OG image  |
 | `public/fonts/`     | Inter and JetBrains Mono (OFL), copied from the `@fontsource-variable` packages the app uses  |
+| `public/_headers`   | Response headers on Cloudflare Pages: the CSP, HSTS, `nosniff`, cache rules                   |
 | `test/site.test.ts` | SEO tags, structured data, headings, links and anchors, no external resources, the CSP, brand |
 
 ## Look at it
@@ -26,12 +27,12 @@ pnpm --filter @surface/site preview   # http://127.0.0.1:4173/
 
 ## The address
 
-The canonical address is `https://s-ayush.github.io/surface/`. To move to another domain, change it in all of these:
+The site is hosted on Cloudflare Pages, built from `main` with no build command ([docs/publishing.md](../../docs/publishing.md) §6). `public/_headers` sets the response headers there; the test keeps its policy equal to the page's `<meta>` policy.
+
+The canonical address is `https://surface.pages.dev/`. To move to another address, change it in all of these:
 
 - `public/index.html`: `canonical`, `og:url`, `og:image`, `twitter:image` and the JSON-LD `@id`, `url` and `image`;
 - `public/404.html`: the home link;
 - `public/robots.txt` and `public/sitemap.xml`;
 - `test/site.test.ts`: `SITE`;
 - [docs/publishing.md](../../docs/publishing.md) §6.
-
-Publishing is manual: see [docs/publishing.md](../../docs/publishing.md) §6.

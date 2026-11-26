@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://s-ayush.github.io/surface/sitemap.xml
+Sitemap: https://surface.pages.dev/sitemap.xml

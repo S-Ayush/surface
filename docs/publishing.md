@@ -49,7 +49,7 @@ Run this checklist on the day the repository goes public. Nothing in it has run 
   - Topics: `issue-tracker`, `self-hosted`, `local-first`, `keyboard-first`, `project-management`, `typescript`.
   - Uncheck Releases and Packages until the first release.
 - [ ] **Features:** keep Issues on, for bug reports from outside. Turn Wiki off, because the docs live in `docs/`.
-- [ ] **Actions → General:** set workflow permissions to "Read repository contents". CI publishes nothing. The Website workflow (`pages.yml`, §6) asks for its own Pages permissions and runs only by hand.
+- [ ] **Actions → General:** set workflow permissions to "Read repository contents". CI publishes nothing.
 
 ## 4. Go public
 
@@ -62,13 +62,33 @@ Run this checklist on the day the repository goes public. Nothing in it has run 
 
 - [ ] Add a row to the [PLAN-017 coordination log](07-plans/sessions/p017-coordination.md) with the date, the commit pushed, and the scan result.
 
-## 6. The landing page (optional, any time after §4)
+## 6. The landing page on Cloudflare Pages
 
-The page is `apps/site/public/` ([PLAN-018](07-plans/PLAN-018-website.md)). Its address is `https://s-ayush.github.io/surface/`. To use your own domain instead, first change every place listed in [apps/site/README.md](../apps/site/README.md).
+The page is `apps/site/public/` ([PLAN-018](07-plans/PLAN-018-website.md)), a static folder with no build step. Its address is `https://surface.pages.dev/`. If Cloudflare gives the project another name, or you add your own domain, change the address everywhere [apps/site/README.md](../apps/site/README.md) lists.
 
-- [ ] **Settings → Pages → Source: GitHub Actions.**
-- [ ] **Actions → Website → Run workflow** on `main`. It deploys only when run by hand.
-- [ ] Open the address. Check the page, the 404 page (`/surface/nope`), `robots.txt` and `sitemap.xml`.
-- [ ] Paste the address into a link preview (a chat app, or a social card validator) and check that the card shows `assets/og-image.png`.
-- [ ] **Google Search Console:** add the property, verify it with the HTML-file method (commit the file to `apps/site/public/`), and submit `sitemap.xml`. Bing Webmaster Tools can import from Search Console.
-- [ ] **Off-page:** list Surface on alternativeto.net and openalternative.co (they rank first for "Linear alternative" searches), and add the address to the repository's About box.
+**Create the project** (Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git):
+
+- [ ] Authorise the Cloudflare GitHub app for **only** the `S-Ayush/surface` repository, then pick it.
+- [ ] Project name: `surface`. This sets the address `surface.pages.dev`.
+- [ ] Production branch: `main`.
+- [ ] Framework preset: **None**. Build command: leave it **empty**. Build output directory: `apps/site/public`. Root directory: leave it empty (the repository root).
+- [ ] Environment variable: `SKIP_DEPENDENCY_INSTALL` = `1`. Without it Cloudflare installs the whole pnpm workspace, which the page doesn't need and which may fail.
+- [ ] Save and deploy.
+
+**After the first deploy** (the project's Settings → Build):
+
+- [ ] **Build watch paths:** include `apps/site/*`, so only changes to the page redeploy it.
+- [ ] **Branch control:** turn off automatic preview deployments. Otherwise every branch you push gets a public `*.pages.dev` copy.
+- [ ] Leave **Web Analytics** off. The page promises no tracking, and its policy (`connect-src 'none'`) blocks the beacon anyway.
+
+**Check it:**
+
+- [ ] Open the address. The demo plays, `/nope` shows the 404 page, and `robots.txt` and `sitemap.xml` load.
+- [ ] Response headers (`curl -sI https://surface.pages.dev/`) include `content-security-policy` with `frame-ancestors 'none'`, `strict-transport-security` and `x-content-type-options`. They come from `apps/site/public/_headers`.
+- [ ] Paste the address into a link preview (a chat app, or a social card validator). The card shows `assets/og-image.png`.
+
+**Get it found:**
+
+- [ ] **Google Search Console:** add a URL-prefix property for the address, verify it with the HTML-file method (commit the file to `apps/site/public/`; the next push deploys it), then submit `sitemap.xml`. Bing Webmaster Tools can import from Search Console.
+- [ ] Put the address in the repository's About box and the README.
+- [ ] List Surface on alternativeto.net and openalternative.co. They rank first for "Linear alternative" searches.
